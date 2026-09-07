@@ -114,7 +114,7 @@ DB를 셋으로 나눈다. 스펙 §61의 배치를 따르되 역할 경계를 �
 
 ```
 db/
-├── registry.db            Collection 등록 · Storage · System 배치 · Plan
+├── registry.db            Collection 등록 · Storage · System 배치
 ├── archive.db             Metadata / Identity / Revision
 └── cache/<collection-id>.db   Scan 결과 (언제든 버리고 재생성 가능)
 ```
@@ -210,6 +210,12 @@ Revision 증가 조건은 `content_hash` 변경 시에만(§39). 같은 내용 �
 않는다. Retention 정책(None / Latest 1 / Latest 5 / 30 Days / Unlimited)은 `archive_records`에
 대한 정리 쿼리로 구현하며 기본값은 **Latest 5**를 권장한다.
 
+**Archive의 Media 취급(결정 D3).** Archive는 Media 파일을 복제하지 않고 원본 위치를
+가리키는 정보만 들고 있다가, Archive→Collection 복사 시 그 경로에서 실제 파일을 함께
+복사한다. 원본이 사라졌거나(외장 디스크 분리, 원본 Collection 삭제) 접근할 수 없으면
+**그 Media만 건너뛰고 나머지는 정상 진행한다** — 오류로 작업을 중단하지 않는다. 건너뛴
+항목은 결과 요약에 집계해서 사용자가 무엇이 빠졌는지 알 수 있게 한다.
+
 ---
 
 ## 4. 핵심 인터페이스
@@ -258,7 +264,8 @@ class FrontendAdapter:
 ```python
 @dataclass
 class PlanEntry:
-    op: Literal["add","delete","move","copy","convert","metadata","media","storage_change"]
+    op: Literal["add","delete","move","copy","convert","media","storage_change"]
+    payload: dict | None          # add 상태 항목의 선편집 메타데이터 (R7)
     source: Ref | None; target: Ref | None
     rom_identity_id: str | None
     storage_from: str | None; storage_to: str | None
@@ -270,6 +277,15 @@ class PlanEntry:
 `physical_delta`를 엔트리 생성 시점에 확정해 두면 용량 재계산이 O(1) 누적합이 된다.
 Plan 항목을 추가/삭제할 때마다 Collection 전체를 다시 훑지 않는다 — 수천 개 항목을
 Ctrl+V 하는 시나리오(§88 Scenario 6)에서 체감 속도를 좌우한다.
+
+**Plan의 범위: 바이트가 움직이는 작업만.** 텍스트 메타데이터 편집은 Plan을 거치지 않고
+Save 시 즉시 파일에 기록한다(결정 D1). Plan에 들어가는 것은 저장 용량을 실제로 바꾸는
+작업 — ROM/Media의 추가·삭제·이동·복사, Storage 위치 변경, Convert — 뿐이다. 이 경계
+덕분에 편집 반응성은 기존 그대로 유지되고, Plan은 "용량과 파일 배치"라는 하나의
+관심사만 다루게 되어 UI(Actual→Plan 표시)와 의미가 정확히 일치한다.
+
+**Plan의 수명: 세션 한정.** Plan은 메모리에만 존재하며 앱 종료 시 사라진다(결정 D2).
+DB 테이블을 두지 않는다. 대신 미확정 Plan이 있는 상태로 종료하려 하면 경고한다.
 
 Apply 파이프라인(§31, §33):
 
@@ -308,7 +324,7 @@ Plan 생성 시점의 `(size, mtime_ns)`를 엔트리에 박아두고 Apply 직�
 | R4 | 물리 파일 동일성 판정 | 용량 이중 계산 (§81) | NTFS `volume_file_id` 우선, 실패 시 정규화 경로 비교 |
 | R5 | `api.py` 모놀리스 승계 | 새 구조가 다시 진흙탕 | 브릿지는 얇게. Job Queue만 `bridge/jobs.py`로 분리 이식 |
 | R6 | 스키마 마이그레이션 부재 | 사용자 자산 유실 | `user_version` 마이그레이션을 1일차 도입. Cache는 파기·재생성으로 처리 |
-| R7 | Auto Plan과 즉시 편집 UI의 충돌 | 아래 §8 참조 | 미결정 — 확인 필요 |
+| R7 | Plan 대기 중인 게임의 메타데이터 편집 | 아직 디스크에 없는 파일에 쓰기 시도 | 아직 존재하지 않는(Plan `add` 상태) 항목의 편집은 파일이 아니라 그 Plan 엔트리의 payload에 반영. Apply 시 함께 기록된다 |
 
 ---
 
@@ -333,15 +349,11 @@ Phase 2까지가 "새 구조가 실제로 굴러가는지" 판가름하는 구�
 
 ---
 
-## 8. 확인이 필요한 결정
+## 8. 확정된 결정
 
-1. **Metadata 편집과 Plan의 관계.** 스펙 §25는 Metadata Change를 Plan에 포함시키고,
-   §35는 기존처럼 즉시 편집 가능한 UI를 요구한다. Auto Plan이 켜져 있을 때 필드를 고치면
-   (a) Plan 항목으로 쌓였다가 Apply에서 파일에 반영, (b) 기존처럼 Save 시 즉시 파일 기록 —
-   둘 중 무엇인가? (a)가 스펙 철학에 맞지만 편집 반응성이 떨어진다.
-2. **Plan의 영속성.** 앱을 껐다 켜면 Plan이 남아 있어야 하나? (남기는 쪽을 권장 — registry.db에 저장)
-3. **Archive→Collection의 Media 처리.** Archive는 Media 파일을 보관하지 않으므로(§37) 붙여넣기
-   시 원본 Collection 경로에서 복사해야 한다. 원본 Collection이 닫혀 있거나 외장 디스크가
-   분리된 경우의 동작은?
-4. **기존 RetroGameManager 자산 이관.** 기존 MasterDB(JSON/SQLite)의 메타데이터를
-   Archive로 가져오는 마이그레이션이 필요한가, 아니면 Collection을 다시 스캔해서 채우면 되나?
+| ID | 결정 | 근거 / 파급 |
+|---|---|---|
+| **D1** | **텍스트 메타데이터 편집은 Plan을 거치지 않고 Save 시 즉시 파일에 기록한다.** Plan은 저장 용량이 실제로 변하는 작업(ROM/Media 추가·삭제·이동·복사, Storage 변경, Convert)만 담는다 | 스펙 §25와 §35의 충돌을 "바이트가 움직이는가"라는 단일 기준으로 해소. 편집 반응성이 기존과 동일하게 유지되고, Plan의 의미가 Actual→Plan 용량 표시와 정확히 일치한다. 단, 아직 디스크에 없는(Plan `add`) 항목의 편집은 Plan 엔트리 payload로 들어간다(R7) |
+| **D2** | **Plan은 세션 한정. 앱 재시작 시 사라진다** | Plan 테이블 불필요 → 스키마·마이그레이션 부담 감소, Plan과 실제 파일 상태가 어긋난 채 되살아나는 위험 제거. 미확정 Plan을 둔 채 종료하려 하면 경고한다 |
+| **D3** | **Archive는 Media 경로 정보만 보관하고 복사 시 원본에서 함께 가져온다. 원본이 없으면 그 Media만 건너뛴다** | 스펙 §37(Archive는 Media 저장소가 아님)을 지키면서 실사용상 "메타데이터만 오고 이미지가 빠지는" 문제를 줄인다. 접근 불가를 오류가 아닌 부분 성공으로 처리해 외장 디스크 분리 상황에서 작업이 멈추지 않는다 |
+| **D4** | **기존 MasterDB 구조는 폐기. 이관 마이그레이션을 만들지 않는다** | `db.py`·`database/sqlite_db.py`의 기존 스키마·JSON 저장소를 모두 삭제한다. 메타데이터는 Collection을 스캔해서 채우고, 필요하면 Collection→Archive 경로로 수집한다. Phase 0의 레거시 정리 범위가 확정됨 |
