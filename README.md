@@ -21,14 +21,15 @@
 
 ## 현재 상태
 
-**Phase 0 (저장소 골격) 진행 중.** 아직 실행 가능한 앱이 아니다 - 진입점과 UI 연결은
-Phase 2에서 붙는다.
+**Phase 2까지 완료.** `python main.py`로 실행된다. Collection을 등록해 스캔하고, 목록을
+탐색하고, 메타데이터를 편집해 저장하는 것까지 동작한다. Plan/Import/Export/Convert는
+Phase 3에서 붙는다.
 
 | Phase | 내용 | 상태 |
 |---|---|---|
-| 0 | 저장소 스키마·마이그레이션, 다중 인스턴스 기반, Provider/Adapter 인터페이스, 레거시 정리 | 진행 중 |
-| 1 | Core Model + ES-DE Adapter + Cache 스캔 | |
-| 2 | Collection UI (탭/헤더/내비/Gamelist) + 기존 Detail 패널 연결 | |
+| 0 | 저장소 스키마·마이그레이션, 다중 인스턴스 기반, Provider/Adapter 인터페이스, 레거시 정리 | 완료 |
+| 1 | Core Model + ES-DE Adapter + Cache 스캔 | 완료 |
+| 2 | Collection UI (탭/헤더/내비/Gamelist) + 기존 Detail 패널 연결 | 완료 |
 | 3 | Plan (Auto Plan·용량 계산·Apply·인스턴스 간 복사/붙여넣기) | |
 | 4~8 | Archive / Match / Compare / Frontend Adapters / MTP | |
 
@@ -43,7 +44,7 @@ adapters/     Frontend Adapter (읽기+쓰기를 한 곳에서 책임)
 storage/      물리 접근 추상화 (Local/UNC, 후에 MTP)
 engines/      파일 복사 엔진 + file_ops.py + native/  ← RetroGameManager에서 그대로 승계
 bridge/       pywebview 브릿지와 Job 큐
-gui_web/      웹 UI (Phase 2에서 새 구조에 맞춰 재배치)
+gui_web/      웹 UI (셸 + 가상 스크롤 Gamelist + 기존 Detail 패널)
 importers/    기존 Frontend 파서 - Phase 1에서 adapters/로 흡수 예정
 exporters/    기존 Frontend 라이터 - Phase 1에서 adapters/로 흡수 예정
 ```

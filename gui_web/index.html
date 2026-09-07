@@ -3,29 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Retro Metadata Manager</title>
+  <title>RetroMeta Studio</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="studio.css" />
 </head>
 <body>
   <div id="app">
+    <div id="titlebar"></div>
+    <div id="tabs-bar"></div>
     <div id="app-body">
-      <div id="sidebar"></div>
-      <div id="main">
-      <div id="context-bar"></div>
-      <div id="list-area">
+      <aside id="nav"></aside>
+      <main id="center">
+        <div id="collection-header"></div>
         <div id="filter-bar"></div>
-        <div id="content-row">
-          <div id="list-body">
-            <div id="list-card-container"></div>
+        <div id="list-wrap">
+          <div id="list-head"></div>
+          <div id="list-scroll">
+            <div id="list-spacer"></div>
+            <div id="list-window"></div>
           </div>
-          <div id="detail-panel"></div>
         </div>
-      </div>
-      <div id="dashboard-view" class="hidden"></div>
-      <div id="settings-view" class="hidden"></div>
-      <div id="compare-view" class="hidden"></div>
-      </div>
+      </main>
+      <aside id="detail-panel"></aside>
     </div>
+    <div id="status-bar"></div>
   </div>
 
   <div id="modal-root"></div>

@@ -246,6 +246,23 @@ class CacheStore:
             "SELECT media_type,rel_path,size,mtime_ns FROM media WHERE rom_uid=? ORDER BY media_type", (rom_uid,))]
         return result
 
+    def update_metadata(self, rom_uid, fields, *, title=None, title_norm=None, content_hash=None):
+        """한 항목의 메타데이터를 갱신한다(사용자 편집 반영).
+
+        frontend_raw는 건드리지 않는다 - 사용자가 편집하는 것은 공통 필드뿐이고,
+        Frontend 고유 값은 읽은 그대로 보존되어야 한다(§50).
+        """
+        with transaction(self._conn):
+            self._conn.execute(
+                "INSERT INTO metadata (rom_uid,fields_json,content_hash) VALUES (?,?,?)"
+                " ON CONFLICT(rom_uid) DO UPDATE SET fields_json=excluded.fields_json,"
+                " content_hash=excluded.content_hash",
+                (rom_uid, json.dumps(fields or {}, ensure_ascii=False), content_hash))
+            self._conn.execute("UPDATE roms SET has_metadata=1 WHERE rom_uid=?", (rom_uid,))
+            if title is not None:
+                self._conn.execute("UPDATE roms SET title=?, title_norm=? WHERE rom_uid=?",
+                                   (title, title_norm or "", rom_uid))
+
     def set_sha256(self, rom_uid, sha256):
         """SHA256은 지연 계산이다(§5 성능). 필요해질 때만 채운다."""
         with transaction(self._conn):

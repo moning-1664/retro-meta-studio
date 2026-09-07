@@ -265,6 +265,35 @@ class JobManager:
         threading.Thread(target=worker, daemon=True).start()
 
     # ------------------------------------------------------------------
+    # 종료
+    # ------------------------------------------------------------------
+    def active_jobs(self) -> list[str]:
+        return [jid for jid, job in self._jobs.items() if not job.get("done")]
+
+    def wait_idle(self, timeout=10.0) -> bool:
+        """진행 중인 job이 하나도 없을 때까지 기다린다. 시간 안에 못 끝내면 False."""
+        waiter = threading.Event()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not self.active_jobs():
+                return True
+            waiter.wait(0.02)
+        return not self.active_jobs()
+
+    def shutdown(self, timeout=5.0) -> bool:
+        """진행 중인 job에 취소를 요청하고 끝날 때까지 기다린다.
+
+        **DB 연결을 닫기 전에 반드시 호출해야 한다.** 워커 스레드가 쓰고 있는 sqlite
+        연결을 닫으면 프로세스가 segfault로 죽는다(실제로 재현했다). 취소는
+        progress_cb 지점에서 협조적으로 일어나므로, 시간 안에 못 멈추는 job이 있으면
+        False를 돌려준다 - 그 경우 호출자는 연결을 닫지 말고 그냥 프로세스를
+        끝내야 한다.
+        """
+        for job_id in self.active_jobs():
+            self.cancel(job_id)
+        return self.wait_idle(timeout)
+
+    # ------------------------------------------------------------------
     # 취소
     # ------------------------------------------------------------------
     def cancel(self, job_id):
