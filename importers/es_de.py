@@ -15,7 +15,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 from .base import list_rom_files_in_dir, stem_matches_any, collect_es_style_media, list_gamelist_entries as _list_gamelist_entries
 from utils import normalize_esde_date, normalize_esde_rating
-from config import ESDE_IGNORED_SYSTEMS
+from app.model.constants import ESDE_IGNORED_SYSTEMS
 
 
 def detect_structure(rom_path, metadata_path, media_path):

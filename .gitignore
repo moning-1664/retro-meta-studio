@@ -32,3 +32,7 @@ Thumbs.db
 node_modules/
 test-results/
 playwright-report/
+
+# 앱 런타임 데이터 (registry/archive/cache DB, 클립보드 핸드오프 파일)
+db/
+clipboard/
