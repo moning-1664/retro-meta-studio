@@ -1,0 +1,100 @@
+"""
+app/plan/validator.py
+======================
+Apply 직전 재검증(스펙 §31, §33).
+
+Plan을 만든 뒤에도 파일 시스템은 밖에서 바뀔 수 있다. 탐색기로 파일을 지웠을 수도
+있고, 다른 인스턴스가 Apply를 끝냈을 수도 있다(§9.5). 그래서 실제로 쓰기 직전에
+다시 확인한다.
+
+문제가 있는 항목은 그 항목만 invalid로 표시하고 나머지는 진행할 수 있게 한다 -
+하나가 틀어졌다고 수천 개짜리 작업 전체를 버리면 쓸 수 없는 도구가 된다. 다만
+용량 초과는 Storage 단위 문제라 그 Storage로 가는 작업 전체를 막는다.
+"""
+
+from __future__ import annotations
+
+from app.model.plan import OP_ADD, OP_DELETE, OP_STORAGE_CHANGE
+
+
+def validate(plan, collection, cache, provider) -> dict:
+    """반환: {"ok": bool, "entries": [...], "capacity": [...], "blocked": bool}"""
+    problems = []
+    for entry in plan.entries:
+        entry.status, entry.error = "pending", None
+        if entry.op == OP_ADD:
+            _validate_add(entry, provider)
+        elif entry.op == OP_DELETE:
+            _validate_delete(entry, cache)
+        elif entry.op == OP_STORAGE_CHANGE:
+            _validate_storage_change(entry, collection)
+        if entry.status == "invalid":
+            problems.append({"key": entry.key, "filename": entry.filename or entry.system,
+                             "error": entry.error})
+
+    capacity = check_capacity(plan, collection, cache, provider)
+    blocked = any(c["over"] for c in capacity)
+    return {"ok": not problems and not blocked, "entries": problems,
+            "capacity": capacity, "blocked": blocked}
+
+
+def _validate_add(entry, provider):
+    source = entry.source or {}
+    rom = source.get("rom") or {}
+    if rom.get("path"):
+        stat = provider.stat(rom["path"])
+        if stat is None:
+            entry.status, entry.error = "invalid", "원본 ROM이 사라졌습니다."
+            return
+        # Plan을 만든 시점과 크기가 다르면 내용이 바뀐 것이다. 조용히 덮어쓰지 않는다.
+        if rom.get("size") is not None and stat.size != int(rom["size"]):
+            entry.status, entry.error = "invalid", "원본 ROM이 변경되었습니다(크기 불일치)."
+            return
+    missing = [m for m in (source.get("media") or []) if not provider.exists(m["path"])]
+    if missing:
+        # media가 없어진 것은 작업을 막을 이유가 못 된다(결정 D3) - 빼고 진행한다.
+        source["media"] = [m for m in source["media"] if provider.exists(m["path"])]
+
+
+def _validate_delete(entry, cache):
+    if entry.rom_uid is None:
+        return
+    if cache.get_row(entry.rom_uid) is None:
+        entry.status, entry.error = "invalid", "항목이 이미 사라졌습니다."
+
+
+def _validate_storage_change(entry, collection):
+    if collection.storage(entry.storage_to) is None:
+        entry.status, entry.error = "invalid", "대상 Storage가 사라졌습니다."
+        return
+    current = next((s.storage_id for s in collection.systems if s.system == entry.system), None)
+    if current is None:
+        entry.status, entry.error = "invalid", "System이 사라졌습니다."
+    elif current == entry.storage_to:
+        entry.status, entry.error = "invalid", "이미 대상 Storage에 있습니다."
+
+
+def check_capacity(plan, collection, cache, provider) -> list[dict]:
+    """Storage별 예상 사용량과 초과 여부(스펙 §20).
+
+    용량을 못 읽는 Storage(MTP, 일부 네트워크 공유)는 Unknown이므로 검사를 건너뛴다 -
+    오류가 아니다(§5).
+    """
+    actual = cache.storage_usage()
+    delta = plan.delta()
+    result = []
+    for storage in collection.storages:
+        volume = provider.volume_info(storage.root_path)
+        used = actual.get(storage.storage_id, 0)
+        change = delta.get(storage.storage_id, 0)
+        planned = used + change
+        over = 0
+        if volume.capacity_bytes is not None and planned > volume.capacity_bytes:
+            over = planned - volume.capacity_bytes
+        result.append({
+            "storageId": storage.storage_id, "label": storage.label,
+            "actualBytes": used, "planBytes": planned, "deltaBytes": change,
+            "capacityBytes": volume.capacity_bytes, "freeBytes": volume.free_bytes,
+            "over": bool(over), "overBytes": over,
+        })
+    return result

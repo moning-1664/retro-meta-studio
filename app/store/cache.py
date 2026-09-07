@@ -70,9 +70,13 @@ MIGRATIONS = (
                mtime_ns INTEGER NOT NULL DEFAULT 0,
                PRIMARY KEY (rom_uid, media_type)
            )""",
+        # storage_id는 ROM이 놓인 Storage, media_storage_id는 media가 놓인
+        # Storage다. ES-DE는 ROM만 System별 Storage를 따라가고 media는 Collection
+        # root에 남기 때문에 둘이 다를 수 있다.
         """CREATE TABLE system_stats (
                system TEXT PRIMARY KEY,
                storage_id TEXT NOT NULL DEFAULT 'internal',
+               media_storage_id TEXT NOT NULL DEFAULT 'internal',
                rom_count INTEGER NOT NULL DEFAULT 0,
                rom_bytes INTEGER NOT NULL DEFAULT 0,
                media_count INTEGER NOT NULL DEFAULT 0,
@@ -174,29 +178,38 @@ class CacheStore:
                         (rom_uid, m["media_type"], m.get("rel_path", ""),
                          int(m.get("size", 0)), int(m.get("mtime_ns", 0))))
 
-    def set_system_stats(self, system, storage_id, **counts):
+    def set_system_stats(self, system, storage_id, media_storage_id=None, **counts):
         fields = {"rom_count": 0, "rom_bytes": 0, "media_count": 0, "media_bytes": 0,
                   "missing_metadata": 0, "missing_media": 0}
         fields.update({k: int(v) for k, v in counts.items() if k in fields})
         with transaction(self._conn):
             self._conn.execute(
-                "INSERT INTO system_stats (system,storage_id,rom_count,rom_bytes,media_count,media_bytes,"
-                " missing_metadata,missing_media) VALUES (?,?,?,?,?,?,?,?)"
+                "INSERT INTO system_stats (system,storage_id,media_storage_id,rom_count,rom_bytes,"
+                " media_count,media_bytes,missing_metadata,missing_media) VALUES (?,?,?,?,?,?,?,?,?)"
                 " ON CONFLICT(system) DO UPDATE SET storage_id=excluded.storage_id,"
+                " media_storage_id=excluded.media_storage_id,"
                 " rom_count=excluded.rom_count, rom_bytes=excluded.rom_bytes,"
                 " media_count=excluded.media_count, media_bytes=excluded.media_bytes,"
                 " missing_metadata=excluded.missing_metadata, missing_media=excluded.missing_media",
-                (system, storage_id, fields["rom_count"], fields["rom_bytes"], fields["media_count"],
-                 fields["media_bytes"], fields["missing_metadata"], fields["missing_media"]))
+                (system, storage_id, media_storage_id or storage_id, fields["rom_count"],
+                 fields["rom_bytes"], fields["media_count"], fields["media_bytes"],
+                 fields["missing_metadata"], fields["missing_media"]))
 
     def system_stats(self) -> list[dict]:
         return [dict(r) for r in self._conn.execute("SELECT * FROM system_stats ORDER BY system")]
 
     def storage_usage(self) -> dict[str, int]:
-        """Storage별 실사용 바이트(Actual). Plan 계산의 기준값(§82)."""
-        rows = self._conn.execute(
-            "SELECT storage_id, SUM(rom_bytes + media_bytes) AS used FROM system_stats GROUP BY storage_id")
-        return {r["storage_id"]: int(r["used"] or 0) for r in rows}
+        """Storage별 실사용 바이트(Actual). Plan 계산의 기준값(§82).
+
+        ROM과 media를 각자 실제로 놓인 Storage에 더한다 - 둘은 다른 Storage일 수 있다.
+        """
+        usage: dict[str, int] = {}
+        for row in self._conn.execute(
+                "SELECT storage_id, media_storage_id, rom_bytes, media_bytes FROM system_stats"):
+            usage[row["storage_id"]] = usage.get(row["storage_id"], 0) + int(row["rom_bytes"] or 0)
+            key = row["media_storage_id"] or row["storage_id"]
+            usage[key] = usage.get(key, 0) + int(row["media_bytes"] or 0)
+        return usage
 
     # ------------------------------------------------------------------
     # 목록 조회 (정렬/필터/페이징 전부 SQL)

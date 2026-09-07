@@ -22,7 +22,11 @@ from adapters import get_adapter
 from app import paths
 from app.model.collection import STORAGE_INTERNAL
 from app.model.constants import MEDIA_TYPES
-from app.store.registry import RegistryError, RegistryStore
+from app.model.plan import Plan
+from app.plan import builder, clipboard
+from app.plan.applier import apply_plan
+from app.plan.validator import check_capacity, validate
+from app.store.registry import CHANGE_APPLIED, RegistryError, RegistryStore
 from app.workspace import Workspace, WorkspaceError
 from bridge.jobs import JobManager
 from utils import normalize_title
@@ -73,6 +77,11 @@ class Api:
         self.registry = RegistryStore(registry_path or paths.REGISTRY_DB)
         self.workspace = Workspace(self.registry, cache_dir=cache_dir or paths.CACHE_DIR)
         self.jobs = JobManager()
+        # Plan은 세션 한정이다(D2). DB에 저장하지 않고 여기서만 들고 있다가 앱이
+        # 꺼지면 사라진다.
+        self._plans: dict[str, Plan] = {}
+        self._clipboard_dir = (Path(cache_dir).parent / "clipboard") if cache_dir else paths.CLIPBOARD_DIR
+        clipboard.prune(self._clipboard_dir)
         self._window = None
 
     def close(self):
@@ -115,6 +124,7 @@ class Api:
 
     @guarded
     def delete_collection(self, collection_id):
+        self._plans.pop(collection_id, None)
         self.workspace.close_collection(collection_id)
         self.registry.delete_collection(collection_id)
         return ok(True)
@@ -318,6 +328,111 @@ class Api:
         title = (merged.get("name") or "").strip() or Path(row["filename"]).stem
         cache.update_metadata(int(rom_uid), merged, title=title, title_norm=normalize_title(title))
         return ok({"title": title})
+
+    # ------------------------------------------------------------------
+    # Plan (세션 한정 - 결정 D2)
+    # ------------------------------------------------------------------
+    def _plan(self, collection_id) -> Plan:
+        plan = self._plans.get(collection_id)
+        if plan is None:
+            plan = self._plans[collection_id] = Plan(collection_id)
+        return plan
+
+    def _plan_context(self, collection_id):
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            raise WorkspaceError("Collection을 찾을 수 없습니다.")
+        return collection, self.workspace.open(collection_id), self.workspace.provider_for(collection)
+
+    @guarded
+    def plan_state(self, collection_id):
+        """Gamelist의 Status 기호와 하단 바가 필요로 하는 것."""
+        plan = self._plan(collection_id)
+        collection, cache, provider = self._plan_context(collection_id)
+        return ok({
+            **plan.summary(),
+            "marks": plan.marks(),
+            "capacity": check_capacity(plan, collection, cache, provider),
+            "clipboard": clipboard.peek(self.registry),
+        })
+
+    @guarded
+    def plan_delete(self, collection_id, rom_uids):
+        collection, cache, _ = self._plan_context(collection_id)
+        result = builder.plan_delete(self._plan(collection_id), collection, cache, rom_uids)
+        return ok(result)
+
+    @guarded
+    def plan_storage_change(self, collection_id, system, storage_to):
+        collection, cache, _ = self._plan_context(collection_id)
+        result = builder.plan_storage_change(self._plan(collection_id), collection, cache,
+                                             system, storage_to)
+        return ok(result)
+
+    @guarded
+    def plan_remove_entry(self, collection_id, key):
+        return ok(self._plan(collection_id).remove(key))
+
+    @guarded
+    def plan_clear(self, collection_id):
+        self._plan(collection_id).clear()
+        return ok(True)
+
+    @guarded
+    def copy_selection(self, collection_id, rom_uids):
+        """다른 인스턴스에서도 붙여넣을 수 있게 내보낸다(결정 D5)."""
+        collection, cache, _ = self._plan_context(collection_id)
+        return ok(clipboard.copy_selection(self.registry, collection, cache, rom_uids,
+                                           self._clipboard_dir))
+
+    @guarded
+    def paste(self, collection_id):
+        collection, _, provider = self._plan_context(collection_id)
+        descriptor, items = clipboard.read_items(self.registry)
+        if not items:
+            return err("붙여넣을 항목이 없습니다.")
+        result = builder.plan_add(self._plan(collection_id), collection, provider, items)
+        return ok({**result, "source": descriptor.get("sourceName")})
+
+    @guarded
+    def validate_plan(self, collection_id):
+        plan = self._plan(collection_id)
+        collection, cache, provider = self._plan_context(collection_id)
+        return ok(validate(plan, collection, cache, provider))
+
+    @guarded
+    def start_apply(self, collection_id):
+        """Plan을 실제 파일 변경으로 실행한다(스펙 §31).
+
+        같은 Collection을 다른 인스턴스가 동시에 Apply하지 못하도록 프로세스 간
+        락을 잡는다(§9.4). 끝나면 반드시 놓는다.
+        """
+        plan = self._plan(collection_id)
+        if not len(plan):
+            return err("적용할 Plan이 없습니다.")
+
+        collection, cache, provider = self._plan_context(collection_id)
+        report = validate(plan, collection, cache, provider)
+        if report["blocked"]:
+            return err("용량이 부족합니다. Plan을 줄이거나 저장 공간을 확보해주세요.")
+
+        lock_name = f"apply:{collection_id}"
+        if not self.registry.acquire_lock(lock_name, kind="apply"):
+            owner = self.registry.lock_owner(lock_name) or {}
+            return err(f"다른 창에서 같은 Collection을 적용하는 중입니다({owner.get('instance_id', '?')[:8]}).")
+
+        def run(cb):
+            try:
+                result = apply_plan(plan, collection, cache, self.registry, provider, progress_cb=cb)
+                self.workspace.scan(collection_id, force=True)
+                self.registry.append_change(CHANGE_APPLIED, collection_id,
+                                            {"applied": result["applied"]})
+                return result
+            finally:
+                self.registry.release_lock(lock_name)
+
+        job_id = self.jobs.run_phased((collection_id,), [("적용", run)], kind="apply")
+        return ok({"jobId": job_id})
 
     # ------------------------------------------------------------------
     # Job

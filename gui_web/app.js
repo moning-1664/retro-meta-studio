@@ -84,6 +84,11 @@
     selected: new Set(),
     focused: null,       // 선택된 romUid (상세 패널 대상)
     detailState: null,
+    // Plan은 세션 한정이다(결정 D2). 백엔드 메모리에만 있고 여기서는 요약만 들고 있다.
+    plan: null,
+    // Auto Plan이 켜져 있으면 복사/삭제/이동이 Plan으로 들어간다(스펙 §26).
+    // 끄면 같은 동작이 확인 후 즉시 실행된다.
+    autoPlan: true,
   };
 
   const activeDetail = () => S.detail[S.activeId] || null;
@@ -264,6 +269,7 @@
     await ensureDetail(id);
     renderAll();
     await reloadList();
+    await refreshPlan();
   }
 
   async function closeTab(id) {
@@ -295,6 +301,7 @@
     resetList();
     renderAll();
     await reloadList();
+    await refreshPlan();
   }
 
   async function ensureDetail(id) {
@@ -470,13 +477,15 @@
   }
 
   async function moveSystemToStorage(system, storageId) {
-    // 배치만 바꾼다. 실제 파일 이동은 Plan Apply가 한다(Phase 3).
-    const r = await api.moveSystem(S.activeId, system, storageId);
+    // 실제 파일은 아직 움직이지 않는다. Plan에 올려두고 확정할 때 옮긴다(스펙 §10, §28).
+    const r = await api.planStorageChange(S.activeId, system, storageId);
     if (!r.ok) { showToast(r.error, "error"); return; }
-    showToast(`${system.toUpperCase()}를 옮겼습니다. 실제 파일 이동은 Plan 적용 시 수행됩니다.`);
-    await ensureDetail(S.activeId);
-    renderNav();
-    renderHeader();
+    await refreshPlan();
+    if (S.autoPlan) {
+      showToast(`${system.toUpperCase()} 이동을 Plan에 올렸습니다. Apply로 확정하세요.`);
+    } else {
+      await applyPlan();
+    }
   }
 
   function openAddStorage() {
@@ -553,8 +562,12 @@
       h("span", {}, [`${formatCount(detail.totalGames)} Games`]),
     ]);
     detail.storages.forEach((storage) => {
-      summary.appendChild(h("span", { class: "cheader-storage" }, [
+      // Plan이 있으면 "Actual -> Plan"으로 보여준다(스펙 §19, §30).
+      const capacity = planCapacity(storage.id);
+      const changed = capacity && capacity.deltaBytes;
+      summary.appendChild(h("span", { class: "cheader-storage" + (capacity && capacity.over ? " over" : "") }, [
         `${storage.label} ${formatBytes(storage.actualBytes)}`,
+        changed ? ` → ${formatBytes(capacity.planBytes)}` : "",
       ]));
     });
     main.appendChild(summary);
@@ -700,7 +713,15 @@
   }
 
   function statusMark(row) {
-    // Plan 상태(+ - △)는 Phase 3에서 채운다. 지금은 실제 파일 상태만 표시한다.
+    // Plan 상태가 있으면 그것이 우선이다. 기호는 작게만 표시하고 제목이나 설명
+    // 전체를 색칠하지 않는다(스펙 §24).
+    const marks = (S.plan && S.plan.marks) || { rows: {}, systems: [] };
+    const mark = marks.rows[`${row.system}|${row.file}`];
+    if (mark === "+") return h("span", { class: "status-mark add", title: "추가 예정" }, ["+"]);
+    if (mark === "-") return h("span", { class: "status-mark del", title: "삭제 예정" }, ["−"]);
+    if ((marks.systems || []).includes(row.system)) {
+      return h("span", { class: "status-mark warn", title: "Storage 이동 예정" }, ["△"]);
+    }
     if (!row.present) return h("span", { class: "status-mark warn", title: "ROM 파일 없음 (metadata만 존재)" }, ["△"]);
     if (!row.hasMetadata) return h("span", { class: "status-mark muted", title: "Metadata 없음" }, ["·"]);
     if (!row.hasMedia) return h("span", { class: "status-mark muted", title: "Media 없음" }, ["·"]);
@@ -989,35 +1010,177 @@
   }
 
   // ------------------------------------------------------------------
+  // Plan
+  // ------------------------------------------------------------------
+  async function refreshPlan() {
+    if (!S.activeId) { S.plan = null; return; }
+    const r = await api.planState(S.activeId);
+    S.plan = r.ok ? r.data : null;
+    renderHeader();
+    renderStatusBar();
+    renderListWindow();
+  }
+
+  const planCapacity = (storageId) =>
+    ((S.plan && S.plan.capacity) || []).find((c) => c.storageId === storageId) || null;
+
+  async function copySelection() {
+    if (!S.selected.size) { showToast("복사할 항목을 선택하세요.", "warning"); return; }
+    const r = await api.copySelection(S.activeId, [...S.selected]);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    await refreshPlan();
+    // 다른 창에서도 붙여넣을 수 있다(결정 D5).
+    showToast(`${formatCount(r.data.count)}개를 복사했습니다. 다른 창에서도 붙여넣을 수 있습니다.`);
+  }
+
+  async function pasteIntoActive() {
+    const r = await api.paste(S.activeId);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    await refreshPlan();
+    const skipped = (r.data.skipped || []).length;
+    const suffix = skipped ? ` (원본이 없어 ${skipped}개 제외)` : "";
+    if (S.autoPlan) showToast(`${formatCount(r.data.added)}개를 Plan에 올렸습니다${suffix}.`);
+    else await applyPlan();
+  }
+
+  async function deleteSelection() {
+    if (!S.selected.size) { showToast("삭제할 항목을 선택하세요.", "warning"); return; }
+    const count = S.selected.size;
+    const run = async () => {
+      const r = await api.planDelete(S.activeId, [...S.selected]);
+      if (!r.ok) { showToast(r.error, "error"); return; }
+      S.selected.clear();
+      await refreshPlan();
+      if (S.autoPlan) showToast(`${formatCount(count)}개를 삭제 예정으로 표시했습니다.`);
+      else await applyPlan();
+    };
+    // Auto Plan이 켜져 있으면 아직 파일이 지워지지 않으므로 확인창까지 띄우지 않는다.
+    if (S.autoPlan) run();
+    else showConfirm("삭제", `${formatCount(count)}개를 즉시 삭제합니다. 되돌릴 수 없습니다.`, true, run);
+  }
+
+  async function applyPlan() {
+    if (!S.plan || !S.plan.total) { showToast("적용할 Plan이 없습니다.", "warning"); return; }
+    const check = await api.validatePlan(S.activeId);
+    if (!check.ok) { showToast(check.error, "error"); return; }
+    const report = check.data;
+
+    const body = h("div", { class: "modal-body" });
+    body.appendChild(h("div", { class: "modal-text" }, [
+      `추가 ${formatCount(S.plan.added)} · 삭제 ${formatCount(S.plan.deleted)} · 이동 ${formatCount(S.plan.moved)}`,
+    ]));
+    (report.capacity || []).forEach((c) => {
+      const row = h("div", { class: "health-row" + (c.over ? " over" : "") }, [
+        h("span", {}, [c.label]),
+        h("span", {}, [
+          `${formatBytes(c.actualBytes)} → ${formatBytes(c.planBytes)}`,
+          c.capacityBytes == null ? " (Capacity Unknown)" : "",
+          c.over ? ` · 용량 초과 +${formatBytes(c.overBytes)}` : "",
+        ]),
+      ]);
+      body.appendChild(row);
+    });
+    if (report.entries && report.entries.length) {
+      body.appendChild(h("div", { class: "modal-hint" }, [
+        `확정할 수 없는 항목 ${report.entries.length}개: ` +
+        report.entries.slice(0, 3).map((e) => `${e.filename} (${e.error})`).join(", "),
+      ]));
+    }
+
+    const actions = [h("button", { class: "btn", onClick: closeModal }, ["취소"])];
+    if (!report.blocked) {
+      actions.push(h("button", { class: "btn primary", onClick: async () => {
+        closeModal();
+        const r = await api.startApply(S.activeId);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        const result = await pollJob(r.data.jobId, "Plan 적용 중");
+        if (!result.ok) {
+          if (!result.cancelled) showToast(result.error, "error");
+        } else {
+          const data = result.data || {};
+          showToast(`적용 완료: ${formatCount(data.applied || 0)}개` +
+                    (data.failed ? `, 실패 ${formatCount(data.failed)}개` : ""));
+        }
+        await ensureDetail(S.activeId);
+        resetList();
+        renderAll();
+        await reloadList();
+        await refreshPlan();
+      } }, ["적용"]));
+    }
+    showModal(report.blocked ? "용량 부족" : "Plan 적용", body, actions);
+  }
+
+  function toggleAutoPlan() {
+    if (!S.autoPlan) { S.autoPlan = true; renderStatusBar(); return; }
+    // 끄기 전에 경고한다(스펙 §32).
+    showConfirm("Auto Plan 끄기",
+      "이후 복사 / 삭제 / 이동이 실제 파일에 즉시 적용됩니다. 계속하시겠습니까?", true,
+      () => { S.autoPlan = false; renderStatusBar(); });
+  }
+
+  // ------------------------------------------------------------------
   // 하단 상태 바
   // ------------------------------------------------------------------
   function renderStatusBar() {
     const bar = $("status-bar");
     clear(bar);
     const detail = activeDetail();
-    bar.appendChild(h("div", { class: "sb-left" }, [
+    const plan = S.plan;
+
+    const left = h("div", { class: "sb-left" }, [
       icon("layoutList", 12),
       h("span", {}, [`Selected ${formatCount(S.selected.size)}`]),
-    ]));
+    ]);
+    if (plan && plan.total) {
+      if (plan.addedBytes) left.appendChild(h("span", { class: "sb-add" }, [`+${formatBytes(plan.addedBytes)}`]));
+      if (plan.deletedBytes) left.appendChild(h("span", { class: "sb-del" }, [`−${formatBytes(plan.deletedBytes)}`]));
+    }
+    bar.appendChild(left);
 
     const middle = h("div", { class: "sb-middle" });
     if (detail) {
-      middle.appendChild(h("span", { class: "sb-label" }, ["Storage (Actual)"]));
+      middle.appendChild(h("span", { class: "sb-label" }, [plan && plan.total ? "Storage (Actual → Plan)" : "Storage"]));
       detail.storages.forEach((storage) => {
-        middle.appendChild(h("span", { class: "sb-storage" }, [
-          h("b", {}, [storage.label]), " ", formatBytes(storage.actualBytes),
+        const capacity = planCapacity(storage.id);
+        const changed = capacity && capacity.deltaBytes;
+        middle.appendChild(h("span", { class: "sb-storage" + (capacity && capacity.over ? " over" : "") }, [
+          h("b", {}, [storage.label]), " ",
+          formatBytes(storage.actualBytes),
+          changed ? ` → ${formatBytes(capacity.planBytes)}` : "",
         ]));
       });
     }
     bar.appendChild(middle);
 
     const actions = h("div", { class: "sb-actions" });
-    ["Import", "Export", "Convert", "Plan"].forEach((label) => {
-      actions.appendChild(h("button", {
-        class: "btn compact", disabled: true,
-        title: "Phase 3에서 활성화됩니다 (Plan / Import / Export / Convert)",
-      }, [label]));
+    const autoBtn = h("button", { class: "btn compact" + (S.autoPlan ? " primary" : ""),
+      title: "Auto Plan: 변경을 바로 적용하지 않고 먼저 계산합니다" },
+      [S.autoPlan ? "✓ Auto Plan" : "Auto Plan OFF"]);
+    autoBtn.addEventListener("click", toggleAutoPlan);
+    actions.appendChild(autoBtn);
+
+    [["Copy", copySelection, !S.selected.size],
+     ["Paste", pasteIntoActive, !(plan && plan.clipboard)],
+     ["Delete", deleteSelection, !S.selected.size]].forEach(([label, fn, disabled]) => {
+      const btn = h("button", { class: "btn compact", disabled: disabled || !detail }, [label]);
+      if (!disabled && detail) btn.addEventListener("click", fn);
+      actions.appendChild(btn);
     });
+
+    const applyBtn = h("button", {
+      class: "btn compact primary", disabled: !(plan && plan.total),
+      title: plan && plan.total ? "Plan을 실제 파일에 적용합니다" : "적용할 Plan이 없습니다",
+    }, [plan && plan.total ? `Apply (${formatCount(plan.total)})` : "Apply"]);
+    if (plan && plan.total) applyBtn.addEventListener("click", applyPlan);
+    actions.appendChild(applyBtn);
+
+    if (plan && plan.total) {
+      const discard = h("button", { class: "btn compact", title: "Plan 비우기" }, [icon("eraser", 12)]);
+      discard.addEventListener("click", () => showConfirm("Plan 비우기", "계산해둔 변경을 모두 버립니다.", true,
+        async () => { await api.planClear(S.activeId); await refreshPlan(); }));
+      actions.appendChild(discard);
+    }
     bar.appendChild(actions);
   }
 
@@ -1076,7 +1239,15 @@
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         if (S.detailState && S.detailState.tab === "metadata") handleSaveDetail();
+        return;
       }
+      // 입력 중에는 목록 단축키가 끼어들면 안 된다.
+      const tag = (e.target && e.target.tagName) || "";
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (!S.activeId) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") { e.preventDefault(); copySelection(); }
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") { e.preventDefault(); pasteIntoActive(); }
+      else if (e.key === "Delete") { e.preventDefault(); deleteSelection(); }
     });
   }
 

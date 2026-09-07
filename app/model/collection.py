@@ -82,3 +82,21 @@ class Collection:
 
     def systems_in(self, storage_id: str) -> list[SystemEntry]:
         return [s for s in self.systems if s.storage_id == storage_id]
+
+    def storage_for_path(self, path) -> str:
+        """이 경로의 바이트가 어느 Storage에 쌓이는지 판정한다.
+
+        ES-DE는 ROM만 System별 Storage를 따라가고 gamelists/downloaded_media는
+        Collection root에 남는다. 그래서 "PS2를 외장 SD로 옮겼다"고 해서 PS2의
+        커버 이미지까지 외장으로 가는 게 아니다 - 용량을 System 단위로 뭉뚱그리면
+        내장/외장 표시가 실제와 어긋난다.
+
+        root_path가 가장 길게 일치하는 Storage를 고르고, 없으면 Internal로 본다.
+        """
+        text = str(path).replace("/", "\\").lower()
+        best, best_len = STORAGE_INTERNAL, -1
+        for storage in self.storages:
+            root = str(storage.root_path or "").replace("/", "\\").lower().rstrip("\\")
+            if root and text.startswith(root) and len(root) > best_len:
+                best, best_len = storage.storage_id, len(root)
+        return best

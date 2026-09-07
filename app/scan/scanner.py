@@ -117,13 +117,17 @@ def scan_collection(collection, cache, provider, adapter, *, media_types=None,
             continue
 
         storage_id = storage_by_system.get(system, STORAGE_INTERNAL)
+        # media는 ROM과 다른 Storage에 있을 수 있다(ES-DE는 downloaded_media를
+        # Collection root에 둔다). 용량을 엉뚱한 Storage에 더하지 않도록 나눈다.
+        media_storage_id = (collection.storage_for_path(layout.media_dir)
+                            if layout.media_dir else storage_id)
         rows, stats = _scan_system(provider, adapter, layout, storage_id, media_types)
         if media_types is not None and system in previous_stats:
             # 부분 스캔이라 media 용량이 실제보다 작다. 예전 값을 유지한다.
             stats["media_bytes"] = previous_stats[system].get("media_bytes", 0)
 
         cache.replace_system(system, rows)
-        cache.set_system_stats(system, storage_id, **stats)
+        cache.set_system_stats(system, storage_id, media_storage_id, **stats)
         cache.set_system_sig(system, signature)
         scanned += 1
         total_roms += stats["rom_count"]
@@ -162,10 +166,18 @@ def _scan_system(provider, adapter, layout, storage_id, media_types):
 
     # gamelist.xml에는 있지만 물리 ROM이 없는 항목도 정상적인 상태다. ES-DE는
     # 메타데이터와 media만 갖춘 Collection을 만들 수 있다.
+    #
+    # [중요] 이 항목들의 media도 용량에 넣어야 한다. ROM이 없다고 커버 이미지가
+    # 디스크를 안 차지하는 게 아니다 - 빼면 Actual이 실제보다 작게 나오고, 그 상태로
+    # Plan 예상치와 비교하면 숫자가 어긋난다.
+    rom_file_set = set(rom_files)
     for filename, entry in metadata.items():
-        if filename in set(rom_files):
+        if filename in rom_file_set:
             continue
         media = media_index.get(Path(filename).stem, [])
+        if media:
+            media_count += 1
+            media_bytes += sum(m.size for m in media)
         rows.append(_row(filename, entry, media, None, storage_id, present=False))
 
     stats = {

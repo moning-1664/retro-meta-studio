@@ -34,6 +34,49 @@ def copy_finalize_groups(dest_dirs, groups: list, timeout_sec: float = 180.0) ->
     return _engine.copy_finalize_groups(dest_dirs, groups, timeout_sec=timeout_sec)
 
 
+def delete_files(paths, timeout_sec: float = 180.0) -> dict:
+    """파일들을 삭제한다. 복사와 같은 이유로 네이티브 워커에 위임한다.
+
+    copy_finalize_groups는 "그룹의 모든 copy가 성공해야 delete/rename을 실행한다"는
+    계약이다. copy가 하나도 없으면 그 조건은 자동으로 참이므로, copies가 빈 그룹
+    하나로 순수 삭제를 표현할 수 있다.
+
+    다만 그 반환값은 copy 결과만 담기 때문에(삭제에 대한 항목별 성공 여부가 없다)
+    실제로 사라졌는지를 여기서 직접 확인해서 돌려준다.
+
+    반환: {str(path): 성공여부}
+    """
+    paths = [Path(p) for p in paths]
+    if not paths:
+        return {}
+    copy_finalize_groups([], [{"copies": [], "deletes": paths, "renames": []}], timeout_sec=timeout_sec)
+    return {str(p): not p.exists() for p in paths}
+
+
+def move_files(pairs: list, timeout_sec: float = 300.0) -> dict:
+    """(src, dest) 쌍을 이동한다. 볼륨이 달라도 동작한다.
+
+    쌍마다 하나의 그룹으로 만들어 "임시 파일로 복사 -> 원본 삭제 -> 임시 파일을
+    최종 이름으로 rename" 순서를 태운다. 복사가 실패하면 그룹 전체가 확정되지 않아
+    **원본이 그대로 남는다** - 이동 도중 실패로 파일이 사라지는 사고를 구조적으로 막는다.
+
+    반환: {str(dest): 성공여부}
+    """
+    pairs = [(Path(s), Path(d)) for s, d in pairs]
+    if not pairs:
+        return {}
+    dest_dirs, groups, tmp_of = [], [], {}
+    for src, dest in pairs:
+        tmp = dest.with_name(dest.name + ".rmstmp")
+        tmp_of[str(dest)] = str(tmp)
+        dest_dirs.append(dest.parent)
+        groups.append({"copies": [(src, tmp)], "deletes": [src], "renames": [(tmp, dest)]})
+    results = copy_finalize_groups(dest_dirs, groups, timeout_sec=timeout_sec)
+    # 그룹이 확정되면 tmp는 최종 이름으로 rename되어 사라진다. 복사 성공 + 최종 파일
+    # 존재를 둘 다 확인해야 "이동이 끝났다"고 말할 수 있다.
+    return {str(dest): bool(results.get(tmp_of[str(dest)])) and dest.exists() for _, dest in pairs}
+
+
 class MediaCopyBatch:
     """[체감 속도] 여러 ROM의 media copy 쌍을 모아뒀다가 flush()에서 한 번에
     copy_files()를 호출한다 - ROM마다 즉시 copy_files()를 부르면 워커

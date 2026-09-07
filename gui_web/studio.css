@@ -270,3 +270,14 @@ body { font-size: var(--fs-body); }
 
 #job-progress { position: fixed; right: 16px; bottom: 48px; z-index: 70; display: none; }
 #job-progress.show { display: block; }
+
+/* ------------------------------------------------------------------- Plan */
+/* 상태 기호는 작게만. 제목/설명 전체를 색칠하지 않는다(스펙 §24). */
+.status-mark.add { color: var(--info); font-weight: 700; }
+.status-mark.del { color: var(--danger); font-weight: 700; }
+
+.sb-add { color: var(--info); font-variant-numeric: tabular-nums; }
+.sb-del { color: var(--danger); font-variant-numeric: tabular-nums; }
+.sb-storage.over, .cheader-storage.over { color: var(--danger); font-weight: 600; }
+.health-row.over span:last-child { color: var(--danger); font-weight: 600; }
+.btn.compact.primary { border-color: var(--accent); color: var(--text); }
