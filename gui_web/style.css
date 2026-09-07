@@ -1,0 +1,974 @@
+/* ==========================================================================
+   style.css
+   Retro Metadata Manager - 웹 GUI 스타일시트
+   외부 의존성 없음 (Tailwind/CDN 미사용). CSS 커스텀 프로퍼티로 테마 전환.
+   ========================================================================== */
+
+:root {
+  --font-scale: 1;
+  /* Midnight Arcade 팔레트 */
+  --bg: #090B18;
+  --card: #12172A;
+  --card2: #191F36;
+  --card3: #252B4A;
+  --border: #30385B;
+  --text: #F4F3FF;
+  --muted: #9DA8C8;
+  --accent: #8B5CF6;
+  --accent-hover: #A78BFA;
+  --success: #39D98A;
+  --warning: #FFB74D;
+  --danger: #FF647C;
+  --info: #4EA1FF;
+
+  /* [수정] 최신 목업(v3)에 맞춰 다크 테마에서는 게임리스트도 어두운 톤으로 통일
+     (이전엔 "항상 밝게" 정책이었으나 디자인이 바뀌어 테마를 따라가도록 변경) */
+  --list-bg: #10162A;
+  --list-head: #1B2340;
+  --list-border: #30385B;
+  --list-row-border: #252D4A;
+  --list-text: #F4F3FF;
+  --list-muted: #9DA8C8;
+  --list-selected: #24204A;
+
+  /* [신규] 전체 앱에서 통일해서 쓰는 타이포그래피 스케일 (Metadata/Media/Settings가
+     다른 화면보다 유독 크게 보이던 문제 - 전부 이 변수만 쓰도록 통일) */
+  --fs-eyebrow: calc(8.5px * var(--font-scale));    /* 라벨/이런벌 캡션 */
+  --fs-caption: calc(9.5px * var(--font-scale));    /* 보조 텍스트 */
+  --fs-body: calc(10.5px * var(--font-scale));      /* 기본 본문/입력값 (게임리스트 텍스트와 동일 수준) */
+  --fs-body-lg: calc(11.5px * var(--font-scale));   /* 강조 본문 */
+  --fs-title: calc(12.5px * var(--font-scale));     /* 패널/모달 제목 */
+
+  /* [신규] Border-radius 스케일 - .rounded/.rounded-lg/.rounded-xl 유틸리티가
+     이미 이 3단계(8/10/14)로 있었지만 대부분의 컴포넌트가 그 클래스를 안 쓰고
+     6~12px 사이 값을 자체적으로 하드코딩해서 실제로는 10종류 넘게 흩어져 있었다.
+     기존에 이미 존재하던 3단계에 xs 한 단계만 보태 전체를 이 스케일로 정리한다. */
+  --radius-xs: 6px;   /* 아주 작은 컨트롤 - 아이콘 버튼, 탭, 인풋, 작은 배지 */
+  --radius-sm: 8px;   /* 기본 버튼/행/작은 카드 - 가장 많이 쓰이던 값 */
+  --radius-md: 10px;  /* 중간 크기 카드/패널 */
+  --radius-lg: 14px;  /* 큰 컨테이너 - 모달, 리스트 박스, 상세 패널 */
+  --radius-pill: 999px;
+}
+
+html[data-theme="light"] {
+  --bg: #F3F1FF;
+  --card: #FFFFFF;
+  --card2: #F8F7FF;
+  --card3: #ECE9FE;
+  --border: #DDD9F5;
+  --text: #1A1830;
+  --muted: #6E7190;
+  --accent: #7357E8;
+  --accent-hover: #6145D0;
+  --success: #1EA96B;
+  --warning: #D88919;
+  --danger: #DF4864;
+  --info: #2472E8;
+  --list-bg: #FFFFFF;
+  --list-head: #F7F6FF;
+  --list-border: #DDD9F5;
+  --list-row-border: #EEECEF;
+  --list-text: #1A1830;
+  --list-muted: #6E7190;
+  --list-selected: #F0ECFF;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: 'Segoe UI', 'Malgun Gothic', system-ui, sans-serif;
+  font-size:calc(13px * var(--font-scale));
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+#app {
+  display: flex; height: 100vh; width: 100vw; position: relative; isolation: isolate;
+  background-image: radial-gradient(circle at 82% -10%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 31%),
+                     linear-gradient(135deg, var(--bg), var(--card));
+}
+/* 은은한 스캔라인(CRT) 텍스처 - 레트로 아케이드 느낌 */
+#app::after {
+  content: ""; pointer-events: none; position: absolute; inset: 0; z-index: 80; opacity: .1;
+  background: repeating-linear-gradient(0deg, transparent 0, transparent 3px, rgba(255,255,255,.035) 4px);
+  mix-blend-mode: overlay;
+}
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent) !important; outline: none;
+}
+
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+input, select, textarea { font-family: inherit; color: var(--text); }
+a { color: inherit; }
+
+/* ---------------- 유틸리티 ---------------- */
+.flex { display: flex; }
+.flex-col { display: flex; flex-direction: column; }
+.flex-1 { flex: 1 1 0%; min-width: 0; min-height: 0; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.justify-center { justify-content: center; }
+.gap-1 { gap: 4px; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; }
+.shrink-0 { flex-shrink: 0; }
+.truncate { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.hidden { display: none !important; }
+.rounded { border-radius: var(--radius-sm); }
+.rounded-lg { border-radius: var(--radius-md); }
+.rounded-xl { border-radius: var(--radius-lg); }
+.rounded-full { border-radius: var(--radius-pill); }
+.w-full { width: 100%; }
+.relative { position: relative; }
+.absolute { position: absolute; }
+.overflow-auto { overflow: auto; }
+.overflow-hidden { overflow: hidden; }
+.cursor-pointer { cursor: pointer; }
+
+/* ---------------- 사이드바 ---------------- */
+#sidebar {
+  width: 224px; flex-shrink: 0; height: 100%;
+  background: var(--bg); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; padding: 16px 12px;
+  overflow-y: auto;
+}
+.brand { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 16px; padding: 0 4px; }
+.brand-icon {
+  width: 34px; height: 27px; border-radius: var(--radius-sm); background: var(--accent);
+  display: flex; align-items: center; justify-content: center; color: #fff; flex-shrink: 0;
+}
+.brand-icon .brand-logo-mark { display: block; }
+/* [로고] THE RETRO CABINET 워드마크 - THE(작게) 위, RETRO CABINET(굵게) 아래 두 줄 */
+.brand-title-row { display: flex; flex-direction: column; gap: 0; line-height: 1; }
+.brand-eyebrow { font-size: calc(7px * var(--font-scale)); font-weight: 700; letter-spacing: .18em; color: var(--muted); }
+.brand-title { font-size: calc(11.5px * var(--font-scale)); font-weight: 800; letter-spacing: .01em; line-height: 1.25; color: var(--text); }
+.brand-tagline { font-size: calc(7.5px * var(--font-scale)); color: var(--muted); margin-top: 2px; max-width: 150px; }
+.brand-version { font-size: var(--fs-eyebrow); color: var(--muted); margin-top: 1px; }
+/* [수정] Settings 톱니바퀴 - 사이드바 하단에서 브랜드 바로 아래(좌측 상단)로 이동.
+   아이콘만 있는 작은 원형 버튼 - 다른 nav-item과 달리 라벨이 없다. */
+.sidebar-settings-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: var(--radius-pill); flex-shrink: 0;
+  color: var(--muted); background: transparent; margin: 0 0 10px 4px;
+}
+.sidebar-settings-btn:hover { color: var(--text); background: var(--card2); }
+
+.nav-section-label {
+  font-size: var(--fs-eyebrow); font-weight: 600; letter-spacing: .05em; color: var(--muted);
+  padding: 0 12px; margin: 16px 0 6px;
+}
+.nav-item {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: var(--radius-sm); text-align: left;
+  color: var(--muted); font-size: var(--fs-body-lg); font-weight: 500;
+  transition: background-color .15s, color .15s;
+  box-shadow: inset 2px 0 0 transparent;
+}
+.nav-item:hover { background: var(--card2); }
+.nav-item.active { background: var(--card3); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+.nav-item.small { font-size: var(--fs-body); padding: 6px 10px; margin-left: 12px; }
+.nav-item .dot { width: 6px; height: 6px; border-radius: var(--radius-pill); flex-shrink: 0; }
+.nav-spacer { flex: 1; }
+
+/* [수정] GameListSet 행은 이름 한 줄만 보이고, Frontend/ROM수/용량은 hover 툴팁으로
+   옮겼다(탐색기 스타일). "|" 자리는 GameListSet별 색상 바 아이콘. */
+.bar-icon { width: 3px; height: 15px; border-radius: 2px; flex-shrink: 0; }
+/* [신규] "스캔 중" 빨간색은 정적인 "오류" 상태와 헷갈리지 않도록 은은하게 깜빡인다. */
+.bar-icon.scanning { animation: bar-icon-scanning-pulse 1s ease-in-out infinite; }
+@keyframes bar-icon-scanning-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+/* [수정] System 행 아이콘 - 더 이상 색상 배경 칩이 아니라 22px 아이콘 자체가 행 안에서
+   식별자 역할을 한다(system-icons.js 전용 SVG 우선, 없으면 icons.js 카테고리로 폴백).
+   색은 고정하지 않고 currentColor로 nav-item의 텍스트 색을 그대로 물려받아, hover/active
+   상태 전환 시 같은 아이콘이 색/투명도만 바뀐다(형태는 항상 동일). */
+.sq-icon { width: 22px; height: 22px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); opacity: .72; transition: color .15s, opacity .15s; }
+.sq-icon svg { display: block; }
+.nav-item:hover .sq-icon { opacity: .92; }
+.nav-item.active .sq-icon { color: var(--accent); opacity: 1; }
+/* 전용 아이콘이 없어 범용 카테고리 아이콘으로 폴백된 경우 - 살짝 더 옅게 표시해 구분되지 않는
+   시스템임을 은근히 드러낸다(기능은 동일, 시각적 우선순위만 다름). */
+.sq-icon-fallback { opacity: .5; }
+.nav-item:hover .sq-icon-fallback { opacity: .7; }
+.nav-item.active .sq-icon-fallback { opacity: .85; }
+
+/* [신규] system-icons-raster.js 전용 PNG 아이콘 - 고정 색상이라 currentColor를 못 쓴다.
+   대신 light/dark 두 장을 같이 그려두고 [data-theme]로 한쪽만 보이게 해서, 테마가
+   바뀌어도 재렌더링 없이 알맞은 버전이 뜨게 한다. 상태(hover/active) 표현도 색 대신
+   opacity만으로 - 브랜드 색이 이미 있어서 색을 더 바꾸면 오히려 부자연스럽다. */
+.sq-icon-raster, .system-icon-raster { opacity: .88; }
+.nav-item:hover .sq-icon-raster { opacity: 1; }
+.nav-item.active .sq-icon-raster { opacity: 1; }
+.raster-icon-pair { position: relative; width: 100%; height: 100%; display: block; }
+.raster-icon-pair img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.raster-icon-pair img.for-light { display: none; }
+.raster-icon-pair img.for-dark { display: block; }
+html[data-theme="light"] .raster-icon-pair img.for-light { display: block; }
+html[data-theme="light"] .raster-icon-pair img.for-dark { display: none; }
+
+/* ---------------- 메인 영역 ---------------- */
+#main { flex: 1 1 0%; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+#top-bar {
+  display: flex; align-items: center; gap: 12px; padding: 12px 20px;
+  border-bottom: 1px solid var(--border); overflow-x: auto; flex-shrink: 0;
+}
+.top-card {
+  text-align: left; border-radius: var(--radius-lg); flex-shrink: 0; min-width: 170px;
+  background: var(--card); border: 1.5px solid var(--border);
+  padding: 9px 12px; transition: border-color .15s, transform .15s, box-shadow .15s;
+}
+.top-card:hover { border-color: var(--muted); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+.top-card.active { border-color: var(--accent); }
+.top-card-title { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size:calc(11px * var(--font-scale)); font-weight: 600; color: var(--text); }
+.top-card-sub { font-size:calc(10px * var(--font-scale)); color: var(--muted); }
+
+#context-bar { display: flex; align-items: center; gap: 6px; flex-shrink: 0; overflow-x: auto; padding: 6px 20px; border-bottom: 1px solid var(--border); background: var(--card); }
+.context-bar-label { font-weight: 700; letter-spacing: .05em; font-size:calc(8.5px * var(--font-scale)); color: var(--muted); margin-right: 2px; flex-shrink: 0; }
+/* [수정] 항상 2줄 구조 - 1줄은 라벨(주 정보), 2줄은 "N ROMs · X GB" 같은 보조
+   정보. 예전엔 한 줄에 다 욱여넣어서 라벨이 길면 숫자가 잘렸다. */
+.context-card { display: inline-flex; flex-direction: column; align-items: stretch; gap: 3px; border-radius: var(--radius-sm); padding: 6px 9px; font-size:calc(10px * var(--font-scale)); color: var(--muted); background: var(--card2); flex-shrink: 0; white-space: nowrap; min-width: 120px; }
+.context-card.active { background: var(--accent); color: #fff; }
+.context-card-row { display: flex; align-items: center; gap: 5px; font-weight: 700; color: var(--text); }
+.context-card.active .context-card-row { color: #fff; }
+.context-card-sub { font-size: calc(9px * var(--font-scale)); color: var(--muted); padding-left: 17px; }
+.context-card.active .context-card-sub { color: rgba(255,255,255,.8); }
+.context-card-capacity { height: 4px; border-radius: var(--radius-pill); background: rgba(255,255,255,.15); overflow: hidden; }
+.context-card-capacity-fill { height: 100%; background: var(--success); transition: width .15s ease-out; }
+.context-card-capacity-fill.over { background: var(--danger); }
+.context-card { position: relative; }
+.context-card:has(.context-card-compare-btn) { padding-right: 24px; }
+.context-card-compare-btn {
+  position: absolute; top: 50%; right: 5px; transform: translateY(-50%);
+  display: flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: var(--radius-xs);
+  color: inherit; opacity: .55; background: transparent;
+}
+.context-card-compare-btn:hover { opacity: 1; background: rgba(255,255,255,.18); }
+.context-card.active .context-card-compare-btn:hover { background: rgba(255,255,255,.3); }
+.context-add-btn { display: inline-flex; align-items: center; gap: 3px; border-radius: var(--radius-sm); padding: 6px 9px; font-size:calc(10px * var(--font-scale)); color: var(--muted); background: var(--card2); border: 1px dashed var(--border); flex-shrink: 0; }
+
+#filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 20px; flex-shrink: 0; }
+
+/* [신규] 게임 삭제 - "삭제 시," + metadata/Rom 체크박스 바 */
+.grid-data-row.multi-selected, .preview-card.multi-selected { outline: 2px solid var(--danger); outline-offset: -2px; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; border-radius: var(--radius-sm);
+  padding: 6px 10px; font-size:calc(11.5px * var(--font-scale)); font-weight: 500;
+  background: var(--card2); color: var(--text); transition: background-color .15s;
+}
+.btn:hover { background: var(--card3); }
+.btn.primary { background: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent-hover); }
+/* [버그 수정] 하드코딩된 밝은 회색(#F1F5F9/#334155)이라 다크 테마에서 튀는
+   pill로 보였다 - 다른 버튼들처럼 테마 토큰을 쓰도록 교체. */
+.btn.light { background: var(--card3); color: var(--text); }
+.btn.light:hover { background: var(--border); }
+.btn.danger-text { color: var(--danger); }
+.btn.danger-text:hover { background: color-mix(in srgb, var(--danger) 14%, var(--card3)); }
+.btn.compact { padding: 6px; }
+.btn.toggle-active { background: var(--accent); color: #fff; }
+/* [신규] 미리보기 토글 버튼 - 눌린 상태(공간 확보 중)를 accent 배경으로 표시 */
+/* [수정] filter-bar 맨 우측 끝(실제 패널이 열릴 자리 바로 위)에 고정 - search box의
+   flex:1이 남는 공간을 흡수해버려도 margin-left:auto가 그 뒤에서 한 번 더 오른쪽
+   끝까지 밀어준다. */
+.preview-toggle-btn { margin-left: auto; }
+.preview-toggle-btn.active { background: var(--accent); color: #fff; }
+.btn.danger { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); }
+.btn.danger:hover { background: color-mix(in srgb, var(--danger) 18%, transparent); }
+/* [신규] "커스텀 모달 본문 아래에 단독으로 놓이는 전체폭 버튼" 패턴이 여러 곳에서
+   매번 style={width:"100%", justifyContent:"center", marginTop:"8~10px"}로 반복되고
+   있었다 - 한 클래스로 통일. */
+.btn.w-full { justify-content: center; }
+.btn.block-action { width: 100%; justify-content: center; margin-top: 8px; }
+
+.view-toggle { display: flex; align-items: center; border-radius: var(--radius-sm); overflow: hidden; border: 1px solid var(--border); flex-shrink: 0; }
+.view-toggle button { padding: 6.5px 9px; background: var(--card2); color: var(--muted); display: flex; }
+.view-toggle button.active { background: var(--accent); color: #fff; }
+
+.searchbox {
+  display: flex; align-items: center; gap: 8px; border-radius: var(--radius-sm);
+  padding: 6px 10px; background: var(--card2); border: 1px solid var(--border);
+}
+.searchbox input { background: transparent; border: none; outline: none; font-size:calc(12px * var(--font-scale)); width: 140px; color: var(--text); }
+
+/* 드롭다운 */
+.dropdown { position: relative; }
+.dropdown-menu {
+  position: absolute; z-index: 30; margin-top: 6px; border-radius: var(--radius-sm); overflow: hidden auto;
+  background: var(--card2); border: 1px solid var(--border); min-width: 180px; max-height: 260px;
+  box-shadow: 0 12px 28px rgba(0,0,0,.35);
+}
+.dropdown-menu button, .dropdown-menu label {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  padding: 8px 12px; font-size:calc(12px * var(--font-scale)); color: var(--text); cursor: pointer;
+}
+.dropdown-menu button:hover, .dropdown-menu label:hover { background: var(--card3); }
+.dropdown-menu button.selected { background: var(--card3); color: #fff; }
+.dropdown-menu button.danger-text { color: var(--danger); }
+.dropdown-menu button.danger-text:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+/* [신규] Compare 소스 변경 메뉴에서 반대편과 같은 소스는 고를 수 없게 disabled 표시 */
+.dropdown-menu button:disabled, .dropdown-menu button.disabled { opacity: .4; cursor: default; pointer-events: none; }
+.dropdown-menu button:disabled:hover, .dropdown-menu button.disabled:hover { background: none; }
+
+/* ---------------- 게임 리스트 ---------------- */
+/* [수정] Metadata Panel을 더 이상 오버레이로 카드/리스트 위에 덮지 않는다 - filter-bar
+   밑을 #content-row(flex row)로 묶어서 #list-body와 #detail-panel이 실제 flex 형제로
+   폭을 나눠 갖는다. 패널이 열리면 #list-body가 자연스럽게 좁아지며 Card Grid가
+   재배치될 뿐, 아무 것도 가려지지 않는다(예전엔 position:absolute 오버레이였음). */
+#list-area { flex: 1 1 0%; display: flex; flex-direction: column; min-height: 0; }
+#content-row { flex: 1 1 0%; min-height: 0; display: flex; gap: 14px; padding: 0 20px 16px; }
+#list-body { flex: 1 1 0%; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+/* [BUG FIX] height:100% 체인은 조상 어딘가 하나라도 정의된 높이가 깨지면 전체가 무너진다.
+   더 견고한 flex:1 체인으로 전면 교체 - 게임이 몇 개 없어도, 창 크기를 줄이거나 늘려도
+   GameList 박스가 항상 남는 공간을 꽉 채우도록 보장한다. */
+#list-card-container { flex: 1 1 0%; min-height: 0; display: flex; flex-direction: column; }
+#list-card {
+  flex: 1 1 0%; min-height: 0; border-radius: var(--radius-lg); overflow: hidden;
+  display: flex; flex-direction: column;
+  background: var(--list-bg); border: 1px solid var(--list-border);
+}
+#list-scroll { flex: 1 1 0%; min-height: 0; overflow: auto; outline: none; }
+#list-inner { min-width: 940px; }
+
+.grid-row { display: grid; }
+.grid-header {
+  position: sticky; top: 0; z-index: 10; background: var(--list-head);
+  border-bottom: 1px solid var(--list-border);
+}
+.grid-header-cell {
+  position: relative; padding: 9px 12px; font-size:calc(10.5px * var(--font-scale)); font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--list-muted);
+  white-space: nowrap; overflow: hidden; user-select: none; display: flex; align-items: center; gap: 3px;
+  cursor: pointer;
+}
+.grid-header-cell.sorted { color: var(--list-text); }
+.col-resize-handle { position: absolute; right: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; }
+.col-resize-handle:hover { background: rgba(99,102,241,.25); }
+
+.grid-data-row { cursor: pointer; border-bottom: 1px solid var(--list-row-border); background: var(--list-bg); }
+.grid-data-row:hover { background: var(--list-head); }
+.grid-data-row.selected { background: var(--list-selected); }
+.grid-cell { padding: 0 12px; font-size:calc(12px * var(--font-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; }
+.grid-cell.no { color: var(--list-muted); }
+.grid-cell.title { font-weight: 500; color: var(--list-text); }
+.grid-header-cell.fav-col, .grid-cell.fav-col { justify-content: center; padding: 0 2px; }
+.grid-cell.fav-col .favorite-star { margin: 0; }
+.status-dot-wrap { display: inline-flex; align-items: center; gap: 6px; }
+.status-dot { width: 7px; height: 7px; border-radius: var(--radius-pill); flex-shrink: 0; }
+
+/* Preview 그리드 */
+#preview-grid { padding: 12px; overflow-y: auto; flex: 1 1 0%; min-height: 0; display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, 93px); justify-content: start; align-content: start; }
+.preview-card { display: flex; flex-direction: column; border-radius: var(--radius-md); overflow: hidden; text-align: left; border: 2px solid transparent; background: var(--list-head); }
+.preview-card.selected { border-color: var(--accent); }
+.preview-cover { width: 100%; aspect-ratio: 3/4; background: var(--list-border); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.preview-cover img { width: 100%; height: 100%; object-fit: cover; }
+.preview-title { padding: 6px; background: var(--list-bg); font-size:calc(10.5px * var(--font-scale)); color: var(--list-text); text-align: center; }
+
+.list-footer { border-top: 1px solid var(--list-border); flex-shrink: 0; }
+.list-footer-summary { padding: 6px 12px; font-size:calc(11px * var(--font-scale)); color: var(--list-muted); border-bottom: 1px solid var(--list-border); }
+.list-footer-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
+
+.empty-msg { text-align: center; padding: 40px 0; color: var(--list-muted); font-size:calc(12px * var(--font-scale)); }
+
+/* [신규] MasterDB 온보딩 */
+#masterdb-onboarding {
+  flex: 1 1 0%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; height: 100%; border-radius: var(--radius-lg); background: var(--card); border: 1px dashed var(--border); color: var(--muted);
+}
+.onboarding-title { font-size:calc(14px * var(--font-scale)); font-weight: 600; color: var(--text); margin-top: 4px; }
+.onboarding-desc { font-size:calc(11.5px * var(--font-scale)); color: var(--muted); max-width: 320px; text-align: center; line-height: 1.5; }
+.onboarding-btn { margin-top: 6px; }
+
+/* ---------------- 상세 패널 (공간 확보형 슬라이드, auto-hide 없음) ---------------- */
+/* [수정] 폭을 고정 320px 대신 min/preferred/max로 정의 - 실제 필드 내용(2열 배치,
+   description 등)을 기준으로 정함. 닫힘 상태는 width:0(overflow:hidden)이라
+   #content-row에서 실제로 공간을 차지하지 않고, 열리면 폭만큼 옆으로 밀어낸다
+   (예전 transform:translateX 오버레이 대신 실제 flex 폭 전환). */
+#detail-panel {
+  /* [수정] 미리보기를 고정해 놓고 보니 MetaData/Media 패널이 리스트 대비 너무 넓다는
+     피드백 반영 - 세 값 모두 약 15% 축소(340 -> 290px 기준). */
+  --panel-min: 250px; --panel-pref: 290px; --panel-max: 360px;
+  width: 0; flex: 0 0 auto; overflow: hidden; border-radius: var(--radius-lg);
+  background: var(--card); border: 1px solid transparent;
+  transition: width .22s ease-out, border-color .22s ease-out;
+}
+#detail-panel.open { width: var(--panel-pref); min-width: var(--panel-min); max-width: var(--panel-max); border-color: var(--border); }
+/* 실제 콘텐츠는 이 고정폭 안쪽 래퍼에 그려서, width가 0→pref로 전환되는 동안 텍스트가
+   중간에 어색하게 줄바꿈되지 않고 폭이 잘리기만 하도록(overflow:hidden) 한다. */
+#detail-panel-inner { width: var(--panel-pref); min-width: var(--panel-min); height: 100%; display: flex; flex-direction: column; }
+/* [신규] 미리보기는 켜져 있는데 아직 아무 것도 선택 안 했을 때 - 빈 패널 대신 안내 */
+.panel-empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--muted); padding: 20px; text-align: center; }
+.panel-empty-state svg { opacity: .45; }
+.panel-empty-msg { font-size: var(--fs-body-lg); }
+.detail-header { display: flex; align-items: center; gap: 6px; padding: 10px 10px 4px; flex-shrink: 0; }
+.detail-eyebrow { font-size: var(--fs-eyebrow); font-weight: 700; letter-spacing: .1em; color: var(--accent); }
+.detail-filename { font-size: var(--fs-body); font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
+.icon-btn { padding: 5px; border-radius: var(--radius-xs); color: var(--muted); background: var(--card2); }
+.icon-btn-danger:hover { color: var(--danger); }
+
+.detail-tabs { display: flex; gap: 3px; padding: 0 10px; flex-shrink: 0; }
+.detail-tab { font-size: var(--fs-caption); font-weight: 500; padding: 5px 10px; border-radius: var(--radius-xs) var(--radius-xs) 0 0; color: var(--muted); }
+.detail-tab.active { background: var(--card2); color: var(--text); }
+
+/* [BUG FIX] 반드시 flex:1 + min-height:0 + overflow-y:auto 여야 내용이 넘칠 때 이 영역만
+   스크롤되고, 헤더/탭/저장버튼(footer)은 항상 화면에 고정되어 보인다. 이전엔 이 체인이
+   깨져서 실제 Windows 실행 시 상단 버튼이 잘려 보이고 전체가 스크롤되는 문제가 있었다. */
+.detail-body { flex: 1 1 0%; min-height: 0; overflow-y: auto; padding: 8px 10px 10px; background: var(--card2); display: flex; flex-direction: column; }
+.detail-body-fixed { flex-shrink: 0; }
+.detail-body-desc-wrap { flex: 1 1 auto; min-height: 70px; display: flex; flex-direction: column; margin-bottom: 8px; }
+.detail-body-desc-wrap textarea.field-input { flex: 1 1 auto; min-height: 70px; resize: none; }
+/* [신규] Metadata 탭 상단 identity 요약 카드 (대표 이미지 + 핵심 필드 6개) */
+.identity-card { display: flex; gap: 10px; border-radius: var(--radius-sm); padding: 8px; margin-bottom: 10px; background: var(--card3); border: 1px solid var(--border); }
+.identity-cover { flex-shrink: 0; width: 72px; height: 92px; border-radius: var(--radius-xs); overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--list-border); color: var(--muted); }
+.identity-cover img { width: 100%; height: 100%; object-fit: cover; }
+.identity-grid { flex: 1; min-width: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; align-content: center; }
+.identity-field { min-width: 0; }
+.identity-field-label { font-size:calc(9px * var(--font-scale)); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 2px; }
+.identity-field-value { font-size:calc(11px * var(--font-scale)); color: var(--text); font-weight: 500; }
+
+.field-label { font-size: var(--fs-eyebrow); text-transform: uppercase; letter-spacing: .03em; color: var(--muted); margin-bottom: 3px; display: flex; align-items: center; gap: 4px; }
+.field-input {
+  width: 100%; border-radius: var(--radius-xs); padding: 4px 7px; font-size: var(--fs-body); outline: none;
+  background: var(--card3); border: 1px solid var(--border); color: var(--text);
+}
+.field-input.title-input { font-size: var(--fs-body); font-weight: 600; margin-bottom: 8px; }
+textarea.field-input { resize: none; line-height: 1.3; }
+.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; margin-bottom: 8px; }
+.field-grid .field-input { background: var(--card2); border: 1px solid var(--border); padding: 3px 6px; }
+/* [SHA256 위치 이동] Players 옆 칸에 들어가는 읽기 전용 SHA256 값 - field-input과
+   같은 박스 모양을 쓰되 input이 아니라 정적 텍스트라 font-family만 monospace로
+   바꾼다(64자 hex를 짧게 자른 값이라도 hex는 monospace가 더 읽기 쉬움). */
+.field-static { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.version-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+
+.detail-footer { padding: 6px 10px 10px; flex-shrink: 0; background: var(--card2); }
+.readonly-hint { display: flex; align-items: flex-start; gap: 6px; font-size:calc(9.5px * var(--font-scale)); color: var(--muted); line-height: 1.4; }
+
+.media-type-tabs.media-type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; border-radius: var(--radius-sm); background: var(--card3); border: 1px solid var(--border); margin-bottom: 8px; }
+.media-type-tab { display: flex; align-items: center; gap: 6px; font-size: var(--fs-caption); font-weight: 500; padding: 6px 9px; border-radius: var(--radius-xs); background: transparent; color: var(--muted); }
+.media-type-tab.active { background: var(--accent); color: #fff; font-weight: 600; }
+.media-exists-dot { width: 6px; height: 6px; border-radius: var(--radius-pill); flex-shrink: 0; }
+
+.dropzone {
+  border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center;
+  background: var(--card3); height: 160px; overflow: hidden; position: relative; cursor: pointer;
+  border: 2px dashed var(--border); transition: border-color .15s;
+}
+.dropzone.dragover { border-color: var(--accent); }
+.dropzone.pending { border-color: var(--warning); }
+.dropzone img { width: 100%; height: 100%; object-fit: contain; }
+.dropzone-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--accent) 15%, transparent); color: #fff; font-size: var(--fs-body); font-weight: 600; }
+.dropzone-badge { position: absolute; top: 5px; right: 5px; border-radius: var(--radius-pill); padding: 2px 7px; background: var(--warning); color: #111; font-size: var(--fs-eyebrow); font-weight: 600; }
+.dropzone-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--muted); }
+.dropzone-hint { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; font-size:calc(10px * var(--font-scale)); color: var(--muted); }
+
+/* ---------------- 모달 (확인창/Local추가/Ver Diff) ---------------- */
+.modal-overlay { position: absolute; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.55); }
+.modal-box { border-radius: var(--radius-lg); box-shadow: 0 20px 50px rgba(0,0,0,.5); background: var(--card); border: 1px solid var(--border); padding: 18px; }
+/* [신규] 모달 8개가 전부 제각각(340/360/400/420/470/560px) 인라인 width를 썼던 걸
+   3단계로 정리했다 - 짧은 확인/선택형(sm), 폼이 있는 일반 모달(md), 스크롤이 필요한
+   긴 목록형(lg, maxHeight로 화면 밖으로 넘치지 않게 자동 스크롤). */
+.modal-w-sm { width: 340px; }
+.modal-w-md { width: 420px; }
+.modal-w-lg { width: 560px; }
+.modal-scroll { max-height: 80%; overflow-y: auto; }
+.modal-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size:calc(13.5px * var(--font-scale)); font-weight: 600; }
+.modal-message { color: var(--muted); font-size:calc(12px * var(--font-scale)); line-height: 1.5; white-space: pre-line; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.modal-actions button { border-radius: var(--radius-sm); padding: 7px 14px; font-size:calc(12px * var(--font-scale)); }
+
+.verdiff-box { width: 94%; max-height: 88%; display: flex; flex-direction: column; }
+.verdiff-body { padding: 16px; overflow-y: auto; flex: 1 1 0%; min-height: 0; }
+.verdiff-cols { display: flex; gap: 12px; }
+.verdiff-col { flex: 1 1 0%; min-width: 0; border-radius: var(--radius-md); padding: 12px; background: var(--card2); border: 1px solid var(--border); }
+.verdiff-col.is-default { border-color: var(--accent); }
+
+/* ---------------- 토스트 ---------------- */
+#toast {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 40;
+  border-radius: var(--radius-sm); padding: 9px 16px; background: var(--card3); box-shadow: 0 12px 28px rgba(0,0,0,.4);
+  font-size:calc(12.5px * var(--font-scale)); max-width: 80%; display: none;
+}
+#toast.show { display: block; }
+
+/* [신규] 백그라운드 작업 진행률 바 (Refresh List/CleanUp/Prune Data/Export 공용) */
+#job-progress {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 45;
+  width: min(420px, 80%); border-radius: var(--radius-md); padding: 12px 16px; background: var(--card);
+  border: 1px solid var(--border); box-shadow: 0 16px 32px rgba(0,0,0,.45); display: none;
+}
+#job-progress.show { display: block; }
+.job-progress-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.job-progress-title { font-size:calc(12px * var(--font-scale)); font-weight: 600; color: var(--text); }
+.job-progress-cancel { flex-shrink: 0; padding: 3px 10px; border-radius: var(--radius-pill); font-size: calc(10.5px * var(--font-scale)); font-weight: 600; color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.job-progress-cancel:hover { background: color-mix(in srgb, var(--danger) 22%, transparent); }
+.job-progress-cancel:disabled { opacity: .6; }
+.job-progress-row { display: flex; align-items: center; gap: 8px; }
+/* [GUI 정돈] "[||||||||][    ]" 텍스트 브라켓 스타일 대신 일반적인 채움 바로 표시한다 -
+   화면 전체(GameList Export 등)와 일관된 인터페이스를 위해. */
+.job-progress-bar { flex: 1; height: 8px; border-radius: var(--radius-pill); background: var(--card3); overflow: hidden; }
+.job-progress-bar-fill { height: 100%; background: var(--accent); border-radius: var(--radius-pill); transition: width .15s ease-out; }
+/* [신규] Compare 행 복사처럼 실제 %진행률을 모르는 단발성 작업용 - 줄무늬가
+   흐르는 애니메이션으로 "진행 중"임을 보여준다(job/jobId 없이도 재사용 가능). */
+.job-progress-bar-fill.indeterminate {
+  width: 100% !important; background: repeating-linear-gradient(45deg, var(--accent) 0 10px, color-mix(in srgb, var(--accent) 55%, transparent) 10px 20px);
+  background-size: 28px 28px; animation: job-progress-stripe 0.7s linear infinite;
+}
+@keyframes job-progress-stripe { from { background-position: 0 0; } to { background-position: 28px 0; } }
+.job-progress-pct { font-variant-numeric: tabular-nums; font-size: calc(11px * var(--font-scale)); color: var(--text); flex-shrink: 0; }
+.job-progress-label { font-size:calc(10.5px * var(--font-scale)); color: var(--muted); margin-top: 6px; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* [신규] Export 모드 선택 목록 */
+.export-mode-item { display: block; width: 100%; text-align: left; border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 6px; background: var(--card2); border: 1px solid var(--border); }
+.export-mode-item:hover { background: var(--card3); border-color: var(--accent); }
+
+/* [신규] 유사롬 결과 모달 */
+.similar-group { border-radius: var(--radius-sm); padding: 8px 10px; margin-bottom: 8px; background: var(--card2); border: 1px solid var(--border); }
+.similar-group-title { font-size:calc(11px * var(--font-scale)); font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+.similar-group-member { display: flex; align-items: center; gap: 8px; font-size:calc(11px * var(--font-scale)); color: var(--text); padding: 2px 0; }
+.similar-group-score { font-size:calc(10px * var(--font-scale)); color: var(--muted); margin-top: 4px; }
+.similar-rep-btn { padding: 3px; flex-shrink: 0; }
+.similar-rep-btn.active { color: var(--warning); background: color-mix(in srgb, var(--warning) 18%, transparent); }
+.similar-group-member.is-representative { font-weight: 600; }
+/* [단위 8] 유사롬 묶어보기 토글 + 대표 항목의 그룹 크기 뱃지 */
+.similar-group-toggle { display: flex; align-items: center; gap: 5px; font-size:calc(11px * var(--font-scale)); color: var(--muted); cursor: pointer; white-space: nowrap; padding: 0 4px; }
+.similar-group-badge { display: inline-block; margin-left: 6px; font-size:calc(9px * var(--font-scale)); font-weight: 700; color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); border-radius: var(--radius-pill); padding: 1px 6px; vertical-align: middle; }
+/* [단위 9] Favorite 별표 (게임 리스트/Preview 카드) */
+.favorite-star { display: inline-flex; vertical-align: middle; margin-right: 5px; padding: 1px; color: var(--list-muted, var(--muted)); flex-shrink: 0; }
+.favorite-star:hover { color: var(--warning); }
+.favorite-star.active { color: var(--warning); }
+.favorite-star.active svg { fill: currentColor; }
+.export-mode-label { font-size:calc(12px * var(--font-scale)); font-weight: 600; color: var(--text); margin-bottom: 2px; }
+.export-mode-desc { font-size:calc(10.5px * var(--font-scale)); color: var(--muted); line-height: 1.4; }
+
+/* ---------------- Dashboard ---------------- */
+#dashboard-view { flex: 1 1 0%; min-height: 0; overflow-y: auto; padding: 16px 20px; }
+.dash-tabs { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+.dash-tab { padding: 6px 12px; font-size:calc(11.5px * var(--font-scale)); font-weight: 500; border-radius: var(--radius-sm); background: var(--card2); color: var(--muted); }
+.dash-tab.active { background: var(--accent); color: #fff; }
+.metric-cards { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.metric-card { flex: 1 1 160px; border-radius: var(--radius-lg); padding: 12px 16px; background: var(--card); border: 1px solid var(--border); }
+.metric-card-label { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size:calc(9.5px * var(--font-scale)); text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.metric-card-value { font-size:calc(19px * var(--font-scale)); font-weight: 600; }
+
+/* [신규] Dashboard Health 요약 줄 */
+.dash-health { font-size:calc(10.5px * var(--font-scale)); color: var(--muted); margin-bottom: 10px; display: flex; gap: 8px; align-items: center; }
+.dash-health-sep { color: var(--border); }
+
+/* [신규] Dashboard - GameListSet 목표 용량 현황/조절 패널 */
+.capacity-dash-panel { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 14px 16px; margin-bottom: 16px; }
+.capacity-dash-title { font-size: var(--fs-body); font-weight: 600; margin-bottom: 10px; }
+.capacity-dash-empty { font-size:calc(11px * var(--font-scale)); color: var(--muted); }
+.capacity-dash-item { padding: 10px 0; border-top: 1px solid var(--border); }
+.capacity-dash-item:first-of-type { border-top: none; padding-top: 0; }
+.capacity-dash-item-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.capacity-dash-item-name { font-weight: 600; font-size:calc(12px * var(--font-scale)); line-height: 1.4; }
+.capacity-dash-item-value { font-size:calc(11px * var(--font-scale)); color: var(--muted); font-variant-numeric: tabular-nums; line-height: 1.4; }
+/* [Dashboard 정돈] 예전엔 10px 두께 + 편집용 슬라이더/입력칸까지 같이 떠 있었다.
+   목표 용량 편집은 이제 Settings > GameListSet에만 있고, Dashboard는 읽기 전용
+   요약이므로 얇게(5px) 표시한다. */
+.capacity-dash-track { height: 5px; border-radius: var(--radius-pill); background: var(--card3); overflow: hidden; }
+.capacity-dash-fill { height: 100%; background: var(--success); transition: width .15s ease-out; }
+.capacity-dash-fill.warn { background: var(--warning); }
+.capacity-dash-fill.over { background: var(--danger); }
+.capacity-dash-item-foot { display: flex; justify-content: space-between; align-items: center; font-size:calc(10px * var(--font-scale)); color: var(--muted); margin-top: 4px; line-height: 1.4; }
+.capacity-dash-controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.capacity-dash-slider { flex: 1; accent-color: var(--accent); }
+.capacity-dash-number { width: 72px; background: var(--card2); border: 1px solid var(--border); border-radius: var(--radius-xs); padding: 4px 6px; color: var(--text); font-size:calc(11px * var(--font-scale)); }
+.capacity-dash-unit { font-size:calc(10.5px * var(--font-scale)); color: var(--muted); flex-shrink: 0; }
+
+/* [신규] 시스템별 용량 가로 막대그래프 (눈금 최대 20GB 고정, 시스템별 색상 세그먼트) */
+.capacity-bar-wrap { margin-bottom: 16px; }
+.capacity-bar-row { display: flex; align-items: center; gap: 10px; }
+.capacity-bar { flex: 1; height: 14px; border-radius: var(--radius-pill); background: var(--card2); overflow: hidden; display: flex; }
+.capacity-bar-seg { height: 100%; transition: width .2s; }
+.capacity-bar-total { font-size:calc(11.5px * var(--font-scale)); font-weight: 600; color: var(--text); white-space: nowrap; }
+.capacity-bar-scale { font-size:calc(9px * var(--font-scale)); color: var(--muted); margin-top: 4px; text-align: right; }
+.system-color-dot { display: inline-block; width: 8px; height: 8px; border-radius: var(--radius-pill); }
+
+.stats-table-title { font-size: var(--fs-body-lg); font-weight: 600; margin-bottom: 6px; }
+table.stats-table { width: 100%; border-radius: var(--radius-lg); overflow: hidden; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); font-size: var(--fs-body); }
+table.stats-table thead tr { background: var(--card2); }
+table.stats-table th { text-align: left; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); padding: 5px 9px; font-size: var(--fs-eyebrow); border-bottom: 1px solid var(--border); }
+table.stats-table td { padding: 4px 9px; border-bottom: 1px solid var(--border); }
+
+/* ---------------- Settings ---------------- */
+/* [GUI 정돈] 폰트 120%, navigation 폭 확장, 그리고 menu/content가 하나의 패널처럼
+   보이도록 같은 배경을 감싸는 카드 하나로 묶는다 - 전에는 두 개의 분리된 블록이
+   가운데 굵은 선 하나로만 나뉘어 있어 "따로 노는" 느낌이었다. */
+#settings-view {
+  flex: 1 1 0%; min-height: 0; display: flex; margin: 10px; border-radius: var(--radius-lg);
+  background: var(--card); border: 1px solid var(--border); overflow: hidden;
+  --fs-eyebrow: calc(10.2px * var(--font-scale));
+  --fs-caption: calc(11.4px * var(--font-scale));
+  --fs-body: calc(12.6px * var(--font-scale));
+  --fs-body-lg: calc(13.8px * var(--font-scale));
+  --fs-title: calc(15px * var(--font-scale));
+}
+.settings-menu { width: 172px; flex-shrink: 0; padding: 10px 8px; display: flex; flex-direction: column; gap: 3px; background: var(--card2); }
+.settings-menu-title { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px 10px; margin-bottom: 4px; font-size: var(--fs-title); font-weight: 700; }
+.settings-menu button { text-align: left; font-size: var(--fs-body); border-radius: var(--radius-xs); padding: 7px 9px; color: var(--muted); }
+.settings-menu button.active { background: var(--card3); color: var(--text); }
+.settings-menu-footer { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--border); }
+.settings-menu-footer .btn { width: 100%; justify-content: center; }
+.settings-content { flex: 1 1 0%; min-height: 0; overflow-y: auto; padding: 16px 20px; }
+.settings-section-title { font-size: var(--fs-body-lg); font-weight: 600; margin-bottom: 8px; }
+.settings-row { display: grid; grid-template-columns: 130px 1fr; gap: 10px; align-items: start; margin-bottom: 8px; max-width: 520px; }
+.settings-row .field-label { margin-bottom: 3px; }
+.settings-row-desc { color: var(--muted); font-size: var(--fs-eyebrow); line-height: 1.35; padding-top: 4px; }
+.settings-info-box { border-radius: var(--radius-sm); background: var(--card2); padding: 10px; margin-bottom: 12px; display: flex; gap: 8px; max-width: 520px; }
+.settings-info-box p { font-size: var(--fs-caption); }
+.settings-checkbox-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; cursor: pointer; max-width: 520px; }
+.settings-checkbox-row input { margin-top: 2px; }
+.settings-checkbox-row .opt-label { font-size: var(--fs-body); }
+.settings-checkbox-row .opt-desc { font-size: var(--fs-eyebrow); color: var(--muted); line-height: 1.35; }
+.local-mgmt-row { display: flex; align-items: center; justify-content: space-between; border-radius: var(--radius-sm); padding: 7px 11px; background: var(--card2); border: 1px solid var(--border); margin-bottom: 6px; max-width: 460px; font-size: var(--fs-body); }
+/* [0.4.1.x Settings 체계화] */
+.settings-row-disabled { opacity: .55; }
+.settings-soon-badge { font-size: calc(9px * var(--font-scale)); font-weight: 700; text-transform: none; letter-spacing: 0; background: var(--card3); color: var(--muted); border-radius: var(--radius-pill); padding: 1px 6px; margin-left: 6px; }
+.settings-checkbox-grid { display: grid; grid-template-columns: repeat(3, minmax(110px, 1fr)); gap: 4px 12px; max-width: 520px; }
+.backup-list { border-radius: var(--radius-sm); overflow: hidden; border: 1px solid var(--border); max-width: 460px; }
+.backup-list button { display: block; width: 100%; text-align: left; padding: 6px 10px; font-size: var(--fs-caption); background: var(--card2); border-bottom: 1px solid var(--border); }
+
+/* [GameListSet Local Path 정보 표시] */
+.local-path-info { max-width: 460px; margin: -2px 0 10px; padding: 8px 11px; border-radius: var(--radius-sm); background: var(--card2); border: 1px solid var(--border); font-size: var(--fs-caption); color: var(--muted); }
+.local-path-info .local-path-row { display: flex; gap: 6px; overflow: hidden; }
+.local-path-info .local-path-row + .local-path-row { margin-top: 2px; }
+.local-path-info .local-path-key { flex-shrink: 0; color: var(--text); font-weight: 600; }
+.local-path-info .local-path-val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* [ArchiveDB Database Path 한 줄 레이아웃] */
+.db-path-row { display: flex; align-items: center; gap: 8px; max-width: 520px; margin-bottom: 6px; }
+.db-path-row .field-label { flex-shrink: 0; margin-bottom: 0; }
+.db-path-row .db-path-val { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-path-row .btn { flex-shrink: 0; }
+
+/* [전역 hover 툴팁] 항목 설명을 기본 숨김 처리하고, 컨트롤에 마우스를 올렸을 때만
+   보여준다 - Settings처럼 설명 텍스트가 많은 화면에서 화면을 항상 채우지 않기 위함. */
+[data-tip] { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip); position: absolute; left: 0; bottom: calc(100% + 7px);
+  background: var(--card3); color: var(--text); border: 1px solid var(--border);
+  padding: 7px 9px; border-radius: var(--radius-xs); font-size: var(--fs-eyebrow); line-height: 1.45;
+  white-space: normal; width: max-content; max-width: 260px; box-shadow: 0 6px 16px rgba(0,0,0,.3);
+  opacity: 0; visibility: hidden; transform: translateY(3px); transition: opacity .12s ease, transform .12s ease;
+  z-index: 80; pointer-events: none;
+}
+[data-tip]:hover::after, [data-tip]:focus-within::after { opacity: 1; visibility: visible; transform: translateY(0); }
+.backup-list button:hover { background: var(--card3); }
+
+/* ---------------- Compare (v0.5 9단계, 좌우 분리형 재설계) ---------------- */
+/* GameList 카드와 동일하게 --list-* 토큰을 쓴다 (라이트=흰 배경, 다크=진한 남색 -
+   style.css 상단 :root/[data-theme] 블록에서 테마별로 정의됨, 하드코딩 색상 아님). */
+#compare-view { flex: 1 1 0%; min-height: 0; display: flex; flex-direction: column; padding: 14px 20px; gap: 12px; }
+
+/* [신규] GameList 필터바와 같은 성격의 툴바 - 소스 선택은 작은 select 두 개로
+   압축(swap 버튼은 centerCol로 옮겨감), 뷰 전환/즐겨찾기/검색은 GameList와
+   동일한 컴포넌트를 재사용, 우측엔 관계 필터([*]/[≠]/[=])를 고정 배치한다. */
+.compare-filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.compare-rel-toggle button { font-weight: 700; font-size: var(--fs-body-lg); min-width: 26px; }
+.compare-search-box { margin-left: auto; max-width: 200px; }
+
+/* 좌우 독립 리스트 - GameList 헤더/행과 같은 --list-* 토큰과 grid 컬럼 구조를 재사용한다. */
+.compare-lists { flex: 1 1 0%; min-height: 0; display: flex; gap: 4px; }
+.compare-list-panel {
+  flex: 1 1 0%; min-width: 0; display: flex; flex-direction: column;
+  border: 1px solid var(--accent); border-radius: var(--radius-md); overflow: hidden;
+  background: var(--list-bg); color: var(--list-text);
+}
+/* [수정] 제목 바를 accent 톤으로 물들이고 패널 테두리도 같은 accent 색을 써서, 제목
+   바 색이 그대로 아래 표 테두리로 흘러 이어지는 것처럼 보이게 한다("선택된 소스와
+   그 GameList가 연결된 느낌" 요청 반영). */
+/* [수정] 가운데 심볼 열의 행이 좌우 목록과 정확히 나란히 보이도록, 제목/헤더/행
+   높이를 고정값으로 통일했다(전엔 콘텐츠에 따라 auto였음 - 셋이 미묘하게 달라도
+   티가 안 났지만, 가운데 열이 생기면서 어긋나면 바로 눈에 띈다). */
+.compare-list-title {
+  flex-shrink: 0; height: var(--compare-title-h, 34px); box-sizing: border-box;
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 0 6px 0 12px; font-size: var(--fs-body-lg); font-weight: 700;
+  background: color-mix(in srgb, var(--accent) 16%, var(--list-head));
+  border-bottom: 1px solid var(--accent);
+}
+.compare-list-title > span { min-width: 0; }
+/* [신규] 제목 우측 끝 소스 전환 버튼 - 흰 텍스트 제목 배경 위라 색을 밝게 맞춘다. */
+.compare-title-dropdown-btn { flex-shrink: 0; color: inherit; opacity: .75; }
+.compare-title-dropdown-btn:hover { opacity: 1; background: rgba(255,255,255,.18); }
+.compare-list-header, .compare-list-row {
+  display: grid; grid-template-columns: 190px 190px 1fr 100px; column-gap: 10px;
+}
+.compare-list-header {
+  flex-shrink: 0; height: var(--compare-header-h, 28px); box-sizing: border-box;
+  position: sticky; top: 0; z-index: 5; background: var(--list-head);
+  border-bottom: 1px solid var(--list-border);
+}
+.compare-header-cell {
+  display: flex; align-items: center; padding: 0 10px; font-size: var(--fs-eyebrow); font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--list-muted);
+}
+.compare-list { flex: 1 1 0%; min-height: 0; overflow-y: auto; }
+.compare-empty { padding: 24px; text-align: center; color: var(--muted); font-size: var(--fs-body); }
+.compare-list-row {
+  height: var(--compare-row-h, 28px); box-sizing: border-box;
+  align-items: center; padding: 0; border-bottom: 1px solid var(--list-row-border); cursor: pointer;
+}
+.compare-list-row:hover { background: var(--list-head); }
+.compare-list-row.selected { background: color-mix(in srgb, var(--accent) 18%, var(--list-bg)); box-shadow: inset 3px 0 0 var(--accent); }
+.compare-list-row.matched:not(.selected) { background: color-mix(in srgb, var(--success) 8%, var(--list-bg)); }
+.compare-list-row.diff .compare-row-file { color: var(--warning); }
+/* [신규] ROM 실물이 없는(metadata-only) 항목의 파일명 - diff([d]) 표시와 동시에
+   붙어도 "ROM 자체가 없음"이 더 심각한 상태이므로 danger 색이 이겨야 한다(specificity를
+   diff 규칙과 동률로 만들고 파일 순서상 뒤에 둬서 우선한다). */
+.compare-list-row .compare-row-file.missing-rom { color: var(--danger); }
+
+/* [신규] 카드 보기 - 3열 grid 대신 커버 썸네일 + 파일명만 나란히. 텍스트 행보다
+   키워야 썸네일이 들어가므로, card-mode에서는 --compare-row-h 자체를 올려
+   왼쪽/오른쪽/가운데 관계 열까지 전부 같이 커진다(높이 변수 하나로 정렬 유지). */
+.compare-lists.card-mode { --compare-row-h: 48px; }
+.compare-list-row.compare-card-row { display: flex; align-items: center; gap: 8px; padding: 0 10px; }
+.compare-card-cover {
+  flex-shrink: 0; width: 36px; height: 36px; border-radius: var(--radius-xs);
+  background: var(--card2); color: var(--list-muted);
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.compare-card-cover img { width: 100%; height: 100%; object-fit: cover; }
+.compare-row-file, .compare-row-title, .compare-row-desc, .compare-row-sha256 { padding: 7px 10px; font-size: var(--fs-body); min-width: 0; }
+.compare-row-sha256 { color: var(--muted); font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: var(--fs-eyebrow); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compare-row-file { font-weight: 600; }
+/* [버그 수정] 왼쪽에만/오른쪽에만 있는 항목의 반대쪽 자리 - 줄 수를 맞춰서 항상
+   같은 파일이 같은 줄에 나란히 보이게 하는 빈 칸. */
+.compare-row-placeholder { cursor: default; opacity: .35; }
+.compare-row-placeholder:hover { background: none; }
+.compare-row-placeholder .compare-row-file { font-weight: 400; }
+.compare-row-title { color: var(--list-text); }
+.compare-row-desc { color: var(--muted); font-size: var(--fs-eyebrow); }
+
+/* [신규] 좌우 패널 사이 가운데 열 - 제목 높이엔 swap 버튼(가운데), 헤더 높이엔
+   다중 선택 일괄 복사 버튼(>/<), 그 아래엔 행마다 =/≠/화살표 심볼. 왼쪽/오른쪽
+   리스트와 같은 높이 체계(제목 바 + 헤더 + 스크롤 목록)를 그대로 맞춰서 매 행이
+   옆줄과 정확히 나란히 보이게 한다. */
+.compare-center-col { flex: 0 0 auto; width: 40px; display: flex; flex-direction: column; }
+.compare-center-actions {
+  flex-shrink: 0; height: var(--compare-title-h, 34px); box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center; gap: 3px;
+}
+.compare-center-actions .icon-btn { padding: 3px; }
+.compare-center-actions .icon-btn:disabled { opacity: .3; cursor: default; pointer-events: none; }
+.compare-center-header {
+  flex-shrink: 0; height: var(--compare-header-h, 28px); box-sizing: border-box;
+  border-bottom: 1px solid var(--list-border);
+}
+/* [신규] 헤더 라인에 배치된 >/< 일괄 복사 버튼 줄 - 위 swapRow와 같은 중앙 정렬 */
+.compare-center-bulk-actions { display: flex; align-items: center; justify-content: center; gap: 3px; }
+.compare-center-bulk-actions .icon-btn { padding: 3px; }
+.compare-center-bulk-actions .icon-btn:disabled { opacity: .3; cursor: default; pointer-events: none; }
+/* 사용자가 직접 스크롤하는 목록이 아니라 좌/우 목록을 스크롤할 때 같이 맞춰지기만
+   하면 되므로 자체 스크롤바는 없앤다(overflow:hidden이어도 scrollTop 대입은 그대로
+   먹혀서 동기화엔 문제없음). */
+.compare-center-list { flex: 1 1 0%; min-height: 0; overflow: hidden; }
+.compare-center-cell {
+  height: var(--compare-row-h, 28px); box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--fs-body-lg); font-weight: 700; color: var(--list-muted);
+  border-bottom: 1px solid var(--list-row-border);
+}
+/* [수정] 같음=기본 텍스트색(흰/검), metadata 다름=파란색, 한쪽에만 있음(복사 가능
+   화살표, 클릭하면 그 행 하나만 즉시 복사)=빨간색. */
+.compare-center-cell.eq { color: var(--text); }
+.compare-center-cell.diff { color: var(--info); gap: 1px; }
+.compare-center-cell.arrow { color: var(--danger); cursor: pointer; }
+.compare-center-cell.arrow:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.compare-center-cell.arrow:focus-visible { outline: 2px solid var(--danger); outline-offset: -2px; }
+/* [신규] ≠ 행에 hover하면 양옆의 </> 복사 버튼이 나타나고 심볼은 숨는다 - 기본
+   상태는 조용히 ≠만 보여주고, 실제로 다룰 때만 액션이 드러나게 한다. */
+.compare-center-diff-symbol { transition: opacity .1s; }
+.compare-center-diff-btn {
+  display: none; padding: 2px; border-radius: var(--radius-xs); color: var(--info);
+  align-items: center; justify-content: center;
+}
+.compare-center-cell.diff:hover .compare-center-diff-symbol { display: none; }
+.compare-center-cell.diff:hover .compare-center-diff-btn { display: inline-flex; }
+.compare-center-diff-btn:hover { background: color-mix(in srgb, var(--info) 16%, transparent); }
+.compare-center-diff-btn:focus-visible { outline: 2px solid var(--info); outline-offset: -2px; }
+
+/* ---------------- 폰트/아이콘 크기 ---------------- */
+svg.icon { display: block; flex-shrink: 0; }
+
+/* ---------------- 스크롤바 ---------------- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--radius-pill); }
+
+/* Frameless title controls: overlay the top-right corner, like a native Windows title bar.
+   It does not consume vertical layout space. */
+#custom-titlebar { position:absolute; inset:0 0 auto 0; height:32px; display:flex; align-items:stretch; justify-content:flex-end; background:transparent; border:0; z-index:10000; pointer-events:none; }
+.custom-titlebar-drag { position:absolute; inset:0 138px 0 0; user-select:none; pointer-events:auto; }
+.custom-titlebar-controls { position:relative; height:32px; display:flex; align-items:stretch; pointer-events:auto; }
+.custom-titlebar-controls button { width:46px; height:32px; padding:0; border:0; background:transparent; display:flex; align-items:center; justify-content:center; font-size:calc(15px * var(--font-scale)); line-height:1; color:var(--muted); }
+.custom-titlebar-controls button:hover { background:var(--card2); color:var(--text); }
+.custom-titlebar-controls #window-close:hover { background:var(--danger); color:#fff; }
+#app-body { display:flex; flex:1 1 auto; min-height:0; min-width:0; width:100%; }
+
+/* Frameless-window resize hit areas. The visible UI remains full-size while these 5px
+   transparent strips restore normal Windows-like resizing. */
+.window-resize-grip { position:fixed; z-index:9999; background:transparent; }
+.window-resize-grip.n { top:0; left:6px; right:6px; height:5px; cursor:ns-resize; }
+.window-resize-grip.s { bottom:0; left:6px; right:6px; height:5px; cursor:ns-resize; }
+.window-resize-grip.e { top:6px; right:0; bottom:6px; width:5px; cursor:ew-resize; }
+.window-resize-grip.w { top:6px; left:0; bottom:6px; width:5px; cursor:ew-resize; }
+.window-resize-grip.ne { top:0; right:0; width:8px; height:8px; cursor:nesw-resize; }
+.window-resize-grip.nw { top:0; left:0; width:8px; height:8px; cursor:nwse-resize; }
+.window-resize-grip.se { right:0; bottom:0; width:10px; height:10px; cursor:nwse-resize; }
+.window-resize-grip.sw { left:0; bottom:0; width:8px; height:8px; cursor:nesw-resize; }
+
+/* Fixed preview-card geometry: ~20% smaller than the old 116px class, independent of count. */
+#preview-grid { grid-template-columns: repeat(auto-fill, 93px); grid-auto-rows: 128px; justify-content:start; align-content:start; gap:12px; }
+.preview-card { width:93px; min-width:93px; max-width:93px; height:128px; min-height:128px; max-height:128px; box-sizing:border-box; }
+.preview-cover { width:93px; height:104px; min-height:104px; max-height:104px; box-sizing:border-box; }
+
+.preview-cover { width:93px; height:124px; aspect-ratio:auto; flex:0 0 124px; }
+.preview-title { min-height:32px; max-height:32px; line-height:16px; overflow:hidden; }
+
+/* Make list selection unmistakable in both themes. */
+.grid-data-row.selected { background:var(--list-selected) !important; box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+.grid-data-row.selected .grid-cell { color:var(--list-text); }
+
+/* Media overview */
+.media-overview-grid { display:grid; gap:8px; margin-bottom:10px; }
+.media-overview-grid.top { grid-template-columns:1fr; }
+.media-overview-grid.bottom { grid-template-columns:1fr 1fr; }
+.media-overview-item { min-width:0; }
+.media-overview-label { font-size:var(--fs-caption); font-weight:600; color:var(--muted); margin:4px 0; }
+.media-overview-preview { height:120px; border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden; background:var(--card3); display:flex; align-items:center; justify-content:center; }
+.media-overview-item.compact .media-overview-preview { height:92px; }
+.media-overview-preview img { width:100%; height:100%; object-fit:contain; display:block; }
+.media-overview-preview .dropzone-empty { display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--muted); font-size:var(--fs-caption); }
+
+.grid-row.grid-data-row.selected { background:var(--accent) !important; color:#fff !important; box-shadow:inset 3px 0 0 var(--accent-hover), inset 0 0 0 1px var(--accent-hover); }
+.grid-row.grid-data.selected > * { color:#fff !important; }
+
+/* v0.4.0.18 media composition: cover left, marquee/miximage right, large screenshot below, wheel smaller. */
+.media-quad-grid { display:grid; grid-template-columns: 1.25fr 1fr; grid-template-rows: 180px 180px; gap:8px; margin-bottom:8px; }
+.media-tile { position:relative; min-width:0; min-height:0; border:1px solid var(--border); border-radius:var(--radius-md); overflow:hidden; background:var(--card3); cursor:pointer; }
+.media-tile.cover { grid-column:1; grid-row:1 / span 2; }
+.media-tile.marquee { grid-column:2; grid-row:1; }
+.media-tile.miximage { grid-column:2; grid-row:2; }
+.media-screenshot-wrap { margin-bottom:8px; }
+.media-screenshot-wrap .media-tile { height:360px; }
+.media-wheel-wrap { width:48%; min-width:280px; }
+.media-wheel-wrap .media-tile { height:190px; }
+.media-tile.video { height:74px; margin-bottom:8px; }
+.media-tile-label { position:absolute; left:7px; top:6px; z-index:2; padding:2px 6px; border-radius:var(--radius-xs); font-size:var(--fs-eyebrow); font-weight:600; color:#fff; background:rgba(0,0,0,.48); pointer-events:none; }
+.media-tile-preview { width:100%; height:100%; display:flex; align-items:center; justify-content:center; }
+.media-tile-preview img { width:100%; height:100%; object-fit:contain; display:block; min-width:0; min-height:0; }
+.media-tile .dropzone-empty { display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--muted); font-size:var(--fs-caption); }
+
+/* v0.4.0.19 - list multi-selection uses the same visual language as card selection. */
+.grid-data-row.multi-selected {
+  background: color-mix(in srgb, var(--accent) 18%, var(--list-bg)) !important;
+  color: var(--list-text) !important;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.grid-data-row.multi-selected .grid-cell { color: var(--list-text) !important; }
+.preview-card.multi-selected {
+  border-color: var(--accent) !important;
+  background: color-mix(in srgb, var(--accent) 12%, var(--list-head));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* v0.4.0.19 media composition: a compact cover block, right-side marquee/miximage,
+   full-width screenshot, and a smaller wheel block. Geometry is fixed so the cover's
+   natural portrait ratio does not stretch the whole composition. */
+.media-quad-grid {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.9fr) minmax(220px, 1.1fr);
+  grid-template-rows: 145px 145px;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.media-tile.cover { grid-column: 1; grid-row: 1 / span 2; }
+.media-tile.marquee { grid-column: 2; grid-row: 1; }
+.media-tile.miximage { grid-column: 2; grid-row: 2; }
+.media-tile.cover .media-tile-preview img { max-width: 100%; max-height: 100%; width: auto; height: 100%; object-fit: contain; }
+.media-screenshot-wrap { margin-bottom: 8px; }
+.media-lower-grid {
+  display: block;
+  margin-bottom: 8px;
+}
+.media-lower-grid .media-tile.screenshot {
+  width: 100%;
+  height: 360px;
+}
+.media-lower-grid .media-tile.wheel {
+  width: 48%;
+  min-width: 260px;
+  height: 170px;
+  margin-top: 8px;
+}
+.media-lower-grid .media-tile.screenshot + .media-tile.wheel { margin-top: 8px; }
+
+/* v0.4.0.21 media layout: natural-size image boxes, 68/32 hero split.
+   No internal horizontal/vertical scrolling. Labels overlay the image and consume no layout space. */
+.detail-body.media-tab-body { overflow: hidden; display:block; }
+.media-tab-body .media-quad-grid {
+  display:grid;
+  grid-template-columns:minmax(0, 68fr) minmax(0, 32fr);
+  grid-template-rows:repeat(3, auto);
+  gap:8px;
+  align-items:stretch;
+  margin:0 0 8px 0;
+}
+.media-tab-body .media-tile {
+  position:relative; min-width:0; min-height:0; width:100%; height:auto;
+  border:1px solid var(--border); border-radius:var(--radius-md); overflow:hidden;
+  background:var(--card3); cursor:pointer; box-sizing:border-box;
+}
+.media-tab-body .media-tile.cover { grid-column:1; grid-row:1 / span 3; }
+.media-tab-body .media-tile.marquee { grid-column:2; grid-row:1; }
+.media-tab-body .media-tile.miximage { grid-column:2; grid-row:2; }
+.media-tab-body .media-tile.wheel { grid-column:2; grid-row:3; }
+.media-tab-body .media-tile-preview {
+  width:100%; height:100%; min-height:0; display:flex; align-items:center; justify-content:center;
+}
+.media-tab-body .media-tile-preview img {
+  display:block; width:100%; height:auto; max-width:100%; max-height:none;
+  object-fit:contain;
+}
+.media-tab-body .media-tile.cover .media-tile-preview img { width:100%; height:auto; }
+.media-tab-body .media-tile.marquee .media-tile-preview img,
+.media-tab-body .media-tile.miximage .media-tile-preview img,
+.media-tab-body .media-tile.wheel .media-tile-preview img {
+  width:100%; height:auto; object-fit:contain;
+}
+.media-tab-body .media-tile-label {
+  position:absolute; left:7px; top:6px; z-index:2; padding:2px 6px; border-radius:var(--radius-xs);
+  font-size:var(--fs-eyebrow); font-weight:600; color:#fff;
+  background:rgba(0,0,0,.48); pointer-events:none;
+}
+.media-tab-body .media-tile .dropzone-empty {
+  min-height:72px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:4px; color:var(--muted); font-size:var(--fs-caption); padding:10px;
+}
+.media-tab-body .media-lower-grid { display:block; width:100%; margin:0 0 8px 0; }
+.media-tab-body .media-lower-grid .media-tile.screenshot {
+  width:100%; height:auto; min-height:0;
+}
+.media-tab-body .media-lower-grid .media-tile.screenshot .media-tile-preview img {
+  width:100%; height:auto; object-fit:contain;
+}
+.media-tab-body .media-tile.video { display:none; }
+.media-tab-body { overflow:hidden !important; }
+
+
+/* v0.4.0.24 metadata/system and media drop UX */
+.system-icon { width:18px; min-width:18px; display:inline-flex; align-items:center; justify-content:center; font-size:13px; line-height:1; }
+.detail-system { margin-top:3px; display:flex; align-items:center; gap:5px; color:var(--muted); font-size:var(--fs-eyebrow); font-weight:700; letter-spacing:.08em; }
+.media-tile.drag-over { outline:2px dashed var(--accent); outline-offset:-3px; background:color-mix(in srgb, var(--accent) 10%, var(--card3)); }
+
+/* v0.4.0.28: selected list rows must be addressable by data-rom-key and visually match card focus. */
+.grid-data-row.selected { background: var(--list-selected) !important; color: var(--list-text) !important; box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--accent) !important; }
+.grid-data-row.selected .grid-cell { color: var(--list-text) !important; }
+.grid-data-row.multi-selected { background: color-mix(in srgb, var(--accent) 18%, var(--list-bg)) !important; outline: 2px solid var(--accent) !important; box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--accent) !important; }

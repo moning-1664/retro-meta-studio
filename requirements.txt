@@ -1,0 +1,7 @@
+requests>=2.31
+Pillow>=10.0
+# tkinter는 Python 표준 라이브러리에 포함 (Windows 기본 설치 시 자동 포함)
+# Dashboard 원형 그래프용 (선택 사항, 미설치 시 텍스트 통계만 표시)
+matplotlib>=3.8
+# 신규 웹 기반 GUI (main_gui.py)용 - Windows에서는 내장 WebView2 사용
+pywebview>=5.0

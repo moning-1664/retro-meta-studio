@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Retro Metadata Manager</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="app-body">
+      <div id="sidebar"></div>
+      <div id="main">
+      <div id="context-bar"></div>
+      <div id="list-area">
+        <div id="filter-bar"></div>
+        <div id="content-row">
+          <div id="list-body">
+            <div id="list-card-container"></div>
+          </div>
+          <div id="detail-panel"></div>
+        </div>
+      </div>
+      <div id="dashboard-view" class="hidden"></div>
+      <div id="settings-view" class="hidden"></div>
+      <div id="compare-view" class="hidden"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="job-progress"></div>
+  <div id="toast"></div>
+
+  <script src="icons.js"></script>
+  <script src="system-icons.js"></script>
+  <script src="system-icons-raster.js"></script>
+  <script src="api-client.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+{
+  "name": "retro-meta-studio",
+  "version": "0.1.0",
+  "description": "레트로 게임 ROM/Metadata를 여러 Frontend(ES-DE, Pegasus, LaunchBox, EmulationStation, 다이지쇼) 사이에서 관리하는 Windows용 GUI 도구. RetroGameManager에서 갈라져 나와 구조를 다시 설계하는 프로젝트.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test:ui": "playwright test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moning-1664/retro-meta-studio.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/moning-1664/retro-meta-studio/issues"
+  },
+  "homepage": "https://github.com/moning-1664/retro-meta-studio#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}

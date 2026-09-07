@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# PyInstaller 빌드 산출물
+build/
+dist/
+build_headless/
+dist_headless/
+build_headless2/
+dist_headless2/
+*.spec
+
+# native/ 빌드 산출물 (native/build_worker.bat이 생성 - 소스(.c)만 커밋한다)
+native/*.exe
+native/*.obj
+native/*.o
+native/*.pdb
+native/*.ilk
+
+# 사용자 실행 데이터 (실행 시 자동 생성됨, 저장소에 포함하지 않음)
+config.json
+backup/
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# UI 테스트 (Playwright)
+node_modules/
+test-results/
+playwright-report/
