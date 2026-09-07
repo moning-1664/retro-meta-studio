@@ -18,7 +18,7 @@
 | 신규 구현 | Collection/Storage 모델, Plan 엔진, Archive, Match 티어, ES-DE custom XML, 가상 스크롤 |
 | 폐기 | `db.py`(MasterDB), `gui/`(tkinter 레거시 2,900줄), `import_engine.py`/`export_engine.py`의 오케스트레이션 |
 
-가장 주의할 점 세 가지:
+가장 주의할 점 네 가지:
 
 1. **Round-trip 보존(스펙 §50–51)은 현재 코드가 구조적으로 못 한다.** 지금 importer는
    알려진 태그만 뽑아 dict로 만들고 나머지는 버린다. 어댑터 계층을 새로 만들 때 원본
@@ -30,6 +30,9 @@
 3. **`api.py` 3,400줄 모놀리스를 그대로 승계하면 안 된다.** 브릿지는 얇게 두고 로직은
    `app/`으로 내린다. 단, 그 안의 Job Queue(약 350줄)는 실제 크래시를 겪으며 다듬어진
    코드라 통째로 살린다.
+4. **앱 인스턴스를 두 개 띄우고 서로 복사/붙여넣기하는 사용법(§9)은 스펙에 없던 요구사항이며,
+   단일 프로세스를 전제한 설계로는 나중에 얹을 수 없다.** SQLite 동시 접근·변경 전파·
+   Apply 상호배제를 Phase 0에서 같이 깔아야 한다.
 
 ---
 
@@ -325,6 +328,7 @@ Plan 생성 시점의 `(size, mtime_ns)`를 엔트리에 박아두고 Apply 직�
 | R5 | `api.py` 모놀리스 승계 | 새 구조가 다시 진흙탕 | 브릿지는 얇게. Job Queue만 `bridge/jobs.py`로 분리 이식 |
 | R6 | 스키마 마이그레이션 부재 | 사용자 자산 유실 | `user_version` 마이그레이션을 1일차 도입. Cache는 파기·재생성으로 처리 |
 | R7 | Plan 대기 중인 게임의 메타데이터 편집 | 아직 디스크에 없는 파일에 쓰기 시도 | 아직 존재하지 않는(Plan `add` 상태) 항목의 편집은 파일이 아니라 그 Plan 엔트리의 payload에 반영. Apply 시 함께 기록된다 |
+| R8 | 두 인스턴스가 같은 DB·같은 Collection을 동시에 쓴다 | DB 잠금 충돌, 캐시 불일치, 같은 파일에 교차 쓰기 | WAL + busy_timeout, Collection 단위 Apply 락(heartbeat), `change_log` 폴링. §9 참조 |
 
 ---
 
@@ -334,10 +338,10 @@ Plan 생성 시점의 `(size, mtime_ns)`를 엔트리에 박아두고 Apply 직�
 
 | Phase | 범위 | 비고 |
 |---|---|---|
-| 0 | 저장소 골격: registry/cache/archive 스키마 + 마이그레이션, `StorageProvider`, `FrontendAdapter` 인터페이스, 레거시 정리(`db.py`/`gui/` 제거) | 여기서 R1·R6를 처리 |
+| 0 | 저장소 골격: registry/cache/archive 스키마 + 마이그레이션, **다중 인스턴스 기반(WAL·락·change_log)**, `StorageProvider`, `FrontendAdapter` 인터페이스, 레거시 정리(`db.py`/`gui/` 제거) | 여기서 R1·R6·R8을 처리 |
 | 1 | Core Model + ES-DE 어댑터 실동작 + Cache 스캔 | 실제 Collection 하나가 열리는 것까지 |
 | 2 | Collection UI: 탭 / 헤더(compact·확장) / ALL·INTERNAL·EXTERNAL 내비 / 가상 스크롤 Gamelist / 기존 Detail 패널 연결 | gui_web 재사용 구간 |
-| 3 | Plan: 모델·Auto Plan·용량 계산·Validate·Apply. Copy/Paste, Delete, Drag&Drop, System 이동 | Apply는 기존 FileOperationEngine |
+| 3 | Plan: 모델·Auto Plan·용량 계산·Validate·Apply. Copy/Paste, Delete, Drag&Drop, System 이동. **인스턴스 간 클립보드 붙여넣기** | Apply는 기존 FileOperationEngine |
 | 4 | Archive: Source Tracking, Revision, Archive Gamelist, Archive→Collection | |
 | 5 | Match: Exact → Normalized → Heuristic 후보 UI (자동 병합 금지 §49) | `similar_rom.py` 활용 |
 | 6 | Compare Mode | `compare_engine.py` 일반화 |
@@ -357,3 +361,139 @@ Phase 2까지가 "새 구조가 실제로 굴러가는지" 판가름하는 구�
 | **D2** | **Plan은 세션 한정. 앱 재시작 시 사라진다** | Plan 테이블 불필요 → 스키마·마이그레이션 부담 감소, Plan과 실제 파일 상태가 어긋난 채 되살아나는 위험 제거. 미확정 Plan을 둔 채 종료하려 하면 경고한다 |
 | **D3** | **Archive는 Media 경로 정보만 보관하고 복사 시 원본에서 함께 가져온다. 원본이 없으면 그 Media만 건너뛴다** | 스펙 §37(Archive는 Media 저장소가 아님)을 지키면서 실사용상 "메타데이터만 오고 이미지가 빠지는" 문제를 줄인다. 접근 불가를 오류가 아닌 부분 성공으로 처리해 외장 디스크 분리 상황에서 작업이 멈추지 않는다 |
 | **D4** | **기존 MasterDB 구조는 폐기. 이관 마이그레이션을 만들지 않는다** | `db.py`·`database/sqlite_db.py`의 기존 스키마·JSON 저장소를 모두 삭제한다. 메타데이터는 Collection을 스캔해서 채우고, 필요하면 Collection→Archive 경로로 수집한다. Phase 0의 레거시 정리 범위가 확정됨 |
+| **D5** | **앱 인스턴스를 여러 개 띄우는 것을 정식 지원한다.** 한쪽에서 복사하고 다른 쪽에서 붙여넣으면 파일과 메타데이터가 함께 넘어간다 | 스펙에 없던 요구사항. 단일 프로세스 전제를 깨므로 §9의 기반 작업이 Phase 0에 포함된다 |
+
+---
+
+## 9. 다중 인스턴스 (Multi-Instance)
+
+앱을 두 개 이상 띄워 놓고, A 인스턴스에서 게임을 복사해 B 인스턴스에 붙여넣으면 **파일과
+메타데이터가 함께** B의 Collection으로 넘어가야 한다. 탭 안에서의 Collection 간 복사(§27)와
+같은 동작이되 프로세스 경계를 넘는다는 점이 다르다.
+
+### 9.1 클립보드를 프로세스 간 채널로 쓴다
+
+별도의 IPC 서버를 만들지 않는다. Windows 클립보드가 이미 프로세스 간 채널이고, 사용자의
+Ctrl+C/Ctrl+V 조작과도 정확히 일치한다.
+
+- 전용 클립보드 포맷 `RetroMetaStudio.Selection`을 등록한다.
+- 실제 payload는 앱 데이터 폴더의 **핸드오프 파일**(`clipboard/<uuid>.json`)에 쓰고,
+  클립보드에는 그 경로와 요약(항목 수, 총 크기, 소스 Collection)만 올린다. 수천 개를
+  복사해도 클립보드 크기 제한에 걸리지 않는다. 오래된 핸드오프 파일은 앱 시작 시 TTL로 정리.
+- payload에 담는 것:
+
+```jsonc
+{
+  "source_collection_id": "…",     // 이름이 아니라 ID (§38)
+  "instance_id": "…",
+  "items": [{
+    "system": "PS2", "filename": "…",
+    "rom": {"path": "<절대경로>", "size": 0, "mtime_ns": 0},
+    "media": [{"type": "covers", "path": "<절대경로>", "size": 0}],
+    "fields": { … },                // 메타데이터 값 자체를 그대로 실어 보낸다
+    "frontend_raw": { … }           // 미지원 필드 보존 (§50)
+  }]
+}
+```
+
+**메타데이터를 payload에 통째로 싣는 것이 핵심 결정이다.** 붙여넣는 쪽이 소스 인스턴스의
+DB를 열거나 소스 앱이 살아 있기를 요구하지 않는다 — 복사한 뒤 A를 닫아도 붙여넣기가
+동작한다. 파일은 절대경로로 참조하므로 원본 파일만 그대로 있으면 된다(없으면 D3와 같은
+규칙으로 그 항목/미디어만 건너뛴다).
+
+- JS에서는 커스텀 클립보드 포맷을 다룰 수 없으므로 **Python 브릿지가 클립보드를 읽고 쓴다**.
+- 붙여넣기 결과는 일반 Copy/Paste와 동일하게 Auto Plan을 거친다(파일 복사 = 용량 변화 = Plan, D1).
+
+### 9.2 SQLite 동시 접근
+
+| DB | 정책 |
+|---|---|
+| `registry.db`, `archive.db` | WAL 모드 + `busy_timeout`. 쓰기 트랜잭션은 짧게 유지 |
+| `cache/<id>.db` | 같은 Collection을 두 인스턴스가 열면 **스캔 소유권**을 advisory lock으로 한쪽만 갖는다. 나머지는 읽기 전용으로 붙고 갱신은 §9.3으로 받는다 |
+
+기존 코드의 `check_same_thread=False` 공유 커넥션은 프로세스 **내부** 스레드용이라 여기서는
+의미가 없다. 프로세스 간 안전성은 전적으로 WAL과 busy_timeout이 담당한다.
+
+부수 효과로, 설정을 `config.json`에서 `registry.db`로 옮기면 기존의 "두 곳에서 동시에
+config를 저장하다 파일이 깨지는" 문제(현재 테스트에도 남아 있는 취약점)가 함께 사라진다.
+
+### 9.3 변경 전파
+
+```sql
+change_log(seq INTEGER PRIMARY KEY AUTOINCREMENT,
+           collection_id TEXT, kind TEXT, payload_json TEXT,
+           instance_id TEXT, at TEXT);
+```
+
+- Apply 완료·스캔 갱신·Collection 설정 변경 시 한 줄 append.
+- 각 인스턴스는 자기가 마지막으로 본 `seq` 이후만 폴링한다. 인덱스 조회 1건이라 수 초 주기로
+  돌려도 비용이 사실상 없다. 자기가 쓴 변경은 `instance_id`로 걸러낸다.
+- **File Watcher와 역할이 다르다.** Watcher는 탐색기 등 *외부 프로그램*의 변경(§65)을,
+  `change_log`는 *다른 인스턴스*의 변경을 담당한다. SMB처럼 Watcher를 못 쓰는 저장소에서도
+  인스턴스 간 전파는 정상 동작하므로 서로를 보완한다.
+
+### 9.4 Apply 상호 배제
+
+- Collection 단위 advisory lock을 `registry.db`에 둔다(소유 인스턴스 + heartbeat 타임스탬프).
+- A가 Apply 중이면 B의 Apply는 대기하거나 명확히 거부한다. 이는 앱 내부에서 이미 쓰고 있는
+  `_run_heavy_job`의 target 직렬화를 프로세스 경계까지 확장한 것과 같은 개념이다.
+- 인스턴스가 비정상 종료해도 heartbeat 만료로 락이 자동 해제된다.
+
+### 9.5 Plan과의 관계
+
+Plan은 인스턴스 로컬 메모리에만 존재하므로(D2) 프로세스 간에 공유되지 않는다 — 충돌 자체가
+없다. 다만 A가 Apply를 끝내면 B가 들고 있던 Plan의 전제가 흔들릴 수 있으므로, B는
+`change_log`를 수신한 시점에 자기 Plan을 재검증하고(§33의 Apply 직전 검증을 앞당겨 수행)
+영향받은 항목만 `invalid`로 표시한다. 사용자는 Apply 순간이 아니라 그 전에 알게 된다.
+
+---
+
+## 10. UI 구성
+
+전체 셸 레이아웃은 제시된 시안 방향을 채택한다.
+
+```
+Collection Tabs        [Master] [Android ES-DE] [Windows ES-DE] [+]
+─────────────┬──────────────────────────────────────┬─────────────
+SYSTEMS      │ Collection Header (compact / 확장)    │ [Metadata]
+ All   1,284 │ ─────────────────────────────────────│ [Media]
+ INTERNAL    │ Search · System · Status · 보기전환   │ [ROM]
+  PS1    128 │ ─────────────────────────────────────│
+  NDS    184 │ #  Title  System  Status  Description │  기존 Detail
+ EXTERNAL SD │  ✓ 1 Final Fantasy X  PS2  −  …       │  패널 그대로
+  PS2    210 │    2 Final Fantasy X-2 PS2 +  …       │
+─────────────┴──────────────────────────────────────┴─────────────
+Selected 3 │ +12.4GB −3.2GB │ Plan +9.2GB │ INT 31.2→27.5 EXT 421.4→434.6 │ [Import][Export][Convert][Plan]
+```
+
+채택하는 것: Collection 탭 바, 좌측 ALL/INTERNAL/EXTERNAL 트리와 시스템별 개수, 중앙
+`# / Title / System / Status / Description` 컬럼, Status의 작은 `+ − △` 기호(§24), 하단
+Selected·증감·Actual→Plan·액션 버튼 바.
+
+### 10.1 우측 Detail 패널은 기존 구현을 그대로 쓴다
+
+시안의 우측은 평평한 속성 목록 + 스크린샷 스트립 형태지만, **기존 `gui_web/app.js`의
+`renderDetailPanel()` / `renderMetadataTab()` / `renderMediaTab()`을 그대로 유지한다**
+(스펙 §34–36). 기존 구성은 이미 3단으로 다듬어져 있다.
+
+- **상단 고정** — identity 카드: 대표 커버 썸네일 + 6필드 요약(Genre / Release / Players /
+  Region / Developer / Publisher), 그 아래 Title 입력
+- **중단** — Description `textarea`. `flex:1`로 **남는 세로 공간을 우선 흡수**한다.
+  스펙 §34가 요구하는 "충분한 세로 공간"이 이미 이 방식으로 구현되어 있다
+- **하단 고정** — 필드 그리드(Genre / Developer / Publisher / Release / Region / Rating /
+  Players / SHA256)와 버전 관리 행
+
+모든 필드는 기존대로 즉시 편집 가능한 상태를 유지하고, 저장은 D1에 따라 Plan을 거치지 않고
+바로 파일에 기록한다.
+
+### 10.2 기존 UI에서 손봐야 하는 곳
+
+| 항목 | 변경 |
+|---|---|
+| 전역 단일 뷰 상태(`S.view`, `S.games`) | Collection 탭별 상태 맵으로 확장 |
+| 좌측 사이드바 | Local/ArchiveDB 목록 → 현재 Collection의 ALL/INTERNAL/EXTERNAL 트리(§12) |
+| Gamelist | 가상 스크롤 + `list_rows` SQL 페이징, Status 컬럼 추가 |
+| Detail의 **Version 관리 UI** | MasterDB 개념이 사라지므로 Archive Revision(§39) 선택으로 의미를 옮긴다. Collection 탭에서는 숨김 |
+| SHA256 필드 | `S.view === "masterdb"` 조건 → ROM 탭/Archive에서 표시하도록 조건 교체 |
+| Compare 뷰 | 기존 `compare-view`를 Gamelist의 Compare Mode로 재배치(§54) |
+| 신규 | Collection 탭 바, 헤더 compact/확장, System 드래그&드롭, 하단 Plan 바 |
