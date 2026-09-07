@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m unittest *)",
+      "Bash(python -m pytest *)",
+      "Bash(python main.py)",
+
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push*)",
+      "Bash(git pull*)",
+      "Bash(git fetch*)",
+      "Bash(git checkout *)",
+      "Bash(git switch *)",
+      "Bash(git restore *)",
+      "Bash(git rm *)",
+      "Bash(git stash*)",
+      "Bash(git merge *)",
+      "Bash(git rebase *)",
+      "Bash(git init*)",
+      "Bash(git remote *)",
+
+      "Bash(mkdir *)",
+      "Bash(cp *)",
+      "Bash(rm -rf db)",
+      "Bash(rm -rf db/*)",
+      "Bash(rm -rf __pycache__*)",
+      "Bash(rm -f /tmp/*)",
+      "Bash(rm -rf /tmp/*)"
+    ]
+  }
+}
