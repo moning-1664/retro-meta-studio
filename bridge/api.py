@@ -358,7 +358,47 @@ class Api:
             "marks": plan.marks(),
             "capacity": check_capacity(plan, collection, cache, provider),
             "clipboard": clipboard.peek(self.registry),
+            # 사용자가 결정해야 하는 것과 지난 Apply에서 실패한 것을 명확히 노출한다.
+            # 이게 안 보이면 "Apply 했으니 끝났다"고 오해한다.
+            "conflictEntries": [self._entry_summary(e) for e in plan.conflict_entries()],
+            "failedEntries": [self._entry_summary(e) for e in plan.failed_entries()],
         })
+
+    @staticmethod
+    def _entry_summary(entry):
+        return {
+            "key": entry.key, "op": entry.op, "system": entry.system,
+            "filename": entry.filename or entry.system,
+            "status": entry.status, "error": entry.error,
+            "resolution": entry.resolution,
+            "conflicts": entry.conflicts,
+        }
+
+    @guarded
+    def plan_resolve_conflict(self, collection_id, key, resolution):
+        """충돌 항목을 어떻게 처리할지 정한다: skip(그대로 둠) 또는 overwrite(덮어씀).
+
+        덮어쓰기를 고르면 용량 계산이 "새 파일 크기 전부"가 아니라 기존 파일과의
+        차이로 다시 계산된다.
+        """
+        collection, _, provider = self._plan_context(collection_id)
+        result = builder.resolve_conflict(self._plan(collection_id), collection, provider,
+                                          key, resolution)
+        return ok(result)
+
+    @guarded
+    def plan_resolve_all_conflicts(self, collection_id, resolution):
+        """충돌 전체를 같은 방식으로 처리한다.
+
+        수백 개를 하나씩 누르게 하면 도구로 쓸 수 없다. 다만 기본값을 자동으로
+        적용하지는 않는다 - 사용자가 명시적으로 고른 경우에만 여기로 온다.
+        """
+        collection, _, provider = self._plan_context(collection_id)
+        plan = self._plan(collection_id)
+        keys = [e.key for e in plan.conflict_entries()]
+        for key in keys:
+            builder.resolve_conflict(plan, collection, provider, key, resolution)
+        return ok({"resolved": len(keys), "resolution": resolution})
 
     @guarded
     def plan_delete(self, collection_id, rom_uids):
@@ -428,7 +468,11 @@ class Api:
         def run(cb):
             try:
                 result = apply_plan(plan, collection, cache, self.registry, provider, progress_cb=cb)
-                self.workspace.scan(collection_id, force=True)
+                # Apply가 건드린 System만 다시 읽어 Cache를 실제 상태에 맞춘다.
+                # 이걸 안 하면 방금 지운 게임이 목록에 남고 용량도 예전 값이 보인다.
+                # 전체 Full Scan은 규모가 커지면 감당이 안 되므로 범위를 좁힌다.
+                if result.get("systems"):
+                    self.workspace.scan(collection_id, force=True, systems=result["systems"])
                 self.registry.append_change(CHANGE_APPLIED, collection_id,
                                             {"applied": result["applied"]})
                 return result

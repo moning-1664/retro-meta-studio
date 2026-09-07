@@ -56,6 +56,39 @@ def _robocopy_path():
     return str(fallback) if fallback.exists() else None
 
 
+#: 파일 시스템마다 시각 해상도가 다르다(FAT32는 2초, exFAT는 10ms). Robocopy는 원본
+#: 타임스탬프를 보존하므로 복사 성공 시 dest.mtime == src.mtime이지만, 해상도 차이를
+#: 흡수할 여유가 필요하다.
+MTIME_TOLERANCE_NS = 2_000_000_000
+
+
+def _stat(path):
+    try:
+        st = os.stat(path)
+        return (st.st_size, st.st_mtime_ns)
+    except OSError:
+        return None
+
+
+def _verify_copy(src, dest) -> bool:
+    """이번 복사가 실제로 성공했는지 확인한다.
+
+    **`dest.exists()`만으로 판정하면 안 된다.** 목적지에 원래 파일이 있었고 이번 복사가
+    실패한 경우에도 참이 되기 때문이다 - 실패를 성공으로 보고하게 된다.
+
+    Robocopy는 원본의 크기와 타임스탬프를 보존하므로, 둘이 일치하면 목적지 파일이
+    이번에 복사된(또는 이미 동일한) 원본과 같은 내용이라고 볼 수 있다. Robocopy가
+    동일하다고 판단해 건너뛴 경우(exit 0)도 결과적으로 같은 파일이 있는 것이므로
+    성공으로 본다.
+    """
+    source, target = _stat(src), _stat(dest)
+    if source is None or target is None:
+        return False
+    if source[0] != target[0]:
+        return False
+    return abs(source[1] - target[1]) <= MTIME_TOLERANCE_NS
+
+
 def _ensure_dir(path) -> bool:
     """디렉터리를 만든다. 실패해도 예외를 던지지 않는다.
 
@@ -150,14 +183,17 @@ class RobocopyEngine(CopyEngine):
                 for _, dest in items:
                     results[str(dest)] = False
                 continue
+            expected = {str(dest): _stat(src) for src, dest in items}
             for chunk in _chunk_names([s.name for s, _ in items]):
                 _run([self.executable, str(src_dir), str(dest_dir), *chunk,
                       "/MOV", "/NJH", "/NJS", "/NP", "/NDL", "/NC", "/NS", "/R:1", "/W:1"], timeout_sec)
-            for _, dest in items:
-                results[str(dest)] = dest.exists()
+            for src, dest in items:
+                results[str(dest)] = _verify_move(src, dest, expected[str(dest)])
 
         for src, dest in renamed:
-            results[str(dest)] = self._move_one(src, dest, timeout_sec)
+            expected = _stat(src)
+            results[str(dest)] = (self._move_one(src, dest, timeout_sec)
+                                  and _verify_move(src, dest, expected))
         return results
 
     # ------------------------------------------------------------------
@@ -180,8 +216,8 @@ class RobocopyEngine(CopyEngine):
             for chunk in _chunk_names([s.name for s, _ in items]):
                 _run([self.executable, str(src_dir), str(dest_dir), *chunk,
                       "/NJH", "/NJS", "/NP", "/NDL", "/NC", "/NS", "/R:1", "/W:1"], timeout_sec)
-            for _, dest in items:
-                results[str(dest)] = dest.exists()
+            for src, dest in items:
+                results[str(dest)] = _verify_copy(src, dest)
 
         # 이름이 바뀌는 쌍: Robocopy는 복사하면서 이름을 못 바꾼다. 임시 하위 폴더에
         # 원본 이름으로 받은 뒤 최종 이름으로 옮긴다. 목적지에 원본 이름으로 바로
@@ -194,7 +230,7 @@ class RobocopyEngine(CopyEngine):
             staged = stage_dir / src.name
             code = _run([self.executable, str(src.parent), str(stage_dir), src.name,
                          "/NJH", "/NJS", "/NP", "/NDL", "/NC", "/NS", "/R:1", "/W:1"], timeout_sec)
-            moved = (code < ROBOCOPY_SUCCESS_MAX and staged.exists()
+            moved = (code < ROBOCOPY_SUCCESS_MAX and _verify_copy(src, staged)
                      and self._move_one(staged, dest, timeout_sec))
             results[str(dest)] = moved
             if staged.exists():
@@ -211,6 +247,23 @@ class RobocopyEngine(CopyEngine):
             return False
         _run(["cmd", "/c", "move", "/y", str(src), str(dest)], timeout_sec)
         return dest.exists()
+
+
+def _verify_move(src, dest, expected) -> bool:
+    """이동이 실제로 끝났는지 확인한다.
+
+    복사와 달리 **원본이 사라졌는지까지** 봐야 한다. 목적지에 같은 이름의 파일이 원래
+    있었고 이동이 실패한 경우 `dest.exists()`는 참이지만 원본도 그대로 남아 있다 -
+    그걸 성공으로 보고하면 Storage 이동에서 파일이 두 곳에 존재하게 된다.
+    """
+    if expected is None:
+        return False
+    if Path(src).exists():
+        return False
+    target = _stat(dest)
+    if target is None:
+        return False
+    return target[0] == expected[0] and abs(target[1] - expected[1]) <= MTIME_TOLERANCE_NS
 
 
 def _group_by_dirs(pairs):

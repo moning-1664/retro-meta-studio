@@ -1059,8 +1059,68 @@
     else showConfirm("삭제", `${formatCount(count)}개를 즉시 삭제합니다. 되돌릴 수 없습니다.`, true, run);
   }
 
+  function conflictLine(entry) {
+    const first = (entry.conflicts || [])[0] || {};
+    return `${entry.filename} — ${first.reason || "목적지에 다른 파일이 있습니다"}`;
+  }
+
+  async function openConflictDialog() {
+    const entries = (S.plan && S.plan.conflictEntries) || [];
+    if (!entries.length) return;
+
+    const list = h("div", { class: "picker-list" });
+    entries.slice(0, 50).forEach((entry) => {
+      const row = h("div", { class: "conflict-row" }, [
+        h("div", { class: "conflict-main" }, [
+          h("div", { class: "picker-name truncate" }, [entry.filename]),
+          h("div", { class: "picker-sub truncate" }, [conflictLine(entry)]),
+        ]),
+      ]);
+      ["건너뛰기", "덮어쓰기"].forEach((label, i) => {
+        const btn = h("button", { class: "btn compact" }, [label]);
+        btn.addEventListener("click", async () => {
+          await api.planResolveConflict(S.activeId, entry.key, i === 0 ? "skip" : "overwrite");
+          await refreshPlan();
+          closeModal();
+          openConflictDialog();
+        });
+        row.appendChild(btn);
+      });
+      list.appendChild(row);
+    });
+    if (entries.length > 50) {
+      list.appendChild(h("div", { class: "modal-hint" }, [`외 ${formatCount(entries.length - 50)}개 더 있습니다.`]));
+    }
+
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "modal-text" }, [
+        `목적지에 같은 이름의 다른 파일이 있는 항목 ${formatCount(entries.length)}개입니다. ` +
+        "크기가 같아도 내용이 다를 수 있어 자동으로 덮어쓰지 않습니다."]),
+      list,
+    ]);
+    showModal("충돌 확인", body, [
+      h("button", { class: "btn", onClick: closeModal }, ["나중에"]),
+      h("button", { class: "btn", onClick: async () => {
+        closeModal();
+        await api.planResolveAllConflicts(S.activeId, "skip");
+        await refreshPlan();
+      } }, ["모두 건너뛰기"]),
+      h("button", { class: "btn danger", onClick: () => {
+        showConfirm("모두 덮어쓰기",
+          `${formatCount(entries.length)}개 항목의 기존 파일을 새 파일로 교체합니다. 되돌릴 수 없습니다.`,
+          true, async () => {
+            await api.planResolveAllConflicts(S.activeId, "overwrite");
+            await refreshPlan();
+          });
+      } }, ["모두 덮어쓰기"]),
+    ]);
+  }
+
   async function applyPlan() {
     if (!S.plan || !S.plan.total) { showToast("적용할 Plan이 없습니다.", "warning"); return; }
+    // 미해결 충돌이 있으면 먼저 결정하게 한다. 그냥 진행하면 그 항목들이 조용히
+    // 빠진 채 "적용 완료"로 보인다.
+    if (S.plan.conflicts) { openConflictDialog(); return; }
     const check = await api.validatePlan(S.activeId);
     if (!check.ok) { showToast(check.error, "error"); return; }
     const report = check.data;
@@ -1098,8 +1158,14 @@
           if (!result.cancelled) showToast(result.error, "error");
         } else {
           const data = result.data || {};
-          showToast(`적용 완료: ${formatCount(data.applied || 0)}개` +
-                    (data.failed ? `, 실패 ${formatCount(data.failed)}개` : ""));
+          const remaining = (data.failed || 0) + (data.partial || 0) + (data.skipped || 0);
+          let message = `적용 ${formatCount(data.applied || 0)}개`;
+          if (data.failed) message += ` · 실패 ${formatCount(data.failed)}개`;
+          if (data.partial) message += ` · 일부만 반영 ${formatCount(data.partial)}개`;
+          if (data.skipped) message += ` · 충돌로 건너뜀 ${formatCount(data.skipped)}개`;
+          // "Apply 했으니 끝났다"고 오해하지 않도록 남은 항목을 반드시 말한다.
+          if (remaining) message += ` — ${formatCount(remaining)}개가 Plan에 남아 있습니다`;
+          showToast(message, remaining ? "warning" : "info");
         }
         await ensureDetail(S.activeId);
         resetList();
@@ -1135,6 +1201,16 @@
     if (plan && plan.total) {
       if (plan.addedBytes) left.appendChild(h("span", { class: "sb-add" }, [`+${formatBytes(plan.addedBytes)}`]));
       if (plan.deletedBytes) left.appendChild(h("span", { class: "sb-del" }, [`−${formatBytes(plan.deletedBytes)}`]));
+      if (plan.conflicts) {
+        const btn = h("button", { class: "sb-badge warn", title: "충돌을 확인하고 처리 방식을 정하세요" },
+          [`충돌 ${formatCount(plan.conflicts)}`]);
+        btn.addEventListener("click", openConflictDialog);
+        left.appendChild(btn);
+      }
+      if (plan.failed) {
+        left.appendChild(h("span", { class: "sb-badge danger", title: "지난 적용에서 실패해 Plan에 남아 있는 항목" },
+          [`실패 ${formatCount(plan.failed)}`]));
+      }
     }
     bar.appendChild(left);
 

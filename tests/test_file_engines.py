@@ -81,6 +81,33 @@ class EngineContractMixin:
         self.assertFalse(list(results.values())[0])
         self.assertTrue(source.exists(), "실패했는데 원본이 사라졌다")
 
+    def test_existing_destination_is_not_mistaken_for_success(self):
+        """[회귀] 목적지에 원래 파일이 있고 이번 복사가 실패하면 실패로 보고해야 한다.
+
+        dest.exists()만으로 판정하면 실패를 성공으로 보고한다. 그 결과를 믿고 Plan이
+        원본을 지우거나 Registry를 갱신하면 데이터가 어긋난다.
+        """
+        stale = self.write("target.bin", b"stale content", directory=self.dst)
+        missing_source = self.src / "does-not-exist.bin"
+
+        results = self.engine.copy_files([self.dst], [(missing_source, stale)], timeout_sec=30)
+        self.assertFalse(results.get(str(stale)), "원본이 없는데 복사가 성공으로 보고됐다")
+        self.assertEqual(stale.read_bytes(), b"stale content", "실패했는데 기존 파일이 바뀌었다")
+
+    def test_existing_destination_is_not_mistaken_for_a_completed_move(self):
+        """[회귀] 이동에서는 더 위험하다. 성공으로 오인하면 파일이 두 곳에 남는다."""
+        source = self.write("dup.bin", b"source content")
+        stale = self.write("dup.bin", b"stale content", directory=self.dst)
+
+        # 목적지를 읽기 전용 폴더로 만들 수 없는 환경도 있으므로, 원본을 잠가서
+        # 이동이 실패하도록 만든다.
+        with open(source, "rb"):
+            results = self.engine.move_pairs([(source, stale)], timeout_sec=30)
+            if results.get(str(stale)):
+                # 이 플랫폼에서는 열려 있어도 이동이 되므로 검증할 수 없다.
+                self.skipTest("이 환경에서는 열린 파일도 이동된다")
+        self.assertTrue(source.exists(), "이동 실패인데 원본이 사라졌다")
+
     def test_group_is_atomic(self):
         """그룹 안의 copy가 하나라도 실패하면 delete/rename을 실행하지 않는다."""
         good = self.write("good.bin", b"g")

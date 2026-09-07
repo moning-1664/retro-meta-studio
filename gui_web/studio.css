@@ -281,3 +281,19 @@ body { font-size: var(--fs-body); }
 .sb-storage.over, .cheader-storage.over { color: var(--danger); font-weight: 600; }
 .health-row.over span:last-child { color: var(--danger); font-weight: 600; }
 .btn.compact.primary { border-color: var(--accent); color: var(--text); }
+
+/* 충돌 / 실패 배지 */
+.sb-badge {
+  padding: 1px 8px; border-radius: var(--radius-pill);
+  border: 1px solid var(--border); background: var(--card2);
+  color: var(--muted); font-size: var(--fs-eyebrow); cursor: default;
+}
+button.sb-badge { cursor: pointer; }
+.sb-badge.warn { border-color: var(--warning); color: var(--warning); }
+.sb-badge.danger { border-color: var(--danger); color: var(--danger); }
+.conflict-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 9px; background: var(--card2);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.conflict-main { flex: 1; min-width: 0; }

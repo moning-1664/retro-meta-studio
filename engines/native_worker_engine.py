@@ -10,6 +10,7 @@ CopyEngine을 native/MediaCopyWorker.exe(media_copy_worker.py)로 구현한다.
 
 import media_copy_worker
 from engines.base import CopyEngine
+from engines.robocopy_engine import _stat, _verify_move
 
 
 class NativeWorkerEngine(CopyEngine):
@@ -54,6 +55,10 @@ class NativeWorkerEngine(CopyEngine):
             tmp_of[str(dest)] = str(tmp)
             dest_dirs.append(dest.parent)
             groups.append({"copies": [(src, tmp)], "deletes": [src], "renames": [(tmp, dest)]})
+        expected = {str(dest): _stat(src) for src, dest in pairs}
         results = self.copy_finalize_groups(dest_dirs, groups, timeout_sec=timeout_sec)
-        return {str(dest): bool(results.get(tmp_of[str(dest)])) and dest.exists()
-                for _, dest in pairs}
+        # dest.exists()만 보면 목적지에 원래 있던 파일을 이번 이동의 결과로 오인한다.
+        # 원본이 사라졌고 크기가 맞는지까지 확인해야 한다.
+        return {str(dest): bool(results.get(tmp_of[str(dest)]))
+                and _verify_move(src, dest, expected[str(dest)])
+                for src, dest in pairs}

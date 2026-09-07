@@ -91,16 +91,23 @@ def _unchanged(cached, current) -> bool:
 
 
 def scan_collection(collection, cache, provider, adapter, *, media_types=None,
-                    force=False, progress_cb=None) -> dict:
-    """Collection 전체를 스캔해 Cache를 갱신한다.
+                    force=False, progress_cb=None, systems=None) -> dict:
+    """Collection을 스캔해 Cache를 갱신한다.
 
     media_types를 좁혀서 주면 그 타입의 media 폴더만 실제로 연다(커버 먼저, 비디오
     나중). 그 경우 media 용량 합계는 부분값이 되므로 기존 통계를 유지한다 - 이어지는
     전체 스캔이 정확한 값으로 덮어쓴다.
 
+    systems를 주면 그 System만 다시 읽는다. Plan Apply 직후처럼 "무엇이 바뀌었는지
+    이미 아는" 경우에 전체를 다시 훑지 않기 위한 것이다 - 10,000개짜리 Collection에서
+    게임 하나를 지울 때마다 Full Scan을 도는 것은 감당할 수 없다. 이때는 사라진
+    System을 정리하는 단계도 건너뛴다(전체를 본 게 아니므로 판단할 근거가 없다).
+
     반환: {"systems": [...], "scanned": n, "skipped": n, "roms": n}
     """
-    systems = adapter.list_systems(provider, collection)
+    partial = systems is not None
+    all_systems = adapter.list_systems(provider, collection)
+    systems = [s for s in all_systems if s in set(systems)] if partial else all_systems
     storage_by_system = {s.system: s.storage_id for s in collection.systems}
     previous_stats = {s["system"]: s for s in cache.system_stats()}
 
@@ -133,8 +140,10 @@ def scan_collection(collection, cache, provider, adapter, *, media_types=None,
         total_roms += stats["rom_count"]
 
     # 사라진 System은 캐시에서 지운다. 안 지우면 목록에 유령 항목이 남는다.
-    for stale in set(previous_stats) - set(systems):
-        cache.forget_system(stale)
+    # 일부만 스캔한 경우에는 판단 근거가 없으므로 건너뛴다.
+    if not partial:
+        for stale in set(previous_stats) - set(systems):
+            cache.forget_system(stale)
 
     cache.set_meta("last_scan", {"systems": len(systems), "scan_version": SCAN_VERSION})
     if progress_cb:

@@ -28,6 +28,20 @@ OP_STORAGE_CHANGE = "storage_change"  # System을 다른 Storage로 이동
 MARKS = {OP_ADD: "+", OP_DELETE: "-", OP_STORAGE_CHANGE: "△"}
 
 
+#: 충돌 해결 방식. 미해결(None) 상태에서는 Apply가 그 항목을 건드리지 않는다.
+RESOLVE_SKIP = "skip"
+RESOLVE_OVERWRITE = "overwrite"
+
+STATUS_PENDING = "pending"
+STATUS_CONFLICT = "conflict"
+STATUS_INVALID = "invalid"
+STATUS_APPLIED = "applied"
+STATUS_FAILED = "failed"
+#: 파일은 일부 반영됐는데 끝까지 가지 못한 상태. 단순 실패와 구별해야 한다 -
+#: 사용자가 "아무 일도 없었다"고 오해하면 안 되기 때문이다.
+STATUS_PARTIAL = "partial"
+
+
 @dataclass
 class PlanEntry:
     op: str
@@ -40,11 +54,17 @@ class PlanEntry:
     storage_to: str | None = None
     #: 논리적 크기(사용자에게 보여줄 값)
     estimated_bytes: int = 0
-    #: Storage별 실제 물리 증감 {storage_id: ±bytes}. 대상에 이미 같은 파일이 있으면 0이다.
+    #: Storage별 실제 물리 증감 {storage_id: ±bytes}.
+    #: **용량 계산과 충돌 판정은 다른 문제다.** 대상에 같은 크기의 파일이 있다고 해서
+    #: 덮어써도 된다는 뜻이 아니다. 그런 경우는 delta가 0이면서 동시에 conflict다.
     physical_delta: dict = field(default_factory=dict)
+    #: 목적지에 이미 다른 파일이 있는 항목들. 비어 있지 않고 resolution이 없으면
+    #: Apply가 이 엔트리를 건너뛴다.
+    conflicts: list = field(default_factory=list)
+    resolution: str | None = None
     #: 아직 디스크에 없는(add) 항목을 미리 편집했을 때의 메타데이터(위험요소 R7)
     payload: dict | None = None
-    status: str = "pending"
+    status: str = STATUS_PENDING
     error: str | None = None
 
     @property
@@ -56,6 +76,11 @@ class PlanEntry:
     @property
     def mark(self) -> str:
         return MARKS.get(self.op, "△")
+
+    @property
+    def blocked(self) -> bool:
+        """해결되지 않은 충돌이 있으면 Apply 대상이 아니다."""
+        return bool(self.conflicts) and self.resolution is None
 
 
 class Plan:
@@ -125,10 +150,24 @@ class Plan:
         added = [e for e in self._entries.values() if e.op == OP_ADD]
         deleted = [e for e in self._entries.values() if e.op == OP_DELETE]
         moved = [e for e in self._entries.values() if e.op == OP_STORAGE_CHANGE]
+        blocked = [e for e in self._entries.values() if e.blocked]
+        failed = [e for e in self._entries.values()
+                  if e.status in (STATUS_FAILED, STATUS_PARTIAL)]
         return {
             "total": len(self._entries),
             "added": len(added), "deleted": len(deleted), "moved": len(moved),
             "addedBytes": sum(e.estimated_bytes for e in added),
             "deletedBytes": sum(e.estimated_bytes for e in deleted),
             "delta": self.delta(),
+            # 해결되지 않은 충돌과 지난 Apply에서 실패한 항목은 사용자가 반드시
+            # 알아야 한다. 이게 안 보이면 "Apply 했으니 끝났다"고 오해한다.
+            "conflicts": len(blocked),
+            "failed": len(failed),
         }
+
+    def conflict_entries(self) -> list[PlanEntry]:
+        return [e for e in self._entries.values() if e.blocked]
+
+    def failed_entries(self) -> list[PlanEntry]:
+        return [e for e in self._entries.values()
+                if e.status in (STATUS_FAILED, STATUS_PARTIAL)]

@@ -148,6 +148,15 @@ class FrontendAdapter:
         """
         raise NotImplementedError
 
+    def remove_entries(self, layout, filenames) -> None:
+        """gamelist에서 해당 항목들을 제거한다.
+
+        "게임 삭제"는 ROM/Media뿐 아니라 메타데이터 항목까지 없애는 것을 의미한다.
+        파일만 지우고 항목을 남기면 다음 스캔에서 metadata-only 항목으로 되살아난
+        것처럼 보인다. 우리가 해석하지 않는 다른 요소(<folder> 등)는 건드리지 않는다.
+        """
+        raise NotImplementedError
+
     def media_pairs(self, layout, filename, media) -> list[tuple[str, str]]:
         """media를 이 Frontend의 규칙에 맞는 목적지로 매핑한 (src, dest) 목록.
 

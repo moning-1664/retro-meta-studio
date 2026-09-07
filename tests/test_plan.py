@@ -64,8 +64,10 @@ class PlanIntegrationTests(unittest.TestCase):
         self.source_root = build_esde_tree(self.dir / "source")
         self.target_root = build_esde_tree(self.dir / "target")
         # 대상에서 ROM과 gamelist를 비워 "받는 쪽" 상태로 만든다.
+        # 대상에서 FFX를 통째로 없앤다 - "대상에 없는 게임을 가져오는" 시나리오다.
         (self.target_root / "ps2" / "FFX.iso").unlink()
         (self.target_root / "downloaded_media" / "ps2" / "covers" / "FFX.png").unlink()
+        (self.target_root / "downloaded_media" / "ps2" / "videos" / "FFX.mp4").unlink()
 
         self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
         self.src = self.api.create_collection("Source", "es-de", str(self.source_root))["data"]["id"]
@@ -143,12 +145,31 @@ class PlanIntegrationTests(unittest.TestCase):
         wait_idle(self.api)
         self.assertEqual(self.api.plan_state(self.dst)["data"]["total"], 0)
 
-    def test_existing_identical_file_counts_as_zero_growth(self):
-        """대상에 이미 같은 파일이 있으면 논리적으로는 추가지만 디스크는 안 는다(§82)."""
+    def test_same_size_but_unverified_file_is_a_conflict_not_a_silent_overwrite(self):
+        """크기가 같다는 이유로 남의 파일을 덮어쓰면 안 된다.
+
+        `같은 이름 + 같은 크기 + 다른 내용`은 ROM 관리에서 흔하다. 확신할 수 없으면
+        사용자에게 묻는다(스펙 §85). 용량은 늘지 않지만 그것과 "덮어써도 된다"는
+        전혀 다른 문제다.
+        """
         self.api.copy_selection(self.src, [self._uid(self.src, "MGS2.iso")])
         self.api.paste(self.dst)
         state = self.api.plan_state(self.dst)["data"]
         self.assertEqual(state["added"], 1)
+        self.assertEqual(state["conflicts"], 1, "같은 크기 파일이 충돌로 잡히지 않았다")
+        self.assertEqual(state["delta"].get("internal", 0), 0)
+
+    def test_byte_identical_copy_is_skipped_without_asking(self):
+        """우리가(또는 다른 도구가) 복사해둔 파일은 타임스탬프까지 같다. 이건 묻지 않는다."""
+        import shutil
+        source = self.source_root / "ps2" / "MGS2.iso"
+        # copy2는 수정 시각을 보존한다 - 복사 도구들이 하는 것과 같다.
+        shutil.copy2(source, self.target_root / "ps2" / "MGS2.iso")
+
+        self.api.copy_selection(self.src, [self._uid(self.src, "MGS2.iso")])
+        self.api.paste(self.dst)
+        state = self.api.plan_state(self.dst)["data"]
+        self.assertEqual(state["conflicts"], 0, "이미 같은 파일인데 충돌로 물었다")
         self.assertEqual(state["delta"].get("internal", 0), 0)
 
     def test_paste_skips_items_whose_source_vanished(self):

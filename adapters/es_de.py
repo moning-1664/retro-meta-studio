@@ -266,6 +266,29 @@ class EsDeAdapter(FrontendAdapter):
             for key, value in (item.get("attrib") or {}).items():
                 child.set(key, value)
 
+    def remove_entries(self, layout, filenames) -> None:
+        """gamelist.xml에서 해당 <game> 항목만 지운다.
+
+        기존 트리를 편집하므로 <folder>처럼 우리가 해석하지 않는 최상위 요소와 다른
+        게임들은 그대로 남는다.
+        """
+        path = Path(layout.metadata_file)
+        root = self._parse_file(path)
+        if root is None:
+            return
+        wanted = set(filenames)
+        removed = False
+        for game in list(root.findall("game")):
+            name = Path((game.findtext("path") or "").strip()).name
+            if name in wanted:
+                root.remove(game)
+                removed = True
+        if not removed:
+            return
+        tree = ET.ElementTree(root)
+        ET.indent(tree, space="  ")
+        tree.write(path, encoding="utf-8", xml_declaration=True)
+
     def media_pairs(self, layout, filename, media) -> list[tuple[str, str]]:
         stem = Path(filename).stem
         pairs = []

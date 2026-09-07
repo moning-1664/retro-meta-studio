@@ -90,7 +90,8 @@ class Workspace:
     def provider_for(self, collection):
         return LocalStorageProvider.for_path(collection.root_path)
 
-    def scan(self, collection_id, *, media_types=None, force=False, progress_cb=None) -> dict:
+    def scan(self, collection_id, *, media_types=None, force=False, progress_cb=None,
+             systems=None) -> dict:
         collection = self.registry.get_collection(collection_id)
         if collection is None:
             raise WorkspaceError("Collection을 찾을 수 없습니다.")
@@ -99,7 +100,8 @@ class Workspace:
         provider = self.provider_for(collection)
 
         result = scan_collection(collection, cache, provider, adapter,
-                                 media_types=media_types, force=force, progress_cb=progress_cb)
+                                 media_types=media_types, force=force,
+                                 progress_cb=progress_cb, systems=systems)
 
         # 스캔으로 새로 발견된 System을 등록해 둬야 좌측 내비게이션과 Storage 배치가
         # 실제 디스크 상태를 따라간다.

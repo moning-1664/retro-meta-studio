@@ -14,18 +14,25 @@ Plan을 만든 뒤에도 파일 시스템은 밖에서 바뀔 수 있다. 탐색
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from adapters import get_adapter
 from app.model.plan import OP_ADD, OP_DELETE, OP_STORAGE_CHANGE
 
 
 def validate(plan, collection, cache, provider) -> dict:
     """반환: {"ok": bool, "entries": [...], "capacity": [...], "blocked": bool}"""
+    adapter = get_adapter(collection.frontend)
     problems = []
     for entry in plan.entries:
+        if entry.blocked:
+            # 해결되지 않은 충돌은 검증 대상이 아니라 사용자 결정 대기 상태다.
+            continue
         entry.status, entry.error = "pending", None
         if entry.op == OP_ADD:
             _validate_add(entry, provider)
         elif entry.op == OP_DELETE:
-            _validate_delete(entry, cache)
+            _validate_delete(entry, collection, cache, provider, adapter)
         elif entry.op == OP_STORAGE_CHANGE:
             _validate_storage_change(entry, collection)
         if entry.status == "invalid":
@@ -56,11 +63,30 @@ def _validate_add(entry, provider):
         source["media"] = [m for m in source["media"] if provider.exists(m["path"])]
 
 
-def _validate_delete(entry, cache):
+def _validate_delete(entry, collection, cache, provider, adapter):
+    """삭제 대상이 Plan을 만들 때와 같은 파일인지 확인한다.
+
+    Cache에 행이 있는지만 보면 부족하다. Plan을 만든 뒤 외부에서 ROM을 다른 파일로
+    교체했을 수 있는데, 그대로 지우면 사용자가 의도하지 않은 파일을 잃는다. 실제
+    파일의 크기와 수정 시각이 Cache와 같은지까지 본다.
+    """
     if entry.rom_uid is None:
         return
-    if cache.get_row(entry.rom_uid) is None:
+    row = cache.get_row(entry.rom_uid)
+    if row is None:
         entry.status, entry.error = "invalid", "항목이 이미 사라졌습니다."
+        return
+    if not row["present"]:
+        return  # metadata만 있는 항목. 지울 ROM 파일이 없다.
+
+    layout = adapter.layout(collection, row["system"])
+    stat = provider.stat(Path(layout.rom_dir) / row["filename"])
+    if stat is None:
+        entry.status, entry.error = "invalid", "ROM 파일이 이미 사라졌습니다."
+        return
+    if stat.size != int(row["size"] or 0) or stat.mtime_ns != int(row["mtime_ns"] or 0):
+        entry.status = "invalid"
+        entry.error = "ROM 파일이 외부에서 변경되었습니다. 다시 스캔한 뒤 삭제해주세요."
 
 
 def _validate_storage_change(entry, collection):
