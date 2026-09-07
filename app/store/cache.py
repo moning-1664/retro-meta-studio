@@ -28,13 +28,10 @@ SCHEMA_VERSION = 1
 
 MIGRATIONS = (
     Migration(1, (
+        # scan_meta는 증분 판정용 System별 시그니처("sig:<system>")도 담는다.
+        # ROM 수천 개를 매번 stat 하지 않고 디렉터리 mtime만 보고 "이 시스템은
+        # 통째로 변경 없음"을 판정하기 위한 것이다.
         "CREATE TABLE scan_meta (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)",
-        # 증분 판정용 디렉터리/파일 시그니처. ROM 수천 개를 매번 stat 하지 않기 위해
-        # 디렉터리 mtime만 보고 "이 시스템은 통째로 변경 없음"을 판정하는 데 쓴다.
-        """CREATE TABLE dir_sig (
-               path TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT '',
-               mtime_ns INTEGER, ctime_ns INTEGER
-           )""",
         """CREATE TABLE roms (
                rom_uid INTEGER PRIMARY KEY AUTOINCREMENT,
                system TEXT NOT NULL,
@@ -102,7 +99,7 @@ class CacheStore:
     def reset(self):
         """Cache 전체를 비운다. 스키마 불일치/손상 시 Full Scan 복구 경로(§66)."""
         with transaction(self._conn):
-            for table in ("media", "metadata", "roms", "dir_sig", "system_stats", "scan_meta"):
+            for table in ("media", "metadata", "roms", "system_stats", "scan_meta"):
                 self._conn.execute(f"DELETE FROM {table}")
 
     @property
@@ -123,17 +120,19 @@ class CacheStore:
                 " ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json",
                 (key, json.dumps(value, ensure_ascii=False)))
 
-    def get_dir_sig(self, path) -> tuple[int, int] | None:
-        row = self._conn.execute("SELECT mtime_ns, ctime_ns FROM dir_sig WHERE path=?", (str(path),)).fetchone()
-        return (row["mtime_ns"], row["ctime_ns"]) if row else None
+    def get_system_sig(self, system):
+        """System 하나의 증분 판정 시그니처. 스캐너가 정의한 구조를 그대로 보관한다."""
+        return self.get_meta(f"sig:{system}")
 
-    def set_dir_sig(self, path, mtime_ns, ctime_ns=None, kind=""):
+    def set_system_sig(self, system, sig):
+        self.set_meta(f"sig:{system}", sig)
+
+    def forget_system(self, system):
+        """System이 사라졌을 때 캐시에서 제거한다."""
         with transaction(self._conn):
-            self._conn.execute(
-                "INSERT INTO dir_sig (path,kind,mtime_ns,ctime_ns) VALUES (?,?,?,?)"
-                " ON CONFLICT(path) DO UPDATE SET kind=excluded.kind,"
-                " mtime_ns=excluded.mtime_ns, ctime_ns=excluded.ctime_ns",
-                (str(path), kind, mtime_ns, ctime_ns))
+            self._conn.execute("DELETE FROM roms WHERE system=?", (system,))
+            self._conn.execute("DELETE FROM system_stats WHERE system=?", (system,))
+            self._conn.execute("DELETE FROM scan_meta WHERE key=?", (f"sig:{system}",))
 
     # ------------------------------------------------------------------
     # 스캔 결과 반영

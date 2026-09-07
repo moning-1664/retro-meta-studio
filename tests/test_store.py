@@ -213,10 +213,10 @@ class CacheTests(unittest.TestCase):
 
     def test_reset_clears_everything(self):
         self.cache.replace_system("PS2", self._rows())
-        self.cache.set_dir_sig("E:/roms/PS2", 123)
+        self.cache.set_system_sig("PS2", {"rom": [1, 2]})
         self.cache.reset()
         self.assertEqual(self.cache.count_rows(), 0)
-        self.assertIsNone(self.cache.get_dir_sig("E:/roms/PS2"))
+        self.assertIsNone(self.cache.get_system_sig("PS2"))
 
 
 class ArchiveTests(unittest.TestCase):

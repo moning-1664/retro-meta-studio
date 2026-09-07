@@ -129,6 +129,14 @@ class FrontendAdapter:
     def list_roms(self, provider, layout) -> list[str]:
         raise NotImplementedError
 
+    def media_dirs(self, layout, media_types=None) -> list[str]:
+        """이 System의 media가 실제로 놓이는 디렉터리들.
+
+        스캐너가 변경 감지를 위해 훑어야 할 대상을 알려주는 용도다. 폴더 이름 규칙은
+        Frontend마다 다르므로 스캐너가 직접 알면 안 된다.
+        """
+        raise NotImplementedError
+
     # ------------------------------------------------------------------
     # 쓰기 (bulk)
     # ------------------------------------------------------------------
