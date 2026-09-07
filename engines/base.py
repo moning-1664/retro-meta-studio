@@ -72,3 +72,20 @@ class CopyEngine:
         않아도) 그 copy 자체의 성공 여부는 이 키로 알 수 있어야 한다.
         """
         raise NotImplementedError
+
+    def delete_paths(self, paths, timeout_sec: float) -> "dict[str, bool]":
+        """파일들을 삭제한다. 항목끼리 독립적이다.
+
+        반환: {str(path): 성공여부} - paths의 모든 경로가 키로 존재해야 한다.
+        """
+        raise NotImplementedError
+
+    def move_pairs(self, pairs: "list[tuple[Path, Path]]", timeout_sec: float) -> "dict[str, bool]":
+        """(src, dest)를 이동한다. 볼륨이 달라도 동작해야 한다.
+
+        **실패 시 원본이 남아야 한다.** 이동 도중 실패로 파일이 사라지는 것은
+        허용되지 않는다 - 복사를 먼저 끝내고 원본을 지우는 순서를 지켜야 한다.
+
+        반환: {str(dest): 성공여부} - pairs의 모든 dest가 키로 존재해야 한다.
+        """
+        raise NotImplementedError

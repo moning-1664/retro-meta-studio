@@ -29,6 +29,7 @@ from app.plan.validator import check_capacity, validate
 from app.store.registry import CHANGE_APPLIED, RegistryError, RegistryStore
 from app.workspace import Workspace, WorkspaceError
 from bridge.jobs import JobManager
+import file_ops
 from utils import normalize_title
 
 #: JS가 쓰는 표시용 라벨 <-> 저장소의 소문자 키
@@ -82,6 +83,9 @@ class Api:
         self._plans: dict[str, Plan] = {}
         self._clipboard_dir = (Path(cache_dir).parent / "clipboard") if cache_dir else paths.CLIPBOARD_DIR
         clipboard.prune(self._clipboard_dir)
+        # 파일 복사 엔진 선택. 기본은 Robocopy다 - 서명 없는 자체 워커는 백신 행동
+        # 기반 탐지에 걸린다는 실사용 보고가 있다(file_ops.py 참고).
+        file_ops.select_engine(self.registry.get_setting("copy_engine", file_ops.ENGINE_AUTO))
         self._window = None
 
     def close(self):
@@ -498,3 +502,21 @@ class Api:
     @guarded
     def default_storage_id(self):
         return ok(STORAGE_INTERNAL)
+
+    @guarded
+    def get_copy_engine(self):
+        """지금 어떤 엔진으로 파일을 옮기는지. 백신 문제로 바꿔야 할 때 쓴다."""
+        from engines.robocopy_engine import robocopy_available
+        return ok({
+            "setting": self.registry.get_setting("copy_engine", file_ops.ENGINE_AUTO),
+            "active": file_ops.active_engine_name(),
+            "robocopyAvailable": robocopy_available(),
+        })
+
+    @guarded
+    def set_copy_engine(self, name):
+        if name not in (file_ops.ENGINE_AUTO, file_ops.ENGINE_ROBOCOPY, file_ops.ENGINE_WORKER):
+            return err(f"알 수 없는 엔진입니다: {name}")
+        self.registry.set_setting("copy_engine", name)
+        file_ops.select_engine(name)
+        return ok({"active": file_ops.active_engine_name()})

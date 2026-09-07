@@ -43,7 +43,7 @@ app/          Collection·Plan·Archive·Match·Compare·Scan 등 모든 비즈�
 └── paths.py    앱 데이터 위치
 adapters/     Frontend Adapter (읽기+쓰기를 한 곳에서 책임)
 storage/      물리 접근 추상화 (Local/UNC, 후에 MTP)
-engines/      파일 복사 엔진 + file_ops.py + native/  ← RetroGameManager에서 그대로 승계
+engines/      파일 복사 엔진 (Robocopy 기본 / 네이티브 워커 대안) + file_ops.py
 bridge/       pywebview 브릿지와 Job 큐
 gui_web/      웹 UI (셸 + 가상 스크롤 Gamelist + 기존 Detail 패널)
 importers/    기존 Frontend 파서 - Phase 1에서 adapters/로 흡수 예정
@@ -72,3 +72,15 @@ python -m unittest discover -s tests
 
 `native/MediaCopyWorker.exe`가 없으면 네이티브 워커 테스트는 skip된다. 워커를 빌드하려면
 `native/build_worker.bat`을 실행한다.
+
+## 파일 복사 엔진
+
+대량 파일 작업을 앱이 직접 하면 백신의 행동 기반 탐지에 걸린다. 그래서 실제 작업은
+별도 프로세스에 맡기며, 두 가지 엔진을 지원한다.
+
+| 엔진 | 설명 |
+|---|---|
+| **Robocopy** (기본) | Windows 내장, 마이크로소프트 서명 바이너리. 백신이 문제 삼지 않는다 |
+| Native Worker | 자체 `MediaCopyWorker.exe`. 서명이 없어 AhnLab에 탐지된 사례가 있다 |
+
+설정은 `copy_engine`(`auto`/`robocopy`/`worker`)이며 기본값 `auto`는 Robocopy를 우선한다.

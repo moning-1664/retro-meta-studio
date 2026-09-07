@@ -43,7 +43,7 @@
 | 파일 | 근거 |
 |---|---|
 | `engines/base.py`, `engines/native_worker_engine.py` | 스펙 §67이 명시적으로 유지를 요구. 계약(원자성/실패격리)이 문서화되어 있음 |
-| `media_copy_worker.py`, `native/media_copy_worker.c` | AhnLab M1875 회피가 실측 검증된 자산(`GOLDEN_VALIDATION.md`) |
+| `media_copy_worker.py`, `native/media_copy_worker.c` | 대안 엔진으로 유지. 단 **기본은 Robocopy다** - 아래 R9 참고 |
 | `file_ops.py` + `MediaCopyBatch` | 배치 flush로 워커 spawn 비용을 억제하는 구조 |
 | `api.py`의 Job Queue (`_run_heavy_job`, `_start_phased_media_job`, 취소/직렬화) | Scan 중 크래시 대응으로 만들어진 부분. 재작성하면 같은 버그를 다시 겪는다 |
 | `gui_web/` 전체 (app.js 4,011줄 + style.css 974줄) | 스펙 §34/§36/§75가 유지를 요구. Detail 패널·모달·토스트·드래그선택·시스템 아이콘 모두 재사용 |
@@ -329,6 +329,7 @@ Plan 생성 시점의 `(size, mtime_ns)`를 엔트리에 박아두고 Apply 직�
 | R6 | 스키마 마이그레이션 부재 | 사용자 자산 유실 | `user_version` 마이그레이션을 1일차 도입. Cache는 파기·재생성으로 처리 |
 | R7 | Plan 대기 중인 게임의 메타데이터 편집 | 아직 디스크에 없는 파일에 쓰기 시도 | 아직 존재하지 않는(Plan `add` 상태) 항목의 편집은 파일이 아니라 그 Plan 엔트리의 payload에 반영. Apply 시 함께 기록된다 |
 | R8 | 두 인스턴스가 같은 DB·같은 Collection을 동시에 쓴다 | DB 잠금 충돌, 캐시 불일치, 같은 파일에 교차 쓰기 | WAL + busy_timeout, Collection 단위 Apply 락(heartbeat), `change_log` 폴링. §9 참조 |
+| R9 | **자체 네이티브 워커가 백신에 탐지된다** | 대량 복사 도중 프로세스가 강제 종료됨 | 서명이 없는 실행 파일이 대량 파일 작업을 반복하는 형태가 원인. `GOLDEN_VALIDATION.md`의 무탐지 실측은 특정 시점 1회일 뿐 보장이 아니다. **Windows 내장 Robocopy(마이크로소프트 서명)를 기본 엔진으로 쓴다.** `CopyEngine` 추상화 덕분에 교체 비용이 없었다 |
 
 ---
 
