@@ -28,26 +28,27 @@
 
 ## 현재 상태 (2026-09-08 기준)
 
-**Phase 7.4까지 완료, main에 push됨.** Adapter 4종, Match, Compare, Convert, Plan,
-Archive가 동작하고, Apply 성능과 Match 링크의 rename 취약성도 닫혔다.
+**Phase 7.5까지 완료, main에 push됨.** Adapter 4종, Match, Compare, Convert, Plan,
+Archive가 동작하고 **실제 앱이 뜨는 것까지 확인**했다(`python main.py`).
 
 지켜야 할 성질 여섯:
 - **Compare는 읽기 전용이다.** 새 변경 동작에는 `blockedInCompare()`를 넣을 것.
-- **Adapter는 모르는 필드를 버리지 않는다.** 단 경로처럼 위치에 매인 값은
-  `strip_location_raw()`로, 다른 Frontend의 값은 `raw_is_mine()`으로 걸러낸다.
+- **Adapter는 모르는 필드를 버리지 않는다.** 단 위치에 매인 값은 `strip_location_raw()`,
+  다른 Frontend의 값은 `raw_is_mine()`으로 걸러낸다.
 - **`to_common()`은 `tag_raw()`로 출처를 남긴다.**
-- **Adapter 쓰기는 System 단위 bulk다.** ROM 하나씩 쓰는 형태로 되돌리지 말 것.
-- **Adapter가 포맷 지식을 독점한다.** `supported_fields`/`media_types`를 서비스 쪽에
-  하드코딩하지 말 것.
-- **호출을 묶는 것과 실패를 묶는 것은 별개다.** Apply는 복사를 25개씩 묶어 부르지만,
-  실패와 되돌리기의 단위는 항목 그대로다.
+- **Adapter 쓰기는 System 단위 bulk다.**
+- **Adapter가 포맷 지식을 독점한다.**
+- **호출을 묶는 것과 실패를 묶는 것은 별개다.**
 
-**성능 기준선**(회귀 판단용): 400게임 Apply 1.20s, 1,000게임+media 12.36s,
-5,000게임+media 61.34s.
+**성능 기준선**: 400게임 Apply 1.20s, 1,000게임+media 12.36s, 5,000게임+media 61.34s.
 
-남은 것: Compare Row key 구조화(Phase 6에서 이월, 우선순위 낮음), Phase 8(MTP, 선택).
-의도적으로 남긴 한계: 다른 볼륨으로 파일을 옮기면 Match 링크가 끊긴다(해시가 필요한데
-비용 때문에 보류), SHA-256 비교.
+**사용자 판단이 필요한 것**: 제목 표시줄이 두 개다(네이티브 + 커스텀). CSS와
+`window_control`은 frameless를 전제로 쓰였는데 `main.py`가 그 옵션을 안 넘긴다.
+`frameless=True`로 가면 창 크기 조절/이동 방식이 바뀌어 손으로 확인해야 한다 -
+Phase 7.5 항목 참고.
+
+남은 것: Compare Row key 구조화(우선순위 낮음), Phase 8(MTP, 선택).
+의도적 한계: 다른 볼륨으로 옮기면 Match 링크가 끊긴다, SHA-256 비교.
 
 (이 절은 최신 상태를 담으므로 계속 갱신한다. 아래 날짜별 항목은 그 시점의 기록이므로
 고치지 않는다.)
@@ -705,3 +706,48 @@ Phase 5에서 "고치려면 Cache에 안정적인 rom key를 심어야 하니 �
 `origin/main`에 push 완료.
 
 **다음**: Compare Row key 구조화(Phase 6에서 이월, 우선순위 낮음), Phase 8(MTP, 선택).
+
+---
+
+## Phase 7.5 — 앱을 실제로 띄워 보고 찾은 것 (2026-09-08, Claude Code)
+
+**테스트 392개가 전부 통과하는 상태였지만 이 앱은 한 번도 실행된 적이 없었다.**
+띄워 보니 바로 문제가 보였다. 이 절의 교훈은 그것 자체다 - 주기적으로 실제로 띄워 볼 것.
+
+### 고친 것 — 창이 화면 밖으로 나갔다
+
+`main.py`가 요청하던 크기는 1536x1000 / 최소 1100x700인데, 개발 기기 화면은
+**1080x1196**이다. 창이 오른쪽으로 150px 나갔고, **최소 폭이 화면 폭보다 커서 사용자가
+줄여서 맞출 수도 없었다.**
+
+- `webview.screens`로 화면 크기를 얻어 초기 크기·최소 크기를 화면 안으로 줄인다.
+- **위치도 직접 정한다.** 크기만 맞췄더니 pywebview가 (52,52)에 놓아 여전히 12px이
+  잘렸다. 지금은 화면 안에 중앙 정렬한다.
+- `MIN_SIZE`는 900x640. **이 값을 다시 올리려면 그 폭에서 레이아웃이 견디는지 먼저
+  재 볼 것** - 1040px/900px 뷰포트에서 가로 넘침 0px을 확인하고 정한 값이다.
+- `tests/test_window_size.py`가 계산을 고정한다(실제로 창을 띄우는 건 테스트의 몫이 아니다).
+
+### 실행 방법 (다음에 또 띄울 때)
+
+```
+python main.py            # db/ 는 실행 시 자동 생성되고 gitignore 대상이다
+```
+
+창을 찾고 캡처하려면 PowerShell + Win32 `EnumWindows`/`GetWindowRect` +
+`System.Drawing`의 `CopyFromScreen`을 쓴다(이 세션에서 그렇게 확인했다).
+pywebview 창은 `MainWindowTitle`로는 안 잡히고 창 제목 열거로 찾아야 한다.
+
+### 아직 안 고친 것 — **제목 표시줄이 두 개다**
+
+네이티브 프레임과 앱이 그린 커스텀 타이틀바가 동시에 보인다.
+`gui_web/studio.css`에 `-webkit-app-region: drag`(타이틀바)와 `no-drag`(창 버튼)가
+이미 있고 `bridge/api.py::window_control`도 minimize/maximize/close를 구현해 뒀다 -
+**frameless를 전제로 쓰인 코드인데 `main.py`가 그 옵션을 안 넘긴다.**
+
+고치려면 `frameless=True`가 필요한데, 그러면 **창 크기 조절과 드래그 이동이
+pywebview 설정에 달리게 된다**(`easy_drag`는 System 드래그앤드롭과 충돌할 수 있어
+`pywebview-drag-region` 쪽이 맞다). 손으로 끌어 보지 않고는 확인할 수 없는 부분이라
+사용자 판단을 받기로 하고 남겨 뒀다.
+
+**검증**: 파이썬 346개(신규 5), Playwright 51개 전부 통과. 커밋 `1f15892`,
+`origin/main`에 push 완료.
