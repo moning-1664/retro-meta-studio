@@ -133,48 +133,34 @@ def _plan_copies(entry, layout, adapter, provider):
     """지금 시점의 목적지 상태를 보고 실제로 복사할 쌍을 고른다.
 
     Plan을 만든 뒤 시간이 흘렀을 수 있으므로 저장해둔 판정을 믿지 않고 다시 본다.
-    반환: (pairs, newly_created, replaced)
+    반환: (pairs, newly_created, replaced, blocked)
     - newly_created: 이번에 처음 생기는 목적지. 롤백할 때 지워도 되는 것들이다.
     - replaced: 이미 파일이 있어서 **덮어쓰게 되는** 목적지. 지워버리면 안 되고,
       덮어쓰기 전에 치워 뒀다가 실패하면 되돌려야 하는 것들이다.
+    - blocked: 덮어쓰게 되는데 **승인받지 않은** 목적지. 조용히 건너뛰면 안 된다 -
+      건너뛰고 메타데이터만 쓰면 gamelist가 남의 ROM을 가리키게 된다.
     """
-    from app.plan.builder import _MediaRef, snapshot_matches
+    from app.plan.builder import add_destinations, approved_targets, snapshot_matches
 
-    source = entry.source or {}
-    overwrite = entry.resolution == RESOLVE_OVERWRITE
-    candidates = []
+    # 사용자가 덮어쓰기를 승인한 **파일별** 목록. 승인이 없으면 빈 dict다.
+    approved = approved_targets(entry)
 
-    rom = source.get("rom") or {}
-    if rom.get("path"):
-        candidates.append((Path(rom["path"]), Path(layout.rom_dir) / entry.filename,
-                           int(rom.get("size") or 0)))
-
-    media_refs = [_MediaRef(m) for m in (source.get("media") or [])]
-    media_sizes = {str(m.path): m.size for m in media_refs}
-    for src, dest in adapter.media_pairs(layout, entry.filename, media_refs):
-        candidates.append((Path(src), Path(dest), media_sizes.get(str(src), 0)))
-
-    # 사용자가 덮어쓰기를 승인한 대상의 "그때 모습". 쓰기 직전에 한 번 더 본다.
-    approved = {str(c["dest"]): c.get("destSnapshot")
-                for c in (entry.conflicts or []) if c.get("dest")}
-
-    pairs, created, replaced = [], [], []
-    for src, dest, size in candidates:
+    pairs, created, replaced, blocked = [], [], [], []
+    for src, dest, size in add_destinations(entry, layout, adapter):
         action, _ = classify_destination(provider, src, size, dest)
         if action == ACTION_IDENTICAL:
             continue  # 이미 같은 파일이 있다. 건드릴 이유가 없다.
-        if action == ACTION_CONFLICT and not overwrite:
-            continue  # 해결되지 않았거나 건너뛰기로 정한 충돌
-        if dest.exists():
-            # 승인받은 그 파일이 아니면 덮어쓰지 않는다. Validate가 이미 걸러내지만,
-            # 실제로 쓰기 직전이 마지막 방어선이다.
-            if str(dest) in approved and not snapshot_matches(provider, dest, approved[str(dest)]):
+        if action == ACTION_CONFLICT:
+            # 여기가 마지막 방어선이다. 승인받은 그 파일일 때만 덮어쓴다.
+            if str(dest) not in approved or not snapshot_matches(provider, dest,
+                                                                 approved[str(dest)]):
+                blocked.append(dest)
                 continue
             replaced.append(dest)
         else:
             created.append(dest)
         pairs.append((src, dest))
-    return pairs, created, replaced
+    return pairs, created, replaced, blocked
 
 
 #: 한 번의 복사 호출에 묶는 항목 수.
@@ -197,9 +183,9 @@ BACKUP_SUFFIX = ".rms-backup"
 def _prepare_add(entry, collection, adapter, provider):
     """복사할 쌍을 계산만 한다. 파일은 건드리지 않는다."""
     layout = adapter.layout(collection, entry.system)
-    pairs, created, replaced = _plan_copies(entry, layout, adapter, provider)
-    return {"entry": entry, "layout": layout, "pairs": pairs,
-            "created": created, "replaced": replaced, "backups": []}
+    pairs, created, replaced, blocked = _plan_copies(entry, layout, adapter, provider)
+    return {"entry": entry, "layout": layout, "pairs": pairs, "created": created,
+            "replaced": replaced, "blocked": blocked, "backups": []}
 
 
 def _backup_replaced(item, errors) -> bool:
@@ -276,12 +262,23 @@ def _copy_prepared(prepared, errors, step):
     여부를 돌려주므로, 한 항목이 실패해도 되돌리는 것은 그 항목이 이번에 새로 만든
     파일뿐이다 - 묶었다고 남의 파일까지 되돌리면 안 된다.
     """
+    for item in prepared:
+        if not item.get("blocked"):
+            continue
+        # 승인받지 않은 파일이 목적지에 있다. **아무것도 하지 않는다** - 그 파일만
+        # 건너뛰고 메타데이터를 쓰면 gamelist가 남의 ROM을 가리키게 된다.
+        entry = item["entry"]
+        entry.status = STATUS_FAILED
+        entry.error = ("대상 폴더에 승인하지 않은 파일이 있습니다. "
+                       "다시 확인한 뒤 덮어쓸지 결정해주세요.")
+        errors.append(f"{entry.filename}: {entry.error}")
+
     for start in range(0, len(prepared), COPY_BATCH):
         batch = [item for item in prepared[start:start + COPY_BATCH]
-                 if _backup_replaced(item, errors)]
+                 if item["entry"].status != STATUS_FAILED and _backup_replaced(item, errors)]
         for skipped in prepared[start:start + COPY_BATCH]:
             if skipped not in batch:
-                step(skipped["entry"].filename)
+                step(skipped["entry"].filename)   # 진행률은 항목 수 기준이라 빼먹지 않는다
         pairs = [pair for item in batch for pair in item["pairs"]]
         results = {}
         if pairs:

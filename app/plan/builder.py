@@ -229,6 +229,70 @@ def resolve_conflict(plan, collection, provider, key, resolution):
     return {"key": key, "resolution": resolution, "delta": delta}
 
 
+def add_destinations(entry, layout, adapter) -> list:
+    """이 ADD 항목이 건드리게 될 (원본, 목적지, 크기) 목록.
+
+    Validate와 Apply가 **같은 목록**을 봐야 한다. 각자 계산하면 언젠가 갈라지고,
+    갈라지는 순간 "검증은 통과했는데 Apply가 다른 파일을 건드리는" 상태가 된다.
+    """
+    source = entry.source or {}
+    out = []
+    rom = source.get("rom") or {}
+    if rom.get("path"):
+        out.append((Path(rom["path"]), Path(layout.rom_dir) / entry.filename,
+                    int(rom.get("size") or 0)))
+    refs = [_MediaRef(m) for m in (source.get("media") or [])]
+    sizes = {str(m.path): m.size for m in refs}
+    for src_path, dest in adapter.media_pairs(layout, entry.filename, refs):
+        out.append((Path(src_path), Path(dest), sizes.get(str(src_path), 0)))
+    return out
+
+
+def approved_targets(entry) -> dict:
+    """사용자가 덮어쓰기를 승인한 **파일별** 목록. {dest: 그때의 모습}
+
+    **승인은 항목이 아니라 파일 단위다.** `entry.resolution`은 항목당 하나뿐이지만
+    충돌은 파일마다 생긴다. 커버가 충돌해서 "덮어쓰기"를 누른 것을 항목 전체의
+    허가로 읽으면, 사용자가 본 적도 없는 ROM까지 덮어쓰게 된다.
+
+    승인하지 않았으면 빈 dict다 - 그러면 어떤 파일도 덮어쓸 수 없다.
+    """
+    if entry.resolution != RESOLVE_OVERWRITE:
+        return {}
+    return {str(c["dest"]): c.get("destSnapshot")
+            for c in (entry.conflicts or []) if c.get("dest")}
+
+
+def unapproved_overwrites(entry, layout, adapter, provider) -> list:
+    """지금 덮어쓰게 되는데 **승인받지 않은** 목적지들.
+
+    두 가지가 여기 걸린다.
+
+    1. Plan을 만들 때는 비어 있던 자리에 그 사이 파일이 생긴 경우. 사용자는 그 파일에
+       대해 아무것도 승인한 적이 없다.
+    2. 승인은 받았지만 그 뒤 다른 파일로 바뀐 경우.
+
+    같은 크기·시각의 파일이 이미 있는 경우(ACTION_IDENTICAL)는 덮어쓰는 것이 아니라
+    건드리지 않는 것이므로 여기 들어오지 않는다.
+    """
+    approved = approved_targets(entry)
+    blocked = []
+    for src_path, dest, size in add_destinations(entry, layout, adapter):
+        action, _ = classify_destination(provider, src_path, size, dest)
+        if action != ACTION_CONFLICT:
+            continue
+        if str(dest) in approved and snapshot_matches(provider, dest, approved[str(dest)]):
+            continue
+        blocked.append(dest)
+
+    # 승인받은 대상이 **사라진** 경우도 승인이 무효다. "이 파일을 덮어쓴다"는 결정은
+    # 빈 자리에 새로 만드는 것과 다른 결정이다 - 사용자가 다시 정해야 한다.
+    for dest, saved in approved.items():
+        if Path(dest) not in blocked and not snapshot_matches(provider, dest, saved):
+            blocked.append(Path(dest))
+    return blocked
+
+
 class _MediaRef:
     """adapter.media_pairs()가 기대하는 최소 형태(media_type/path)."""
 

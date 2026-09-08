@@ -28,7 +28,7 @@
 
 ## 현재 상태 (2026-09-08 기준)
 
-**Phase 7.10까지 완료, main에 push됨.** (Phase 8 MTP는 안정성 작업을 위해 8.1에서 중단)
+**Phase 7.11까지 완료, main에 push됨.** (Phase 8 MTP는 안정성 작업을 위해 8.1에서 중단)
 
 **Phase 7.9까지 완료.** 앱이 실제로 뜨고, 사용자의 실제 자료 둘 다 읽으며,
 **다시 써도 파일이 그대로다**(실제 27개 gamelist / 값 14,282개 기준 차이 0).
@@ -1034,3 +1034,55 @@ SHA256 전면 도입 없음. Phase 7.9의 ES-DE write-back 보존 동작 그대�
 **검증**: 파이썬 431개(신규 37), Playwright 62개 전부 통과. 실제 ES-DE 백업
 27 gamelist / 1,558게임 / 14,282값 차이 0, 원본 sha256 동일. 수정을 되돌리면 신규
 37개 중 **18개가 실패**한다.
+
+---
+
+## 2026-09-08 — Phase 7.11: QA Audit (승인 범위 + Provider 회귀)
+
+문서: `docs/TEST_MATRIX.md`, `docs/TEST_REPORT_2026-09-08.md`
+
+Phase 7.10이 넣은 "승인한 것은 그 시점의 그 파일" 규칙에 **구멍이 있었다.** 규칙을
+넣는 것과 규칙이 모든 경로를 덮는 것은 다르다.
+
+### 다음 사람이 반드시 알아야 할 것
+
+- **승인은 항목이 아니라 파일 단위다.** `entry.resolution`은 항목당 하나뿐인데 충돌은
+  파일마다 생긴다. 커버 승인이 ROM 승인으로 번지면 사용자가 본 적도 없는 파일을
+  덮어쓴다. `builder.approved_targets()` / `unapproved_overwrites()`가 그 경계다.
+- **승인 없는 대상이 있으면 그 항목은 아무것도 하지 않는다.** 예전에는 그 파일만
+  조용히 건너뛰고 **gamelist는 쓰고 APPLIED로 표시**했다 - 메타데이터가 남의 ROM을
+  가리키게 된다. 건너뛰기는 답이 아니다.
+- **Validate와 Apply는 `add_destinations()`로 같은 목록을 본다.** 각자 계산하면
+  갈라지고, 갈라지면 "검증은 통과했는데 Apply가 다른 파일을 건드리는" 상태가 된다.
+- **원본 media 정책**: 없어진 것은 빼고 진행(D3), **바뀐 것은 멈춘다.**
+
+### 테스트를 쓸 때 밟기 쉬운 함정 두 개 (실제로 밟았다)
+
+1. **Adapter는 registry가 들고 있는 싱글턴이다.** `self.adapter.write_index = boom`으로
+   인스턴스 속성을 씌우고 치우지 않으면, 클래스 레벨로 패치하는 다른 테스트를 가려
+   **거짓 PASS**를 만든다(`test_plan_recovery`가 그렇게 깨졌다). 되돌릴 때
+   `self.adapter.__dict__.pop("write_index", None)`으로 **속성을 지운다.**
+2. **fixture는 파일마다 다른 mtime을 찍어야 한다.** Windows 시계는 ~15.6ms마다
+   갱신되는데 fixture는 그보다 빨리 만들어진다. 크기가 같은 두 파일이 같은 시각을
+   갖게 되면 `classify_destination()`이 "이미 같은 파일"로 보고 복사를 건너뛴다 -
+   테스트가 실행할 때마다 다른 결과를 낸다. `test_stability_hardening.touch()`가
+   카운터로 시각을 어긋나게 찍는다. **새 테스트도 이 `touch()`를 쓸 것.**
+
+### Phase 8 Provider 전환 회귀 검증
+
+`tests/test_provider_regression.py` — 네 Adapter 전부에 대해 쓰기→읽기→고치기→쓰기→
+다시읽기 + Provider 실패 시 디스크 미접촉. `EveryAdapterIsCoveredTests`가 Adapter를
+추가하고 여기 넣는 것을 잊으면 걸리게 한다. **회귀 없음.**
+
+### 아직 검증 못 한 것 (NOT TESTED - PASS로 적지 말 것)
+
+**Playwright 62개는 목업 API 위에서 돈다.** "GUI 성공 메시지 = 실제 파일 결과"는
+검증되지 않았다. 실제 filesystem에 닿는 E2E 하네스가 없어서, 다음이 전부 미검증이다:
+Cache↔외부 filesystem Refresh, Archive 충돌 시 current 결정 규칙(**정책 자체가
+미확정**), Collection→Collection 붙여넣기 workflow, Plan GUI(drag/clipboard/Execute),
+Cancel safety, Restart recovery, 다중 인스턴스.
+
+**Phase 8을 "안정화 완료"로 표시하려면 그 E2E 하네스가 먼저 필요하다.**
+
+**검증**: 파이썬 468개(신규 37), Playwright 62개 전부 통과. 전체 스위트 4회 연속
+동일 결과. 실제 ES-DE 27 gamelist / 1,558게임 / 14,282값 차이 0, 원본 sha256 동일.

@@ -189,6 +189,64 @@ class ConvertIntegrationTests(unittest.TestCase):
         self.assertTrue(cover.exists(), "media가 왕복에서 사라졌다")
         self.assertEqual(cover.read_bytes(), b"cover-bytes")
 
+
+    def test_repeated_round_trips_do_not_keep_losing_fields(self):
+        """**손실은 한 번 일어나고 멈춰야 한다 - 왕복마다 조금씩 깎이면 안 된다.**
+
+        Frontend 사이 변환은 반드시 무언가를 잃는다(§50-51). 그건 정상이다. 문제는
+        그 손실이 **누적되는** 경우다. 사용자가 ES-DE와 Pegasus를 오가며 작업하는
+        것은 흔한데, 왕복할 때마다 필드가 하나씩 사라지면 몇 번 만에 제목만 남는다.
+
+        그래서 1회 왕복 뒤 살아남은 것이 3회 왕복 뒤에도 그대로인지 본다.
+        """
+        current, hop = self.src, 0
+        after_first = None
+        for _ in range(3):
+            hop += 1
+            mid, _ = self._target(f"pg{hop}", "pegasus", empty_pegasus)
+            self._convert_and_apply(current, mid)
+            self.api.start_scan(mid, True)
+            wait_idle(self.api)
+
+            hop += 1
+            back, back_root = self._target(f"esde{hop}", "es-de", empty_esde)
+            self._convert_and_apply(mid, back)
+            self.api.start_scan(back, True)
+            wait_idle(self.api)
+
+            adapter = EsDeAdapter()
+            collection = self.api.registry.get_collection(back)
+            fields = adapter.read_index(
+                PROVIDER, adapter.layout(collection, "ps2"))["FFX.iso"].fields
+            if after_first is None:
+                after_first = dict(fields)
+            current = back
+
+        self.assertEqual(fields, after_first,
+                         "왕복을 반복할수록 값이 계속 깎인다")
+        self.assertEqual(fields["name"], "Final Fantasy X")
+
+    def test_media_also_survives_repeated_round_trips(self):
+        """파일도 마찬가지다 - 왕복마다 하나씩 사라지면 안 된다."""
+        current, hop = self.src, 0
+        for _ in range(3):
+            hop += 1
+            mid, _ = self._target(f"m_pg{hop}", "pegasus", empty_pegasus)
+            self._convert_and_apply(current, mid)
+            self.api.start_scan(mid, True)
+            wait_idle(self.api)
+
+            hop += 1
+            back, back_root = self._target(f"m_esde{hop}", "es-de", empty_esde)
+            self._convert_and_apply(mid, back)
+            self.api.start_scan(back, True)
+            wait_idle(self.api)
+            current = back
+
+        cover = back_root / "downloaded_media" / "ps2" / "covers" / "FFX.png"
+        self.assertTrue(cover.exists(), "왕복 3회 만에 media가 사라졌다")
+        self.assertEqual(cover.read_bytes(), b"cover-bytes", "다른 파일로 바뀌었다")
+
     # --- ⑤ LaunchBox: 제목 기준 media 파일명 ---------------------------
     def test_launchbox_apply_places_media_and_reads_it_back(self):
         target, root = self._target("launchbox", "launchbox", empty_launchbox)

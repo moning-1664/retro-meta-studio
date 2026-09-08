@@ -18,7 +18,7 @@ from pathlib import Path
 
 from adapters import get_adapter
 from app.model.plan import OP_ADD, OP_DELETE, OP_STORAGE_CHANGE, RESOLVE_OVERWRITE
-from app.plan.builder import snapshot_matches
+from app.plan.builder import snapshot_matches, unapproved_overwrites
 
 
 def validate(plan, collection, cache, provider) -> dict:
@@ -31,7 +31,7 @@ def validate(plan, collection, cache, provider) -> dict:
             continue
         entry.status, entry.error = "pending", None
         if entry.op == OP_ADD:
-            _validate_add(entry, provider, plan)
+            _validate_add(entry, provider, plan, collection, adapter)
         elif entry.op == OP_DELETE:
             _validate_delete(entry, collection, cache, provider, adapter)
         elif entry.op == OP_STORAGE_CHANGE:
@@ -46,7 +46,7 @@ def validate(plan, collection, cache, provider) -> dict:
             "capacity": capacity, "blocked": blocked}
 
 
-def _validate_add(entry, provider, plan=None):
+def _validate_add(entry, provider, plan=None, collection=None, adapter=None):
     source = entry.source or {}
     rom = source.get("rom") or {}
     if rom.get("path"):
@@ -63,15 +63,29 @@ def _validate_add(entry, provider, plan=None):
             entry.status, entry.error = "invalid", "원본 ROM이 변경되었습니다(크기 불일치)."
             return
 
-    # 덮어쓰기를 승인받은 대상이 그때 그 파일인지 확인한다. 사용자가 승인한 것은
-    # "그 시점의 그 파일"이지 "Apply 시점에 그 경로에 있는 아무 파일"이 아니다.
-    if entry.resolution == RESOLVE_OVERWRITE:
-        for conflict in entry.conflicts or []:
-            if not snapshot_matches(provider, conflict["dest"], conflict.get("destSnapshot")):
-                entry.status = "invalid"
-                entry.error = ("덮어쓸 대상이 Plan을 만든 뒤 바뀌었습니다. "
-                               "다시 확인한 뒤 덮어쓰기를 결정해주세요.")
-                return
+    # 원본 media도 ROM과 같은 수준으로 본다. 바뀐 커버를 조용히 복사하면 사용자는
+    # 자기가 고른 그림이 갔다고 믿는다.
+    #
+    # **"없어진 것"과 "바뀐 것"은 다르게 다룬다.** 없어진 media는 빼고 진행한다(D3) -
+    # 그것 때문에 붙여넣기 전체를 막을 이유가 없다. 하지만 다른 파일로 바뀐 것은
+    # 사용자가 고른 것이 아니므로 멈춘다.
+    for media in source.get("media") or []:
+        if not provider.exists(media["path"]):
+            continue
+        if not snapshot_matches(provider, media["path"], media.get("snapshot")):
+            entry.status, entry.error = "invalid", "원본 media가 변경되었습니다. 다시 확인해주세요."
+            return
+
+    # 덮어쓰게 되는 목적지 중 승인받지 않은 것이 있는지 본다. Plan을 만들 때는 비어
+    # 있던 자리에 그 사이 파일이 생겼을 수도 있고(승인한 적 없다), 승인받은 파일이
+    # 그 뒤 바뀌었을 수도 있다.
+    if collection is not None and adapter is not None:
+        layout = adapter.layout(collection, entry.system)
+        if unapproved_overwrites(entry, layout, adapter, provider):
+            entry.status = "invalid"
+            entry.error = ("대상 폴더에 승인하지 않은 파일이 있습니다. "
+                           "다시 확인한 뒤 덮어쓸지 결정해주세요.")
+            return
 
     missing = [m for m in (source.get("media") or []) if not provider.exists(m["path"])]
     if missing:

@@ -8,6 +8,7 @@
 비교하면 부족하다 - 같은 크기의 다른 ROM으로 바뀌는 것은 ROM 관리에서 아주 흔하다.
 """
 
+import os
 import unittest
 from pathlib import Path
 
@@ -27,9 +28,26 @@ from tests.fixtures import build_custom_esde_tree, scan, temp_root
 PROVIDER = LocalStorageProvider()
 
 
+#: `touch()`가 파일마다 다른 수정 시각을 찍기 위한 카운터.
+_TICK = [0]
+
+
 def touch(path: Path, data: bytes) -> Path:
+    """파일을 쓰고 **다른 파일과 겹치지 않는 수정 시각**을 찍는다.
+
+    이걸 하지 않으면 테스트가 들쭉날쭉해진다. Windows 시계는 약 15.6ms마다 갱신되는데
+    fixture는 그보다 빨리 만들어지므로, 크기가 같은 두 파일이 같은 수정 시각을 갖는
+    일이 자주 생긴다. 그러면 `classify_destination()`이 서로 다른 파일을
+    "이미 같은 파일"로 보고 복사를 건너뛴다 - 테스트가 실행할 때마다 다른 결과를 낸다.
+
+    실제 파일에서는 이것이 결함이 아니라 의도된 판정이다(같은 크기 + 같은 시각이면
+    우리가 복사해둔 파일로 본다). 흔들리는 것은 fixture 쪽이므로 fixture에서 고친다.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
+    _TICK[0] += 1
+    stamp = int(path.stat().st_mtime_ns) - _TICK[0] * 10 ** 9
+    os.utime(path, ns=(stamp, stamp))
     return path
 
 
@@ -128,8 +146,7 @@ class PlanCase(unittest.TestCase):
         build_custom_esde_tree(self.src_root, "ps2", [{"filename": "FFX.iso", "title": "FFX"}])
         build_custom_esde_tree(self.dst_root, "ps2", [])
 
-        self.src_rom = self.src_root / "ps2" / "FFX.iso"
-        self.src_rom.write_bytes(b"NEW" * 100)
+        self.src_rom = touch(self.src_root / "ps2" / "FFX.iso", b"NEW" * 100)
         self.src_cover = touch(self.src_root / "downloaded_media" / "ps2" / "covers" / "FFX.png",
                                b"n" * 50)
 
@@ -192,7 +209,13 @@ class OverwriteTargetIsRecheckedTests(PlanCase):
         self.assertEqual(self.dest_rom.read_bytes(), b"NEW" * 100)
 
     def test_a_replaced_target_stops_the_apply(self):
-        """대상이 다른 파일로 바뀌었다 - 승인은 그 파일에 대한 것이 아니었다."""
+        """대상이 다른 파일로 바뀌었다 - 승인은 그 파일에 대한 것이 아니었다.
+
+        `b"OTHER" * 60`은 원래 파일과 같은 300바이트다. 제자리로 덮어쓰면 같은 tick
+        안에서는 흔적이 남지 않아 테스트가 들쭉날쭉해진다 - 외부 도구가 하는 대로
+        지우고 새로 만든다.
+        """
+        self.dest_rom.unlink()
         touch(self.dest_rom, b"OTHER" * 60)
         result = self.validate()
         self.assertFalse(result["ok"], "바뀐 대상을 그대로 덮어쓰려 한다")
@@ -235,6 +258,7 @@ class OverwriteTargetIsRecheckedTests(PlanCase):
 
     def test_the_stale_target_is_not_overwritten_even_if_apply_runs(self):
         """검증을 건너뛰고 Apply가 돌아도 바뀐 대상을 덮어쓰지 않아야 한다."""
+        self.dest_rom.unlink()
         touch(self.dest_rom, b"OTHER" * 60)
         self.validate()
         self.apply()
@@ -263,11 +287,16 @@ class OverwriteRollbackRestoresOriginalTests(PlanCase):
         self.validate()
 
     def _break_metadata(self):
+        """gamelist 쓰기를 실패시킨다.
+
+        Adapter는 registry가 들고 있는 **싱글턴**이라, 인스턴스 속성을 씌워 두고
+        치우지 않으면 클래스 메서드를 패치하는 다른 테스트를 가린다(실제로
+        `test_plan_recovery`가 그렇게 깨졌다). 그래서 되돌릴 때 속성을 지운다.
+        """
         def boom(*_a, **_k):
             raise OSError("gamelist를 쓸 수 없다")
-        self.adapter.write_index, self._saved = boom, self.adapter.write_index
-        self.addCleanup(lambda: setattr(type(self.adapter), "write_index", self._saved)
-                        if False else setattr(self.adapter, "write_index", self._saved))
+        self.adapter.write_index = boom
+        self.addCleanup(lambda: self.adapter.__dict__.pop("write_index", None))
 
     def test_a_successful_overwrite_leaves_the_new_file_and_no_backup(self):
         self.apply()
@@ -317,7 +346,7 @@ class SourceChangeDetectionTests(PlanCase):
         self.assertTrue(self.validate()["ok"])
 
     def test_a_resized_source_is_rejected(self):
-        self.src_rom.write_bytes(b"N" * 5)
+        touch(self.src_rom, b"N" * 5)
         self.assertFalse(self.validate()["ok"])
 
     def test_a_same_size_source_replacement_is_rejected(self):
@@ -328,7 +357,7 @@ class SourceChangeDetectionTests(PlanCase):
         `OverwriteTargetIsRecheckedTests.test_the_known_limit_is_written_down` 참고.
         """
         self.src_rom.unlink()
-        self.src_rom.write_bytes(b"OTH" * 100)
+        touch(self.src_rom, b"OTH" * 100)
         self.assertEqual(self.src_rom.stat().st_size, len(b"NEW" * 100))
         self.assertFalse(self.validate()["ok"], "같은 크기의 다른 원본을 못 알아봤다")
 
