@@ -179,6 +179,16 @@
     },
     plan_remove_entry: () => ok({ removed: 1 }),
 
+    // Convert(§53). 미리보기는 "무엇을 잃는지"까지 말해야 의미가 있다.
+    convert_preview: () => ok({
+      sourceId: "c1", sourceName: "Master Library", sourceFrontend: "ES-DE",
+      targetId: "c2", targetName: "Android ES-DE", targetFrontend: "Pegasus",
+      games: 1284, metadata: 1284, media: 4821, droppedMedia: 96,
+      unsupportedFields: 37, unsupportedFieldNames: ["region"],
+      frontendSpecific: 112, systems: ["ps2", "snes"],
+    }),
+    start_convert: () => ok({ added: 1284, conflicts: 0, skipped: [] }),
+
     // Compare(§54-59). 목업은 상태를 들고 있다가 필터에 반응한다 - 필터 버튼이
     // 실제로 목록을 바꾸는지까지 GUI 테스트로 확인할 수 있어야 하기 때문이다.
     start_compare: (baseId, otherId) => {
@@ -298,6 +308,9 @@
     matchCounts: (id, romUids) => call("match_counts", id, romUids),
     applyMatch: (id, romUid, romIdentityId) => call("apply_match", id, romUid, romIdentityId),
     clearMatch: (id, romUid) => call("clear_match", id, romUid),
+
+    convertPreview: (sourceId, targetId) => call("convert_preview", sourceId, targetId),
+    startConvert: (sourceId, targetId) => call("start_convert", sourceId, targetId),
 
     startCompare: (baseId, otherId) => call("start_compare", baseId, otherId),
     compareState: () => call("compare_state"),

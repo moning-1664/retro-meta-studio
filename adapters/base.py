@@ -87,11 +87,22 @@ class AdapterAction:
     label: str
 
 
+#: 공통 모델이 다루는 Metadata 필드. Adapter가 이 중 무엇을 담을 수 있는지는 제각각이다.
+COMMON_FIELDS = ("name", "desc", "genre", "developer", "publisher",
+                 "releasedate", "region", "players", "rating")
+
+
 class FrontendAdapter:
     id: str = "base"
     display_name: str = "Base"
     #: 이 Frontend가 다루는 media 종류
     media_types: tuple[str, ...] = ()
+    #: 이 Frontend의 포맷이 **실제로 담을 수 있는** 공통 필드.
+    #:
+    #: Convert(§53)가 "이 변환에서 무엇이 버려지는지"를 사용자에게 미리 보여주려면,
+    #: 각 Adapter가 자기 포맷의 한계를 스스로 알려야 한다. 예: Pegasus의
+    #: metadata.pegasus.txt에는 region에 해당하는 키가 없다.
+    supported_fields: tuple[str, ...] = COMMON_FIELDS
 
     # ------------------------------------------------------------------
     # 구조 파악

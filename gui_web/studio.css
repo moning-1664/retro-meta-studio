@@ -391,3 +391,23 @@ button.sb-badge { cursor: pointer; }
 .compare-snapshot { color: var(--muted); font-size: var(--fs-eyebrow); font-variant-numeric: tabular-nums; }
 .cmp-identity { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
 .cheader-extras { display: flex; align-items: center; gap: 8px; padding-top: 4px; }
+
+/* Convert 미리보기 (스펙 §53) - 넘어가는 것과 잃는 것을 시각적으로 갈라 놓는다. */
+.convert-head {
+  display: flex; align-items: center; gap: 9px; min-width: 0;
+  padding: 7px 9px; margin-bottom: 10px;
+  background: var(--card2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.convert-arrow { flex: none; color: var(--accent); }
+.convert-table { display: flex; flex-direction: column; gap: 2px; }
+.convert-losses {
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
+}
+.convert-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 4px 6px; border-radius: var(--radius-sm);
+}
+.convert-row.lossy { background: var(--card2); }
+.convert-row.lossy .convert-value { color: var(--warning); font-weight: 600; }
+.convert-label { color: var(--muted); font-size: var(--fs-eyebrow); }
+.convert-value { font-variant-numeric: tabular-nums; }

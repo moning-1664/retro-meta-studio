@@ -146,6 +146,9 @@ class PegasusAdapter(FrontendAdapter):
     id = "pegasus"
     display_name = "Pegasus"
     media_types = tuple(ASSET_NAMES)
+    #: Pegasus 포맷에는 region 키가 없다 - Convert 미리보기가 이걸 근거로
+    #: "버려지는 필드"를 센다.
+    supported_fields = tuple(FIELD_KEYS)
 
     # ------------------------------------------------------------------
     # 구조 파악

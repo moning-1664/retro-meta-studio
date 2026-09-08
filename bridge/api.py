@@ -29,6 +29,7 @@ from app.plan.applier import apply_plan
 from app.plan.validator import check_capacity, validate
 from app.archive import service as archive_service
 from app.compare import engine as compare_engine
+from app.convert import service as convert_service
 from app.match import service as match_service
 from app.store.archive import ArchiveStore
 from app.store.registry import CHANGE_APPLIED, RegistryError, RegistryStore
@@ -603,6 +604,40 @@ class Api:
         if row is None:
             return err("항목을 찾을 수 없습니다.")
         return ok({"cleared": match_service.clear_match(self.archive, collection_id, row)})
+
+    # ------------------------------------------------------------------
+    # Convert (스펙 §53)
+    # ------------------------------------------------------------------
+    @guarded
+    def convert_preview(self, source_collection_id, target_collection_id):
+        """이 변환에서 무엇이 넘어가고 무엇이 사라지는지. **아무것도 바꾸지 않는다.**
+
+        Frontend 간 변환은 반드시 무언가를 잃으므로(§50-51), 실행 전에 그것을 보여줘야
+        사용자가 판단할 수 있다.
+        """
+        if source_collection_id == target_collection_id:
+            return err("같은 Collection으로는 변환할 수 없습니다.")
+        source = self.registry.get_collection(source_collection_id)
+        target = self.registry.get_collection(target_collection_id)
+        if source is None or target is None:
+            return err("Collection을 찾을 수 없습니다.")
+        cache = self.workspace.open(source_collection_id)
+        return ok(convert_service.preview(source, cache, target))
+
+    @guarded
+    def start_convert(self, source_collection_id, target_collection_id):
+        """변환 결과를 target의 Plan에 올린다. Auto Plan이 꺼져 있어도 여기서는
+        파일을 건드리지 않는다 - 확정은 언제나 Apply의 몫이다."""
+        if source_collection_id == target_collection_id:
+            return err("같은 Collection으로는 변환할 수 없습니다.")
+        source = self.registry.get_collection(source_collection_id)
+        if source is None:
+            return err("원본 Collection을 찾을 수 없습니다.")
+        source_cache = self.workspace.open(source_collection_id)
+        target, _cache, provider = self._plan_context(target_collection_id)
+        result = convert_service.plan_convert(self._plan(target_collection_id), source,
+                                              source_cache, target, provider)
+        return ok(result)
 
     # ------------------------------------------------------------------
     # Compare (스펙 §54-59)

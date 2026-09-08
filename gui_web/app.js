@@ -263,6 +263,10 @@
     const actions = [
       h("button", { class: "btn", onClick: () => { closeModal(); promptRename(collection); } }, ["이름 변경"]),
     ];
+    actions.push(h("button", { class: "btn", onClick: () => {
+      closeModal();
+      openConvert(collection);
+    } }, ["Convert"]));
     // Compare는 두 단계다(§54): 한 탭에서 기준을 정하고, 다른 탭에서 그 기준과 비교한다.
     if (S.compareBase && S.compareBase !== collection.id) {
       const baseName = (S.collections.find((c) => c.id === S.compareBase) || {}).name || "기준";
@@ -1066,6 +1070,108 @@
 
     el.addEventListener("click", () => openDetail(row));
     return el;
+  }
+
+  // ------------------------------------------------------------------
+  // Convert (스펙 §53)
+  // ------------------------------------------------------------------
+  /** 변환 대상 고르기 -> 미리보기 -> Plan. 원본 Collection은 건드리지 않는다. */
+  async function openConvert(source) {
+    const targets = S.collections.filter((c) => c.id !== source.id);
+    if (!targets.length) {
+      showToast("변환해 넣을 다른 Collection이 없습니다. 먼저 추가하세요.", "warning");
+      return;
+    }
+
+    const select = h("select", { class: "field-input" },
+      targets.map((c) => h("option", { value: c.id }, [`${c.name} (${c.frontendLabel})`])));
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "modal-text" }, [`${source.name}의 내용을 다른 Collection으로 변환합니다.`]),
+      h("div", { class: "field-label" }, ["대상 Collection"]),
+      select,
+      h("div", { class: "modal-hint" },
+        ["원본은 그대로 둡니다. 변환 결과는 Plan에 올라가고, Apply를 눌러야 실제로 반영됩니다."]),
+    ]);
+
+    showModal("Convert", body, [
+      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+      h("button", { class: "btn primary", onClick: () => {
+        const targetId = select.value;
+        closeModal();
+        showConvertPreview(source.id, targetId);
+      } }, ["다음"]),
+    ]);
+  }
+
+  /** 실행 전에 무엇을 잃는지 보여준다 - Frontend 간 변환은 반드시 무언가를 잃는다(§50-51). */
+  async function showConvertPreview(sourceId, targetId) {
+    const r = await api.convertPreview(sourceId, targetId);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    const d = r.data;
+
+    const body = h("div", { class: "modal-body" });
+    body.appendChild(h("div", { class: "convert-head" }, [
+      h("span", { class: "truncate" }, [`${d.sourceName} (${d.sourceFrontend})`]),
+      h("span", { class: "convert-arrow" }, ["→"]),
+      h("span", { class: "truncate" }, [`${d.targetName} (${d.targetFrontend})`]),
+    ]));
+
+    const table = h("div", { class: "convert-table" });
+    const line = (label, value, cls, hint) => {
+      const row = h("div", { class: "convert-row" + (cls ? " " + cls : "") },
+                    [h("span", { class: "convert-label" }, [label]),
+                     h("span", { class: "convert-value" }, [formatCount(value)])]);
+      if (hint) row.setAttribute("title", hint);
+      table.appendChild(row);
+    };
+    line("Games", d.games);
+    line("Metadata", d.metadata);
+    line("Media", d.media);
+    body.appendChild(table);
+
+    // 잃는 것은 따로 묶어서, 넘어가는 숫자와 섞이지 않게 한다.
+    const losses = h("div", { class: "convert-table convert-losses" });
+    const lossLine = (label, value, hint) => {
+      const row = h("div", { class: "convert-row" + (value ? " lossy" : "") }, [
+        h("span", { class: "convert-label" }, [label]),
+        h("span", { class: "convert-value" }, [formatCount(value)]),
+      ]);
+      if (hint) row.setAttribute("title", hint);
+      losses.appendChild(row);
+    };
+    lossLine("Unsupported fields", d.unsupportedFields,
+             (d.unsupportedFieldNames || []).length
+               ? `${d.targetFrontend} 포맷에 자리가 없는 필드: ${d.unsupportedFieldNames.join(", ")}`
+               : "대상 포맷이 담지 못하는 공통 필드 값의 개수");
+    lossLine("Unsupported media", d.droppedMedia,
+             `${d.targetFrontend}가 다루지 않는 media 종류`);
+    lossLine("Frontend-specific", d.frontendSpecific,
+             "원본 Frontend 고유 값 - 다른 Frontend로는 넘어가지 않습니다");
+    body.appendChild(losses);
+
+    if (d.unsupportedFields || d.droppedMedia || d.frontendSpecific) {
+      body.appendChild(h("div", { class: "modal-hint" },
+        ["표시된 값은 이번 변환에서 대상에 남지 않습니다. 원본 Collection은 그대로 유지됩니다."]));
+    }
+
+    showModal("Convert 미리보기", body, [
+      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+      h("button", { class: "btn primary", onClick: async () => {
+        closeModal();
+        const result = await api.startConvert(sourceId, targetId);
+        if (!result.ok) { showToast(result.error, "error"); return; }
+        const added = result.data.added || 0;
+        const skipped = (result.data.skipped || []).length;
+        // 대상 Collection의 Plan에 올라갔으므로 그쪽으로 데려간다 - 아니면 사용자는
+        // 아무 일도 안 일어난 것처럼 느낀다.
+        await openTab(targetId);
+        await refreshPlan();
+        renderAll();
+        showToast(`${formatCount(added)}개를 Plan에 올렸습니다`
+                  + (skipped ? ` (원본이 없어 ${skipped}개 제외)` : "")
+                  + ". Apply를 눌러야 실제로 반영됩니다.");
+      } }, ["Plan에 올리기"]),
+    ]);
   }
 
   // ------------------------------------------------------------------
