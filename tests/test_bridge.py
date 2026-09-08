@@ -37,7 +37,8 @@ class BridgeTests(unittest.TestCase):
         internal = detail["storages"][0]
         self.assertEqual(internal["id"], "internal")
         self.assertEqual([s["system"] for s in internal["systems"]], ["ps2"])
-        self.assertEqual(internal["systems"][0]["count"], 2)
+        # 네비게이션 개수는 목록 개수와 같아야 한다(게임 수, 물리 ROM 파일 수 아님).
+        self.assertEqual(internal["systems"][0]["count"], 3)
         self.assertEqual(internal["actualBytes"], 3110)
 
     def test_list_rows_paginates_and_reports_total(self):

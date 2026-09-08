@@ -1143,3 +1143,47 @@ Cancel safety, Restart recovery, 다중 인스턴스.
 외부 파일 추가/삭제 후 Rescan 반영.
 
 **검증**: 파이썬 486개, Playwright(목업) 62개, **E2E(실제 파일) 9개** 전부 통과.
+
+---
+
+## 2026-09-09 — Phase 7.13 (GUI-02): 네비게이션 개수 = 목록 개수
+
+전에 진행 중이던 작업(코드는 이미 있었고 검증/마무리가 안 된 상태)을 이어서 끝냈다.
+`tests/test_gui_counts.py`가 재현하는 실제 증상: 사용자의 ES-DE 백업(ROM 없이
+gamelist+media만 있는 정상 상태)을 열었더니 목록엔 1,539개가 뜨는데 좌측 네비게이션은
+28개 System 전부 0으로 보였고, 스캔 직후 다시 세면 1,539/1,533/1,519로 값이 흔들렸다.
+
+### 원인 두 가지, 고친 방식
+
+1. **세는 대상이 달랐다.** 네비게이션은 `system_stats.rom_count`(물리 ROM 파일 수),
+   목록은 `count_rows()`(게임 행 수)를 썼다. `CacheStore.count_by_system()`을 새로
+   추가해(`app/store/cache.py`) `roms` 테이블을 게임 단위로 세고, `bridge/api.py`의
+   `collection_detail()`이 이제 이 값을 쓴다. **ROM이 없는 것을 정상으로 다루는
+   Frontend(ES-DE)가 있으므로, "물리 파일 수"를 세는 통계를 화면 개수로 쓰면 안 된다** -
+   다른 개수 표시를 추가할 때도 이 구분을 먼저 확인할 것.
+2. **스캔은 2단계(커버 먼저, 나머지 나중)인데 단계마다 job이 새로 생긴다.** 화면이 1단계
+   job만 보고 "완료"로 읽어 2단계가 Cache를 쓰는 중에 개수를 세고 있었다. `jobs.run_phased()`에
+   `attach_followup_job_id=True`를 넘기면 완료 결과에 `followUpJobId`가 실린다
+   (`bridge/jobs.py`). `gui_web/app.js::pollJob()`이 이 값이 있으면 그 job으로 갈아타
+   끝까지 따라간다. **여러 단계로 나뉜 job을 새로 만들 때 이 플래그를 켜지 않으면 같은
+   레이스가 재현된다.**
+
+### 낡은 테스트 하나 고쳤다
+
+`tests/test_bridge.py::test_collection_detail_shapes_header_and_nav`가 옛 버그
+동작(물리 ROM 수 2)을 정답으로 고정해 두고 있었다 - fixture는 게임 3개인데 ROM은
+2개뿐이라 옛 코드가 "정상"으로 보였다. 목록 총합(3)과 같은 값으로 정정했다.
+**이 테스트가 다시 실패하면 카운트 소스가 갈라졌다는 뜻이니 `count_rows()`와
+`count_by_system()` 중 하나가 계약을 어긴 것부터 볼 것.**
+
+### 확인만 하고 넘어간 것
+
+이 개발 환경에는 `pywebview`가 설치돼 있지 않아 `tests/test_window_size.py`가
+`ModuleNotFoundError`로 막힌다(`requirements.txt`에는 있음 - 이 머신만의 문제).
+Phase 7.5 이후의 실제 실행 검증과는 무관하니, 그 파일을 건드리지 않는 한 무시해도 된다.
+
+**검증**: 파이썬 495개(신규 8, 웹뷰 미설치로 1개 스킵) 전부 통과, Playwright(목업)
+62개 전부 통과, E2E(실제 파일) 9개 전부 통과.
+
+**다음**: `docs/ARCHITECTURE.md` §7에 이 Phase를 반영할 것. 남은 후보는 여전히
+Compare Row key 구조화(우선순위 낮음), Phase 8(MTP, 선택), ARRM 배치(제외됨).

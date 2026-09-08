@@ -192,7 +192,7 @@
   const hideJobProgress = () => $("job-progress").classList.remove("show");
 
   function pollJob(jobId, title) {
-    return new Promise((resolve) => {
+    return new Promise((resolve) => {          // jobId는 단계가 넘어가며 바뀐다
       showJobProgress(title, jobId);
       const tick = async () => {
         const r = await api.jobProgress(jobId);
@@ -200,6 +200,11 @@
         const job = r.data;
         updateJobProgress(job.current, job.total, job.label);
         if (!job.done) { setTimeout(tick, 180); return; }
+        // 여러 단계로 나뉜 작업은 단계마다 job이 새로 생긴다. 앞 단계가 끝났다고
+        // 멈추면 뒤 단계가 아직 Cache를 쓰는 중에 목록을 그리게 된다 - 개수가
+        // 실행할 때마다 달라진다. 후속 job이 있으면 끝까지 따라간다.
+        const followUp = job.result && job.result.followUpJobId;
+        if (followUp && !job.error) { jobId = followUp; setTimeout(tick, 60); return; }
         hideJobProgress();
         if (job.error) { resolve({ ok: false, error: job.error, cancelled: job.cancelled }); return; }
         resolve({ ok: true, data: job.result });

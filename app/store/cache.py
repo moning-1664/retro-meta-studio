@@ -255,6 +255,17 @@ class CacheStore:
             params = [*params, int(limit), int(offset)]
         return [dict(r) for r in self._conn.execute(sql, params)]
 
+    def count_by_system(self) -> dict[str, int]:
+        """System별 **게임 수**. 좌측 네비게이션과 목록이 같은 것을 세게 하기 위한 것.
+
+        `system_stats.rom_count`를 쓰면 안 된다 - 그것은 물리 ROM 파일 수라서,
+        gamelist와 media만 있고 ROM이 없는 Collection(ES-DE에서 정상이다)에서는
+        전부 0이 된다. 실제로 사용자의 백업을 열었을 때 목록에는 1,539개가 뜨는데
+        네비게이션은 28개 System이 전부 0으로 표시됐다.
+        """
+        return {row["system"]: int(row["n"]) for row in self._conn.execute(
+            "SELECT system, COUNT(*) AS n FROM roms GROUP BY system")}
+
     def count_rows(self, *, systems=None, storage_ids=None, search=None) -> int:
         where, params = self._build_where(systems, storage_ids, search)
         row = self._conn.execute(f"SELECT COUNT(*) AS n FROM roms{where}", params).fetchone()

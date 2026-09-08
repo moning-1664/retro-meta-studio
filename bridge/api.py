@@ -168,6 +168,7 @@ class Api:
             return err("Collection을 찾을 수 없습니다.")
         cache = self.workspace.open(collection_id)
         stats = {s["system"]: s for s in cache.system_stats()}
+        games = cache.count_by_system()
         usage = cache.storage_usage()
         provider = self.workspace.provider_for(collection)
 
@@ -184,7 +185,8 @@ class Api:
                 "capacityBytes": volume.capacity_bytes,
                 "freeBytes": volume.free_bytes,
                 "systems": [
-                    {"system": s.system, "count": stats.get(s.system, {}).get("rom_count", 0)}
+                    # 목록에 뜨는 게임 수와 같은 값이어야 한다(`count_by_system`).
+                    {"system": s.system, "count": games.get(s.system, 0)}
                     for s in collection.systems_in(storage.storage_id)
                 ],
             })
@@ -796,7 +798,12 @@ class Api:
             ("나머지 미디어", lambda cb: self.workspace.scan(
                 collection_id, force=force, progress_cb=cb)),
         ]
-        job_id = self.jobs.run_phased((collection_id,), phases, kind="scan")
+        # **후속 job id를 결과에 실어 보낸다.** 단계마다 job이 새로 생기므로, 1단계
+        # job만 지켜보면 그것이 끝나는 순간 화면은 "스캔 완료"로 알고 목록을 그린다.
+        # 그런데 2단계가 여전히 Cache를 쓰고 있어서, 그 직후 보이는 개수가 실행할
+        # 때마다 다르다(실제 백업에서 1,539 / 1,533 / 1,519로 흔들렸다).
+        job_id = self.jobs.run_phased((collection_id,), phases, kind="scan",
+                                      attach_followup_job_id=True)
         return ok({"jobId": job_id})
 
     @guarded
