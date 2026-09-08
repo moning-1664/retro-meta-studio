@@ -72,8 +72,9 @@ test("확정한 뒤 목록을 다시 그리면 Match 해제가 나타난다", as
   await page.locator(".modal-actions .btn", { hasText: "Apply Match" }).click();
   await expect(page.locator(".match-badge")).toHaveCount(0);
 
-  // 정렬을 바꾸면 목록을 다시 불러오고 뱃지 개수도 다시 계산된다.
-  await page.locator(".mini-select").selectOption("filename");
+  // 정렬을 바꾸면 목록을 다시 불러오고 뱃지 개수도 다시 계산된다. 정렬 셀렉트는
+  // 없앴고 Header를 눌러서 정렬한다.
+  await page.locator(".lh-file").click();
   await expect(page.locator(".match-badge")).toHaveCount(1);
 
   await page.locator(".match-badge").click();

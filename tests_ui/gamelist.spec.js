@@ -43,13 +43,38 @@ test("Esc로 상세 패널을 닫는다", async ({ page }) => {
   await expect(page.locator("#detail-panel")).not.toHaveClass(/open/);
 });
 
-test("체크박스로 고르면 상태바 선택 개수가 따라 오른다", async ({ page }) => {
-  await page.locator(".lrow").nth(0).locator("input[type=checkbox]").check();
+// 체크박스는 없앴다. 수천 개 목록에서 하나씩 누르는 것은 실제로 쓸 수 있는 방법이
+// 아니어서, 탐색기와 같은 규칙(클릭 / Ctrl / Shift)으로 고른다.
+//
+// 행의 정중앙에는 Match 뱃지 같은 버튼이 올 수 있어서, 사용자가 실제로 누르는 것과
+// 같이 **빈 셀**(File)을 누른다.
+const cellOf = (page, n) => page.locator(".lrow").nth(n).locator(".lc-file");
+
+test("클릭하면 그 항목 하나만 선택된다", async ({ page }) => {
+  await cellOf(page, 0).click();
   await expect(page.locator(".sb-left")).toContainText("Selected 1");
-  await page.locator(".lrow").nth(1).locator("input[type=checkbox]").check();
+  await cellOf(page, 1).click();
+  await expect(page.locator(".sb-left")).toContainText("Selected 1");
+});
+
+test("Ctrl+클릭은 선택에 넣고 뺀다", async ({ page }) => {
+  await cellOf(page, 0).click();
+  await cellOf(page, 1).click({ modifiers: ["Control"] });
   await expect(page.locator(".sb-left")).toContainText("Selected 2");
-  await page.locator(".lrow").nth(0).locator("input[type=checkbox]").uncheck();
+  await cellOf(page, 1).click({ modifiers: ["Control"] });
   await expect(page.locator(".sb-left")).toContainText("Selected 1");
+});
+
+test("Shift+클릭은 기준점부터 여기까지를 고른다", async ({ page }) => {
+  await cellOf(page, 0).click();
+  await cellOf(page, 2).click({ modifiers: ["Shift"] });
+  await expect(page.locator(".sb-left")).toContainText("Selected 3");
+});
+
+test("고른 행은 눈에 보이게 표시된다", async ({ page }) => {
+  await cellOf(page, 0).click();
+  await cellOf(page, 1).click({ modifiers: ["Control"] });
+  await expect(page.locator(".lrow.selected")).toHaveCount(2);
 });
 
 test("System 내비로 좁히면 그 시스템 행만 남는다", async ({ page }) => {

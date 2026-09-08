@@ -103,16 +103,16 @@ test.describe("Plan Execute가 실제로 파일을 옮긴다", () => {
 
     await openReal(page);
     await openTab(page, "Source");
-    // 선택은 행의 체크박스로 한다 - 행 클릭은 상세 패널을 여는 동작이다.
-    await page.locator(".lrow", { hasText: "Final Fantasy X" })
-              .locator("input[type=checkbox]").check();
+    // 체크박스는 없앴다. 탐색기처럼 행을 눌러 고른다 - 행 가운데에는 버튼이 올 수
+    // 있어서 빈 셀(File)을 누른다.
+    await page.locator(".lrow", { hasText: "Final Fantasy X" }).locator(".lc-file").click();
     await page.locator(".sb-actions .btn", { hasText: "Copy" }).click();
 
     await openTab(page, "Target");
     await page.locator(".sb-actions .btn", { hasText: "Paste" }).click();
-    await expect(page.locator(".sb-actions .btn", { hasText: /^Apply \(/ })).toBeVisible();
+    await expect(page.locator("#filter-bar .btn", { hasText: /^Apply \(/ })).toBeVisible();
 
-    await page.locator(".sb-actions .btn", { hasText: /^Apply \(/ }).click();
+    await page.locator("#filter-bar .btn", { hasText: /^Apply \(/ }).click();
     // Apply는 확인 모달을 한 번 거친다 - 실제 파일을 바꾸는 동작이기 때문이다.
     await page.locator(".modal-actions .btn.primary").click();
     await expect(page.locator("#toast")).toBeVisible();
@@ -142,16 +142,17 @@ test.describe("Cancel은 아무것도 바꾸지 않는다", () => {
 
     await openReal(page);
     await openTab(page, "Source");
-    await page.locator(".lrow", { hasText: "Metal Gear Solid 2" })
-              .locator("input[type=checkbox]").check();
+    await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).locator(".lc-file").click();
     await page.locator(".sb-actions .btn", { hasText: "Copy" }).click();
 
     await openTab(page, "Target");
     await page.locator(".sb-actions .btn", { hasText: "Paste" }).click();
-    await expect(page.locator(".sb-actions .btn", { hasText: /^Apply \(/ })).toBeVisible();
+    await expect(page.locator("#filter-bar .btn", { hasText: /^Apply \(/ })).toBeVisible();
 
-    await page.locator(".sb-actions .btn", { hasText: /^Apply \(/ }).click();
-    await page.locator(".modal-actions .btn", { hasText: "취소" }).click();
+    // Plan 버리기는 목록 위 Cancel 버튼이다(예전에는 지우개 아이콘이었다).
+    // 되돌릴 수 없는 동작이 아니지만 계산한 것을 버리는 것이라 한 번 확인한다.
+    await page.locator("#filter-bar .btn", { hasText: "Cancel" }).click();
+    await page.locator(".modal-actions .btn", { hasText: "확인" }).click();
     await expect(page.locator(".modal-actions")).toHaveCount(0);
 
     // **확인 창에서 취소했으면 디스크는 그대로여야 한다.**
@@ -165,7 +166,7 @@ test.describe("외부에서 파일이 바뀌면 다시 읽어 반영한다", () 
 
     await openReal(page);
     await openTab(page, "Source");
-    await page.locator(".btn", { hasText: "Rescan" }).click();
+    await page.locator("#filter-bar .icon-btn[title='다시 스캔']").click();
     await expect(page.locator(".lrow", { hasText: "Ico" })).toBeVisible({ timeout: 20000 });
   });
 
@@ -174,7 +175,7 @@ test.describe("외부에서 파일이 바뀌면 다시 읽어 반영한다", () 
 
     await openReal(page);
     await openTab(page, "Source");
-    await page.locator(".btn", { hasText: "Rescan" }).click();
+    await page.locator("#filter-bar .icon-btn[title='다시 스캔']").click();
     await expect(page.locator(".lrow", { hasText: "Ico" })).toHaveCount(0, { timeout: 20000 });
   });
 });

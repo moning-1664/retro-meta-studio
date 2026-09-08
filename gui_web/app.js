@@ -15,7 +15,29 @@
 (function () {
   "use strict";
 
-  const ROW_HEIGHT = 34;
+  const ROW_HEIGHT = 26;   // 이전 프로젝트의 줄 높이. 34는 한 화면에 너무 적게 들어간다
+
+  // Gamelist 컬럼. 이전 프로젝트에서 실제로 쓰던 구성이다 - 제목이 아니라 **설명**이
+  // 가장 넓다. 목록만 훑어도 어떤 게임인지 알 수 있어야 하기 때문이다.
+  //
+  // `key`가 없는 컬럼(No., ★)은 정렬도 폭 조절도 하지 않는다.
+  const COLUMNS = [
+    { id: "no", label: "No.", width: 46, fixed: true },
+    { id: "file", label: "File", key: "filename", width: 190 },
+    { id: "title", label: "Title", key: "title", width: 220 },
+    { id: "desc", label: "Description", key: "desc", width: 390 },
+    { id: "region", label: "Region", key: "region", width: 78 },
+    { id: "rating", label: "Rating", key: "rating", width: 66 },
+    { id: "fav", label: "★", key: "favorite", width: 30, fixed: true },
+    { id: "genre", label: "Genre", key: "genre", width: 120 },
+    { id: "status", label: "Status", width: 62, fixed: true },
+  ];
+  const COL_MIN_WIDTH = 50;
+  const DEFAULT_COL_WIDTHS = Object.fromEntries(COLUMNS.map((c) => [c.id, c.width]));
+
+  function gridTemplate() {
+    return COLUMNS.map((c) => `${S.colWidths[c.id] || c.width}px`).join(" ");
+  }
   const PAGE_SIZE = 200;
   const OVERSCAN = 8;
   const MAX_TABS = 10;
@@ -76,6 +98,14 @@
     search: "",
     order: "title",
     descending: false,
+    favoritesOnly: false,
+    viewMode: "list",          // "list" | "card"
+    statusFilter: "all",       // all | metadata | media | missing
+    // 컬럼 폭은 사용자가 맞춰 놓는 것이라 Collection별로 기억한다(`ui_state`).
+    colWidths: { ...DEFAULT_COL_WIDTHS },
+    // Shift+Click 범위 선택의 기준점. 마지막으로 "그냥 누른" 행이다.
+    selectAnchor: null,
+    previewOn: true,
     // 가상 스크롤
     rowCache: new Map(), // index -> row
     loadedPages: new Set(),
@@ -114,10 +144,41 @@
 
   function currentQuery() {
     const scope = activeScope();
-    const query = { search: S.search, order: S.order, descending: S.descending };
+    const query = {
+      search: S.search, order: S.order, descending: S.descending,
+      favoritesOnly: !!S.favoritesOnly,
+    };
     if (scope.kind === "system") query.systems = [scope.id];
     else if (scope.kind === "storage") query.storageIds = [scope.id];
     return query;
+  }
+
+  // --------------------------------------------------------------------
+  // 화면 상태 기억하기 (컬럼 폭 / 정렬)
+  // --------------------------------------------------------------------
+  // 사용자가 맞춰 놓은 것은 앱을 닫아도 남아야 한다. Collection마다 따로 기억한다 -
+  // System 구성이 다르면 보고 싶은 폭도 다르다.
+  async function loadUiState(collectionId) {
+    S.colWidths = { ...DEFAULT_COL_WIDTHS };
+    if (!collectionId || collectionId === ARCHIVE_ID) return;
+    const r = await api.getUiState(collectionId);
+    if (!r.ok || !r.data) return;
+    if (r.data.colWidths) S.colWidths = { ...DEFAULT_COL_WIDTHS, ...r.data.colWidths };
+    if (r.data.sort) { S.order = r.data.sort.key || S.order; S.descending = !!r.data.sort.desc; }
+    if (typeof r.data.previewOn === "boolean") S.previewOn = r.data.previewOn;
+  }
+
+  let uiStateTimer = null;
+  function saveUiState() {
+    if (!S.activeId || S.activeId === ARCHIVE_ID) return;
+    clearTimeout(uiStateTimer);   // 끄는 동안 매 픽셀마다 저장하지 않는다
+    const id = S.activeId;
+    const payload = {
+      colWidths: { ...S.colWidths },
+      sort: { key: S.order, desc: !!S.descending },
+      previewOn: S.previewOn !== false,
+    };
+    uiStateTimer = setTimeout(() => api.saveUiState(id, payload), 300);
   }
 
   // ------------------------------------------------------------------
@@ -322,6 +383,9 @@
     S.activeId = id;
     resetList();
     await ensureDetail(id);
+    // 사용자가 맞춰 놓은 컬럼 폭과 정렬을 먼저 되살린 뒤에 그린다 - 나중에 불러오면
+    // 기본값으로 한 번 그렸다가 다시 그려서 화면이 흔들린다.
+    await loadUiState(id);
     renderAll();
     await reloadList();
     await refreshPlan();
@@ -357,6 +421,7 @@
     // Frontend 고유 기능은 여기서 따로 불러와야 한다.
     await loadAdapterActions();
     resetList();
+    await loadUiState(id);
     renderAll();
     await reloadList();
     await refreshPlan();
@@ -830,6 +895,68 @@
     if (isCompare()) { renderCompareBar(bar); return; }
     if (!activeDetail()) return;
 
+    // 이전 프로젝트의 툴바 구성이다.
+    //   List/Card · System · Status · ★ · Search · Refresh
+    // 정렬 셀렉트와 방향 버튼은 없앴다 - Header를 눌러서 정렬하기 때문이다.
+    const detail = activeDetail();
+
+    const modes = h("div", { class: "seg" });
+    [["list", "목록"], ["card", "카드"]].forEach(([mode, label]) => {
+      const btn = h("button", {
+        class: "seg-btn" + (S.viewMode === mode ? " on" : ""), title: label + " 보기",
+      }, [icon(mode === "list" ? "layoutList" : "layoutGrid", 12)]);
+      btn.addEventListener("click", () => {
+        if (S.viewMode === mode) return;
+        S.viewMode = mode;
+        renderFilterBar();
+        renderListWindow();
+      });
+      modes.appendChild(btn);
+    });
+    bar.appendChild(modes);
+
+    // System 필터. 좌측 내비게이션과 같은 곳을 가리키므로 상태를 공유한다.
+    const scope = activeScope();
+    const systems = (detail ? detail.storages.flatMap((s) => s.systems) : [])
+      .map((s) => s.system).sort();
+    const sysSel = h("select", { class: "mini-select", title: "System 필터" }, [
+      h("option", { value: "" }, ["모든 System"]),
+      ...systems.map((s) => h("option", { value: s }, [s])),
+    ]);
+    sysSel.value = scope.kind === "system" ? scope.id : "";
+    sysSel.addEventListener("change", async (e) => {
+      // setScope가 목록 재조회까지 한다. 여기서 또 부르면 같은 질의를 두 번 보낸다.
+      await setScope(e.target.value ? { kind: "system", id: e.target.value } : { kind: "all" });
+      renderFilterBar();
+    });
+    bar.appendChild(sysSel);
+
+    const statusSel = h("select", { class: "mini-select", title: "상태 필터" }, [
+      h("option", { value: "all" }, ["모든 상태"]),
+      h("option", { value: "metadata" }, ["메타데이터 없음"]),
+      h("option", { value: "media" }, ["미디어 없음"]),
+      h("option", { value: "missing" }, ["ROM 없음"]),
+    ]);
+    statusSel.value = S.statusFilter;
+    statusSel.addEventListener("change", async (e) => {
+      S.statusFilter = e.target.value;
+      resetList();
+      await reloadList();
+    });
+    bar.appendChild(statusSel);
+
+    const fav = h("button", {
+      class: "icon-btn" + (S.favoritesOnly ? " on" : ""),
+      title: S.favoritesOnly ? "전체 보기" : "즐겨찾기만 보기",
+    }, [S.favoritesOnly ? "★" : "☆"]);
+    fav.addEventListener("click", async () => {
+      S.favoritesOnly = !S.favoritesOnly;
+      renderFilterBar();
+      resetList();
+      await reloadList();
+    });
+    bar.appendChild(fav);
+
     const search = h("input", { class: "search-input", placeholder: "Search...", value: S.search });
     let timer = null;
     search.addEventListener("input", (e) => {
@@ -839,24 +966,49 @@
     });
     bar.appendChild(h("div", { class: "search-box" }, [icon("search", 13), search]));
 
-    const orderSel = h("select", { class: "mini-select" }, [
-      h("option", { value: "title" }, ["제목순"]),
-      h("option", { value: "filename" }, ["파일명순"]),
-      h("option", { value: "system" }, ["시스템순"]),
-      h("option", { value: "size" }, ["크기순"]),
-    ]);
-    orderSel.value = S.order;
-    orderSel.addEventListener("change", async (e) => { S.order = e.target.value; resetList(); await reloadList(); });
-    bar.appendChild(orderSel);
-
-    const dir = h("button", { class: "icon-btn", title: S.descending ? "내림차순" : "오름차순" },
-      [icon(S.descending ? "chevronDown" : "chevronUp", 12)]);
-    dir.addEventListener("click", async () => { S.descending = !S.descending; resetList(); await reloadList(); });
-    bar.appendChild(dir);
+    const refresh = h("button", { class: "icon-btn", title: "다시 스캔" }, [icon("refresh", 12)]);
+    refresh.addEventListener("click", () => runScan(S.activeId));
+    bar.appendChild(refresh);
 
     bar.appendChild(h("div", { class: "filter-spacer" }));
+
+    // Plan 조작은 여기 있어야 한다. 하단 상태바에 있으면 목록에서 고르고 바로 누르기가
+    // 멀고, 무엇보다 지금 무엇이 선택돼 있는지와 떨어져 보인다.
+    renderPlanActions(bar);
+
     bar.appendChild(h("div", { class: "filter-total", id: "filter-total" },
       [`${formatCount(S.total)} items`]));
+  }
+
+  /** AutoPlan / Apply / Cancel. 나머지(Copy/Paste/Delete)는 우클릭과 단축키로 쓴다. */
+  function renderPlanActions(bar) {
+    if (isCompare() || isArchive()) return;
+    const plan = S.plan;
+
+    const auto = h("button", {
+      class: "btn compact" + (S.autoPlan ? " primary" : ""),
+      title: "Auto Plan: 변경을 바로 적용하지 않고 먼저 계산합니다",
+    }, [S.autoPlan ? "✓ Auto Plan" : "Auto Plan OFF"]);
+    auto.addEventListener("click", toggleAutoPlan);
+    bar.appendChild(auto);
+
+    const apply = h("button", {
+      class: "btn compact primary", disabled: !(plan && plan.total),
+      title: plan && plan.total ? "Plan을 실제 파일에 적용합니다" : "적용할 Plan이 없습니다",
+    }, [plan && plan.total ? `Apply (${formatCount(plan.total)})` : "Apply"]);
+    if (plan && plan.total) apply.addEventListener("click", applyPlan);
+    bar.appendChild(apply);
+
+    // 지우개 아이콘 대신 Cancel. 무엇이 일어나는지 글자로 말하는 편이 낫다.
+    const cancel = h("button", {
+      class: "btn compact", disabled: !(plan && plan.total), title: "계산해둔 변경을 버립니다",
+    }, ["Cancel"]);
+    if (plan && plan.total) {
+      cancel.addEventListener("click", () => showConfirm(
+        "Plan 취소", "계산해둔 변경을 모두 버립니다. 실제 파일은 바뀌지 않습니다.", true,
+        async () => { await api.planClear(S.activeId); await refreshPlan(); }));
+    }
+    bar.appendChild(cancel);
   }
 
   // ------------------------------------------------------------------
@@ -879,12 +1031,61 @@
     const head = $("list-head");
     clear(head);
     if (!activeDetail()) return;
-    head.appendChild(h("div", { class: "lh lh-check" }));
-    head.appendChild(h("div", { class: "lh lh-index" }, ["#"]));
-    head.appendChild(h("div", { class: "lh lh-title" }, ["Title"]));
-    head.appendChild(h("div", { class: "lh lh-system" }, ["System"]));
-    head.appendChild(h("div", { class: "lh lh-status" }, ["Status"]));
-    head.appendChild(h("div", { class: "lh lh-desc" }, ["File"]));
+    head.style.gridTemplateColumns = gridTemplate();
+
+    COLUMNS.forEach((col) => {
+      const sorted = col.key && S.order === col.key;
+      const cell = h("div", { class: "lh lh-" + col.id + (sorted ? " sorted" : "") },
+                     [col.label]);
+      if (col.key) {
+        // 한 번 누르면 오름차순, 다시 누르면 내림차순. 이전 프로젝트와 같다 -
+        // 그래서 별도의 정렬 셀렉트와 방향 버튼이 필요 없다.
+        cell.addEventListener("click", async () => {
+          if (S.order === col.key) S.descending = !S.descending;
+          else { S.order = col.key; S.descending = false; }
+          saveUiState();
+          resetList();
+          renderListHead();
+          await reloadList();
+        });
+        if (sorted) cell.appendChild(icon(S.descending ? "chevronDown" : "chevronUp", 10));
+      }
+      if (!col.fixed) {
+        const handle = h("div", { class: "col-resize" });
+        handle.addEventListener("mousedown", (e) => startColumnResize(col.id, e));
+        handle.addEventListener("click", (e) => e.stopPropagation());
+        cell.appendChild(handle);
+      }
+      head.appendChild(cell);
+    });
+  }
+
+  /** 컬럼 경계를 끌어 폭을 바꾼다. 놓는 순간 저장한다. */
+  function startColumnResize(id, event) {
+    const startX = event.clientX;
+    const startWidth = S.colWidths[id] || DEFAULT_COL_WIDTHS[id];
+    document.body.style.cursor = "col-resize";
+
+    const onMove = (e) => {
+      S.colWidths[id] = Math.max(COL_MIN_WIDTH, startWidth + (e.clientX - startX));
+      const template = gridTemplate();
+      // 다시 그리지 않고 폭만 바꾼다 - 끄는 동안 목록 전체를 재생성하면 끊긴다.
+      const head = $("list-head");
+      if (head) head.style.gridTemplateColumns = template;
+      document.querySelectorAll(".lrow").forEach((r) => {
+        r.style.gridTemplateColumns = template;
+      });
+    };
+    const onUp = () => {
+      document.body.style.cursor = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      saveUiState();
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    event.preventDefault();
+    event.stopPropagation();
   }
 
   const isCompare = () => !!S.compare;
@@ -1045,24 +1246,15 @@
     const selected = S.selected.has(row.romUid);
     const el = h("div", {
       class: "lrow" + (selected ? " selected" : "") + (S.focused === row.romUid ? " focused" : ""),
-      style: { height: ROW_HEIGHT + "px" },
+      style: { height: ROW_HEIGHT + "px", gridTemplateColumns: gridTemplate() },
     });
 
-    const check = h("input", { type: "checkbox" });
-    check.checked = selected;
-    check.addEventListener("click", (e) => e.stopPropagation());
-    check.addEventListener("change", () => {
-      if (check.checked) S.selected.add(row.romUid); else S.selected.delete(row.romUid);
-      el.classList.toggle("selected", check.checked);
-      renderStatusBar();
-    });
-    el.appendChild(h("div", { class: "lc lc-check" }, [check]));
-    el.appendChild(h("div", { class: "lc lc-index" }, [String(index + 1)]));
+    // No. - 화면에 보이는 순번이 아니라 목록 전체에서의 순번이다.
+    el.appendChild(h("div", { class: "lc lc-no" }, [String(index + 1)]));
+    el.appendChild(h("div", { class: "lc lc-file truncate", title: row.file }, [row.file]));
 
-    const titleCell = h("div", { class: "lc lc-title" }, [
-      systemIcon(row.system, 15),
-      h("span", { class: "lrow-title truncate" }, [row.title || row.file]),
-    ]);
+    const titleCell = h("div", { class: "lc lc-title truncate" }, [row.title || row.file]);
+    titleCell.title = row.title || row.file;
     // Exact로 확정되지 않은 후보가 있으면 개수만 조용히 알린다. 누르기 전까지는
     // 아무것도 일어나지 않는다(§49 - 자동 병합 금지).
     const matchCount = S.matchCounts[row.romUid];
@@ -1073,13 +1265,106 @@
       titleCell.appendChild(badge);
     }
     el.appendChild(titleCell);
-    el.appendChild(h("div", { class: "lc lc-system" }, [
-      h("span", { class: "sys-badge" }, [String(row.system).toUpperCase()])]));
-    el.appendChild(h("div", { class: "lc lc-status" }, [statusMark(row)]));
-    el.appendChild(h("div", { class: "lc lc-desc truncate" }, [row.file]));
 
-    el.addEventListener("click", () => openDetail(row));
+    // Description이 가장 넓다. 목록만 훑어도 어떤 게임인지 알 수 있어야 한다.
+    const desc = (row.desc || "").replace(/\s+/g, " ").trim();
+    el.appendChild(h("div", { class: "lc lc-desc truncate", title: desc }, [desc]));
+    el.appendChild(h("div", { class: "lc lc-region truncate" }, [row.region || ""]));
+    el.appendChild(h("div", { class: "lc lc-rating" }, [formatRating(row.rating)]));
+
+    // 별표는 눌러서 바로 켜고 끈다. 상세 패널을 열지 않아도 되게.
+    const star = h("button", {
+      class: "fav-btn" + (row.favorite ? " on" : ""),
+      title: row.favorite ? "즐겨찾기 해제" : "즐겨찾기",
+    }, [row.favorite ? "★" : "☆"]);
+    star.addEventListener("click", (e) => { e.stopPropagation(); toggleFavorite(row, star); });
+    el.appendChild(h("div", { class: "lc lc-fav" }, [star]));
+
+    el.appendChild(h("div", { class: "lc lc-genre truncate", title: row.genre || "" },
+                     [row.genre || ""]));
+    el.appendChild(h("div", { class: "lc lc-status" }, [statusMark(row)]));
+
+    el.addEventListener("click", (e) => handleRowClick(e, row, index));
     return el;
+  }
+
+  /** rating은 0~5로 들어온다. 이전 프로젝트처럼 한 자리로만 보여준다. */
+  function formatRating(value) {
+    const n = parseFloat(value);
+    return Number.isFinite(n) && n > 0 ? n.toFixed(1) : "";
+  }
+
+  async function toggleFavorite(row, button) {
+    if (blockedInCompare("즐겨찾기를 변경")) return;
+    if (isArchive()) return;
+    const next = !row.favorite;
+    // 눌린 것이 바로 보이게 먼저 바꾸고, 실패하면 되돌린다.
+    row.favorite = next;
+    button.textContent = next ? "★" : "☆";
+    button.classList.toggle("on", next);
+
+    const r = await api.setFavorite(S.activeId, row.romUid, next);
+    if (!r.ok) {
+      row.favorite = !next;
+      button.textContent = row.favorite ? "★" : "☆";
+      button.classList.toggle("on", row.favorite);
+      showToast(r.error, "error");
+      return;
+    }
+    // 즐겨찾기만 보는 중이었다면 방금 해제한 항목은 목록에서 빠져야 한다.
+    if (S.favoritesOnly && !next) { resetList(); await reloadList(); }
+  }
+
+  /** 행 클릭. **탐색기와 같은 규칙으로 고른다.**
+   *
+   *   그냥 클릭      - 이 항목 하나만. 상세 패널이 열린다.
+   *   Ctrl+클릭      - 이 항목을 선택에 넣거나 뺀다.
+   *   Shift+클릭     - 기준점부터 여기까지를 선택으로 대체한다.
+   *   Ctrl+Shift+클릭 - 기준점부터 여기까지를 기존 선택에 더한다.
+   *
+   * 체크박스를 없앤 이유가 여기 있다 - 수천 개 목록에서 체크박스를 하나씩 누르는 것은
+   * 실제로 쓸 수 있는 방법이 아니다.
+   */
+  function handleRowClick(event, row, index) {
+    const additive = event.ctrlKey || event.metaKey;
+    if (event.shiftKey) {
+      const anchor = S.selectAnchor;
+      const anchorIndex = anchor == null ? -1 : indexOfRow(anchor);
+      if (anchorIndex >= 0) {
+        const [lo, hi] = anchorIndex < index ? [anchorIndex, index] : [index, anchorIndex];
+        if (!additive) S.selected.clear();
+        for (let i = lo; i <= hi; i++) {
+          const r = S.rowCache.get(i);
+          if (r) S.selected.add(r.romUid);
+        }
+      } else {
+        S.selected = new Set([row.romUid]);
+        S.selectAnchor = row.romUid;
+      }
+      renderListWindow();
+      renderStatusBar();
+      return;
+    }
+    if (additive) {
+      if (S.selected.has(row.romUid)) S.selected.delete(row.romUid);
+      else S.selected.add(row.romUid);
+      S.selectAnchor = row.romUid;
+      renderListWindow();
+      renderStatusBar();
+      return;
+    }
+    S.selected = new Set([row.romUid]);
+    S.selectAnchor = row.romUid;
+    renderStatusBar();
+    openDetail(row);
+  }
+
+  /** 캐시에 들어온 행 중에서 그 romUid의 위치. Shift 범위 선택의 기준점 계산용. */
+  function indexOfRow(romUid) {
+    for (const [index, row] of S.rowCache.entries()) {
+      if (row && row.romUid === romUid) return index;
+    }
+    return -1;
   }
 
   /** gamelist가 없는 Collection이면 ROM 목록만으로 만들어 줄지 묻는다.
@@ -1716,6 +2001,8 @@
     const r = await api.planState(S.activeId);
     S.plan = r.ok ? r.data : null;
     renderHeader();
+    // Apply/Cancel이 목록 위 툴바에 있으므로 Plan이 바뀌면 툴바도 다시 그려야 한다.
+    renderFilterBar();
     renderStatusBar();
     renderListWindow();
   }

@@ -143,7 +143,7 @@ body { font-size: var(--fs-body); }
   padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--card);
 }
 .search-box {
-  display: flex; align-items: center; gap: 6px; flex: 0 1 340px;
+  display: flex; align-items: center; gap: 6px; flex: 0 1 200px;  /* 검색만 넓게 차지하지 않게 */
   padding: 5px 9px; background: var(--card2);
   border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--muted);
 }
@@ -161,28 +161,66 @@ body { font-size: var(--fs-body); }
 
 /* Gamelist */
 #list-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--list-bg); }
+/* 컬럼 폭은 화면에서 정한다(gridTemplateColumns) - 사용자가 끌어서 바꾸고 그 값이
+   저장되기 때문에 CSS에 박아둘 수 없다. */
 #list-head {
-  display: grid; grid-template-columns: 30px 46px 1fr 88px 66px 1.1fr;
-  align-items: center; height: 30px; padding: 0 14px;
+  display: grid; align-items: center; height: 26px; padding: 0 8px;
   background: var(--list-head); border-bottom: 1px solid var(--list-border);
-  font-size: var(--fs-eyebrow); letter-spacing: .6px; color: var(--list-muted); text-transform: uppercase;
+  /* 헤더가 본문보다 작으면 어느 컬럼인지 읽기 어렵다. 대문자 변환도 뺐다 - 한글
+     컬럼명과 섞이면 정렬이 어긋나 보인다. */
+  font-size: var(--fs-caption); letter-spacing: .2px; color: var(--list-muted);
+  user-select: none;
 }
-#list-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; position: relative; }
+.lh {
+  position: relative; display: flex; align-items: center; gap: 4px;
+  padding-right: 6px; min-width: 0; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lh.sorted { color: var(--text); }
+.lh-no, .lh-status, .lh-fav { cursor: default; }
+.lh-rating, .lh-fav { justify-content: center; }
+/* 컬럼 경계. 실제 선보다 넓게 잡아야 잡기 쉽다. */
+.col-resize {
+  position: absolute; top: 0; right: -3px; width: 7px; height: 100%;
+  cursor: col-resize; z-index: 2;
+}
+.col-resize:hover { background: var(--accent); opacity: .45; }
+
+#list-scroll { flex: 1; overflow: auto; position: relative; }
 #list-spacer { width: 1px; }
 #list-window { position: absolute; top: 0; left: 0; right: 0; will-change: transform; }
 .lrow {
-  display: grid; grid-template-columns: 30px 46px 1fr 88px 66px 1.1fr;
-  align-items: center; padding: 0 14px; cursor: pointer;
+  display: grid; align-items: center; padding: 0 8px; cursor: pointer;
   border-bottom: 1px solid var(--list-row-border); color: var(--list-text);
 }
 .lrow:hover { background: var(--card2); }
 .lrow.selected { background: var(--list-selected); }
 .lrow.focused { box-shadow: inset 2px 0 0 var(--accent); }
 .lrow.placeholder { cursor: default; opacity: .5; }
-.lc { min-width: 0; display: flex; align-items: center; gap: 7px; font-size: var(--fs-body); }
-.lc-index { color: var(--list-muted); font-variant-numeric: tabular-nums; font-size: var(--fs-caption); }
-.lc-desc { color: var(--list-muted); font-size: var(--fs-caption); }
-.lrow-title { font-weight: 500; }
+.lc {
+  min-width: 0; display: flex; align-items: center; gap: 6px;
+  font-size: var(--fs-body); padding-right: 6px;
+}
+/* 제목만 굵게 하면 목록 전체가 제목 나열처럼 보인다. 본문 굵기를 유지하고
+   설명·부가 정보만 흐리게 해서 위계를 만든다. */
+.lc-title { color: var(--list-text); }
+.lc-no { color: var(--list-muted); font-variant-numeric: tabular-nums; justify-content: flex-end; }
+.lc-file, .lc-desc, .lc-region, .lc-genre { color: var(--list-muted); }
+.lc-rating { color: var(--list-muted); font-variant-numeric: tabular-nums; justify-content: center; }
+.lc-fav, .lc-status { justify-content: center; }
+.fav-btn {
+  background: none; border: 0; padding: 0; cursor: pointer; line-height: 1;
+  font-size: 13px; color: var(--list-muted);
+}
+.fav-btn.on { color: var(--warning, #e0a030); }
+.fav-btn:hover { color: var(--warning, #e0a030); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.seg-btn {
+  background: var(--card2); border: 0; padding: 3px 7px; cursor: pointer;
+  color: var(--muted); display: flex; align-items: center;
+}
+.seg-btn.on { background: var(--accent); color: #fff; }
+.icon-btn.on { color: var(--warning, #e0a030); }
 .sys-badge {
   padding: 1px 7px; border-radius: var(--radius-pill);
   background: var(--card3); color: var(--muted);
