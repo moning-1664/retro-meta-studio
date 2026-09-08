@@ -28,8 +28,16 @@
 
 ## 현재 상태 (2026-09-08 기준)
 
-**Phase 5(Match)까지 완료 + main에 push됨.** Phase 6(Compare Mode)이 다음 - `compare_engine.py`
-일반화, Match 엔진의 티어 판정을 Compare 좌우 매칭에 재사용할 예정.
+**Phase 5(Match) 완료 + 외부 리뷰 대응 hardening까지 main에 push됨.**
+
+다음은 Phase 6(Compare Mode). **`compare_engine.py`를 일반화하기 전에 Match의
+`classify()`를 `MatchSubject ↔ MatchSubject`로 한 단계 일반화해야 한다** - 지금 계약은
+"Collection cache row ↔ Archive rom_identity"로 박혀 있어 Compare(Collection ↔ Collection)에
+그대로 쓸 수 없다. 이 판단의 근거는 아래 hardening 항목과
+`docs/REPORTS/2026-09-08-phase5-hardening.md` §8에 있다.
+
+(이 절은 최신 상태를 담으므로 계속 갱신한다. 아래 날짜별 항목은 그 시점의 기록이므로
+고치지 않는다.)
 
 ---
 
