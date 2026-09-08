@@ -1187,3 +1187,36 @@ Phase 7.5 이후의 실제 실행 검증과는 무관하니, 그 파일을 건�
 
 **다음**: `docs/ARCHITECTURE.md` §7에 이 Phase를 반영할 것. 남은 후보는 여전히
 Compare Row key 구조화(우선순위 낮음), Phase 8(MTP, 선택), ARRM 배치(제외됨).
+
+---
+
+## 2026-09-09 — SQLite 커넥션 직렬화 + Archive `hasMedia` 실제화
+
+사용자가 "Archive에 수집"을 누르는 도중 스캔이 함께 돌면 `Cannot commit. No transaction
+to Active`, `bad parameter or other API misuse`, `get_row`의 `TypeError`가 났다 - 겉보기엔
+셋이지만 원인은 하나, **sqlite3 커넥션 하나를 여러 스레드가 동시에 건드린 것**이었다.
+`connect()` 문서가 스레드 안전은 호출자 책임이라 못박고 있는데 아무도 지키지 않고 있었다.
+
+### 고친 방식
+
+- `app/store/sqlite.py`의 커넥션을 감싸서 모든 statement가 **재진입 락** 아래 돈다.
+- `transaction()`은 **BEGIN~COMMIT 전체**를 락으로 감싼다. **statement마다 락을 걸면
+  안 된다** - 그래도 다른 스레드가 그 사이에 커밋할 수 있고, 그게 실제로 보고된 오류
+  그대로다. 다음에 트랜잭션 관련 코드를 만질 때 이 구분을 지킬 것.
+- 조회 결과는 락 안에서 읽어 작은 cursor 대역 객체로 돌려준다 - 살아있는 cursor를
+  그대로 넘기면 락이 풀린 뒤 다른 스레드가 낀 상태에서 호출자가 행을 당겨가게 된다.
+- 호출부는 전혀 안 바꿨다(`app/store/archive.py`, `bridge/api.py`만 별개 이유로 수정).
+
+### 함께 찾은 것 — Archive가 media를 갖고 있으면서도 없다고 답했다
+
+Archive 목록 조회가 `hasMedia`를 **하드코딩 false**로 내려서, `archive_media` 테이블에
+실제로 행이 쌓여 있어도 화면은 항상 media 없음으로 보였다. 목록 쿼리가 이제 실제로
+센다 - 실제 백업 기준 1,539개 중 1,428개가 media를 갖고 있었다(이미 있었는데 안 보였을
+뿐이다).
+
+**검증**: 파이썬 509개(신규 9, 직렬화 없이 되돌리면 실패). 커밋 `01812d4`,
+`origin/main`에 push 완료.
+
+**다음**: 남은 후보는 Compare Row key 구조화(우선순위 낮음), Phase 8(MTP, 선택,
+`docs/PENDING_DECISIONS.md`에서 사용자 확인 대기), Archive Revision Phase D(같은 문서에서
+사용자 확인 대기).
