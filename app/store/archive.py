@@ -125,6 +125,18 @@ MIGRATIONS = (
            )""",
         "CREATE INDEX ix_match_links_identity ON match_links(rom_identity_id)",
     )),
+    Migration(5, (
+        # 파일을 rename하면 (collection_id, system, filename) 키가 어긋나 사용자가
+        # 확정해 둔 Match가 조용히 끊긴다. 파일시스템이 주는 파일 ID(NTFS의
+        # 볼륨:인덱스)는 **rename과 내용 수정에도 유지되고 새 파일과는 다르므로**,
+        # 이름이 바뀐 뒤에도 같은 파일임을 알아볼 수 있다(실측으로 확인).
+        #
+        # 파일 ID를 주 키로 삼지는 않는다 - 네트워크 공유나 비NTFS에서는 값이 없고,
+        # 다른 볼륨으로 옮기면 바뀐다. 이름으로 먼저 찾고, 어긋날 때 이 값으로
+        # 되찾아 링크를 고쳐 놓는 보조 수단이다.
+        "ALTER TABLE match_links ADD COLUMN volume_file_id TEXT",
+        "CREATE INDEX ix_match_links_file ON match_links(collection_id, volume_file_id)",
+    )),
 )
 
 
@@ -377,21 +389,60 @@ class ArchiveStore:
             params.append(exclude_collection)
         return [dict(row) for row in self._conn.execute(sql, params)]
 
-    def put_match_link(self, collection_id, system, filename, rom_identity_id, *, tier="", score=0.0):
+    def put_match_link(self, collection_id, system, filename, rom_identity_id, *,
+                       tier="", score=0.0, volume_file_id=None):
         with transaction(self._conn):
             self._conn.execute(
-                "INSERT INTO match_links (collection_id,system,filename,rom_identity_id,tier,score,created_at)"
-                " VALUES (?,?,?,?,?,?,?)"
+                "INSERT INTO match_links (collection_id,system,filename,rom_identity_id,tier,score,"
+                " created_at,volume_file_id) VALUES (?,?,?,?,?,?,?,?)"
                 " ON CONFLICT(collection_id,system,filename) DO UPDATE SET"
                 "   rom_identity_id=excluded.rom_identity_id, tier=excluded.tier,"
-                "   score=excluded.score, created_at=excluded.created_at",
-                (collection_id, system, filename, rom_identity_id, tier, float(score), time.time()))
+                "   score=excluded.score, created_at=excluded.created_at,"
+                "   volume_file_id=excluded.volume_file_id",
+                (collection_id, system, filename, rom_identity_id, tier, float(score),
+                 time.time(), volume_file_id))
 
-    def get_match_link(self, collection_id, system, filename) -> dict | None:
+    def get_match_link(self, collection_id, system, filename, *, volume_file_id=None) -> dict | None:
+        """확정해 둔 Match를 찾는다. 이름이 바뀌었으면 파일 ID로 되찾아 고쳐 놓는다.
+
+        `volume_file_id`를 넘기면 두 가지가 달라진다.
+
+        1. **이름이 같아도 파일 ID가 다르면 남남으로 본다.** rename 뒤에 같은 이름의
+           다른 파일이 생기면, 이름만 보고 옛 링크를 물려주게 되기 때문이다.
+        2. 이름으로 못 찾으면 파일 ID로 찾아보고, 찾으면 **그 자리에서 filename을
+           고쳐 놓는다**(자가 복구). 다음부터는 이름으로 바로 찾힌다.
+        """
         row = self._conn.execute(
             "SELECT * FROM match_links WHERE collection_id=? AND system=? AND filename=?",
             (collection_id, system, filename)).fetchone()
-        return dict(row) if row else None
+        if row is not None:
+            known = row["volume_file_id"]
+            if not (volume_file_id and known and volume_file_id != known):
+                return dict(row)
+            # 이름은 같은데 다른 파일이다. 아래에서 파일 ID로 다시 찾는다.
+
+        if not volume_file_id:
+            return None
+        found = self._conn.execute(
+            "SELECT * FROM match_links WHERE collection_id=? AND volume_file_id=?",
+            (collection_id, volume_file_id)).fetchone()
+        if found is None:
+            return None
+
+        link = dict(found)
+        if link["filename"] != filename or link["system"] != system:
+            with transaction(self._conn):
+                # 자리를 옮겨 적는다. 새 자리에 이름만 같은 옛 링크가 있으면 그건
+                # 다른 파일의 것이므로 밀어낸다(위에서 이미 남남으로 판정했다).
+                self._conn.execute(
+                    "DELETE FROM match_links WHERE collection_id=? AND system=? AND filename=?",
+                    (collection_id, system, filename))
+                self._conn.execute(
+                    "UPDATE match_links SET system=?, filename=? WHERE collection_id=?"
+                    "  AND system=? AND filename=?",
+                    (system, filename, collection_id, link["system"], link["filename"]))
+            link["system"], link["filename"] = system, filename
+        return link
 
     def match_links_of(self, collection_id) -> dict:
         """{(system, filename): rom_identity_id} - 목록 한 번에 표시할 때 쓴다."""

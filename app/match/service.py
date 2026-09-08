@@ -22,9 +22,20 @@ from __future__ import annotations
 from app.match import engine
 
 
-def linked_identity(archive, collection_id, system, filename) -> str | None:
-    """사용자가 확정해 둔 Match가 있으면 그 rom_identity_id."""
-    link = archive.get_match_link(collection_id, system, filename)
+def linked_identity(archive, collection_id, row) -> str | None:
+    """사용자가 확정해 둔 Match가 있으면 그 rom_identity_id.
+
+    `row`(cache의 항목)를 통째로 받는 이유는 **파일이 rename됐을 때도 찾아내기
+    위해서**다. 링크는 (system, filename)으로 저장되지만, 이름이 바뀌면 그 키가
+    어긋나 사용자가 확정해 둔 Match가 조용히 끊긴다. cache가 들고 있는 파일
+    ID(`volume_file_id`)는 rename에도 유지되므로, 그것으로 되찾아 링크를 고친다.
+    """
+    return _link_of(archive, collection_id, row) or None
+
+
+def _link_of(archive, collection_id, row):
+    link = archive.get_match_link(collection_id, row["system"], row["filename"],
+                                  volume_file_id=row.get("volume_file_id"))
     return link["rom_identity_id"] if link else None
 
 
@@ -47,7 +58,7 @@ def candidates_for(archive, collection_id, row, *, deep=True, limit=engine.DEFAU
         kwargs["fields_of"] = fields_of
     candidates = finder(archive, source, **kwargs)
 
-    linked = linked_identity(archive, collection_id, row["system"], row["filename"])
+    linked = linked_identity(archive, collection_id, row)
     for candidate in candidates:
         candidate["linked"] = candidate["romIdentityId"] == linked
     return {
@@ -109,7 +120,8 @@ def apply_match(archive, collection_id, row, rom_identity_id, *, manual=False) -
         tier, score = chosen["tier"], chosen["score"]
 
     archive.put_match_link(collection_id, row["system"], row["filename"],
-                           rom_identity_id, tier=tier, score=score)
+                           rom_identity_id, tier=tier, score=score,
+                           volume_file_id=row.get("volume_file_id"))
     return {"romIdentityId": rom_identity_id, "tier": tier, "score": score,
             "manual": chosen is None}
 
