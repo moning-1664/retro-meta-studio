@@ -105,6 +105,8 @@
     colWidths: { ...DEFAULT_COL_WIDTHS },
     // Shift+Click 범위 선택의 기준점. 마지막으로 "그냥 누른" 행이다.
     selectAnchor: null,
+    // 접어 둔 Storage 그룹. 폴더 트리처럼 더블클릭으로 여닫는다.
+    collapsedStorages: {},
     previewOn: true,
     // 가상 스크롤
     rowCache: new Map(), // index -> row
@@ -284,17 +286,27 @@
   function renderTitlebar() {
     const bar = $("titlebar");
     clear(bar);
-    // `pywebview-drag-region`이 붙은 곳을 끌어야 창이 움직인다(frameless 창).
+    // **막대 전체가 끌기 영역이다.** `pywebview-drag-region`이 붙은 곳만 창을 옮기는데,
+    // 예전에는 제목과 가운데 여백에만 붙어 있어서 그 사이 빈틈을 잡으면 창이 안 움직였다.
     // 창 버튼에는 붙이지 않는다 - 버튼을 누를 때 창이 딸려 움직이면 안 된다.
-    bar.appendChild(h("div", { class: "brand pywebview-drag-region" }, [
-      h("span", { class: "brand-icon" }, [icon("database", 17)]),
+    bar.classList.add("pywebview-drag-region");
+
+    // 제목은 가운데 놓는다. 양옆에 같은 폭을 두어 버튼이 있어도 가운데가 밀리지 않게 한다.
+    bar.appendChild(h("div", { class: "titlebar-side" }));
+    bar.appendChild(h("div", { class: "brand" }, [
+      h("span", { class: "brand-icon" }, [icon("database", 20)]),
       h("span", { class: "brand-title" }, ["RetroMeta Studio"]),
     ]));
-    bar.appendChild(h("div", { class: "titlebar-spacer pywebview-drag-region" }));
-    const controls = h("div", { class: "window-controls" });
-    [["menu", "minimize"], ["layoutGrid", "maximize"], ["x", "close"]].forEach(([ico, action]) => {
-      controls.appendChild(h("button", { class: "icon-btn", title: action,
-        onClick: () => api.windowControl(action) }, [icon(ico, 12)]));
+
+    const controls = h("div", { class: "titlebar-side window-controls" });
+    // Windows의 창 버튼과 같은 모양으로 - 대시, 네모, 곱하기.
+    [["\u2013", "minimize", "최소화"],
+     ["\u25a1", "maximize", "최대화"],
+     ["\u00d7", "close", "닫기"]].forEach(([glyph, action, label]) => {
+      controls.appendChild(h("button", {
+        class: "win-btn" + (action === "close" ? " close" : ""), title: label,
+        onClick: () => api.windowControl(action),
+      }, [glyph]));
     });
     bar.appendChild(controls);
   }
@@ -611,12 +623,21 @@
       head.appendChild(h("span", { class: "nav-group-name" }, [storage.label.toUpperCase()]));
       head.appendChild(h("span", { class: "nav-count" }, [formatCount(total)]));
       head.addEventListener("click", () => setScope({ kind: "storage", id: storage.id }));
+      // 폴더처럼 접었다 편다. System이 많은 Storage가 목록을 다 차지하지 않게.
+      head.addEventListener("dblclick", (e) => {
+        e.preventDefault();
+        S.collapsedStorages[storage.id] = !S.collapsedStorages[storage.id];
+        renderNav();
+      });
       if (!isCompare()) {
         head.addEventListener("contextmenu", (e) => { e.preventDefault(); openStorageMenu(storage, e); });
       }
+      const collapsed = !!S.collapsedStorages[storage.id];
+      head.insertBefore(icon(collapsed ? "chevronRight" : "chevronDown", 11), head.firstChild);
       group.appendChild(head);
+      if (collapsed) group.classList.add("collapsed");
 
-      storage.systems.forEach((sys) => {
+      (collapsed ? [] : storage.systems).forEach((sys) => {
         const row = navRow(sys.system.toUpperCase(), sys.count,
           scope.kind === "system" && scope.id === sys.system,
           () => setScope({ kind: "system", id: sys.system }));
@@ -634,11 +655,19 @@
       });
 
       // System을 다른 Storage로 끌어다 놓는 자리(스펙 §10).
-      head.addEventListener("dragover", (e) => { e.preventDefault(); head.classList.add("drop-target"); });
-      head.addEventListener("dragleave", () => head.classList.remove("drop-target"));
-      head.addEventListener("drop", async (e) => {
+      //
+      // **그룹 전체가 받는다.** 예전에는 머리글 한 줄만 받아서, 사람이 자연스럽게
+      // 하는 동작 - 그 그룹 "안에" 떨어뜨리기 - 이 아무 일도 하지 않았다.
+      group.addEventListener("dragover", (e) => {
         e.preventDefault();
-        head.classList.remove("drop-target");
+        group.classList.add("drop-target");
+      });
+      group.addEventListener("dragleave", (e) => {
+        if (!group.contains(e.relatedTarget)) group.classList.remove("drop-target");
+      });
+      group.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        group.classList.remove("drop-target");
         let payload;
         try { payload = JSON.parse(e.dataTransfer.getData("text/plain")); } catch (_) { return; }
         if (!payload || payload.from === storage.id) return;

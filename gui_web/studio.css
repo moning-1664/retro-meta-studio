@@ -19,15 +19,27 @@ body { font-size: var(--fs-body); }
 
 /* ---------------------------------------------------------------- 타이틀바 */
 #titlebar {
-  display: flex; align-items: center; gap: 10px;
-  padding: 0 10px; background: var(--card); border-bottom: 1px solid var(--border);
-  -webkit-app-region: drag;
+  /* 높이를 정한다. 예전에는 내용 높이가 곧 막대 높이여서 아이콘과 글자가 위아래로
+     붙어 잘려 보였다. 창 전체 크기는 그대로 두고 이 막대 안에서만 여유를 준다. */
+  display: flex; align-items: center; height: 34px; flex: 0 0 34px;
+  padding: 0 4px 0 10px; background: var(--card); border-bottom: 1px solid var(--border);
 }
-.brand { display: flex; align-items: center; gap: 8px; }
-.brand-icon { color: var(--accent); display: flex; }
-.brand-title { font-size: var(--fs-body-lg); font-weight: 700; letter-spacing: .2px; }
-.titlebar-spacer { flex: 1; }
-.window-controls { display: flex; gap: 2px; -webkit-app-region: no-drag; }
+/* 좌우에 같은 폭을 둬야 가운데 제목이 버튼 쪽으로 밀리지 않는다. */
+.titlebar-side { flex: 1 1 0; display: flex; align-items: center; min-width: 0; }
+.window-controls { justify-content: flex-end; gap: 0; }
+.brand { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.brand-icon { color: var(--accent); display: flex; align-items: center; }
+/* 이전보다 30%쯤 크게. 창 제목은 화면에서 가장 먼저 읽히는 글자다. */
+.brand-title { font-size: calc(var(--fs-body-lg) * 1.3); font-weight: 700; letter-spacing: .2px; }
+
+/* Windows의 창 버튼과 같은 비율(폭이 높이보다 넓다). */
+.win-btn {
+  width: 44px; height: 100%; border: 0; background: none; cursor: pointer;
+  color: var(--muted); font-size: 14px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.win-btn:hover { background: var(--card2); color: var(--text); }
+.win-btn.close:hover { background: #c42b1c; color: #fff; }
 
 /* ------------------------------------------------------------ Collection 탭 */
 #tabs-bar {
@@ -211,6 +223,12 @@ body { font-size: var(--fs-body); }
   overflow: hidden;
 }
 .revision-meta { margin-top: 4px; font-size: var(--fs-eyebrow); color: var(--list-muted); }
+
+/* System을 끌어다 놓는 동안 그룹 전체가 받는다는 것을 보여준다. */
+.nav-group.drop-target {
+  outline: 1px dashed var(--accent); outline-offset: -1px; border-radius: var(--radius-sm);
+}
+.nav-group-head { user-select: none; }
 
 /* Gamelist */
 #list-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--list-bg); }

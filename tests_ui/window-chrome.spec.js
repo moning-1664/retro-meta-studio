@@ -8,16 +8,32 @@ const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
-test("제목 표시줄이 창을 끌 수 있는 영역으로 표시된다", async ({ page }) => {
-  // pywebview는 이 클래스가 붙은 곳을 끌 때만 창을 옮긴다.
-  await expect(page.locator("#titlebar .brand.pywebview-drag-region")).toHaveCount(1);
-  await expect(page.locator("#titlebar .titlebar-spacer.pywebview-drag-region")).toHaveCount(1);
+test("제목 표시줄 전체가 끌 수 있는 영역이다", async ({ page }) => {
+  // pywebview는 이 클래스가 붙은 곳을 끌 때만 창을 옮긴다. 예전에는 제목과 가운데
+  // 여백에만 붙어 있어서 그 사이 빈틈을 잡으면 창이 안 움직였다.
+  await expect(page.locator("#titlebar.pywebview-drag-region")).toHaveCount(1);
 });
 
 test("창 버튼은 끌기 영역에서 빠져 있다", async ({ page }) => {
   // 버튼에까지 끌기 영역이 붙으면 누를 때 창이 딸려 움직인다.
   await expect(page.locator("#titlebar .window-controls.pywebview-drag-region")).toHaveCount(0);
-  await expect(page.locator("#titlebar .window-controls .icon-btn")).toHaveCount(3);
+  await expect(page.locator("#titlebar .window-controls .win-btn")).toHaveCount(3);
+});
+
+test("창 버튼은 윈도우와 같은 기호를 쓴다", async ({ page }) => {
+  const labels = await page.locator("#titlebar .win-btn").allTextContents();
+  expect(labels).toEqual(["–", "□", "×"]);
+});
+
+test("제목은 가운데에 있고 잘리지 않는다", async ({ page }) => {
+  const bar = await page.locator("#titlebar").boundingBox();
+  const brand = await page.locator("#titlebar .brand").boundingBox();
+  // 가운데 - 양옆 여백 차이가 크지 않아야 한다.
+  const left = brand.x - bar.x;
+  const right = (bar.x + bar.width) - (brand.x + brand.width);
+  expect(Math.abs(left - right)).toBeLessThan(bar.width * 0.12);
+  // 잘리지 않는다 - 막대가 내용보다 높아야 한다.
+  expect(bar.height).toBeGreaterThan(brand.height);
 });
 
 test("크기 조절 손잡이가 오른쪽 아래에 있다", async ({ page }) => {
