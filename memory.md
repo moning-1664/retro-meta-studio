@@ -28,29 +28,25 @@
 
 ## 현재 상태 (2026-09-08 기준)
 
-**Phase 7.2 + 그 hardening까지 완료, main에 push됨.** Adapter 4종, Match, Compare,
-Convert, Plan, Archive가 동작하고 Frontend 간 변환이 실제 파일시스템 왕복으로 검증됐다.
+**Phase 7.3까지 완료, main에 push됨.** Adapter 4종, Match, Compare, Convert, Plan,
+Archive가 동작하고, Apply 성능 문제(항목별 호출)도 닫혔다.
 
-지켜야 할 성질 다섯:
+지켜야 할 성질 여섯:
 - **Compare는 읽기 전용이다.** 새 변경 동작에는 `blockedInCompare()`를 넣을 것.
 - **Adapter는 모르는 필드를 버리지 않는다.** 단 경로처럼 위치에 매인 값은
-  `strip_location_raw()`로, **다른 Frontend의 값은 `raw_is_mine()`으로** 걸러낸다.
-- **`to_common()`은 `tag_raw()`로 출처를 남긴다.** 안 남기면 남의 raw를 못 걸러낸다.
+  `strip_location_raw()`로, 다른 Frontend의 값은 `raw_is_mine()`으로 걸러낸다.
+- **`to_common()`은 `tag_raw()`로 출처를 남긴다.**
 - **Adapter 쓰기는 System 단위 bulk다.** ROM 하나씩 쓰는 형태로 되돌리지 말 것.
 - **Adapter가 포맷 지식을 독점한다.** `supported_fields`/`media_types`를 서비스 쪽에
   하드코딩하지 말 것.
+- **호출을 묶는 것과 실패를 묶는 것은 별개다.** Apply는 복사를 25개씩 묶어 부르지만,
+  실패와 되돌리기의 단위는 항목 그대로다.
 
-**다음 과제(측정 근거 있음)**: Apply가 항목당 약 50ms인데 그중 **복사 호출이 80%,
-`write_index`가 20%**다. `_apply_add`가 항목마다 `file_ops.copy_files()`를 불러 Robocopy
-프로세스가 매번 뜨는 것이 병목이다. 먼저 복사 호출을 묶고, 그 다음 `write_index`를 묶는다.
-**둘 다 되돌리기 정책을 먼저 정해야 한다** - 지금은 항목 하나가 실패하면 그 항목의 파일만
-되돌리는데, 묶으면 그 경계가 사라진다.
+**성능 기준선**(회귀 판단용): 400게임 Apply 1.20s, 1,000게임+media 12.36s,
+5,000게임+media 61.34s. 남은 시간은 실제 파일 I/O다.
 
-(앞선 Phase 7.1/7.2 항목에 "write_index의 O(n²)가 다음 과제"라고 적혀 있으나, 그건 재
-보지 않고 단정한 것이라 **틀렸다.** Phase 7.2 Hardening 항목의 측정을 볼 것.)
-
-그 다음은 Phase 7.3 이월분(`match_links` rename, Compare Row key 구조화),
-Phase 8(MTP, 선택).
+다음: 이월분 두 개 — `match_links`의 rename 취약성(Phase 5), Compare Row key 구조화
+(Phase 6, 우선순위 낮음). 그 다음이 Phase 8(MTP, 선택).
 
 (이 절은 최신 상태를 담으므로 계속 갱신한다. 아래 날짜별 항목은 그 시점의 기록이므로
 고치지 않는다.)
@@ -593,3 +589,63 @@ Phase 7.1·7.2 항목에 "`write_index()`의 O(n²)가 다음 과제"라고 적�
 
 **검증**: 파이썬 323개(신규 18), Playwright 51개 전부 통과. 커밋 `5bc9e6f`,
 `origin/main`에 push 완료.
+
+---
+
+## Phase 7.3 — Apply의 항목별 호출을 묶는다 (2026-09-08, Claude Code)
+
+Phase 7.2 Hardening의 측정을 근거로 고쳤다. **400게임 Apply 20.50s → 1.20s(17배).**
+상세는 `docs/REPORTS/2026-09-08-phase7.3-apply-batching.md`.
+
+### 구조 — `_apply_adds()`의 세 단계
+
+```
+준비 : 항목마다 복사할 쌍을 계산만 한다 (파일 안 건드림)
+복사 : COPY_BATCH(25)개씩 묶어 file_ops.copy_files()
+기록 : System 단위로 adapter.write_index() 한 번
+```
+
+**전부 한 번에 묶지 말 것.** 복사는 Apply에서 가장 오래 걸리는 구간이라 통째로 묶으면
+그 동안 진행률이 멈춰 사용자는 앱이 죽은 것으로 본다. `COPY_BATCH`를 없애거나 아주
+크게 만들면 그 회귀가 난다 - `test_progress_still_moves_during_the_copy`가 막는다.
+
+### 이번 작업의 핵심 구분 — **호출을 묶는 것과 실패를 묶는 것은 별개다**
+
+`copy_files()`가 **목적지별 성공 여부**를 돌려주므로, 호출을 묶어도 어느 항목이
+실패했는지 정확히 안다. 그래서 되돌리는 것은 **그 항목이 이번에 새로 만든 파일**뿐이다.
+
+묶었다고 묶음 전체를 실패로 처리하지 말 것. 실제로 그렇게 바꿔 보니 테스트 3개가
+실패한다(`test_one_failed_copy_does_not_drag_down_its_batch` 등).
+
+### 되돌리기 정책은 **바꾸지 않았다**
+
+리뷰가 "정책 고정"을 요구했지만, 확인해 보니 이미 `tests/test_plan_recovery.py`에
+명시돼 있었다(Phase 3 hardening). 새로 정하지 않고 그대로 지켰다.
+
+| 실패 지점 | 정책 |
+|---|---|
+| 복사 | 그 항목만 FAILED, 그 항목이 새로 만든 파일만 되돌림 |
+| 메타데이터 쓰기 | 복사한 파일을 되돌리고 FAILED (묶음 때문에 대상이 그 System 전체로 늘어남) |
+| media 링크 쓰기 | PARTIAL, **파일은 유지** (Phase 7.1에서 정함) |
+
+**media 링크만 정책이 다른 이유**: 메타데이터가 없으면 그 ROM은 gamelist에 없는 유령
+파일이 되어 다음 Apply가 충돌로 막힌다 → 되돌리는 게 낫다. media 링크만 없으면 항목은
+이미 gamelist에 있고 파일도 유효하다 → 되돌리면 오히려 복사를 다시 해야 한다.
+
+### 실측 (이 숫자를 기준선으로 쓸 것)
+
+| 게임 수 | 이전 | 이후 |
+|---|---|---|
+| 100 | 4.55s | 0.34s |
+| 200 | 9.67s | 0.60s |
+| 400 | 20.50s | 1.20s |
+
+호출 횟수(400게임): `copy_files` 400 → 16회, `write_index` 400 → 1회.
+media 포함 실제 규모: 1,000게임 12.36s / 5,000게임 61.34s — **남은 시간은 실제 파일
+I/O이지 프로세스 기동 몫이 아니다.** 여기서 더 줄이려면 복사 자체를 봐야 한다.
+
+**검증**: 파이썬 331개(신규 8), Playwright 51개 전부 통과. 커밋 `022ef78`,
+`origin/main`에 push 완료.
+
+**다음**: 이월분 두 개 — `match_links`가 파일명 rename에 끊기는 문제(Phase 5에서 이월),
+Compare Row key 구조화(Phase 6에서 이월, 우선순위 낮음). 그 다음이 Phase 8(MTP, 선택).
