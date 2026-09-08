@@ -174,8 +174,14 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids) -> dic
             # Metadata는 바이트가 움직이지 않으므로 바로 파일에 쓴다(D1).
             layout = adapter.layout(collection, system)
             merged = {**(row["fields"] or {}), **fields}
+            # Archive의 frontend_raw는 그것을 올린 Collection의 것이라, 대상이 다른
+            # Frontend면 모양이 맞지 않아 되살릴 수 없다. 대상에 이미 있는 값이
+            # 있으면 그쪽을 쓰고, 없으면 내 것일 때만 가져온다.
+            existing_raw = row["frontend_raw"] if row else None
+            candidate = existing_raw or frontend_raw
+            preserved = candidate if adapter.raw_is_mine(candidate) else {}
             adapter.write_index(layout, [GameEntry(filename=filename, fields=merged,
-                                                   frontend_raw=row["frontend_raw"] or frontend_raw)])
+                                                   frontend_raw=preserved)])
             title = (merged.get("name") or "").strip() or Path(filename).stem
             cache.update_metadata(rom_uid, merged, title=title, title_norm=normalize_title(title))
             updated += 1

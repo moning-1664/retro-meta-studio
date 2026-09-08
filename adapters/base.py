@@ -91,6 +91,16 @@ class AdapterAction:
 COMMON_FIELDS = ("name", "desc", "genre", "developer", "publisher",
                  "releasedate", "region", "players", "rating")
 
+#: `frontend_raw`가 **어느 Frontend에서 나왔는지**를 스스로 밝히는 키.
+#:
+#: frontend_raw의 내용과 모양은 Frontend마다 다르다(ES-DE는 `{"tag","text","attrib"}`,
+#: Pegasus는 `{"key","value"}`). 그래서 다른 Frontend의 raw를 그대로 넘겨받으면
+#: 되살리다가 깨진다 - 실제로 ES-DE -> Pegasus Convert가 `KeyError: 'key'`로 실패했다.
+#:
+#: 출처를 값 안에 넣어 두면 Clipboard 파일이나 Archive DB를 거쳐도 함께 따라간다.
+#: 별도 스키마를 늘리지 않고 "이 값이 내 것인가"를 어디서든 판정할 수 있다.
+RAW_FRONTEND_KEY = "_frontend"
+
 
 class FrontendAdapter:
     id: str = "base"
@@ -167,6 +177,22 @@ class FrontendAdapter:
         것처럼 보인다. 우리가 해석하지 않는 다른 요소(<folder> 등)는 건드리지 않는다.
         """
         raise NotImplementedError
+
+    def tag_raw(self, frontend_raw: dict) -> dict:
+        """이 원본 보존값이 내 것임을 표시한다. `to_common()`의 마지막에 부른다."""
+        raw = dict(frontend_raw or {})
+        if raw:
+            raw[RAW_FRONTEND_KEY] = self.id
+        return raw
+
+    def raw_is_mine(self, frontend_raw) -> bool:
+        """이 원본 보존값을 내가 되살릴 수 있는가.
+
+        출처 표시가 없으면(예전에 저장된 값) 일단 내 것으로 본다 - 표시가 없다는
+        이유로 멀쩡한 값을 버리면 계약 2를 어기는 쪽이 된다.
+        """
+        origin = (frontend_raw or {}).get(RAW_FRONTEND_KEY)
+        return origin is None or origin == self.id
 
     def strip_location_raw(self, frontend_raw) -> dict:
         """**다른 위치로 옮겨 적을 때 따라가면 안 되는** 원본 값을 걷어낸다.

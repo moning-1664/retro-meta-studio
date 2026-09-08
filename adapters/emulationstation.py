@@ -160,7 +160,7 @@ class EmulationStationAdapter(FrontendAdapter):
         if game.attrib:
             raw["attrib"] = dict(game.attrib)
         return GameEntry(filename=Path(text("path").replace("\\", "/")).name,
-                         fields=fields, frontend_raw=raw)
+                         fields=fields, frontend_raw=self.tag_raw(raw))
 
     def media_dirs(self, layout, media_types=None) -> list[str]:
         """gamelist가 경로를 들고 있으므로 media 폴더는 우리가 쓰는 곳 하나뿐이다.

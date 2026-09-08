@@ -165,7 +165,8 @@ class EsDeAdapter(FrontendAdapter):
             raw["extra"] = extra
         if game.attrib:
             raw["attrib"] = dict(game.attrib)
-        return GameEntry(filename=Path(text("path")).name, fields=fields, frontend_raw=raw)
+        return GameEntry(filename=Path(text("path")).name, fields=fields,
+                         frontend_raw=self.tag_raw(raw))
 
     def media_dirs(self, layout, media_types=None) -> list[str]:
         if not layout.media_dir:

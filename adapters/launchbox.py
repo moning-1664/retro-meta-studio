@@ -169,7 +169,8 @@ class LaunchBoxAdapter(FrontendAdapter):
         app_path = (game.findtext("ApplicationPath") or "").strip()
         if app_path:
             raw["applicationPath"] = app_path
-        return GameEntry(filename=filename, fields=fields, frontend_raw=raw)
+        return GameEntry(filename=filename, fields=fields,
+                         frontend_raw=self.tag_raw(raw))
 
     def _title_index(self, provider, layout) -> dict[str, str]:
         """media 파일명(제목 기준) -> ROM stem 대응표."""

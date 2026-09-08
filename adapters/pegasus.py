@@ -240,7 +240,8 @@ class PegasusAdapter(FrontendAdapter):
         # Pegasus 포맷에는 region이 없다. 공통 모델의 키 구성을 다른 Adapter와
         # 맞추기 위해 빈 값으로 채워 둔다(없는 것과 빈 것을 구분하지 않는다).
         fields["region"] = ""
-        return GameEntry(filename=filename, fields=fields, frontend_raw=raw)
+        return GameEntry(filename=filename, fields=fields,
+                         frontend_raw=self.tag_raw(raw))
 
     def media_dirs(self, layout, media_types=None) -> list[str]:
         """게임별 폴더라 타입별 디렉터리가 없다 - media 루트 하나만 돌려준다."""
@@ -308,8 +309,12 @@ class PegasusAdapter(FrontendAdapter):
         fields = entry.fields or {}
         values = {pegasus_key: (fields.get(common) or "").strip()
                   for common, pegasus_key in FIELD_KEYS.items()}
+        # 모양이 다른 항목(다른 Frontend의 raw)이 섞여 들어와도 깨지지 않는다.
+        # 호출부가 걸러주는 것이 정상이지만, 여기서 KeyError로 Apply 전체가 실패하는
+        # 일은 없어야 한다.
         extra = {item["key"]: item.get("value", "")
-                 for item in (entry.frontend_raw or {}).get("extra") or []}
+                 for item in (entry.frontend_raw or {}).get("extra") or []
+                 if isinstance(item, dict) and "key" in item}
 
         pairs: list[tuple[str, str]] = []
         seen = set()

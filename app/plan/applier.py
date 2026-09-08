@@ -185,10 +185,17 @@ def _apply_add(entry, collection, adapter, provider, errors, media_links=None):
     # gamelist에만 있는 유령 항목이 남는다.
     fields = entry.payload or (entry.source or {}).get("fields") or {}
     try:
-        # ADD는 **다른 Collection에서 온 항목**을 이 Collection에 적는 것이다. 원본
-        # 보존값 중 "그 자리에서만 참인 것"(원조 ES의 media 경로 등)은 걷어내야 한다 -
-        # 그대로 적으면 gamelist가 남의 폴더를 가리킨다.
-        preserved = adapter.strip_location_raw((entry.source or {}).get("frontend_raw"))
+        # ADD는 **다른 Collection에서 온 항목**을 이 Collection에 적는 것이다.
+        # 원본 보존값(frontend_raw)에는 두 가지 함정이 있다.
+        #
+        # 1) 다른 Frontend의 값이면 **모양부터 다르다**(ES-DE는 {"tag","text"},
+        #    Pegasus는 {"key","value"}). 그대로 넘기면 되살리다 깨진다 - 실제로
+        #    ES-DE -> Pegasus Convert가 KeyError로 실패했다. Frontend 간 변환에서
+        #    frontend_raw가 따라가지 않는 것은 §50-51의 정의이기도 하다.
+        # 2) 같은 Frontend라도 경로처럼 "그 자리에서만 참인 값"은 걷어내야 한다.
+        source_raw = (entry.source or {}).get("frontend_raw")
+        preserved = (adapter.strip_location_raw(source_raw)
+                     if adapter.raw_is_mine(source_raw) else {})
         adapter.write_index(layout, [GameEntry(filename=entry.filename, fields=fields,
                                                frontend_raw=preserved)])
     except Exception as e:  # noqa: BLE001
