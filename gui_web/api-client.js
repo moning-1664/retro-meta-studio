@@ -42,6 +42,25 @@
 
   const mockMatchLinks = {};
 
+  const mockCompare = { on: false };
+  const mockCompareRows = [
+    { key: "ps2|Same.iso", system: "ps2", file: "Same.iso", title: "Same Game",
+      size: 100, status: "same", mediaDiff: false, changedFields: [] },
+    { key: "ps2|Conflict.iso", system: "ps2", file: "Conflict.iso", title: "Conflict Game",
+      size: 200, status: "conflict", mediaDiff: false, changedFields: ["genre"] },
+    { key: "ps2|OnlyBase.iso", system: "ps2", file: "OnlyBase.iso", title: "Only Base",
+      size: 300, status: "only_a", mediaDiff: false, changedFields: [] },
+    { key: "ps2|OnlyOther.iso", system: "ps2", file: "OnlyOther.iso", title: "Only Other",
+      size: 400, status: "only_b", mediaDiff: false, changedFields: [] },
+    { key: "ps2|MediaOnly.iso", system: "ps2", file: "MediaOnly.iso", title: "Media Only",
+      size: 500, status: "same", mediaDiff: true, changedFields: [] },
+  ];
+  const mockCompareState = () => ({
+    baseId: "c1", otherId: "c2", baseName: "Master Library", otherName: "Android ES-DE",
+    counts: { all: 5, same: 2, conflict: 1, only_a: 1, only_b: 1, media: 1 },
+    systems: ["ps2"],
+  });
+
   const mock = {
     list_collections: () => ok(mockCollections),
     collection_detail: () => ok(mockDetail),
@@ -153,6 +172,35 @@
     },
     plan_remove_entry: () => ok({ removed: 1 }),
 
+    // Compare(§54-59). 목업은 상태를 들고 있다가 필터에 반응한다 - 필터 버튼이
+    // 실제로 목록을 바꾸는지까지 GUI 테스트로 확인할 수 있어야 하기 때문이다.
+    start_compare: (baseId, otherId) => {
+      mockCompare.on = true;
+      return ok(mockCompareState());
+    },
+    compare_state: () => ok(mockCompare.on ? mockCompareState() : null),
+    compare_rows: (status) => {
+      if (!mockCompare.on) return Promise.resolve({ ok: false, error: "Compare Mode가 아닙니다." });
+      const rows = mockCompareRows.filter((r) =>
+        !status || status === "all" ? true : status === "media" ? r.mediaDiff : r.status === status);
+      return ok({ rows, total: rows.length, offset: 0 });
+    },
+    compare_detail: (key) => {
+      const row = mockCompareRows.find((r) => r.key === key) || mockCompareRows[0];
+      const has = (side) => side === "left" ? row.status !== "only_b" : row.status !== "only_a";
+      const side = (name, genre) => has(name) ? {
+        romUid: 1, filename: row.file, title: row.title, size: row.size, present: true,
+        mediaTypes: ["covers"], fields: { name: row.title, genre, desc: "설명" },
+      } : null;
+      return ok({
+        key: row.key, system: row.system, file: row.file, status: row.status,
+        changedFields: row.changedFields, mediaDiff: row.mediaDiff,
+        baseName: "Master Library", otherName: "Android ES-DE",
+        left: side("left", "RPG"), right: side("right", row.changedFields.length ? "Action" : "RPG"),
+      });
+    },
+    exit_compare: () => { mockCompare.on = false; return ok(true); },
+
     // Match(§45-49). 자동으로 붙는 것은 Exact뿐이라는 규칙을 목업에서도 지킨다 -
     // 여기서 autoMatch를 채워버리면 화면 쪽 "사용자가 골라야 한다"를 검증할 수 없다.
     match_counts: () => ok({ 2: 2 }),
@@ -240,6 +288,13 @@
     matchCounts: (id, romUids) => call("match_counts", id, romUids),
     applyMatch: (id, romUid, romIdentityId) => call("apply_match", id, romUid, romIdentityId),
     clearMatch: (id, romUid) => call("clear_match", id, romUid),
+
+    startCompare: (baseId, otherId) => call("start_compare", baseId, otherId),
+    compareState: () => call("compare_state"),
+    compareRows: (q) => call("compare_rows", q.status || null, q.systems || null,
+                             q.search || null, q.limit || 200, q.offset || 0),
+    compareDetail: (key) => call("compare_detail", key),
+    exitCompare: () => call("exit_compare"),
 
     startScan: (id, force) => call("start_scan", id, !!force),
     jobProgress: (jobId) => call("get_job_progress", jobId),

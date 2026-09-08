@@ -82,23 +82,64 @@ METADATA_THRESHOLD = 70.0
 DEFAULT_LIMIT = 8
 
 
-def source_of_row(row) -> dict:
-    """cache의 row를 Match 입력 형태로 바꾼다."""
-    fields = row.get("fields") or {}
-    filename = row["filename"]
-    title = (row.get("title") or "").strip() or Path(filename).stem
+def subject(*, system, filename, title=None, size=None, sha256=None, fields=None,
+            ref=None) -> dict:
+    """판정에 쓰는 **중립 형태**(MatchSubject).
+
+    엔진은 이 shape 두 개만 비교한다 - 한쪽이 Collection의 ROM인지 Archive의 Identity인지
+    알지 못하고, 알 필요도 없다. 이렇게 두는 이유는 같은 판정 로직이 두 방향에 쓰이기
+    때문이다:
+
+        Archive Match : Collection ROM  <-> Archive ROM Identity
+        Compare       : Collection A ROM <-> Collection B ROM
+
+    처음에는 `classify(source, identity)`처럼 한쪽을 Archive Identity로 못박아 두었는데,
+    그러면 Compare가 같은 규칙을 쓰려고 할 때 Archive가 아닌 것을 Archive인 척 꾸며
+    넘겨야 한다. 계약을 한 단계 올려서 그 왜곡을 없앤 것이다.
+
+    `ref`는 엔진이 들여다보지 않는 호출자 몫의 식별자다(rom_uid든 rom_identity_id든).
+    """
+    fields = fields or {}
+    filename = filename or ""
+    display_title = (title or "").strip() or Path(filename).stem
     return {
-        "system": row["system"],
+        "system": system,
         "filename": filename,
-        "size": row.get("size") or None,
-        "sha256": row.get("sha256"),
-        "title": title,
-        "title_norm": normalize_title(title),
+        "size": size or None,
+        "sha256": sha256 or None,
+        "title": display_title,
+        "title_norm": normalize_title(display_title),
         "filename_norm": normalize_title(Path(filename).stem),
         "developer": fields.get("developer") or "",
         "publisher": fields.get("publisher") or "",
         "releasedate": fields.get("releasedate") or "",
+        "ref": ref,
     }
+
+
+def subject_of_row(row) -> dict:
+    """Collection cache의 row -> MatchSubject."""
+    return subject(system=row["system"], filename=row["filename"],
+                   title=row.get("title"), size=row.get("size"),
+                   sha256=row.get("sha256"), fields=row.get("fields"),
+                   ref=row.get("rom_uid"))
+
+
+def subject_of_identity(identity, fields=None) -> dict:
+    """Archive의 rom_identity 행 -> MatchSubject.
+
+    개발사/출시일은 Identity가 아니라 Record(출처별 Metadata)에 있으므로 `fields`로 따로
+    받는다 - 없으면 이름/크기/해시만으로 판정되고, Metadata 티어는 성립하지 않는다.
+    """
+    return subject(system=identity["system"],
+                   filename=identity.get("filename") or identity.get("filename_norm") or "",
+                   title=identity.get("title"), size=identity.get("size"),
+                   sha256=identity.get("sha256"), fields=fields,
+                   ref=identity.get("rom_identity_id"))
+
+
+#: 예전 이름. Archive Match 경로가 쓰던 것이라 한동안 남겨 둔다.
+source_of_row = subject_of_row
 
 
 def _identity_view(identity) -> dict:
@@ -115,8 +156,10 @@ def _identity_view(identity) -> dict:
     }
 
 
-def classify(source: dict, identity: dict) -> tuple[str | None, float, list[str]]:
-    """이름/해시/크기만으로 판정하는 앞쪽 두 티어. (tier, score, evidence).
+def classify(a: dict, b: dict) -> tuple[str | None, float, list[str]]:
+    """두 MatchSubject를 이름/해시/크기로 판정하는 앞쪽 두 티어. (tier, score, evidence).
+
+    a와 b는 대칭이다 - 어느 쪽이 Collection이고 어느 쪽이 Archive인지 구분하지 않는다.
 
     안 맞으면 (None, 0.0, []). score는 0~100의 표시용 값이고, evidence는 "왜 이 티어인지"를
     사용자에게 그대로 보여주기 위한 근거 문구다.
@@ -125,25 +168,25 @@ def classify(source: dict, identity: dict) -> tuple[str | None, float, list[str]
     내려간다. 그 조합을 Exact의 2차 증거로 인정하는 것은 ARCHITECTURE의 해시 정책("전량
     사전 해싱 금지, (size, 정규화 파일명)이 1차 판정")을 따른 의도된 결정이다.
     """
-    if source["system"] != identity["system"]:
+    if a["system"] != b["system"]:
         return None, 0.0, []
 
-    src_sha, id_sha = source.get("sha256"), identity.get("sha256")
-    if src_sha and id_sha:
+    a_sha, b_sha = a.get("sha256"), b.get("sha256")
+    if a_sha and b_sha:
         # 해시가 있는데 서로 다르면 같은 ROM일 수 없다 - 다른 티어로도 붙이지 않는다.
-        if src_sha == id_sha:
+        if a_sha == b_sha:
             return TIER_EXACT, 100.0, ["SHA256 일치"]
         return None, 0.0, []
 
-    same_filename_norm = bool(source["filename_norm"]) and \
-        source["filename_norm"] == (identity.get("filename_norm") or "")
-    src_size, id_size = source.get("size"), identity.get("size")
+    same_filename_norm = bool(a["filename_norm"]) and \
+        a["filename_norm"] == (b.get("filename_norm") or "")
+    a_size, b_size = a.get("size"), b.get("size")
 
-    if same_filename_norm and src_size and id_size and int(src_size) == int(id_size):
+    if same_filename_norm and a_size and b_size and int(a_size) == int(b_size):
         return TIER_EXACT, 99.0, ["파일명 일치", "크기 일치"]
 
-    same_title_norm = bool(source["title_norm"]) and \
-        source["title_norm"] == (identity.get("title_norm") or "")
+    same_title_norm = bool(a["title_norm"]) and \
+        a["title_norm"] == (b.get("title_norm") or "")
     if same_filename_norm or same_title_norm:
         # 이름은 같은데 크기가 다르다 = 지역판/리비전 차이일 가능성이 높다.
         # 확증이 없으므로 자동으로 붙이지 않는다.
@@ -160,7 +203,7 @@ def _same(a, b) -> bool:
     return bool(a) and a == b
 
 
-def _metadata_match(source: dict, identity_fields: dict) -> tuple[str | None, float, list[str]]:
+def _metadata_match(a: dict, b: dict) -> tuple[str | None, float, list[str]]:
     """구조화된 Metadata가 서로 **같은가**(§45의 "Strong metadata match").
 
     문자열 유사도가 아니라 값의 동일성으로 본다. 유사도로 판정하면 결국 Heuristic과
@@ -169,9 +212,9 @@ def _metadata_match(source: dict, identity_fields: dict) -> tuple[str | None, fl
     개발사만, 혹은 연도만 같은 것은 근거가 되지 못한다 - 같은 회사가 같은 해에 낸
     게임은 얼마든지 있다. **개발사와 출시일이 함께** 같아야 후보로 올린다.
     """
-    developer = _same(source.get("developer"), identity_fields.get("developer"))
-    release = _same(source.get("releasedate"), identity_fields.get("releasedate"))
-    publisher = _same(source.get("publisher"), identity_fields.get("publisher"))
+    developer = _same(a.get("developer"), b.get("developer"))
+    release = _same(a.get("releasedate"), b.get("releasedate"))
+    publisher = _same(a.get("publisher"), b.get("publisher"))
     if not (developer and release):
         return None, 0.0, []
 
@@ -183,20 +226,19 @@ def _metadata_match(source: dict, identity_fields: dict) -> tuple[str | None, fl
     return TIER_METADATA, score, evidence
 
 
-def _heuristic_match(source: dict, identity: dict,
-                     identity_fields: dict) -> tuple[str | None, float, list[str]]:
+def _heuristic_match(a: dict, b: dict) -> tuple[str | None, float, list[str]]:
     """마지막 단계 - 문자열 유사도. similar_rom의 배점을 그대로 쓴다.
 
     여기서 나온 점수는 **추천 순서를 정하는 용도**일 뿐이며, 몇 점이든 자동으로
     붙지 않는다(§49).
     """
-    left = {"romKey": "src", "title": source["title"], "filename": source["filename"],
-            "developer": source.get("developer") or "",
-            "releasedate": source.get("releasedate") or ""}
-    right = {"romKey": identity["rom_identity_id"], "title": identity.get("title") or "",
-             "filename": identity.get("filename") or "",
-             "developer": identity_fields.get("developer") or "",
-             "releasedate": identity_fields.get("releasedate") or ""}
+    left = {"romKey": "a", "title": a["title"], "filename": a["filename"],
+            "developer": a.get("developer") or "",
+            "releasedate": a.get("releasedate") or ""}
+    right = {"romKey": "b", "title": b.get("title") or "",
+             "filename": b.get("filename") or "",
+             "developer": b.get("developer") or "",
+             "releasedate": b.get("releasedate") or ""}
     raw, breakdown = compute_pair_score(left, right)
 
     # 양쪽 모두 값이 있는 항목의 배점만 합쳐 "이번에 실제로 비교할 수 있었던 최대 점수"를
@@ -232,7 +274,7 @@ def quick_candidates(archive, source: dict, *, exclude_collection=None,
             source["system"], filename_norm=source["filename_norm"],
             title_norm=source["title_norm"], sha256=source.get("sha256"),
             exclude_collection=exclude_collection):
-        tier, score, evidence = classify(source, identity)
+        tier, score, evidence = classify(source, subject_of_identity(identity))
         if tier:
             found.append({**_identity_view(identity), "tier": tier,
                           "score": score, "evidence": evidence})
@@ -249,13 +291,14 @@ def deep_candidates(archive, source: dict, *, exclude_collection=None,
     found = []
     for identity in archive.identities_in_system(source["system"],
                                                  exclude_collection=exclude_collection):
-        tier, score, evidence = classify(source, identity)
+        fields = (fields_of(identity["rom_identity_id"]) if fields_of else {}) or {}
+        other = subject_of_identity(identity, fields)
+        tier, score, evidence = classify(source, other)
         if not tier:
-            fields = (fields_of(identity["rom_identity_id"]) if fields_of else {}) or {}
             # 구조화된 필드의 동일성을 먼저 본다. 그게 안 되면 문자열 유사도로 내려간다.
-            tier, score, evidence = _metadata_match(source, fields)
+            tier, score, evidence = _metadata_match(source, other)
             if not tier:
-                tier, score, evidence = _heuristic_match(source, identity, fields)
+                tier, score, evidence = _heuristic_match(source, other)
         if tier:
             found.append({**_identity_view(identity), "tier": tier,
                           "score": score, "evidence": evidence})

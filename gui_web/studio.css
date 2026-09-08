@@ -342,3 +342,49 @@ button.sb-badge { cursor: pointer; }
 .match-score { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 .match-option-why { color: var(--info); font-size: var(--fs-eyebrow); margin-top: 1px; }
 .match-tier.tier-manual { border-color: var(--muted); color: var(--muted); }
+
+/* Compare Mode (스펙 §54-59) - 일반 Gamelist와 같은 자리를 쓰되, 지금이 비교
+   상태라는 것이 한눈에 보여야 한다. */
+#filter-bar.compare { gap: 10px; }
+.compare-title {
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  font-size: var(--fs-body);
+}
+.compare-eyebrow {
+  flex: none; padding: 1px 7px; border-radius: var(--radius-pill);
+  border: 1px solid var(--info); color: var(--info);
+  font-size: var(--fs-eyebrow); letter-spacing: .04em;
+}
+.compare-filters { display: flex; align-items: center; gap: 4px; }
+.compare-filter {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: var(--radius-pill);
+  border: 1px solid var(--border); background: var(--card2);
+  color: var(--muted); font-size: var(--fs-eyebrow); cursor: pointer;
+}
+.compare-filter:hover { color: var(--text); }
+.compare-filter.active { border-color: var(--accent); color: var(--text); background: var(--card); }
+.compare-filter-count { font-variant-numeric: tabular-nums; opacity: .75; }
+.compare-filter.f-only_a.active { border-color: var(--danger); }
+.compare-filter.f-only_b.active { border-color: var(--info); }
+.compare-filter.f-conflict.active { border-color: var(--warning); }
+
+/* 좌우 비교 상세 */
+.cmp-sides, .cmp-row {
+  display: grid; grid-template-columns: 84px 1fr 1fr; gap: 8px; align-items: baseline;
+}
+.cmp-sides { grid-template-columns: 1fr 1fr; padding: 0 0 7px; }
+.cmp-side-name { color: var(--text); font-size: var(--fs-eyebrow); font-weight: 600; }
+.cmp-side-name.absent { color: var(--muted); font-weight: 400; }
+.cmp-side-mark { color: var(--danger); }
+.cmp-table { display: flex; flex-direction: column; gap: 2px; }
+.cmp-row { padding: 5px 6px; border-radius: var(--radius-sm); }
+.cmp-row.changed { background: var(--card2); }
+.cmp-row.changed .cmp-value { color: var(--warning); }
+.cmp-label { color: var(--muted); font-size: var(--fs-eyebrow); }
+.cmp-value { font-size: var(--fs-body); word-break: break-word; }
+.cmp-media-note {
+  display: flex; align-items: center; gap: 6px; margin-top: 9px;
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--muted); font-size: var(--fs-eyebrow);
+}

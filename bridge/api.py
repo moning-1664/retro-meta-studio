@@ -27,6 +27,7 @@ from app.plan import builder, clipboard
 from app.plan.applier import apply_plan
 from app.plan.validator import check_capacity, validate
 from app.archive import service as archive_service
+from app.compare import engine as compare_engine
 from app.match import service as match_service
 from app.store.archive import ArchiveStore
 from app.store.registry import CHANGE_APPLIED, RegistryError, RegistryStore
@@ -92,6 +93,9 @@ class Api:
         # 기반 탐지에 걸린다는 실사용 보고가 있다(file_ops.py 참고).
         file_ops.select_engine(self.registry.get_setting("copy_engine", file_ops.ENGINE_AUTO))
         self._window = None
+        # Compare Mode도 Plan처럼 세션 한정이다 - 껐다 켜면 비교 상태는 사라진다.
+        # {"baseId":..., "otherId":..., "rows":[...]} 또는 None.
+        self._compare = None
 
     def close(self):
         """앱 종료. 진행 중인 작업을 먼저 멈춘 뒤에 DB를 닫는다.
@@ -598,6 +602,107 @@ class Api:
         if row is None:
             return err("항목을 찾을 수 없습니다.")
         return ok({"cleared": match_service.clear_match(self.archive, collection_id, row)})
+
+    # ------------------------------------------------------------------
+    # Compare (스펙 §54-59)
+    # ------------------------------------------------------------------
+    @guarded
+    def start_compare(self, base_collection_id, other_collection_id):
+        """두 Collection을 맞대어 비교를 시작한다.
+
+        비교 결과는 **여기서 한 번 계산해 들고 있는다**. 필터를 누를 때마다 두
+        Collection을 다시 훑으면 만 단위 목록에서 버튼이 먹통이 되고, 무엇보다 그
+        사이에 스캔이 끼면 필터마다 다른 스냅샷을 보게 된다. 최신 상태로 다시 보려면
+        사용자가 명시적으로 다시 시작하면 된다.
+        """
+        if base_collection_id == other_collection_id:
+            return err("같은 Collection끼리는 비교할 수 없습니다.")
+        base = self.registry.get_collection(base_collection_id)
+        other = self.registry.get_collection(other_collection_id)
+        if base is None or other is None:
+            return err("Collection을 찾을 수 없습니다.")
+
+        left = self.workspace.open(base_collection_id).all_entries()
+        right = self.workspace.open(other_collection_id).all_entries()
+        rows = compare_engine.compare(left, right)
+        self._compare = {"baseId": base_collection_id, "otherId": other_collection_id,
+                         "rows": rows}
+        return ok(self._compare_state())
+
+    @guarded
+    def compare_state(self):
+        """지금 Compare Mode인지와 요약. 아니면 data=None."""
+        return ok(self._compare_state() if self._compare else None)
+
+    def _compare_state(self):
+        base = self.registry.get_collection(self._compare["baseId"])
+        other = self.registry.get_collection(self._compare["otherId"])
+        rows = self._compare["rows"]
+        return {
+            "baseId": self._compare["baseId"], "otherId": self._compare["otherId"],
+            "baseName": base.name if base else "?",
+            "otherName": other.name if other else "?",
+            "counts": compare_engine.summarize(rows),
+            "systems": sorted({r["system"] for r in rows}),
+        }
+
+    @guarded
+    def compare_rows(self, status=None, systems=None, search=None, limit=200, offset=0):
+        """Compare Gamelist. 일반 Gamelist와 같은 모양으로 돌려준다."""
+        if not self._compare:
+            return err("Compare Mode가 아닙니다.")
+        rows = compare_engine.filter_rows(self._compare["rows"], status)
+        if systems:
+            rows = [r for r in rows if r["system"] in systems]
+        if search:
+            needle = str(search).strip().lower()
+            rows = [r for r in rows
+                    if needle in r["file"].lower()
+                    or needle in ((r["left"] or r["right"] or {}).get("title") or "").lower()]
+        total = len(rows)
+        page = rows[int(offset):int(offset) + int(limit)]
+        return ok({"rows": [self._compare_row_summary(r) for r in page],
+                   "total": total, "offset": int(offset)})
+
+    @staticmethod
+    def _compare_row_summary(row):
+        side = row["left"] or row["right"] or {}
+        return {
+            # 좌우 어느 쪽에만 있을 수 있으므로 romUid는 목록의 키로 쓰지 않는다 -
+            # (system, file)이 Compare 행의 안정적인 식별자다.
+            "key": f"{row['system']}|{row['file']}",
+            "system": row["system"], "file": row["file"],
+            "title": side.get("title") or "",
+            "size": side.get("size") or 0,
+            "status": row["status"], "mediaDiff": row["mediaDiff"],
+            "changedFields": row["changedFields"],
+            "leftRomUid": (row["left"] or {}).get("romUid"),
+            "rightRomUid": (row["right"] or {}).get("romUid"),
+        }
+
+    @guarded
+    def compare_detail(self, key):
+        """한 행의 좌우 Metadata를 나란히. 다른 필드는 changedFields로 알린다."""
+        if not self._compare:
+            return err("Compare Mode가 아닙니다.")
+        row = next((r for r in self._compare["rows"]
+                    if f"{r['system']}|{r['file']}" == key), None)
+        if row is None:
+            return err("항목을 찾을 수 없습니다.")
+        state = self._compare_state()
+        return ok({
+            "key": key, "system": row["system"], "file": row["file"],
+            "status": row["status"], "changedFields": row["changedFields"],
+            "mediaDiff": row["mediaDiff"],
+            "baseName": state["baseName"], "otherName": state["otherName"],
+            "left": row["left"], "right": row["right"],
+        })
+
+    @guarded
+    def exit_compare(self):
+        """Compare Mode 종료(§58의 [Exit Compare])."""
+        self._compare = None
+        return ok(True)
 
     # ------------------------------------------------------------------
     # Job

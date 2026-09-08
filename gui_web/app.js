@@ -92,6 +92,11 @@
     // Auto Plan이 켜져 있으면 복사/삭제/이동이 Plan으로 들어간다(스펙 §26).
     // 끄면 같은 동작이 확인 후 즉시 실행된다.
     autoPlan: true,
+    // Compare Mode(§54-59). compare가 있으면 Gamelist가 비교 목록으로 바뀐다.
+    // compareBase는 "기준으로 지정"만 해두고 아직 상대를 안 고른 중간 상태다.
+    compare: null,
+    compareBase: null,
+    compareFilter: "all",
   };
 
   //: Archive는 Collection이 아니지만 같은 Gamelist/Detail UI를 쓴다(스펙 §43).
@@ -253,8 +258,25 @@
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "modal-text" }, [`${collection.name} (${collection.rootPath})`]),
     ]);
-    showModal("Collection", body, [
+    const actions = [
       h("button", { class: "btn", onClick: () => { closeModal(); promptRename(collection); } }, ["이름 변경"]),
+    ];
+    // Compare는 두 단계다(§54): 한 탭에서 기준을 정하고, 다른 탭에서 그 기준과 비교한다.
+    if (S.compareBase && S.compareBase !== collection.id) {
+      const baseName = (S.collections.find((c) => c.id === S.compareBase) || {}).name || "기준";
+      actions.push(h("button", { class: "btn primary", onClick: () => {
+        closeModal();
+        runCompare(S.compareBase, collection.id);
+      } }, [`${baseName}와 비교`]));
+    } else {
+      actions.push(h("button", { class: "btn", onClick: () => {
+        closeModal();
+        S.compareBase = collection.id;
+        showToast("비교 기준으로 지정했습니다. 다른 Collection 탭을 우클릭해 비교를 시작하세요.");
+      } }, ["Compare 기준으로 지정"]));
+    }
+    showModal("Collection", body, [
+      ...actions,
       h("button", { class: "btn danger", onClick: () => {
         closeModal();
         showConfirm("Collection 제거", "등록 목록에서 제거합니다. 실제 파일은 삭제되지 않습니다.", true,
@@ -673,9 +695,45 @@
   // ------------------------------------------------------------------
   // 필터 바
   // ------------------------------------------------------------------
+  const COMPARE_FILTERS = [["all", "All"], ["same", "Same"], ["only_a", "Only A"],
+                           ["only_b", "Only B"], ["conflict", "Conflict"], ["media", "Media"]];
+
+  function renderCompareBar(bar) {
+    const state = S.compare;
+    bar.classList.add("compare");
+    bar.appendChild(h("div", { class: "compare-title" }, [
+      h("span", { class: "compare-eyebrow" }, ["COMPARE"]),
+      h("span", { class: "truncate" }, [`${state.baseName} ↔ ${state.otherName}`]),
+    ]));
+
+    const filters = h("div", { class: "compare-filters" });
+    COMPARE_FILTERS.forEach(([key, label]) => {
+      const count = (state.counts || {})[key];
+      const btn = h("button", {
+        class: "compare-filter" + (S.compareFilter === key ? " active" : "") + " f-" + key,
+      }, [label, count === undefined ? "" : h("span", { class: "compare-filter-count" },
+                                              [formatCount(count)])]);
+      btn.addEventListener("click", async () => {
+        S.compareFilter = key;
+        resetList();
+        renderFilterBar();
+        await reloadList();
+      });
+      filters.appendChild(btn);
+    });
+    bar.appendChild(filters);
+
+    bar.appendChild(h("div", { class: "filter-spacer" }));
+    const exit = h("button", { class: "btn compact" }, ["Exit Compare"]);
+    exit.addEventListener("click", exitCompare);
+    bar.appendChild(exit);
+  }
+
   function renderFilterBar() {
     const bar = $("filter-bar");
     clear(bar);
+    bar.classList.remove("compare");
+    if (isCompare()) { renderCompareBar(bar); return; }
     if (!activeDetail()) return;
 
     const search = h("input", { class: "search-input", placeholder: "Search...", value: S.search });
@@ -735,7 +793,10 @@
     head.appendChild(h("div", { class: "lh lh-desc" }, ["File"]));
   }
 
+  const isCompare = () => !!S.compare;
+
   function fetchRows(query) {
+    if (isCompare()) return api.compareRows({ ...query, status: S.compareFilter });
     return isArchive() ? api.archiveRows(query) : api.listRows(S.activeId, query);
   }
 
@@ -756,7 +817,9 @@
 
   /** Match 뱃지 개수는 목록 렌더링을 막지 않고 뒤따라 채운다(§49의 [n] 표시). */
   async function loadMatchCounts(rows, token) {
-    if (isArchive() || !rows.length) return;
+    // Compare 행은 좌우 어느 쪽 romUid인지가 정해져 있지 않고, 애초에 Archive Match와
+    // 무관한 화면이다.
+    if (isArchive() || isCompare() || !rows.length) return;
     const uids = rows.map((row) => row.romUid);
     const r = await api.matchCounts(S.activeId, uids);
     if (!r.ok || token !== S.queryToken) return;
@@ -781,6 +844,25 @@
       renderListWindow();
       loadMatchCounts(r.data.rows, token);
     }
+  }
+
+  //: Compare 행의 기호(§56). +는 상대에만, -는 기준에만, △는 Metadata 충돌.
+  const COMPARE_MARK = {
+    only_b: ["add", "+", "상대 Collection에만 있음"],
+    only_a: ["del", "−", "기준 Collection에만 있음"],
+    conflict: ["warn", "△", "Metadata가 다름"],
+  };
+
+  function compareMark(row) {
+    const mark = COMPARE_MARK[row.status];
+    if (mark) {
+      const [cls, glyph, title] = mark;
+      return h("span", { class: "status-mark " + cls, title }, [glyph]);
+    }
+    if (row.mediaDiff) {
+      return h("span", { class: "status-mark muted", title: "Media 구성이 다름" }, ["○"]);
+    }
+    return h("span", { class: "status-mark ok", title: "양쪽이 같음" }, [""]);
   }
 
   function statusMark(row) {
@@ -834,7 +916,27 @@
     ]);
   }
 
+  function compareRowElement(row, index) {
+    const el = h("div", {
+      class: "lrow compare-row" + (S.focused === row.key ? " focused" : "") + " s-" + row.status,
+      style: { height: ROW_HEIGHT + "px" },
+    });
+    el.appendChild(h("div", { class: "lc lc-check" }));
+    el.appendChild(h("div", { class: "lc lc-index" }, [String(index + 1)]));
+    el.appendChild(h("div", { class: "lc lc-title" }, [
+      systemIcon(row.system, 15),
+      h("span", { class: "lrow-title truncate" }, [row.title || row.file]),
+    ]));
+    el.appendChild(h("div", { class: "lc lc-system" }, [
+      h("span", { class: "sys-badge" }, [String(row.system).toUpperCase()])]));
+    el.appendChild(h("div", { class: "lc lc-status" }, [compareMark(row)]));
+    el.appendChild(h("div", { class: "lc lc-desc truncate" }, [row.file]));
+    el.addEventListener("click", () => openCompareDetail(row));
+    return el;
+  }
+
   function rowElement(row, index) {
+    if (isCompare()) return compareRowElement(row, index);
     const selected = S.selected.has(row.romUid);
     const el = h("div", {
       class: "lrow" + (selected ? " selected" : "") + (S.focused === row.romUid ? " focused" : ""),
@@ -873,6 +975,96 @@
 
     el.addEventListener("click", () => openDetail(row));
     return el;
+  }
+
+  // ------------------------------------------------------------------
+  // Compare Mode (스펙 §54-59)
+  // ------------------------------------------------------------------
+  async function runCompare(baseId, otherId) {
+    const r = await api.startCompare(baseId, otherId);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    S.compare = r.data;
+    S.compareBase = null;
+    S.compareFilter = "all";
+    // Compare는 Gamelist를 통째로 바꾼다. 이전 선택/상세는 다른 세계의 것이므로 버린다.
+    resetList();
+    renderAll();
+    await reloadList();
+  }
+
+  async function exitCompare() {
+    await api.exitCompare();
+    S.compare = null;
+    S.compareBase = null;
+    resetList();
+    renderAll();
+    await reloadList();
+  }
+
+  /** 좌우를 나란히 놓고 다른 값만 표시를 달리한다(§57). */
+  async function openCompareDetail(row) {
+    S.focused = row.key;
+    renderListWindow();
+    const r = await api.compareDetail(row.key);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    S.detailState = { compare: r.data, tab: "metadata" };
+    renderDetailPanel();
+  }
+
+  function renderCompareDetail(panel) {
+    const d = S.detailState.compare;
+    const inner = h("div", { id: "detail-panel-inner" });
+    panel.appendChild(inner);
+
+    const header = h("div", { class: "detail-header" }, [
+      h("div", { style: { minWidth: "0", flex: "1" } }, [
+        h("div", { class: "detail-eyebrow" }, ["COMPARE"]),
+        h("div", { class: "detail-filename" }, [d.file]),
+        h("div", { class: "detail-system" }, [systemIcon(d.system, 13), String(d.system).toUpperCase()]),
+      ]),
+    ]);
+    const close = h("button", { class: "icon-btn", title: "닫기 (Esc)" }, [icon("x", 13)]);
+    close.addEventListener("click", closeDetail);
+    header.appendChild(close);
+    inner.appendChild(header);
+
+    const body = h("div", { class: "detail-body" });
+
+    // 어느 쪽에 있는지부터 알려준다 - 한쪽에만 있으면 값 비교 자체가 의미 없다.
+    body.appendChild(h("div", { class: "cmp-sides" }, [
+      h("div", { class: "cmp-side-name" + (d.left ? "" : " absent") },
+        [d.baseName, h("span", { class: "cmp-side-mark" }, [d.left ? "" : " (없음)"])]),
+      h("div", { class: "cmp-side-name" + (d.right ? "" : " absent") },
+        [d.otherName, h("span", { class: "cmp-side-mark" }, [d.right ? "" : " (없음)"])]),
+    ]));
+
+    const rows = [
+      ["Title", "name"], ["Description", "desc"], ["Genre", "genre"],
+      ["Developer", "developer"], ["Publisher", "publisher"], ["Release", "releasedate"],
+      ["Region", "region"], ["Players", "players"], ["Rating", "rating"],
+    ];
+    const changed = new Set(d.changedFields || []);
+    const table = h("div", { class: "cmp-table" });
+    rows.forEach(([label, key]) => {
+      const left = ((d.left || {}).fields || {})[key] || "";
+      const right = ((d.right || {}).fields || {})[key] || "";
+      if (!left && !right) return;
+      const line = h("div", { class: "cmp-row" + (changed.has(key) ? " changed" : "") });
+      line.appendChild(h("div", { class: "cmp-label" }, [label]));
+      line.appendChild(h("div", { class: "cmp-value" }, [left || "-"]));
+      line.appendChild(h("div", { class: "cmp-value" }, [right || "-"]));
+      table.appendChild(line);
+    });
+    body.appendChild(table);
+
+    if (d.mediaDiff) {
+      body.appendChild(h("div", { class: "cmp-media-note" }, [
+        icon("image", 12),
+        h("span", {}, [`Media 구성이 다릅니다 - ${((d.left || {}).mediaTypes || []).join(", ") || "없음"}`
+                       + ` \u2194 ${((d.right || {}).mediaTypes || []).join(", ") || "없음"}`]),
+      ]));
+    }
+    inner.appendChild(body);
   }
 
   // ------------------------------------------------------------------
@@ -1020,6 +1212,8 @@
     const state = S.detailState;
     panel.classList.toggle("open", !!state);
     if (!state) return;
+
+    if (state.compare) { renderCompareDetail(panel); return; }
 
     const inner = h("div", { id: "detail-panel-inner" });
     panel.appendChild(inner);

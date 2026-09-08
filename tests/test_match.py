@@ -233,7 +233,8 @@ class GoldenMatchCases(unittest.TestCase):
     def test_golden_developer_and_release_make_a_metadata_candidate(self):
         source, _ = self.pair({"developer": "Konami", "releasedate": "20010719T000000"})
         tier, score, evidence = engine._metadata_match(
-            source, {"developer": "Konami", "releasedate": "20010719T000000"})
+            source, self.pair(ident={"developer": "Konami",
+                                        "releasedate": "20010719T000000"})[1])
         self.assertEqual(tier, engine.TIER_METADATA)
         self.assertGreaterEqual(score, engine.METADATA_THRESHOLD)
         self.assertIn("개발사 일치", evidence)
@@ -241,11 +242,11 @@ class GoldenMatchCases(unittest.TestCase):
     def test_golden_developer_alone_is_not_enough(self):
         """같은 회사가 낸 다른 게임까지 후보로 올라오면 목록이 쓸모없어진다."""
         source, _ = self.pair({"developer": "Konami", "releasedate": "20010719T000000"})
-        self.assertIsNone(engine._metadata_match(source, {"developer": "Konami"})[0])
+        self.assertIsNone(engine._metadata_match(source, self.pair(ident={"developer": "Konami"})[1])[0])
 
     def test_golden_empty_fields_never_match_each_other(self):
         source, _ = self.pair()
-        self.assertIsNone(engine._metadata_match(source, {"developer": "", "releasedate": ""})[0])
+        self.assertIsNone(engine._metadata_match(source, self.pair()[1])[0])
 
     def test_golden_similar_names_land_in_heuristic(self):
         source, identity = self.pair(
@@ -256,7 +257,7 @@ class GoldenMatchCases(unittest.TestCase):
              "title_norm": "metal gear solid 2 substance",
              "filename_norm": "metal gear solid 2 substance"})
         self.assertIsNone(engine.classify(source, identity)[0], "이름이 달라 앞 티어로는 안 걸린다")
-        tier, score, evidence = engine._heuristic_match(source, identity, {})
+        tier, score, evidence = engine._heuristic_match(source, identity)
         self.assertEqual(tier, engine.TIER_HEURISTIC)
         self.assertGreaterEqual(score, engine.HEURISTIC_THRESHOLD)
         self.assertTrue(evidence, "점수를 만든 근거를 사용자에게 보여줄 수 있어야 한다")
@@ -268,7 +269,7 @@ class GoldenMatchCases(unittest.TestCase):
             {"title": "Gran Turismo 3", "filename": "GT3.iso",
              "title_norm": "gran turismo 3", "filename_norm": "gt3"})
         self.assertIsNone(engine.classify(source, identity)[0])
-        self.assertIsNone(engine._heuristic_match(source, identity, {})[0])
+        self.assertIsNone(engine._heuristic_match(source, identity)[0])
 
     # --- 자동 매칭 -----------------------------------------------------
     def test_golden_two_exact_candidates_block_auto_match(self):

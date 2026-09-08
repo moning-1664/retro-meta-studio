@@ -249,6 +249,40 @@ class CacheStore:
             params.extend([needle, needle])
         return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
 
+    def all_entries(self, systems=None) -> list[dict]:
+        """Compare가 쓰는 전량 조회 - Metadata 필드와 Media 종류까지 한 번에 싣는다.
+
+        `query_rows()`는 목록 표시용이라 fields를 빼고, `get_row()`는 한 건마다 질의를
+        세 번 한다. Compare는 두 Collection을 통째로 맞대므로 행마다 get_row를 부르면
+        (좌 N + 우 M)번의 질의가 된다 - 여기서는 세 번으로 끝낸다.
+        """
+        where, params = "", []
+        if systems:
+            where = f" WHERE system IN ({','.join('?' * len(systems))})"
+            params = list(systems)
+        rows = {}
+        for row in self._conn.execute(
+                "SELECT rom_uid,system,filename,storage_id,size,sha256,title,title_norm,"
+                f" has_metadata,has_media,present FROM roms{where}", params):
+            entry = dict(row)
+            entry["fields"] = {}
+            entry["media_types"] = []
+            rows[entry["rom_uid"]] = entry
+
+        if not rows:
+            return []
+        for meta in self._conn.execute("SELECT rom_uid,fields_json FROM metadata"):
+            entry = rows.get(meta["rom_uid"])
+            if entry is not None:
+                entry["fields"] = json.loads(meta["fields_json"])
+        for media in self._conn.execute("SELECT rom_uid,media_type FROM media"):
+            entry = rows.get(media["rom_uid"])
+            if entry is not None:
+                entry["media_types"].append(media["media_type"])
+        for entry in rows.values():
+            entry["media_types"].sort()
+        return list(rows.values())
+
     def get_row(self, rom_uid) -> dict | None:
         row = self._conn.execute("SELECT * FROM roms WHERE rom_uid=?", (rom_uid,)).fetchone()
         if row is None:
