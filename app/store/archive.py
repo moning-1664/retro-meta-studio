@@ -341,6 +341,42 @@ class ArchiveStore:
             params.append(exclude_collection)
         return [dict(row) for row in self._conn.execute(sql, params)]
 
+    def identities_matching(self, system, *, filename_norm=None, title_norm=None,
+                            sha256=None, exclude_collection=None) -> list[dict]:
+        """이름/해시로 **인덱스를 타고** 좁혀지는 후보만.
+
+        `identities_in_system()`은 그 System의 Identity를 전부 돌려주므로, Gamelist처럼
+        행마다 부르는 자리에서 쓰면 (보이는 행 수 x System Identity 수)만큼의 비교가
+        파이썬에서 일어난다. 여기서는 세 인덱스
+        (`ix_rom_identities_lookup`, `ix_games_title`, `ix_rom_identities_sha`)로
+        SQL이 먼저 걸러내므로 보통 0~수 건만 돌아온다.
+
+        Heuristic은 이름이 어긋난 뒤에 보는 것이라 이 질의로는 못 찾는다 - 그건
+        `identities_in_system()`을 쓰는 deep 경로의 몫이다.
+        """
+        clauses, params = [], [system]
+        if filename_norm:
+            clauses.append("r.filename_norm=?")
+            params.append(filename_norm)
+        if title_norm:
+            clauses.append("g.title_norm=?")
+            params.append(title_norm)
+        if sha256:
+            clauses.append("r.sha256=?")
+            params.append(sha256)
+        if not clauses:
+            return []
+
+        sql = ("SELECT r.*, g.title, g.title_norm FROM rom_identities r"
+               " JOIN games g ON g.game_id = r.game_id"
+               f" WHERE r.system=? AND ({' OR '.join(clauses)})")
+        if exclude_collection:
+            sql += (" AND EXISTS (SELECT 1 FROM archive_records ar"
+                    "   WHERE ar.rom_identity_id = r.rom_identity_id"
+                    "     AND ar.source_collection_id <> ?)")
+            params.append(exclude_collection)
+        return [dict(row) for row in self._conn.execute(sql, params)]
+
     def put_match_link(self, collection_id, system, filename, rom_identity_id, *, tier="", score=0.0):
         with transaction(self._conn):
             self._conn.execute(

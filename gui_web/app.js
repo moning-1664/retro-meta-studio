@@ -878,7 +878,8 @@
   // ------------------------------------------------------------------
   // Match (스펙 §45-49)
   // ------------------------------------------------------------------
-  const TIER_LABEL = { exact: "정확", normalized: "이름 일치", metadata: "메타데이터", heuristic: "유사" };
+  const TIER_LABEL = { exact: "정확", normalized: "이름 일치", metadata: "메타데이터",
+                       heuristic: "유사", manual: "수동 연결" };
 
   /** 후보 목록. 고르기 전까지 아무것도 반영되지 않는다 - 그것이 이 화면의 요점이다. */
   async function openMatchDialog(row) {
@@ -898,14 +899,21 @@
       });
       option.appendChild(h("span", { class: "match-radio" }, [
         candidate.romIdentityId === chosen ? "◉" : "○"]));
-      option.appendChild(h("div", { class: "match-option-main" }, [
+      const main = h("div", { class: "match-option-main" }, [
         h("div", { class: "match-option-title truncate" }, [candidate.title || candidate.filename]),
         h("div", { class: "match-option-sub truncate" }, [
           candidate.filename,
           candidate.region ? ` · ${candidate.region}` : "",
           candidate.size ? ` · ${formatBytes(candidate.size)}` : "",
         ]),
-      ]));
+      ]);
+      // 점수만 보여주면 "왜 이게 후보인지"에 답하지 못한다 - 무엇이 일치해서 올라온
+      // 것인지 함께 적는다.
+      if (candidate.evidence && candidate.evidence.length) {
+        main.appendChild(h("div", { class: "match-option-why truncate" },
+          [candidate.evidence.join(" · ")]));
+      }
+      option.appendChild(main);
       option.appendChild(h("span", { class: "match-tier tier-" + candidate.tier },
         [TIER_LABEL[candidate.tier] || candidate.tier]));
       option.appendChild(h("span", { class: "match-score" }, [`${Math.round(candidate.score)}%`]));

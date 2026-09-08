@@ -340,3 +340,5 @@ button.sb-badge { cursor: pointer; }
 .match-tier.tier-exact { border-color: var(--ok, var(--accent)); color: var(--ok, var(--accent)); }
 .match-tier.tier-heuristic { border-color: var(--warning); color: var(--warning); }
 .match-score { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.match-option-why { color: var(--info); font-size: var(--fs-eyebrow); margin-top: 1px; }
+.match-tier.tier-manual { border-color: var(--muted); color: var(--muted); }

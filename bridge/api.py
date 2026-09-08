@@ -576,13 +576,20 @@ class Api:
         return ok({str(uid): n for uid, n in counts.items()})
 
     @guarded
-    def apply_match(self, collection_id, rom_uid, rom_identity_id):
-        """사용자가 고른 후보를 확정한다. 파일도 Metadata도 아직 건드리지 않는다."""
+    def apply_match(self, collection_id, rom_uid, rom_identity_id, manual=False):
+        """사용자가 고른 후보를 확정한다. 파일도 Metadata도 아직 건드리지 않는다.
+
+        후보 목록에 없는 Identity는 거절한다 - `manual=True`를 명시해야 강제로 잇고,
+        그때는 티어가 `manual`로 남아 엔진 판정과 구분된다. 지금 UI에는 강제 연결
+        경로가 없고, Compare(Phase 6)처럼 사용자가 좌우를 직접 지목하는 화면이
+        생길 때 쓰라고 열어 둔 것이다.
+        """
         cache = self.workspace.open(collection_id)
         row = cache.get_row(int(rom_uid))
         if row is None:
             return err("항목을 찾을 수 없습니다.")
-        return ok(match_service.apply_match(self.archive, collection_id, row, rom_identity_id))
+        return ok(match_service.apply_match(self.archive, collection_id, row,
+                                            rom_identity_id, manual=bool(manual)))
 
     @guarded
     def clear_match(self, collection_id, rom_uid):

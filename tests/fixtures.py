@@ -156,6 +156,48 @@ def build_scaled_esde_tree(root: Path, *, systems=("ps2", "snes"), per_system=50
     return root
 
 
+def build_custom_esde_tree(root: Path, system: str, entries, *, with_media=False) -> Path:
+    """항목을 하나씩 지정하는 ES-DE 트리. Match Golden Case용.
+
+    `build_scaled_esde_tree()`는 규모를 만드는 데 쓰고, 이쪽은 "제목은 다른데 개발사와
+    출시일이 같다" 같은 **정확한 조합**이 필요할 때 쓴다. 티어 판정은 필드 하나 차이로
+    갈리므로, 그런 케이스를 규모 생성기의 부산물로 얻으려 하면 테스트가 무엇을
+    검증하는지 읽을 수 없게 된다.
+
+    entries: [{"filename", "title", "size"?, "developer"?, "publisher"?,
+               "releasedate"?, "genre"?, "rom"?(False면 물리 파일 없음)}, ...]
+    """
+    gamelist_dir = root / "gamelists" / system
+    gamelist_dir.mkdir(parents=True, exist_ok=True)
+    rom_dir = root / system
+    rom_dir.mkdir(parents=True, exist_ok=True)
+    if with_media:
+        (root / "downloaded_media" / system / "covers").mkdir(parents=True, exist_ok=True)
+
+    games = []
+    for entry in entries:
+        filename = entry["filename"]
+        if entry.get("rom", True):
+            (rom_dir / filename).write_bytes(b"r" * int(entry.get("size", 1024)))
+        parts = [
+            "  <game>",
+            f"    <path>./{_xml_escape(filename)}</path>",
+            f"    <name>{_xml_escape(entry['title'])}</name>",
+        ]
+        for tag in ("developer", "publisher", "releasedate", "genre"):
+            if entry.get(tag):
+                parts.append(f"    <{tag}>{_xml_escape(str(entry[tag]))}</{tag}>")
+        parts.append("  </game>")
+        games.append("\n".join(parts))
+
+    header = '<?xml version="1.0"?>\n<gameList>\n'
+    body = "\n".join(games)
+    (gamelist_dir / "gamelist.xml").write_text(header + body + "\n</gameList>\n",
+                                               encoding="utf-8")
+    return root
+
+
+
 # ----------------------------------------------------------------------
 # 작업(Job) 대기 헬퍼
 # ----------------------------------------------------------------------

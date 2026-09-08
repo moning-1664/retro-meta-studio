@@ -145,5 +145,13 @@ Archive → Collection이다.
 
 ## 5. 다음
 
-Phase 6(Compare Mode) — `compare_engine.py` 일반화. Match의 티어 판정을 Compare의 좌우
-매칭에 그대로 쓸 수 있으므로 이번 엔진이 그쪽 기반이 된다.
+Phase 6(Compare Mode) — `compare_engine.py` 일반화.
+
+> **정정(2026-09-08, 외부 리뷰 반영)**: 원래 여기에 "Match의 티어 판정을 Compare에 그대로
+> 쓸 수 있다"고 적었으나 **그대로 쓰면 안 된다.** `classify()`의 계약이 "Collection row ↔
+> Archive identity"로 박혀 있어서 Compare(Collection ↔ Collection)에는 맞지 않는다.
+> 판정 로직을 subject↔subject로 한 단계 일반화한 뒤 Compare를 얹어야 한다 -
+> `2026-09-08-phase5-hardening.md` §8 참고.
+
+이 문서의 §3에 적힌 Phase 5 구현은 그 뒤 리뷰 대응으로 일부 바뀌었다(Apply 정책,
+Metadata/Heuristic 분리, 점수 환산). 최신 상태는 hardening 리포트를 볼 것.

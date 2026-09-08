@@ -13,7 +13,8 @@ import unittest
 
 from app.match import engine
 from bridge.api import Api
-from tests.fixtures import build_scaled_esde_tree, scan, temp_root
+from tests.fixtures import (build_custom_esde_tree, build_scaled_esde_tree,
+                            scan, temp_root)
 
 
 class ClassifyTests(unittest.TestCase):
@@ -35,33 +36,34 @@ class ClassifyTests(unittest.TestCase):
         return base
 
     def test_same_hash_is_exact(self):
-        tier, score = engine.classify(self.source(sha256="a" * 64),
-                                      self.identity(sha256="a" * 64, size=999))
+        tier, score, evidence = engine.classify(self.source(sha256="a" * 64),
+                                                self.identity(sha256="a" * 64, size=999))
         self.assertEqual(tier, engine.TIER_EXACT)
         self.assertEqual(score, 100.0)
+        self.assertEqual(evidence, ["SHA256 일치"], "왜 Exact인지 근거가 남아야 한다")
 
     def test_different_hash_is_never_a_candidate(self):
         """해시가 어긋나면 이름이 같아도 같은 ROM일 수 없다."""
-        tier, _ = engine.classify(self.source(sha256="a" * 64), self.identity(sha256="b" * 64))
+        tier, _, _ = engine.classify(self.source(sha256="a" * 64), self.identity(sha256="b" * 64))
         self.assertIsNone(tier)
 
     def test_filename_alone_is_not_exact(self):
         """§47: 단순 Filename만으로 Exact Match를 확정해서는 안 된다."""
-        tier, _ = engine.classify(self.source(size=None), self.identity(size=None))
+        tier, _, _ = engine.classify(self.source(size=None), self.identity(size=None))
         self.assertEqual(tier, engine.TIER_NORMALIZED)
 
     def test_filename_plus_size_is_exact(self):
-        tier, _ = engine.classify(self.source(size=1000), self.identity(size=1000))
+        tier, _, _ = engine.classify(self.source(size=1000), self.identity(size=1000))
         self.assertEqual(tier, engine.TIER_EXACT)
 
     def test_same_name_different_size_stays_a_candidate(self):
         """지역판/리비전 차이로 보이는 상황 - 확증이 없으니 자동으로 붙이지 않는다."""
-        tier, _ = engine.classify(self.source(size=1000), self.identity(size=2000))
+        tier, _, _ = engine.classify(self.source(size=1000), self.identity(size=2000))
         self.assertEqual(tier, engine.TIER_NORMALIZED)
         self.assertNotIn(engine.TIER_NORMALIZED, engine.AUTO_TIERS)
 
     def test_different_system_never_matches(self):
-        tier, _ = engine.classify(self.source(), self.identity(system="snes"))
+        tier, _, _ = engine.classify(self.source(), self.identity(system="snes"))
         self.assertIsNone(tier)
 
     def test_auto_match_needs_exactly_one_exact(self):
@@ -180,6 +182,176 @@ class MatchApiTests(unittest.TestCase):
         result = self.api.apply_match(snes, row["romUid"], ps2_identity)
         self.assertFalse(result["ok"])
         self.assertIn("System", result["error"])
+
+
+class GoldenMatchCases(unittest.TestCase):
+    """티어 판정을 케이스별로 고정한다.
+
+    Match에서 무서운 것은 "테스트가 실패하는 것"이 아니라 **잘못된 매칭이 조용히
+    통과하는 것**이다. 그래서 판정 규칙 하나하나에 이름을 붙여 박아 둔다 - 누군가
+    임계값이나 티어 순서를 건드리면 어느 케이스가 무너졌는지 바로 보이도록.
+    """
+
+    def pair(self, src=None, ident=None):
+        source = {"system": "ps2", "filename": "Game (USA).iso", "size": 1000,
+                  "sha256": None, "title": "Game", "title_norm": "game",
+                  "filename_norm": "game", "developer": "", "publisher": "",
+                  "releasedate": ""}
+        identity = {"rom_identity_id": "i1", "game_id": "g1", "system": "ps2",
+                    "filename": "Game (Europe).iso", "filename_norm": "game",
+                    "title": "Game", "title_norm": "game", "size": 1000,
+                    "sha256": None, "region": None}
+        source.update(src or {})
+        identity.update(ident or {})
+        return source, identity
+
+    # --- Exact ---------------------------------------------------------
+    def test_golden_same_hash(self):
+        source, identity = self.pair({"sha256": "a" * 64}, {"sha256": "a" * 64, "size": 999})
+        self.assertEqual(engine.classify(source, identity)[0], engine.TIER_EXACT)
+
+    def test_golden_same_filename_and_size(self):
+        source, identity = self.pair({"size": 1000}, {"size": 1000})
+        self.assertEqual(engine.classify(source, identity)[0], engine.TIER_EXACT)
+
+    def test_golden_same_filename_different_hash_is_excluded(self):
+        """해시가 어긋나면 이름과 크기가 같아도 같은 ROM이 아니다."""
+        source, identity = self.pair({"sha256": "a" * 64}, {"sha256": "b" * 64})
+        self.assertIsNone(engine.classify(source, identity)[0])
+
+    # --- Normalized ----------------------------------------------------
+    def test_golden_region_variants_are_normalized_not_exact(self):
+        source, identity = self.pair({"size": 1000}, {"size": 2000})
+        self.assertEqual(engine.classify(source, identity)[0], engine.TIER_NORMALIZED)
+
+    def test_golden_metadata_only_entry_cannot_be_exact(self):
+        """크기를 모르는 항목(ROM 없는 metadata-only)은 확증이 없다(§47)."""
+        source, identity = self.pair({"size": None}, {"size": None})
+        self.assertEqual(engine.classify(source, identity)[0], engine.TIER_NORMALIZED)
+
+    # --- Metadata / Heuristic ------------------------------------------
+    def test_golden_developer_and_release_make_a_metadata_candidate(self):
+        source, _ = self.pair({"developer": "Konami", "releasedate": "20010719T000000"})
+        tier, score, evidence = engine._metadata_match(
+            source, {"developer": "Konami", "releasedate": "20010719T000000"})
+        self.assertEqual(tier, engine.TIER_METADATA)
+        self.assertGreaterEqual(score, engine.METADATA_THRESHOLD)
+        self.assertIn("개발사 일치", evidence)
+
+    def test_golden_developer_alone_is_not_enough(self):
+        """같은 회사가 낸 다른 게임까지 후보로 올라오면 목록이 쓸모없어진다."""
+        source, _ = self.pair({"developer": "Konami", "releasedate": "20010719T000000"})
+        self.assertIsNone(engine._metadata_match(source, {"developer": "Konami"})[0])
+
+    def test_golden_empty_fields_never_match_each_other(self):
+        source, _ = self.pair()
+        self.assertIsNone(engine._metadata_match(source, {"developer": "", "releasedate": ""})[0])
+
+    def test_golden_similar_names_land_in_heuristic(self):
+        source, identity = self.pair(
+            {"title": "Metal Gear Solid 2", "filename": "Metal Gear Solid 2.iso",
+             "title_norm": "metal gear solid 2", "filename_norm": "metal gear solid 2"},
+            {"title": "Metal Gear Solid 2 Substance",
+             "filename": "Metal Gear Solid 2 Substance.iso",
+             "title_norm": "metal gear solid 2 substance",
+             "filename_norm": "metal gear solid 2 substance"})
+        self.assertIsNone(engine.classify(source, identity)[0], "이름이 달라 앞 티어로는 안 걸린다")
+        tier, score, evidence = engine._heuristic_match(source, identity, {})
+        self.assertEqual(tier, engine.TIER_HEURISTIC)
+        self.assertGreaterEqual(score, engine.HEURISTIC_THRESHOLD)
+        self.assertTrue(evidence, "점수를 만든 근거를 사용자에게 보여줄 수 있어야 한다")
+
+    def test_golden_unrelated_titles_are_not_candidates(self):
+        source, identity = self.pair(
+            {"title": "Final Fantasy X", "filename": "FFX.iso",
+             "title_norm": "final fantasy x", "filename_norm": "ffx"},
+            {"title": "Gran Turismo 3", "filename": "GT3.iso",
+             "title_norm": "gran turismo 3", "filename_norm": "gt3"})
+        self.assertIsNone(engine.classify(source, identity)[0])
+        self.assertIsNone(engine._heuristic_match(source, identity, {})[0])
+
+    # --- 자동 매칭 -----------------------------------------------------
+    def test_golden_two_exact_candidates_block_auto_match(self):
+        """모호하면 자동으로 결정하지 않는다(§88)."""
+        exact = [{"romIdentityId": "a", "tier": engine.TIER_EXACT, "score": 99.0},
+                 {"romIdentityId": "b", "tier": engine.TIER_EXACT, "score": 99.0}]
+        self.assertIsNone(engine.auto_match(exact))
+
+    def test_golden_manual_tier_is_never_automatic(self):
+        self.assertNotIn(engine.TIER_MANUAL, engine.AUTO_TIERS)
+        self.assertIsNone(engine.auto_match(
+            [{"romIdentityId": "a", "tier": engine.TIER_MANUAL, "score": 0.0}]))
+
+
+class ApplyMatchPolicyTests(unittest.TestCase):
+    """Apply Match가 "근거 있는 선택"만 받아들이는지.
+
+    Match Link는 메모가 아니라 Ingest / Archive -> Collection / Compare가 "같은 ROM"이라고
+    믿고 쓰는 관계 데이터다. 근거 없는 연결이 티어까지 위장한 채 같은 테이블에 섞이면
+    나중에 그 링크가 어디서 왔는지 설명할 수 없게 된다.
+    """
+
+    def setUp(self):
+        self.dir = temp_root("rms_apply_")
+        source_root = build_custom_esde_tree(self.dir / "src", "ps2", [
+            {"filename": "Metal Gear Solid 2.iso", "title": "Metal Gear Solid 2",
+             "developer": "Konami", "releasedate": "20011113T000000", "size": 1000},
+            {"filename": "Gran Turismo 3.iso", "title": "Gran Turismo 3",
+             "developer": "Polyphony", "releasedate": "20010428T000000", "size": 2000},
+        ])
+        target_root = build_custom_esde_tree(self.dir / "dst", "ps2", [
+            # 같은 게임인데 이름이 다르다 - 앞쪽 두 티어로는 안 걸린다.
+            {"filename": "MGS2 Sons of Liberty.iso", "title": "Metal Gear Solid 2 Sons of Liberty",
+             "developer": "Konami", "releasedate": "20011113T000000", "size": 1500},
+        ])
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.src = self.api.create_collection("Source", "es-de", str(source_root))["data"]["id"]
+        self.dst = self.api.create_collection("Target", "es-de", str(target_root))["data"]["id"]
+        for cid in (self.src, self.dst):
+            scan(self.api, cid)
+        self.api.archive_ingest(self.src)
+        self.row = self.api.list_rows(self.dst, limit=50)["data"]["rows"][0]
+
+    def tearDown(self):
+        self.api.close()
+
+    def _archive_id(self, filename):
+        rows = self.api.archive_rows(limit=50)["data"]["rows"]
+        return next(r["romIdentityId"] for r in rows if r["file"] == filename)
+
+    def test_choosing_a_real_candidate_records_its_own_tier_and_score(self):
+        """후보 목록에 보인 티어/점수가 그대로 남아야 한다.
+
+        예전에는 확정할 때 classify()를 다시 불렀는데, classify()는 Exact/Normalized만
+        판정하므로 Metadata/Heuristic 후보가 전부 "heuristic / 0.0점"으로 뭉개졌다 -
+        사용자가 보고 고른 근거와 실제로 기록된 근거가 달라지는 셈이었다.
+        """
+        result = self.api.match_candidates(self.dst, self.row["romUid"])["data"]
+        candidate = next(c for c in result["candidates"]
+                         if c["filename"] == "Metal Gear Solid 2.iso")
+        self.assertIn(candidate["tier"], (engine.TIER_METADATA, engine.TIER_HEURISTIC))
+        self.assertGreater(candidate["score"], 0.0)
+
+        applied = self.api.apply_match(self.dst, self.row["romUid"],
+                                       candidate["romIdentityId"])["data"]
+        self.assertEqual(applied["tier"], candidate["tier"])
+        self.assertEqual(applied["score"], candidate["score"])
+        self.assertFalse(applied["manual"])
+
+    def test_an_identity_that_is_not_a_candidate_is_refused(self):
+        unrelated = self._archive_id("Gran Turismo 3.iso")
+        result = self.api.apply_match(self.dst, self.row["romUid"], unrelated)
+        self.assertFalse(result["ok"])
+        self.assertIn("후보 목록에 없는", result["error"])
+
+    def test_forcing_it_is_possible_but_recorded_as_manual(self):
+        unrelated = self._archive_id("Gran Turismo 3.iso")
+        applied = self.api.apply_match(self.dst, self.row["romUid"], unrelated,
+                                       manual=True)["data"]
+        self.assertEqual(applied["tier"], engine.TIER_MANUAL)
+        self.assertTrue(applied["manual"])
+        self.assertEqual(applied["score"], 0.0,
+                         "엔진이 근거를 못 댄 연결에 점수를 붙이면 안 된다")
 
 
 if __name__ == "__main__":

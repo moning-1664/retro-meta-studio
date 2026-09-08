@@ -32,6 +32,15 @@ test("후보 목록이 티어와 점수를 함께 보여준다", async ({ page }
   await expect(page.locator(".match-source")).toContainText("Metal Gear Solid 2");
 });
 
+test("후보마다 '왜 올라왔는지' 근거를 함께 보여준다", async ({ page }) => {
+  // 점수만 있으면 사용자가 판단할 수 없다 - 무엇이 일치해서 후보가 됐는지 적는다.
+  await page.locator(".match-badge").click();
+  const why = page.locator(".match-option-why");
+  await expect(why).toHaveCount(2);
+  await expect(why.nth(0)).toContainText("정규화 파일명 일치");
+  await expect(why.nth(1)).toContainText("제목");
+});
+
 test("아무것도 고르지 않으면 Apply Match를 누를 수 없다", async ({ page }) => {
   await page.locator(".match-badge").click();
   const apply = page.locator(".modal-actions .btn", { hasText: "Apply Match" });

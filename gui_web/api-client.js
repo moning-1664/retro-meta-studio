@@ -161,17 +161,19 @@
       candidates: [
         { romIdentityId: "ri-1", filename: "Metal Gear Solid 2 (Japan).iso",
           title: "Metal Gear Solid 2", region: "Japan", size: 4300000001,
-          tier: "normalized", score: 85, linked: false },
+          tier: "normalized", score: 85, linked: false,
+          evidence: ["정규화 파일명 일치", "크기 다름"] },
         { romIdentityId: "ri-2", filename: "Metal Gear Solid 2 Substance.iso",
           title: "Metal Gear Solid 2: Substance", region: "USA", size: 4500000000,
-          tier: "heuristic", score: 71.4, linked: false },
+          tier: "heuristic", score: 71.4, linked: false,
+          evidence: ["제목 27점", "파일명 12점"] },
       ],
       linkedRomIdentityId: mockMatchLinks[romUid] || null,
       autoMatch: null,
     }),
     apply_match: (id, romUid, romIdentityId) => {
       mockMatchLinks[romUid] = romIdentityId;
-      return ok({ romIdentityId, tier: "normalized", score: 85 });
+      return ok({ romIdentityId, tier: "normalized", score: 85, manual: false });
     },
     clear_match: (id, romUid) => {
       const had = !!mockMatchLinks[romUid];
