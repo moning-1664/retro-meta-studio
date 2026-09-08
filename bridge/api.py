@@ -521,7 +521,10 @@ class Api:
                 "romUid": r["rom_identity_id"], "romIdentityId": r["rom_identity_id"],
                 "system": r["system"], "file": r["filename"], "title": r["title"],
                 "sources": r["source_count"], "updatedAt": r["updated_at"],
-                "hasMetadata": True, "hasMedia": False, "present": True, "size": 0,
+                # 예전에는 False로 박아뒀다. Archive에 media가 저장돼 있어도
+                # 목록에서는 영영 없는 것으로 보였다.
+                "hasMetadata": True, "hasMedia": bool(r["media_count"]),
+                "present": True, "size": 0,
                 "storageId": "archive",
             } for r in rows],
             "total": self.archive.count_rows(**query), "offset": int(offset),

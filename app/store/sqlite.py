@@ -24,6 +24,7 @@ DB를 고치려면 새로 만들어야 한다"는 주석이 코드에 남아 있
 from __future__ import annotations
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +37,88 @@ class Migration:
     """version은 1부터 시작하는 연속된 정수. statements는 순서대로 실행된다."""
     version: int
     statements: tuple[str, ...]
+
+
+class _Rows:
+    """결과를 락 안에서 미리 다 읽어 둔 커서.
+
+    커서를 그대로 돌려주면 호출부가 락 **밖에서** 행을 하나씩 당겨오게 되고, 그
+    순간 다시 같은 연결을 만지게 된다. 그래서 읽기는 락 안에서 끝낸다.
+    """
+
+    __slots__ = ("_rows", "_index", "lastrowid", "rowcount")
+
+    def __init__(self, rows, lastrowid, rowcount):
+        self._rows, self._index = rows, 0
+        self.lastrowid, self.rowcount = lastrowid, rowcount
+
+    def __iter__(self):
+        return iter(self._rows[self._index:])
+
+    def fetchone(self):
+        if self._index >= len(self._rows):
+            return None
+        self._index += 1
+        return self._rows[self._index - 1]
+
+    def fetchall(self):
+        rest, self._index = self._rows[self._index:], len(self._rows)
+        return rest
+
+    def fetchmany(self, size=1):
+        rest = self._rows[self._index:self._index + size]
+        self._index += len(rest)
+        return rest
+
+
+class _SerializedConnection:
+    """같은 연결을 여러 스레드가 쓰는 것을 안전하게 만든다.
+
+    Job 워커가 스캔으로 Cache를 쓰는 동안 사용자가 Archive 수집을 누르는 것은
+    정상적인 사용이다. 그때 SQLite 연결이 깨지면 "실패했는데 화면은 완료"가 된다.
+
+    재진입 가능한 락을 쓴다 - `transaction()` 안에서 다시 `execute()`를 부르기 때문이다.
+    """
+
+    def __init__(self, conn):
+        object.__setattr__(self, "_conn", conn)
+        object.__setattr__(self, "_lock", threading.RLock())
+
+    # -- 문장 실행 ------------------------------------------------------
+    def execute(self, *args, **kwargs):
+        with self._lock:
+            cur = self._conn.execute(*args, **kwargs)
+            return _Rows(cur.fetchall(), cur.lastrowid, cur.rowcount)
+
+    def executemany(self, *args, **kwargs):
+        with self._lock:
+            cur = self._conn.executemany(*args, **kwargs)
+            return _Rows(cur.fetchall(), cur.lastrowid, cur.rowcount)
+
+    def executescript(self, *args, **kwargs):
+        with self._lock:
+            return self._conn.executescript(*args, **kwargs)
+
+    # -- 트랜잭션 경계 --------------------------------------------------
+    @property
+    def lock(self):
+        """`transaction()`이 트랜잭션 전체를 한 스레드에 묶기 위해 쓴다."""
+        return self._lock
+
+    @property
+    def in_transaction(self):
+        with self._lock:
+            return self._conn.in_transaction
+
+    def close(self):
+        with self._lock:
+            return self._conn.close()
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, "_conn"), name)
+
+    def __setattr__(self, name, value):
+        setattr(self._conn, name, value)
 
 
 def connect(path, migrations=(), *, busy_timeout_ms=DEFAULT_BUSY_TIMEOUT_MS):
@@ -57,16 +140,13 @@ def connect(path, migrations=(), *, busy_timeout_ms=DEFAULT_BUSY_TIMEOUT_MS):
     conn.execute("PRAGMA foreign_keys=ON")
     if migrations:
         migrate(conn, migrations)
-    return conn
+    # **연결을 직렬화해서 돌려준다.** Job 워커와 사용자 동작이 같은 연결을
+    # 동시에 만지면 커서와 트랜잭션 상태가 뒤섞인다.
+    return _SerializedConnection(conn)
 
 
-@contextmanager
-def transaction(conn, immediate=True):
-    """쓰기 트랜잭션. 중첩해서 열 수 없다(SQLite가 중첩 트랜잭션을 지원하지 않음).
-
-    이미 트랜잭션이 열려 있으면 그대로 통과시켜서, 호출부가 `transaction()`을
-    중첩해도 바깥쪽 하나만 커밋되도록 한다.
-    """
+def _transaction_body(conn, immediate):
+    """실제 BEGIN/COMMIT/ROLLBACK. 락은 `transaction()`이 잡는다."""
     if conn.in_transaction:
         yield conn
         return
@@ -77,6 +157,23 @@ def transaction(conn, immediate=True):
         conn.execute("ROLLBACK")
         raise
     conn.execute("COMMIT")
+
+
+@contextmanager
+def transaction(conn, immediate=True):
+    """쓰기 트랜잭션. 중첩해서 열 수 없다(SQLite가 중첩 트랜잭션을 지원하지 않음).
+
+    이미 트랜잭션이 열려 있으면 그대로 통과시켜서, 호출부가 `transaction()`을
+    중첩해도 바깥쪽 하나만 커밋되도록 한다.
+    """
+    lock = getattr(conn, "lock", None)
+    if lock is None:
+        yield from _transaction_body(conn, immediate)
+        return
+    # **트랜잭션 전체를 한 스레드가 쥔다.** 문장 단위로만 직렬화하면 BEGIN과 COMMIT
+    # 사이에 다른 스레드가 끼어들어 "커밋할 트랜잭션이 없다"가 된다.
+    with lock:
+        yield from _transaction_body(conn, immediate)
 
 
 def user_version(conn) -> int:
