@@ -31,6 +31,8 @@ from app.archive import service as archive_service
 from app.compare import engine as compare_engine
 from app.convert import service as convert_service
 from app.match import service as match_service
+from app.metadata import service as metadata_service
+from storage.local import LocalStorageProvider
 from app.store.archive import ArchiveStore
 from app.store.registry import CHANGE_APPLIED, RegistryError, RegistryStore
 from app.workspace import Workspace, WorkspaceError
@@ -607,6 +609,27 @@ class Api:
         if row is None:
             return err("항목을 찾을 수 없습니다.")
         return ok({"cleared": match_service.clear_match(self.archive, collection_id, row)})
+
+    # ------------------------------------------------------------------
+    # Metadata 없는 Collection 시작하기
+    # ------------------------------------------------------------------
+    @guarded
+    def metadata_status(self, collection_id):
+        """gamelist가 없는 System이 있는지. Collection을 연 직후 물어보기 위한 것이다."""
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            return err("Collection을 찾을 수 없습니다.")
+        provider = LocalStorageProvider.for_path(collection.root_path)
+        return ok(metadata_service.status(collection, provider))
+
+    @guarded
+    def generate_metadata(self, collection_id, systems=None):
+        """ROM 목록만 담은 gamelist를 만든다. 이미 있는 파일은 건드리지 않는다."""
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            return err("Collection을 찾을 수 없습니다.")
+        provider = LocalStorageProvider.for_path(collection.root_path)
+        return ok(metadata_service.generate(collection, provider, systems))
 
     # ------------------------------------------------------------------
     # Convert (스펙 §53)

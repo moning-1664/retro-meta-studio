@@ -457,6 +457,9 @@
                                              targetSel.value || null, archSel.value || null);
         if (!r.ok) { showToast(r.error, "error"); return; }
         await loadCollections();
+        // **불러오기 전에** 묻는다 - 스캔이 끝난 뒤에 물으면 사용자는 이미 "메타데이터가
+        // 없는 목록"을 본 뒤라 무엇을 정하는 건지 알기 어렵다.
+        await offerMetadataBootstrap(r.data.id);
         await openTab(r.data.id);
         runScan(r.data.id);
       } }, ["추가"]),
@@ -1072,6 +1075,49 @@
 
     el.addEventListener("click", () => openDetail(row));
     return el;
+  }
+
+  /** gamelist가 없는 Collection이면 ROM 목록만으로 만들어 줄지 묻는다.
+   *
+   * 만들지 않아도 Collection은 열린다 - 그때는 Gamelist에 파일명이 제목 자리에 뜨고,
+   * 사용자가 항목을 고쳐 저장하는 순간 gamelist.xml이 만들어진다. 여기서 미리 만드는
+   * 것은 이후 작업(Export/Convert/Archive 수집)을 자연스럽게 하기 위한 선택지다.
+   */
+  async function offerMetadataBootstrap(collectionId) {
+    const status = await api.metadataStatus(collectionId);
+    if (!status.ok || !status.data.missing.length) return;
+
+    const missing = status.data.missing;
+    const roms = status.data.systems
+      .filter((s) => missing.includes(s.system))
+      .reduce((sum, s) => sum + s.roms, 0);
+
+    await new Promise((done) => {
+      const body = h("div", { class: "modal-body" }, [
+        h("div", { class: "modal-text" }, [
+          `메타데이터(gamelist.xml)가 없는 System이 ${formatCount(missing.length)}개 있습니다.`,
+        ]),
+        h("div", { class: "modal-hint" }, [
+          `ROM ${formatCount(roms)}개의 파일명만 담은 gamelist를 지금 만들 수 있습니다. `
+          + "제목은 파일명 그대로 들어가고 나머지 항목은 비워 둡니다 - 추측해서 채우지 않습니다.",
+        ]),
+        h("div", { class: "modal-hint" }, [
+          `대상: ${missing.slice(0, 8).join(", ")}${missing.length > 8 ? " …" : ""}`,
+        ]),
+      ]);
+      showModal("메타데이터가 없습니다", body, [
+        h("button", { class: "btn", onClick: () => { closeModal(); done(); } }, ["나중에"]),
+        h("button", { class: "btn primary", onClick: async () => {
+          closeModal();
+          const made = await api.generateMetadata(collectionId, missing);
+          if (!made.ok) { showToast(made.error, "error"); done(); return; }
+          const games = (made.data.created || []).reduce((sum, c) => sum + c.games, 0);
+          showToast(`${formatCount(made.data.created.length)}개 System에 `
+                    + `${formatCount(games)}개 항목의 gamelist를 만들었습니다.`);
+          done();
+        } }, ["gamelist 만들기"]),
+      ]);
+    });
   }
 
   // ------------------------------------------------------------------

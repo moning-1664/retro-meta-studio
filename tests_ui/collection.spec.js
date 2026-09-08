@@ -31,9 +31,13 @@ test("새 Collection 추가는 이름과 폴더가 둘 다 있어야 진행된�
   await expect(page.locator("#toast")).toContainText("이름과 폴더");
   await expect(page.locator(".modal-title")).toHaveText("새 Collection");
 
-  // 찾아보기(목업 pick_folder)로 경로를 채우면 추가되고 탭이 열린다.
+  // 찾아보기(목업 pick_folder)로 경로를 채우면 추가된다.
   await page.locator(".modal-body .btn", { hasText: "찾아보기" }).click();
   await modalButton(page, "추가").click();
+
+  // 메타데이터가 없는 Collection이면 만들지 먼저 묻는다(§Phase 7.8) - 그 안내를
+  // 지나야 탭이 열린다.
+  await modalButton(page, "나중에").click();
   await expect(page.locator(".ctab.active")).toContainText("이름만 있음");
 });
 

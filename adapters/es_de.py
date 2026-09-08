@@ -69,18 +69,52 @@ class EsDeAdapter(FrontendAdapter):
     # 구조 파악
     # ------------------------------------------------------------------
     def detect(self, provider, root_path) -> Detection:
+        """이 경로가 ES-DE Collection인지.
+
+        **메타데이터가 아직 없는 순수 ROM 트리도 받아들인다.** `gamelists/`도
+        `downloaded_media/`도 없지만 System 폴더 안에 ROM이 있는 형태는 흔하다 -
+        스크래핑을 한 번도 안 한 사람의 컬렉션이 정확히 그 모습이고, 그 사람도 앱을
+        열어서 시작할 수 있어야 한다. 다만 "ES-DE라고 확신"할 근거는 없으므로
+        confidence를 낮게 준다.
+        """
         root = Path(root_path)
         gamelists, media = root / "gamelists", root / "downloaded_media"
         has_gamelists, has_media = provider.exists(gamelists), provider.exists(media)
-        if not has_gamelists and not has_media:
-            return Detection(0.0, message="gamelists/downloaded_media 폴더를 찾을 수 없습니다.")
-        systems = set()
-        for base in (gamelists, media):
-            systems.update(e.name for e in provider.scandir(base)
-                           if e.is_dir and e.name.lower() not in ESDE_IGNORED_SYSTEMS)
-        confidence = 1.0 if (has_gamelists and has_media) else 0.6
-        return Detection(confidence, tuple(sorted(systems)),
-                         f"{len(systems)}개 시스템을 찾았습니다.")
+
+        if has_gamelists or has_media:
+            systems = set()
+            for base in (gamelists, media):
+                systems.update(e.name for e in provider.scandir(base)
+                               if e.is_dir and e.name.lower() not in ESDE_IGNORED_SYSTEMS)
+            confidence = 1.0 if (has_gamelists and has_media) else 0.6
+            return Detection(confidence, tuple(sorted(systems)),
+                             f"{len(systems)}개 시스템을 찾았습니다.")
+
+        systems = tuple(sorted(self._systems_with_roms(provider, root)))
+        if not systems:
+            return Detection(0.0, message="gamelists/downloaded_media 폴더도, "
+                                          "ROM이 든 시스템 폴더도 찾을 수 없습니다.")
+        return Detection(0.3, systems,
+                         f"{len(systems)}개 시스템의 ROM을 찾았습니다. "
+                         "메타데이터(gamelist.xml)는 아직 없습니다.")
+
+    def _systems_with_roms(self, provider, root) -> list[str]:
+        """ROM 파일이 실제로 들어 있는 하위 폴더만 System으로 본다.
+
+        폴더가 있다고 전부 System으로 잡으면 `themes`나 사용자의 잡동사니까지 딸려
+        들어온다. 파일이 하나라도 ROM처럼 생겼는지 보고 정한다.
+        """
+        found = []
+        for entry in provider.scandir(root):
+            if not entry.is_dir or entry.name.lower() in ESDE_IGNORED_SYSTEMS                     or entry.name.lower() in RESERVED_DIRS:
+                continue
+            for child in provider.scandir(entry.path):
+                if child.is_dir or child.name.startswith("."):
+                    continue
+                if Path(child.name).suffix.lower() not in NON_ROM_EXTENSIONS:
+                    found.append(entry.name)
+                    break
+        return found
 
     def list_systems(self, provider, collection) -> list[str]:
         systems = set()

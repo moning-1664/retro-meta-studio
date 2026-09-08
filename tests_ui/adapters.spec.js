@@ -24,6 +24,7 @@ test("고른 Frontend가 새 Collection에 그대로 반영된다", async ({ pag
   await page.locator(".modal-body select").first().selectOption("pegasus");
   await page.locator(".modal-body .btn", { hasText: "찾아보기" }).click();
   await modalButton(page, "추가").click();
+  await modalButton(page, "나중에").click();   // 메타데이터 생성 안내를 지난다
   await expect(page.locator(".ctab.active")).toContainText("펠가수스");
 });
 

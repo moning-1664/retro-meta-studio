@@ -184,6 +184,14 @@
     plan_remove_entry: () => ok({ removed: 1 }),
 
     // Convert(§53). 미리보기는 "무엇을 잃는지"까지 말해야 의미가 있다.
+    metadata_status: () => ok({
+      systems: [{ system: "snes", hasMetadata: false, roms: 2 },
+                { system: "gba", hasMetadata: false, roms: 1 }],
+      missing: ["snes", "gba"], roms: 3,
+    }),
+    generate_metadata: () => ok({
+      created: [{ system: "snes", games: 2 }, { system: "gba", games: 1 }], skipped: [],
+    }),
     convert_preview: () => ok({
       sourceId: "c1", sourceName: "Master Library", sourceFrontend: "ES-DE",
       targetId: "c2", targetName: "Android ES-DE", targetFrontend: "Pegasus",
@@ -312,6 +320,9 @@
     matchCounts: (id, romUids) => call("match_counts", id, romUids),
     applyMatch: (id, romUid, romIdentityId) => call("apply_match", id, romUid, romIdentityId),
     clearMatch: (id, romUid) => call("clear_match", id, romUid),
+
+    metadataStatus: (id) => call("metadata_status", id),
+    generateMetadata: (id, systems) => call("generate_metadata", id, systems || null),
 
     convertPreview: (sourceId, targetId) => call("convert_preview", sourceId, targetId),
     startConvert: (sourceId, targetId) => call("start_convert", sourceId, targetId),
