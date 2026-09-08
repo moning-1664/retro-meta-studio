@@ -21,9 +21,10 @@
 
 ## 현재 상태
 
-**Phase 4까지 완료.** `python main.py`로 실행된다. Collection 등록·스캔·탐색·메타데이터
+**Phase 5까지 완료.** `python main.py`로 실행된다. Collection 등록·스캔·탐색·메타데이터
 편집, Plan을 통한 복사/삭제/Storage 이동(인스턴스 간 복사 포함), 그리고 여러 Collection의
-Metadata를 출처와 함께 모으는 Archive까지 동작한다.
+Metadata를 출처와 함께 모으는 Archive, 그리고 이름이 어긋난 항목을 사람이 이어주는
+Match까지 동작한다.
 
 | Phase | 내용 | 상태 |
 |---|---|---|
@@ -32,8 +33,8 @@ Metadata를 출처와 함께 모으는 Archive까지 동작한다.
 | 2 | Collection UI (탭/헤더/내비/Gamelist) + 기존 Detail 패널 연결 | 완료 |
 | 3 | Plan (Auto Plan·용량 계산·Apply·인스턴스 간 복사/붙여넣기) | 완료 |
 | 4 | Archive (Source Tracking·Revision·Archive→Collection) | 완료 |
-| 5 | Match (Exact → Normalized → Heuristic) | 다음 |
-| 6~8 | Compare / Frontend Adapters / MTP | |
+| 5 | Match (Exact → Normalized → Heuristic 후보 UI) | 완료 |
+| 6~8 | Compare / Frontend Adapters / MTP | 6이 다음 |
 
 ## 구조
 
@@ -67,12 +68,29 @@ db/
 
 ## 테스트
 
+백엔드:
+
 ```
 python -m unittest discover -s tests
 ```
 
 `native/MediaCopyWorker.exe`가 없으면 네이티브 워커 테스트는 skip된다. 워커를 빌드하려면
 `native/build_worker.bat`을 실행한다.
+
+GUI (Playwright, 헤드리스 Chromium):
+
+```
+npm install
+npx playwright install chromium
+npx playwright test
+```
+
+`gui_web/`은 pywebview가 없으면 `api-client.js`가 내장 목업으로 폴백하므로(`api.isMock()`),
+실제 앱을 띄우지 않고도 클릭/입력/스크롤 시나리오를 검증할 수 있다. 목업에 없는 호출은
+`{ok:false}`가 되어 그 화면이 조용히 오류 경로만 지나가므로, `tests/test_wiring.py`가
+`app.js → api-client.js → bridge/api.py`의 이름·인자 개수와 **목업 커버리지**를 함께
+감시한다. 네이티브 폴더 대화상자, 실제 파일 I/O, WebView2 고유 렌더링은 여전히 실기
+확인이 필요하다.
 
 ## 파일 복사 엔진
 

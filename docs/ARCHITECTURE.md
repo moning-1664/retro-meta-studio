@@ -344,7 +344,7 @@ Plan 생성 시점의 `(size, mtime_ns)`를 엔트리에 박아두고 Apply 직�
 | 2 | Collection UI: 탭 / 헤더(compact·확장) / ALL·INTERNAL·EXTERNAL 내비 / 가상 스크롤 Gamelist / 기존 Detail 패널 연결 | gui_web 재사용 구간 |
 | 3 | Plan: 모델·Auto Plan·용량 계산·Validate·Apply. Copy/Paste, Delete, Drag&Drop, System 이동. **인스턴스 간 클립보드 붙여넣기** | Apply는 기존 FileOperationEngine |
 | 4 | Archive: Source Tracking, Revision, Archive Gamelist, Archive→Collection | |
-| 5 | Match: Exact → Normalized → Heuristic 후보 UI (자동 병합 금지 §49) | `similar_rom.py` 활용 |
+| 5 | Match: Exact → Normalized → Heuristic 후보 UI (자동 병합 금지 §49) | 완료. `similar_rom.py`의 점수를 재사용하고, 자동으로 붙는 것은 Exact 하나뿐이다. 구현 중 §46(Game/ROM Identity 분리)이 실제로는 깨져 있던 것을 함께 고쳤다 - `docs/REPORTS/2026-09-08-phase5-match-and-test-harness.md` |
 | 6 | Compare Mode | `compare_engine.py` 일반화 |
 | 7 | 나머지 어댑터(Pegasus/LaunchBox/ES) + Round-trip 검증 + ES-DE custom systems XML | |
 | 8 | MTP Provider (선택) | 필요성 재평가 후 착수 |
