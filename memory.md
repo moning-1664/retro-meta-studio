@@ -28,25 +28,28 @@
 
 ## 현재 상태 (2026-09-08 기준)
 
-**Phase 7.5까지 + frameless 전환 완료, main에 push됨.** 실제 앱이 뜨고 UI가 정상
-렌더링되는 것까지 확인했다(`python main.py`).
+**Phase 7.7까지 완료, main에 push됨.** 앱이 실제로 뜨고, **사용자의 실제 ES-DE 백업
+1,546게임을 오류 없이 읽는다.**
 
 지켜야 할 성질:
 - **Compare는 읽기 전용이다.** 새 변경 동작에는 `blockedInCompare()`를 넣을 것.
-- **Adapter는 모르는 필드를 버리지 않는다.** 단 위치에 매인 값은 `strip_location_raw()`,
+- **Adapter는 모르는 필드를 버리지 않는다.** 위치에 매인 값은 `strip_location_raw()`,
   다른 Frontend의 값은 `raw_is_mine()`으로 걸러낸다.
 - **`to_common()`은 `tag_raw()`로 출처를 남긴다.**
 - **Adapter 쓰기는 System 단위 bulk다.**
 - **Adapter가 포맷 지식을 독점한다.**
 - **호출을 묶는 것과 실패를 묶는 것은 별개다.**
-- **창은 frameless다.** `easy_drag=False`를 유지하고, 창 이동은
-  `pywebview-drag-region`, 크기 조절은 `#resize-grip`이 맡는다. 최소 크기는
-  `main.py::MIN_SIZE`와 `app.js::MIN_WINDOW` 두 곳에 있으니 **같이 바꿀 것**.
+- **창은 frameless다.** `easy_drag=False` 유지, 최소 크기는 `main.py::MIN_SIZE`와
+  `app.js::MIN_WINDOW` 두 곳.
+- **실제 자료의 XML은 깨져 있을 수 있다.** ES-DE 3.x의 다중 루트와 맨 `&`를 복구해서
+  읽는다 - 그 복구를 되돌리면 실제 컬렉션의 32%가 사라진다.
 
 **성능 기준선**: 400게임 Apply 1.20s, 1,000게임+media 12.36s, 5,000게임+media 61.34s.
+**실제 자료 기준선**: ES-DE 백업 스캔 1,546게임 / 오류 0.
 
-남은 것: Compare Row key 구조화(우선순위 낮음), Phase 8(MTP, 선택).
-의도적 한계: 다른 볼륨으로 옮기면 Match 링크가 끊긴다, SHA-256 비교.
+다음 후보: **ROM 트리만 있는 Collection 열기**(사용자의 `C:\Games\ROMs`가 아직 안 열린다 -
+41/43이 metadata 없는 순수 ROM 폴더), ARRM 배치 지원, Compare Row key 구조화(낮음),
+Phase 8(MTP, 선택).
 
 (이 절은 최신 상태를 담으므로 계속 갱신한다. 아래 날짜별 항목은 그 시점의 기록이므로
 고치지 않는다.)
@@ -801,3 +804,61 @@ pywebview의 `window.resize()`가 frameless 창에서 동작하는 것은 probe�
 
 **검증**: 파이썬 346개, Playwright 57개(신규 6) 전부 통과. 커밋 `f1391b0`,
 `origin/main`에 push 완료.
+
+---
+
+## 실제 ES-DE 백업으로 돌려 보고 찾은 결함 5건 (2026-09-08, Claude Code)
+
+**테스트 403개가 전부 통과하는 상태였는데, 사용자의 실제 컬렉션은 40%가 스캔되지 않고
+있었다.** 930게임(오류로 중단) → **1,546게임**(정상 완료). 상세는
+`docs/REPORTS/2026-09-08-phase7.7-real-data.md`.
+
+### 사용자의 실제 자료 (다음에도 여기로 검증할 것)
+
+```
+메타데이터 : C:\Users\moning\Downloads\Backup\ES-DE_3.1.01312312\ES-DE
+             gamelists 26개 시스템 / 1,539게임, downloaded_media 14,705개 / 13.87GB
+ROM        : C:\Games\ROMs   43개 시스템 / 3,686개 / 182.8GB
+```
+
+ES-DE 표준 배치(메타데이터·ROM 분리)라 **Collection root = ES-DE 폴더, ROM 폴더를
+External Storage로 붙이고 System을 전부 그쪽으로 옮기면** 열린다. 이 앱이 의도한
+사용 방식 그대로다.
+
+**검증할 때는 registry/cache를 임시 폴더에 만들 것**(`Api(registry_path=..., cache_dir=...)`).
+스캔은 읽기 전용이지만 앱의 `db/`를 오염시키지 않는다. 실제 자료에는 절대 쓰지 말 것.
+
+### 고친 것
+
+1. **`<alternativeEmulator>`** — ES-DE 3.x는 `<gameList>` 앞에 이 요소를 형제로 쓴다.
+   최상위 요소가 둘이라 `ET.parse`가 거절하고, 우리는 그걸 삼켜 **그 System의
+   메타데이터를 통째로 잃었다**(26개 중 9개, 488게임). 실패하면 임시 루트로 감싸 읽는다.
+2. **맨 `&`** — `<name>캡틴 아메리카 & 어벤저스</name>`. 감싸기도 실패했을 때만, 올바른
+   실체 참조는 건드리지 않고 맨 `&`만 고쳐 재시도한다(famicom 199게임).
+3. **같은 media type 두 개** — `covers/X.jpg` + `covers/X.png`가 있으면
+   `(rom_uid, media_type)` UNIQUE 위반으로 **스캔 전체가 죽었다.** 14,705개 중 그런 ROM이
+   **단 2개**였는데 `nes` 이후 8개 시스템이 아예 스캔되지 않았고, 작업은 `done: True`로
+   끝나 겉보기엔 성공이었다. 스캐너가 타입당 하나만 남긴다 - **경로 순서로 고른다**
+   (스캔마다 달라지면 Compare가 매번 다르다고 말한다).
+4. **ES-DE 자체 폴더** — `controllers`/`screensavers`/`temp`가 System으로 잡혔다.
+   `RESERVED_DIRS`에 추가.
+5. **목업이 실제와 다른 모양** — `add_external_storage`의 실제 반환은 **storage id
+   문자열**인데 목업은 객체였다. `test_wiring`은 이름·인자 개수까지만 보므로 이 종류를
+   못 잡는다.
+
+### 배운 것 — 합성 fixture의 한계
+
+fixture는 **우리가 아는 모양만** 만든다. 위 다섯은 전부 우리가 모르던 모양이었다.
+`build_custom_esde_tree()`는 늘 올바른 XML을 쓰고, 타입당 media를 하나만 만든다.
+
+그래서 실제에서 확인한 모양을 `tests/test_real_world_esde.py`에 **작은 fixture로**
+옮겨 뒀다. **테스트가 실제 경로를 직접 보게 하지 말 것** - 182GB이고 그 PC에만 있으며,
+쓰기 경로가 실수로 실제 자료를 건드리면 되돌릴 수 없다.
+
+### 아직 못 여는 것
+
+`C:\Games\ROMs`만 단독으로 열면 **Adapter 4종 전부 confidence 0.0**이다.
+- 43개 중 **41개가 metadata 없는 순수 ROM 폴더**
+- 나머지 2개는 ARRM 배치(`<system>/media/gamelist.xml` + `media/<system>/<타입>/`)
+
+ES-DE 백업과 함께 쓰면 열리지만, ROM 트리만 가진 사용자는 아직 시작할 수 없다.
