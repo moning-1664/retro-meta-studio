@@ -151,9 +151,29 @@ def scan_collection(collection, cache, provider, adapter, *, media_types=None,
     return {"systems": systems, "scanned": scanned, "skipped": skipped, "roms": total_roms}
 
 
+def _one_per_media_type(media):
+    """같은 media type이 여럿이면 하나만 남긴다.
+
+    Cache는 `(rom_uid, media_type)`을 기본 키로 쓴다 - "한 게임의 한 타입에 파일 하나"가
+    이 모델의 전제이기 때문이다. 그런데 실제 폴더에는 `Shanghai 1.jpg`와
+    `Shanghai 1.png`가 같은 `covers` 안에 함께 있는 경우가 있다.
+
+    예전에는 그대로 넣다가 **UNIQUE 제약 위반으로 스캔 전체가 죽었다.** 사용자의 실제
+    자료에서 media 14,705개 중 그런 ROM이 2개 있었는데, 그 둘 때문에 27개 시스템 중
+    8개가 아예 스캔되지 않았다(nes 이후 전부).
+
+    어느 것을 남길지는 경로 순서로 정한다 - 스캔할 때마다 달라지지 않는 것이 중요하다.
+    """
+    chosen = {}
+    for item in sorted(media, key=lambda m: str(m.path)):
+        chosen.setdefault(item.media_type, item)
+    return list(chosen.values())
+
+
 def _scan_system(provider, adapter, layout, storage_id, media_types):
     metadata = adapter.read_index(provider, layout)
-    media_index = adapter.read_media_index(provider, layout, media_types)
+    media_index = {stem: _one_per_media_type(items)
+                   for stem, items in adapter.read_media_index(provider, layout, media_types).items()}
     rom_files = adapter.list_roms(provider, layout)
 
     rows = []

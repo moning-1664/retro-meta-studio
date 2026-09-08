@@ -23,6 +23,7 @@ ES-DE Frontend Adapter.
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -49,7 +50,10 @@ MEDIA_FOLDERS = {
 #: 설치(흔하다)에서 이걸 걸러내지 않으면 `gamelists`나 `downloaded_media`가 게임
 #: 시스템으로 잡혀 유령 항목이 생긴다.
 RESERVED_DIRS = {"gamelists", "downloaded_media", "themes", "custom_systems",
-                 "collections", "settings", "scripts", "logs", "tools", "emulators"}
+                 "collections", "settings", "scripts", "logs", "tools", "emulators",
+                 # 실제 ES-DE 3.x 설치에서 확인한 나머지 - 이걸 빼면 `controllers`나
+                 # `screensavers`가 게임 시스템으로 잡혀 빈 항목이 목록에 뜬다.
+                 "temp", "controllers", "screensavers", "cache", "backups"}
 
 MEDIA_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".mp4", ".avi"}
 NON_ROM_EXTENSIONS = {".xml", ".txt", ".jpg", ".jpeg", ".png", ".webp", ".db", ".ini",
@@ -375,11 +379,60 @@ class EsDeAdapter(FrontendAdapter):
 
         gamelist.xml 하나가 깨졌다고 Collection 전체 스캔이 실패하면 안 된다 -
         그 System만 메타데이터 없는 상태로 보이는 편이 낫다.
+
+        **ES-DE 3.x는 `<gameList>` 앞에 `<alternativeEmulator>`를 형제로 쓴다.**
+
+        ```xml
+        <?xml version="1.0"?>
+        <alternativeEmulator>
+            <label>Snes9x 2010</label>
+        </alternativeEmulator>
+        <gameList>
+        ```
+
+        최상위 요소가 둘이라 엄밀히는 잘못된 XML이고 `ET.parse`가 "junk after document
+        element"로 거절한다. 하지만 이건 ES-DE가 실제로 만들어 내는 파일이다 - 사용자의
+        실제 백업에서 26개 시스템 중 9개가 이 형태였고, 그대로 두면 그 시스템의
+        메타데이터 488개(전체의 32%)를 통째로 잃는다.
+
+        그래서 실패하면 임시 루트로 감싸 다시 읽고 그 안의 `<gameList>`를 꺼낸다.
         """
         try:
             return ET.parse(path).getroot()
-        except (ET.ParseError, OSError):
+        except ET.ParseError:
+            return EsDeAdapter._parse_multi_root(path)
+        except OSError:
             return None
+
+    @staticmethod
+    def _parse_multi_root(path):
+        """엄밀한 파서가 거절한 gamelist를 최대한 살려 읽는다. `<gameList>`만 돌려준다.
+
+        실제 백업에서 나온 두 가지를 다룬다.
+
+        1. **최상위 요소가 여럿**(위 `_parse_file` 참고) - 임시 루트로 감싼다.
+        2. **이스케이프하지 않은 `&`** - `<name>캡틴 아메리카 & 어벤저스</name>` 같은
+           값이 실제로 들어 있다. 이건 진짜로 잘못된 XML이지만, 그 한 글자 때문에
+           그 System의 199개 항목을 통째로 버리는 것이 더 나쁘다.
+
+        `&`는 감싸기가 실패했을 때만 손댄다. 이미 올바른 실체 참조(`&amp;`, `&#39;`)는
+        건드리지 않는다.
+        """
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        # XML 선언은 문서 맨 앞에만 올 수 있으므로 감싸기 전에 떼어낸다.
+        body = re.sub(r"^\s*<\?xml[^>]*\?>", "", text, count=1)
+        for candidate in (body, re.sub(r"&(?!#?\w+;)", "&amp;", body)):
+            try:
+                wrapper = ET.fromstring(f"<rms-wrapper>{candidate}</rms-wrapper>")
+            except ET.ParseError:
+                continue
+            found = wrapper.find("gameList")
+            if found is not None:
+                return found
+        return None
 
 
 register(EsDeAdapter())

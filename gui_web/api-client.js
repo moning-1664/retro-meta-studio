@@ -159,7 +159,10 @@
         actualBytes: 0, capacityBytes: 256e9, freeBytes: 256e9, systems: [],
       };
       mockDetail.storages.push(storage);
-      return ok(storage);
+      // 실제 bridge는 **storage id 문자열**을 돌려준다(`ok(storage_id)`). 목업이 객체를
+      // 돌려주면 화면이 `r.data.id`를 읽는 코드로 바뀌었을 때 테스트만 통과하고 앱에서
+      // 깨진다 - 실제 데이터로 돌려 보다 발견했다.
+      return ok(storage.id);
     },
     remove_storage: (id, storageId) => {
       const i = mockDetail.storages.findIndex((s) => s.id === storageId);
