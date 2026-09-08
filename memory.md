@@ -28,20 +28,24 @@
 
 ## 현재 상태 (2026-09-08 기준)
 
-**Phase 7.1까지 완료, main에 push됨.** Adapter 4종, Match, Compare, Plan, Archive가
-동작하고, EmulationStation media 링크도 Apply까지 이어진다.
+**Phase 7.2까지 완료, main에 push됨.** Adapter 4종, Match, Compare, Convert, Plan,
+Archive가 동작한다.
 
-지켜야 할 성질 셋:
+지켜야 할 성질 넷:
 - **Compare는 읽기 전용이다.** 새 변경 동작에는 `blockedInCompare()`를 넣을 것.
-- **Adapter는 모르는 필드를 버리지 않는다.** 단, **경로처럼 그 자리에서만 참인 값**은
-  `strip_location_raw()`로 걷어낸다(다른 Collection에 그대로 적으면 남의 폴더를 가리킴).
+- **Adapter는 모르는 필드를 버리지 않는다.** 단 경로처럼 위치에 매인 값은
+  `strip_location_raw()`로 걷어낸다.
 - **Adapter 쓰기는 System 단위 bulk다.** ROM 하나씩 쓰는 형태로 되돌리지 말 것.
+- **Adapter가 포맷 지식을 독점한다.** `supported_fields`/`media_types` 같은 한계를
+  서비스 쪽에 하드코딩하지 말 것.
 
-**알려진 잔여 문제**: `_apply_add`가 항목마다 `write_index()`를 부른다(메타데이터 쪽
-O(n²)). 되돌리기 정책을 먼저 정해야 해서 별도 작업으로 남겼다 - Phase 7.1 항목 참고.
+**알려진 잔여 문제(우선순위 올라감)**: `_apply_add`가 항목마다 `write_index()`를 부른다.
+Convert가 대량 항목을 한 번에 Plan에 올리는 경로를 만들어서 이제 실제로 드러나기 쉽다 -
+1,000개 변환 시 gamelist.xml을 1,000번 다시 쓴다. 고치려면 되돌리기 정책을 먼저 정해야
+한다(Phase 7.1 항목 참고).
 
-다음은 Phase 7.2(Adapter 간 변환 UI) → 7.3(이월분: `match_links` rename, Compare Row
-key) → Phase 8(MTP, 선택).
+다음 후보: 위 `write_index` bulk화, Phase 7.3(이월분: `match_links` rename,
+Compare Row key 구조화), Phase 8(MTP, 선택).
 
 (이 절은 최신 상태를 담으므로 계속 갱신한다. 아래 날짜별 항목은 그 시점의 기록이므로
 고치지 않는다.)
@@ -446,3 +450,67 @@ fixture를 **RetroPie 스타일**(`downloaded_images/<system>/<stem>.png`)로 �
 
 **다음**: Phase 7.2(Adapter 간 변환 UI) → 7.3(Match/Compare 이월분: `match_links` rename,
 Compare Row key) → Phase 8(MTP, 선택).
+
+---
+
+## Phase 7.2 — Adapter 간 변환(Convert)과 손실 미리보기 (2026-09-08, Claude Code)
+
+스펙 §53. 상세는 `docs/REPORTS/2026-09-08-phase7.2-convert.md`.
+
+### Convert에는 새 실행 경로가 없다 — 이 점을 유지할 것
+
+```
+source cache row ──(공통 모델)──> builder.plan_add ──> Plan ──> Apply
+                                                                └─ target Adapter가 자기 포맷으로 쓴다
+```
+
+**붙여넣기(`paste`)와 같은 `builder.plan_add`를 쓴다.** 목적지 충돌 판정, 용량 계산,
+원본이 사라진 항목 건너뛰기가 전부 거기 이미 있다. Convert 전용 복사 코드를 새로 만들지
+말 것 - 그 순간 두 경로의 충돌/용량 규칙이 갈라진다.
+
+Plan 계약도 그대로다: **Plan 단계에서는 아무 파일도 안 바뀌고**, 원본 Collection은 읽기만
+한다(§53 "원본 보존"). 테스트가 둘 다 고정하고 있다.
+
+### 새로 만든 건 미리보기뿐 — 세는 규칙이 핵심
+
+`app/convert/service.py::preview()`. 신경 쓴 것 셋:
+
+- **값이 비어 있으면 세지 않는다.** `region` 태그가 있어도 값이 빈 문자열이면 잃을 것이
+  없다. 겁주는 숫자를 만들지 않기 위함이다.
+- **어느 필드인지 이름까지 준다**(`unsupportedFieldNames`). 숫자만으로는 사용자가 무엇을
+  잃는지 알 수 없다.
+- **필드와 media는 별개의 축이다.** EmulationStation은 공통 필드 9개를 전부 담아
+  `unsupportedFields`가 0이지만 `3dboxes`는 여전히 못 받는다. **두 숫자를 하나로
+  합치지 말 것** - 테스트가 이 구분을 고정한다.
+
+### Adapter 계약에 `supported_fields`가 늘었다
+
+각 Adapter가 **자기 포맷이 담을 수 있는 공통 필드**를 선언한다(기본 = 9개 전부,
+Pegasus만 `region` 제외 - `metadata.pegasus.txt`에 그 키가 없다).
+
+**이 값을 Convert 서비스에 하드코딩하지 말 것.** 그러면 Adapter를 추가할 때마다 서비스를
+함께 고쳐야 하고, "Adapter가 포맷 지식을 독점한다"는 원칙이 깨진다. 새 Adapter를 만들 때
+자기 포맷이 못 담는 공통 필드가 있으면 여기서 빼면 된다.
+
+### UI 메모
+
+탭 우클릭 → `Convert` → 대상 선택 → 미리보기 → `Plan에 올리기`. 대상 목록에 자기 자신은
+없고, Plan에 올린 뒤 **대상 Collection 탭으로 데려간다** - 그러지 않으면 사용자는 아무 일도
+안 일어난 것처럼 느낀다. 토스트가 "Apply를 눌러야 실제로 반영됩니다"를 명시한다.
+
+서비스의 `preview()`/`plan_convert()`는 이미 `systems=` 인자를 받는다(부분 변환). UI에는
+아직 노출하지 않았다 - 전체 변환이 기본 시나리오라 그것부터 붙였다.
+
+### 우선순위가 올라간 잔여 문제
+
+Phase 7.1에서 적어 둔 **`_apply_add`의 항목별 `write_index()` 호출(O(n²))**이 그대로다.
+Convert가 **대량 항목을 한 번에 Plan에 올리는 경로**를 만들었으므로 이 문제가 실제로
+드러나기 쉬워졌다 - 1,000개를 변환해 Apply하면 gamelist.xml을 1,000번 다시 쓴다.
+다음에 다룰 후보로 우선순위가 올라갔다. 고칠 때는 **되돌리기 정책을 먼저 정해야 한다**
+(지금은 항목 하나가 실패하면 그 항목의 파일만 되돌린다).
+
+**검증**: 파이썬 305개(신규 13), Playwright 51개(신규 6) 전부 통과. 커밋 `aca1366`,
+`origin/main`에 push 완료.
+
+**다음**: Phase 7.3(이월분: `match_links` rename, Compare Row key 구조화) 또는 위의
+`write_index` bulk화. Phase 8(MTP)은 여전히 선택 항목이다.
