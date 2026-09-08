@@ -108,15 +108,42 @@ class Workspace:
 
         # 스캔으로 새로 발견된 System을 등록해 둬야 좌측 내비게이션과 Storage 배치가
         # 실제 디스크 상태를 따라간다.
+        #
+        # **어느 Storage에 넣을지는 실제 ROM 경로가 정한다.** 무조건 Internal로 넣으면
+        # 외장 SD에 있는 System이 Internal로 등록되고, 그 순간부터 용량 표시가 통째로
+        # 틀어진다(내장은 부풀고 외장은 비어 보인다).
+        #
+        # 이미 registry에 있는 System은 건드리지 않는다 - 사용자가 정해 둔 배치를
+        # 스캔이 마음대로 되돌리면 안 된다.
         known = {s.system for s in collection.systems}
         for system in result["systems"]:
             if system not in known:
-                self.registry.upsert_system(collection_id, system, STORAGE_INTERNAL)
+                self.registry.upsert_system(collection_id, system,
+                                            self._storage_for_new_system(collection, provider, system))
 
         # 다른 인스턴스가 이 Collection을 열어두고 있다면 캐시를 다시 읽어야 한다(§9.3).
         self.registry.append_change(CHANGE_SCAN_UPDATED, collection_id,
                                     {"scanned": result["scanned"], "roms": result["roms"]})
         return result
+
+    @staticmethod
+    def _storage_for_new_system(collection, provider, system) -> str:
+        """새로 발견된 System이 **실제로 놓여 있는** Storage.
+
+        `adapter.layout()`에 물어보면 안 된다 - layout은 registry에 등록된 배치를
+        근거로 경로를 만들기 때문에, 아직 등록되지 않은 System에 대해서는 언제나
+        Collection root를 가리킨다(순환이다). 그래서 각 Storage의 root 밑에 그 이름의
+        폴더가 실제로 있는지를 직접 본다.
+
+        External을 먼저 본다. 양쪽에 같은 이름의 폴더가 있는 경우는 판단할 근거가
+        없는데, 사용자가 명시적으로 추가한 쪽이 External이므로 그쪽을 택한다.
+        """
+        for storage in collection.storages:
+            if storage.storage_id == STORAGE_INTERNAL or not storage.root_path:
+                continue
+            if provider.exists(Path(storage.root_path) / system):
+                return storage.storage_id
+        return STORAGE_INTERNAL
 
     # ------------------------------------------------------------------
     # 목록 조회

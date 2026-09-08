@@ -15,6 +15,10 @@ ROM 관리 도구에서 가장 위험한 것은 기능이 없는 게 아니라 *
 - **ADD**: 파일을 먼저 옮기고 메타데이터를 나중에 쓴다. 메타데이터 기록이 실패하면
   이번에 새로 만든 파일을 되돌린다. 되돌리기까지 실패하면 단순 실패가 아니라
   `partial`로 표시해서 사용자가 손대야 한다는 것을 알 수 있게 한다.
+- **ADD(덮어쓰기)**: 기존 파일을 덮어쓰기로 한 경우, **덮어쓰기 전에 원본을 옆으로
+  치워 둔다.** `복사 성공 != 작업 성공`이기 때문이다 - 복사는 됐는데 gamelist 기록이
+  실패하면, 새로 만든 파일만 지우는 롤백으로는 이미 사라진 원본을 되살릴 수 없다.
+  치워둔 원본은 **그 항목의 작업이 끝까지 성공한 뒤에** 지운다.
 - **STORAGE CHANGE**: 이동 → 검증 → Registry 갱신 순서로 가되, 어느 단계가 실패하든
   **이미 옮겨진 파일을 원래 자리로 되돌린다.** 파일은 옮겨졌는데 Registry는 예전
   위치를 가리키는 상태(또는 그 반대)를 만들지 않는 것이 목적이다.
@@ -70,7 +74,7 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
     # 한 번에 기록한다. ROM 하나마다 gamelist.xml을 다시 쓰면 O(n^2)가 된다(계약 1).
     media_links: dict[str, dict[str, list]] = {}
 
-    _apply_adds(adds, collection, adapter, provider, errors, media_links, step)
+    prepared_adds = _apply_adds(adds, collection, adapter, provider, errors, media_links, step)
     touched_systems.update(entry.system for entry in adds)
     for entry in deletes:
         _apply_delete(entry, collection, adapter, cache, provider, errors)
@@ -82,6 +86,9 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
         step(entry.system)
 
     _write_media_links(adds, collection, adapter, media_links, errors)
+    # 백업은 **여기서** 정리한다. 복사가 끝난 시점이 아니라 그 항목의 작업 전체가
+    # 끝난 시점이 커밋이다(§ADD 덮어쓰기).
+    _settle_backups(prepared_adds, errors)
 
     applied = [e for e in runnable if e.status == STATUS_APPLIED]
     failed = [e for e in runnable if e.status == STATUS_FAILED]
@@ -126,10 +133,12 @@ def _plan_copies(entry, layout, adapter, provider):
     """지금 시점의 목적지 상태를 보고 실제로 복사할 쌍을 고른다.
 
     Plan을 만든 뒤 시간이 흘렀을 수 있으므로 저장해둔 판정을 믿지 않고 다시 본다.
-    반환: (pairs, newly_created) - newly_created는 이번에 처음 생기는 목적지들이라
-    롤백할 때 지워도 되는 것들이다.
+    반환: (pairs, newly_created, replaced)
+    - newly_created: 이번에 처음 생기는 목적지. 롤백할 때 지워도 되는 것들이다.
+    - replaced: 이미 파일이 있어서 **덮어쓰게 되는** 목적지. 지워버리면 안 되고,
+      덮어쓰기 전에 치워 뒀다가 실패하면 되돌려야 하는 것들이다.
     """
-    from app.plan.builder import _MediaRef
+    from app.plan.builder import _MediaRef, snapshot_matches
 
     source = entry.source or {}
     overwrite = entry.resolution == RESOLVE_OVERWRITE
@@ -145,17 +154,27 @@ def _plan_copies(entry, layout, adapter, provider):
     for src, dest in adapter.media_pairs(layout, entry.filename, media_refs):
         candidates.append((Path(src), Path(dest), media_sizes.get(str(src), 0)))
 
-    pairs, created = [], []
+    # 사용자가 덮어쓰기를 승인한 대상의 "그때 모습". 쓰기 직전에 한 번 더 본다.
+    approved = {str(c["dest"]): c.get("destSnapshot")
+                for c in (entry.conflicts or []) if c.get("dest")}
+
+    pairs, created, replaced = [], [], []
     for src, dest, size in candidates:
         action, _ = classify_destination(provider, src, size, dest)
         if action == ACTION_IDENTICAL:
             continue  # 이미 같은 파일이 있다. 건드릴 이유가 없다.
         if action == ACTION_CONFLICT and not overwrite:
             continue  # 해결되지 않았거나 건너뛰기로 정한 충돌
-        if not dest.exists():
+        if dest.exists():
+            # 승인받은 그 파일이 아니면 덮어쓰지 않는다. Validate가 이미 걸러내지만,
+            # 실제로 쓰기 직전이 마지막 방어선이다.
+            if str(dest) in approved and not snapshot_matches(provider, dest, approved[str(dest)]):
+                continue
+            replaced.append(dest)
+        else:
             created.append(dest)
         pairs.append((src, dest))
-    return pairs, created
+    return pairs, created, replaced
 
 
 #: 한 번의 복사 호출에 묶는 항목 수.
@@ -170,11 +189,84 @@ def _plan_copies(entry, layout, adapter, provider):
 COPY_BATCH = 25
 
 
+#: 덮어쓰기 전에 원본을 치워 둘 때 붙이는 꼬리표. 스캔에서 ROM으로 잡히지 않는
+#: 확장자여야 하고, 남아 있으면 사용자가 무엇인지 알아볼 수 있어야 한다.
+BACKUP_SUFFIX = ".rms-backup"
+
+
 def _prepare_add(entry, collection, adapter, provider):
     """복사할 쌍을 계산만 한다. 파일은 건드리지 않는다."""
     layout = adapter.layout(collection, entry.system)
-    pairs, created = _plan_copies(entry, layout, adapter, provider)
-    return {"entry": entry, "layout": layout, "pairs": pairs, "created": created}
+    pairs, created, replaced = _plan_copies(entry, layout, adapter, provider)
+    return {"entry": entry, "layout": layout, "pairs": pairs,
+            "created": created, "replaced": replaced, "backups": []}
+
+
+def _backup_replaced(item, errors) -> bool:
+    """덮어쓸 기존 파일을 옆으로 치워 둔다. 못 치우면 그 항목은 시작하지 않는다.
+
+    치우지 못한 채로 덮어쓰기를 시작하면, 그 뒤로 어떤 단계가 실패하든 원본을 되살릴
+    방법이 없다. 시작하지 않는 편이 낫다.
+    """
+    targets = item.get("replaced") or []
+    if not targets:
+        return True
+    pairs = [(dest, Path(str(dest) + BACKUP_SUFFIX)) for dest in targets]
+    results = file_ops.move_files(pairs)
+    item["backups"] = [(dest, backup) for dest, backup in pairs if results.get(str(backup))]
+    if len(item["backups"]) == len(pairs):
+        return True
+
+    entry = item["entry"]
+    _restore_backups(item, errors)
+    entry.status, entry.error = STATUS_FAILED, "기존 파일을 백업하지 못했습니다."
+    errors.append(f"{entry.filename}: 기존 파일을 백업하지 못해 덮어쓰지 않았습니다.")
+    return False
+
+
+def _restore_backups(item, errors) -> bool:
+    """치워둔 원본을 제자리로 되돌린다. 전부 되돌렸으면 True."""
+    backups = item.get("backups") or []
+    item["backups"] = []
+    if not backups:
+        return True
+    # 새로 쓰인 파일이 자리를 차지하고 있으면 먼저 치운다 - 안 그러면 되돌릴 자리가 없다.
+    occupied = [dest for dest, _b in backups if Path(dest).exists()]
+    if occupied:
+        file_ops.delete_files(occupied)
+    results = file_ops.move_files([(backup, dest) for dest, backup in backups])
+    failed = [dest for dest, _b in backups if not results.get(str(dest))]
+    if failed:
+        errors.append(f"{item['entry'].filename}: 원본을 되돌리지 못했습니다 - {failed[0]} 등")
+        return False
+    return True
+
+
+def _settle_backups(prepared, errors):
+    """작업이 끝난 뒤 백업을 정리한다. **여기까지 와야 커밋이다.**
+
+    - 실패한 항목: 원본을 되돌린다. 사용자에게는 "아무 일도 없었다"가 되어야 한다.
+    - 성공/부분성공: 백업을 지운다. 부분성공은 파일을 일부러 남겨두는 상태이므로
+      되돌리면 안 된다 - 사용자가 손대야 한다는 표시일 뿐이다.
+    """
+    for item in prepared:
+        if not item.get("backups"):
+            continue
+        if item["entry"].status == STATUS_FAILED:
+            if not _restore_backups(item, errors):
+                item["entry"].status = STATUS_PARTIAL
+            continue
+        leftovers = [backup for _dest, backup in item["backups"] if Path(backup).exists()]
+        item["backups"] = []
+        if leftovers:
+            file_ops.delete_files(leftovers)
+
+
+def _undo(item, errors) -> bool:
+    """이번 작업이 만든 것을 지우고, 치워둔 원본을 되돌린다."""
+    removed = _rollback_files(item["created"], errors, item["entry"])
+    restored = _restore_backups(item, errors)
+    return removed and restored
 
 
 def _copy_prepared(prepared, errors, step):
@@ -185,7 +277,11 @@ def _copy_prepared(prepared, errors, step):
     파일뿐이다 - 묶었다고 남의 파일까지 되돌리면 안 된다.
     """
     for start in range(0, len(prepared), COPY_BATCH):
-        batch = prepared[start:start + COPY_BATCH]
+        batch = [item for item in prepared[start:start + COPY_BATCH]
+                 if _backup_replaced(item, errors)]
+        for skipped in prepared[start:start + COPY_BATCH]:
+            if skipped not in batch:
+                step(skipped["entry"].filename)
         pairs = [pair for item in batch for pair in item["pairs"]]
         results = {}
         if pairs:
@@ -197,8 +293,8 @@ def _copy_prepared(prepared, errors, step):
             failed = [dest for _src, dest in item["pairs"] if not results.get(str(dest))]
             if failed:
                 # 파일 단계에서 실패했으면 메타데이터는 쓰지 않는다. 이번에 새로 만든
-                # 파일만 정리한다 - 원래 있던 파일은 건드리지 않는다.
-                _rollback_files(item["created"], errors, entry)
+                # 파일을 지우고, 덮어쓰려고 치워뒀던 원본은 제자리로 돌려놓는다.
+                _undo(item, errors)
                 entry.status, entry.error = STATUS_FAILED, f"{len(failed)}개 파일 복사 실패"
                 errors.append(f"{entry.filename}: 파일 복사 실패")
             step(entry.filename)
@@ -248,7 +344,7 @@ def _write_metadata(prepared, adapter, errors, media_links):
         except Exception as e:  # noqa: BLE001
             for item in group:
                 entry = item["entry"]
-                recovered = _rollback_files(item["created"], errors, entry)
+                recovered = _undo(item, errors)
                 entry.status = STATUS_FAILED if recovered else STATUS_PARTIAL
                 entry.error = (f"Metadata 기록 실패: {e}" if recovered
                                else f"Metadata 기록 실패 후 복사된 파일 정리에도 실패: {e}")
@@ -282,6 +378,7 @@ def _apply_adds(adds, collection, adapter, provider, errors, media_links, step):
     prepared = [_prepare_add(entry, collection, adapter, provider) for entry in adds]
     _copy_prepared(prepared, errors, step)
     _write_metadata(prepared, adapter, errors, media_links)
+    return prepared
 
 def _rollback_files(paths, errors, entry) -> bool:
     """이번 작업이 새로 만든 파일만 지운다. 전부 지웠으면 True."""

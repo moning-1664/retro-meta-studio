@@ -133,7 +133,7 @@ def scan_collection(collection, cache, provider, adapter, *, media_types=None,
             # 부분 스캔이라 media 용량이 실제보다 작다. 예전 값을 유지한다.
             stats["media_bytes"] = previous_stats[system].get("media_bytes", 0)
 
-        cache.replace_system(system, rows)
+        cache.replace_system(system, rows, media_types=media_types)
         cache.set_system_stats(system, storage_id, media_storage_id, **stats)
         cache.set_system_sig(system, signature)
         scanned += 1

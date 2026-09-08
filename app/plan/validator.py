@@ -17,7 +17,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from adapters import get_adapter
-from app.model.plan import OP_ADD, OP_DELETE, OP_STORAGE_CHANGE
+from app.model.plan import OP_ADD, OP_DELETE, OP_STORAGE_CHANGE, RESOLVE_OVERWRITE
+from app.plan.builder import snapshot_matches
 
 
 def validate(plan, collection, cache, provider) -> dict:
@@ -30,7 +31,7 @@ def validate(plan, collection, cache, provider) -> dict:
             continue
         entry.status, entry.error = "pending", None
         if entry.op == OP_ADD:
-            _validate_add(entry, provider)
+            _validate_add(entry, provider, plan)
         elif entry.op == OP_DELETE:
             _validate_delete(entry, collection, cache, provider, adapter)
         elif entry.op == OP_STORAGE_CHANGE:
@@ -45,7 +46,7 @@ def validate(plan, collection, cache, provider) -> dict:
             "capacity": capacity, "blocked": blocked}
 
 
-def _validate_add(entry, provider):
+def _validate_add(entry, provider, plan=None):
     source = entry.source or {}
     rom = source.get("rom") or {}
     if rom.get("path"):
@@ -53,14 +54,62 @@ def _validate_add(entry, provider):
         if stat is None:
             entry.status, entry.error = "invalid", "원본 ROM이 사라졌습니다."
             return
-        # Plan을 만든 시점과 크기가 다르면 내용이 바뀐 것이다. 조용히 덮어쓰지 않는다.
+        # 크기가 같아도 같은 파일이라는 보장은 없다. Plan을 만들 때 찍어둔 모습과
+        # 대조한다 - `같은 이름 + 같은 크기 + 다른 내용`은 ROM에서 흔하다.
+        if not snapshot_matches(provider, rom["path"], rom.get("snapshot")):
+            entry.status, entry.error = "invalid", "원본 ROM이 변경되었습니다. 다시 확인해주세요."
+            return
         if rom.get("size") is not None and stat.size != int(rom["size"]):
             entry.status, entry.error = "invalid", "원본 ROM이 변경되었습니다(크기 불일치)."
             return
+
+    # 덮어쓰기를 승인받은 대상이 그때 그 파일인지 확인한다. 사용자가 승인한 것은
+    # "그 시점의 그 파일"이지 "Apply 시점에 그 경로에 있는 아무 파일"이 아니다.
+    if entry.resolution == RESOLVE_OVERWRITE:
+        for conflict in entry.conflicts or []:
+            if not snapshot_matches(provider, conflict["dest"], conflict.get("destSnapshot")):
+                entry.status = "invalid"
+                entry.error = ("덮어쓸 대상이 Plan을 만든 뒤 바뀌었습니다. "
+                               "다시 확인한 뒤 덮어쓰기를 결정해주세요.")
+                return
+
     missing = [m for m in (source.get("media") or []) if not provider.exists(m["path"])]
     if missing:
         # media가 없어진 것은 작업을 막을 이유가 못 된다(결정 D3) - 빼고 진행한다.
+        # **다만 용량 계산에서도 빼야 한다.** 복사 목록에서만 빼고 예상치를 그대로 두면
+        # 화면의 Plan 용량과 실제로 일어날 일이 어긋나고 Capacity Check까지 틀린다.
         source["media"] = [m for m in source["media"] if provider.exists(m["path"])]
+        _recalculate_delta(entry, missing, plan)
+
+
+def _recalculate_delta(entry, dropped, plan=None):
+    """빠진 media만큼 예상 바이트와 물리 증감을 줄인다.
+
+    `physical_delta`를 직접 고치기 전에 Plan에 알려야 한다 - Plan은 엔트리를 넣고 뺄
+    때마다 누적 합계를 갱신하는 O(1) 구조라, 값을 몰래 바꾸면 합계가 틀어진 채로
+    남는다(화면의 `Actual -> Plan` 표시가 그 합계다).
+    """
+    dropped_bytes = sum(int(m.get("size") or 0) for m in dropped)
+    if not dropped_bytes:
+        return
+    storage_id = _media_storage_of(entry)
+    delta = dict(entry.physical_delta)
+    if storage_id in delta:
+        # 복사하기로 했던 것만 줄인다. 덮어쓰기라 이미 0이었다면 건드릴 것이 없다.
+        delta[storage_id] = delta[storage_id] - min(dropped_bytes, delta[storage_id])
+        if delta[storage_id] == 0:
+            del delta[storage_id]
+    estimated = max(0, int(entry.estimated_bytes) - dropped_bytes)
+    if plan is not None:
+        plan.revise(entry, estimated_bytes=estimated, physical_delta=delta)
+    else:
+        entry.estimated_bytes, entry.physical_delta = estimated, delta
+
+
+def _media_storage_of(entry) -> str:
+    """media 바이트가 잡혀 있던 Storage. 하나뿐이면 그것, 아니면 대상 Storage."""
+    keys = [k for k, v in (entry.physical_delta or {}).items() if v > 0]
+    return keys[0] if len(keys) == 1 else (entry.storage_to or "internal")
 
 
 def _validate_delete(entry, collection, cache, provider, adapter):
@@ -87,6 +136,21 @@ def _validate_delete(entry, collection, cache, provider, adapter):
     if stat.size != int(row["size"] or 0) or stat.mtime_ns != int(row["mtime_ns"] or 0):
         entry.status = "invalid"
         entry.error = "ROM 파일이 외부에서 변경되었습니다. 다시 스캔한 뒤 삭제해주세요."
+        return
+
+    # media도 지운다. 삭제는 되돌릴 수 없으므로 ROM만 확인하고 넘어가면, Plan을 만든
+    # 뒤 밖에서 교체된 커버를 사용자 승인 없이 지우게 된다.
+    #
+    # 이미 사라진 media는 문제가 아니다 - 지우려던 목적이 이미 달성됐다.
+    for saved_path, saved in ((entry.source or {}).get("mediaSnapshots") or {}).items():
+        current = provider.stat(saved_path)
+        if current is None:
+            continue
+        if (current.size != int(saved.get("size", -1))
+                or current.mtime_ns != int(saved.get("mtimeNs", -1))):
+            entry.status = "invalid"
+            entry.error = "media 파일이 외부에서 변경되었습니다. 다시 스캔한 뒤 삭제해주세요."
+            return
 
 
 def _validate_storage_change(entry, collection):
@@ -105,6 +169,11 @@ def check_capacity(plan, collection, cache, provider) -> list[dict]:
 
     용량을 못 읽는 Storage(MTP, 일부 네트워크 공유)는 Unknown이므로 검사를 건너뛴다 -
     오류가 아니다(§5).
+
+    **막을지 말지는 파일 시스템의 실제 여유 공간이 정한다.** Cache의 사용량은 마지막
+    스캔 시점의 값이라 그 사이 다른 프로그램이 같은 디스크에 쓴 것을 모른다. Cache로
+    판정하면 실제로는 꽉 찬 디스크에 복사를 시작하거나(위험), 반대로 여유가 충분한데
+    막는다. Cache 기반 `planBytes`는 화면에 보여줄 예상값으로만 남긴다.
     """
     actual = cache.storage_usage()
     delta = plan.delta()
@@ -115,8 +184,8 @@ def check_capacity(plan, collection, cache, provider) -> list[dict]:
         change = delta.get(storage.storage_id, 0)
         planned = used + change
         over = 0
-        if volume.capacity_bytes is not None and planned > volume.capacity_bytes:
-            over = planned - volume.capacity_bytes
+        if volume.free_bytes is not None and change > volume.free_bytes:
+            over = change - volume.free_bytes
         result.append({
             "storageId": storage.storage_id, "label": storage.label,
             "actualBytes": used, "planBytes": planned, "deltaBytes": change,

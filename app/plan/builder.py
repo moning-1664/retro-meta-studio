@@ -44,6 +44,39 @@ ACTION_IDENTICAL = "identical"  # 크기와 시각이 같다. 이미 같은 파�
 ACTION_CONFLICT = "conflict"    # 목적지에 다른 파일이 있다. 사용자 판단이 필요하다
 
 
+def snapshot(provider, path) -> dict | None:
+    """이 파일이 "그 파일"인지 나중에 확인하기 위한 최소 정보.
+
+    크기만으로는 부족하다 - `같은 이름 + 같은 크기 + 다른 내용`은 ROM 관리에서 흔하다.
+    수정 시각(ns)과 파일 식별자(`volume_file_id`)까지 함께 본다. 셋 다 이미 스캔이
+    읽고 있는 값이라 추가 비용이 없다.
+
+    **SHA256은 쓰지 않는다.** 4GB짜리 ISO 수천 개를 Plan 만들 때마다 해싱하면 도구를
+    쓸 수 없다. 해시는 사용자가 명시적으로 요구하는 깊은 검증에만 쓴다.
+    """
+    stat = provider.stat(path)
+    if stat is None:
+        return None
+    return {"size": int(stat.size), "mtimeNs": int(stat.mtime_ns), "fileId": stat.file_id}
+
+
+def snapshot_matches(provider, path, saved) -> bool:
+    """저장해둔 snapshot과 지금 파일이 같은가. snapshot이 없으면 판단하지 않는다."""
+    if not saved:
+        return True
+    current = snapshot(provider, path)
+    if current is None:
+        return False
+    if current["size"] != int(saved.get("size", -1)):
+        return False
+    if current["mtimeNs"] != int(saved.get("mtimeNs", -1)):
+        return False
+    # file_id는 못 읽는 저장소가 있다(네트워크 공유). 양쪽 다 있을 때만 비교한다.
+    if saved.get("fileId") and current.get("fileId"):
+        return saved["fileId"] == current["fileId"]
+    return True
+
+
 def classify_destination(provider, src_path, src_size, dest_path) -> tuple[str, dict | None]:
     """목적지 상태를 보고 이 파일을 어떻게 다뤄야 하는지 판정한다.
 
@@ -80,6 +113,11 @@ def classify_destination(provider, src_path, src_size, dest_path) -> tuple[str, 
         "source": str(src_path), "dest": str(dest_path),
         "sourceSize": int(src_size or 0), "destSize": int(existing.size),
         "reason": reason,
+        # 사용자가 "덮어쓰기"를 누르는 순간 승인하는 것은 **지금 이 자리에 있는 이
+        # 파일**을 덮어쓰는 것이다. Apply 직전에 같은 파일인지 다시 확인하기 위해
+        # 그 시점의 모습을 함께 들고 간다.
+        "destSnapshot": {"size": int(existing.size), "mtimeNs": int(existing.mtime_ns),
+                         "fileId": existing.file_id},
     }
 
 
@@ -102,11 +140,15 @@ def plan_add(plan, collection, provider, items):
         rom_storage = _storage_of_system(collection, system)
         media_storage = collection.storage_for_path(layout.media_dir) if layout.media_dir else rom_storage
 
-        source_rom = item.get("rom") or {}
+        source_rom = dict(item.get("rom") or {})
         rom_path = source_rom.get("path")
-        if rom_path and not provider.exists(rom_path):
-            skipped.append({"filename": filename, "reason": "원본 ROM을 찾을 수 없습니다."})
-            continue
+        if rom_path:
+            taken = snapshot(provider, rom_path)
+            if taken is None:
+                skipped.append({"filename": filename, "reason": "원본 ROM을 찾을 수 없습니다."})
+                continue
+            # Plan을 만든 시점의 원본 모습. Apply 직전에 같은 파일인지 확인한다.
+            source_rom["snapshot"] = taken
 
         delta, estimated, conflicts = {}, 0, []
         if rom_path:
@@ -121,9 +163,10 @@ def plan_add(plan, collection, provider, items):
 
         media_items = []
         for media in item.get("media") or []:
-            if not provider.exists(media["path"]):
+            taken = snapshot(provider, media["path"])
+            if taken is None:
                 continue  # 원본이 없는 media만 조용히 빠진다(D3)
-            media_items.append(media)
+            media_items.append({**media, "snapshot": taken})
             size = int(media.get("size") or 0)
             estimated += size
             pairs = adapter.media_pairs(layout, filename, [_MediaRef(media)])
@@ -139,7 +182,7 @@ def plan_add(plan, collection, provider, items):
 
         entry = PlanEntry(
             op=OP_ADD, system=system, filename=filename,
-            source={**item, "media": media_items},
+            source={**item, "rom": source_rom, "media": media_items},
             storage_to=rom_storage, estimated_bytes=estimated, physical_delta=delta,
             conflicts=conflicts,
             status=STATUS_CONFLICT if conflicts else STATUS_PENDING,
@@ -212,12 +255,18 @@ def plan_delete(plan, collection, cache, rom_uids):
         if row["present"]:
             estimated += int(row["size"] or 0)
             _bump(delta, rom_storage, -int(row["size"] or 0))
+        # 지울 media의 모습도 함께 들고 간다. 삭제는 되돌릴 수 없으므로, Plan을 만든
+        # 뒤 밖에서 바뀐 파일을 승인 없이 지우면 안 된다.
+        media_snapshots = {}
         for media in row["media"]:
             estimated += int(media["size"] or 0)
             _bump(delta, media_storage, -int(media["size"] or 0))
+            media_snapshots[str(media["rel_path"])] = {
+                "size": int(media["size"] or 0), "mtimeNs": int(media["mtime_ns"] or 0)}
 
         entry = PlanEntry(op=OP_DELETE, system=system, filename=row["filename"],
                           rom_uid=int(rom_uid), storage_from=rom_storage,
+                          source={"mediaSnapshots": media_snapshots},
                           estimated_bytes=estimated, physical_delta=delta)
         plan.add(entry)
         entries.append(entry)

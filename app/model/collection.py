@@ -92,11 +92,19 @@ class Collection:
         내장/외장 표시가 실제와 어긋난다.
 
         root_path가 가장 길게 일치하는 Storage를 고르고, 없으면 Internal로 본다.
+        중첩된 Storage(`D:\\ROM` 안에 `D:\\ROM\\PS2`)가 실제로 있으므로 가장 긴
+        일치가 이긴다.
+
+        **일치는 "같은 폴더이거나 그 아래"일 때만이다.** 단순 문자열 prefix로 보면
+        `D:\\ROM_BACKUP`이 `D:\\ROM`에 걸려서, 백업 폴더의 용량이 ROM Storage에
+        더해지고 화면의 내장/외장 표시가 실제와 어긋난다.
         """
-        text = str(path).replace("/", "\\").lower()
+        text = str(path).replace("/", "\\").rstrip("\\").lower()
         best, best_len = STORAGE_INTERNAL, -1
         for storage in self.storages:
-            root = str(storage.root_path or "").replace("/", "\\").lower().rstrip("\\")
-            if root and text.startswith(root) and len(root) > best_len:
+            root = str(storage.root_path or "").replace("/", "\\").rstrip("\\").lower()
+            if not root or len(root) <= best_len:
+                continue
+            if text == root or text.startswith(root + "\\"):
                 best, best_len = storage.storage_id, len(root)
         return best

@@ -99,6 +99,20 @@ class Plan:
         self._apply_delta(entry.physical_delta, sign=1)
         return entry
 
+    def revise(self, entry: PlanEntry, *, estimated_bytes=None, physical_delta=None) -> PlanEntry:
+        """이미 들어 있는 엔트리의 용량을 고친다. **누적 합계를 함께 맞춘다.**
+
+        `entry.physical_delta`를 직접 대입하면 합계(`self._delta`)가 예전 값을 안은 채로
+        남는다. 화면의 `Actual -> Plan` 표시가 그 합계라, 조용히 틀린 숫자가 된다.
+        """
+        self._apply_delta(entry.physical_delta, sign=-1)
+        if estimated_bytes is not None:
+            entry.estimated_bytes = int(estimated_bytes)
+        if physical_delta is not None:
+            entry.physical_delta = dict(physical_delta)
+        self._apply_delta(entry.physical_delta, sign=1)
+        return entry
+
     def remove(self, key) -> bool:
         entry = self._entries.pop(key, None)
         if entry is None:

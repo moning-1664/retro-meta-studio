@@ -141,12 +141,22 @@ class CacheStore:
     # ------------------------------------------------------------------
     # 스캔 결과 반영
     # ------------------------------------------------------------------
-    def replace_system(self, system, rows):
+    def replace_system(self, system, rows, media_types=None):
         """한 System의 스캔 결과를 통째로 교체한다.
 
         증분 스캔은 "변경된 System만 다시 읽는다"가 기본 단위이므로, 갱신도 System
         단위로 원자적으로 바꾸는 것이 가장 단순하고 안전하다. 부분 갱신을 지원하면
         삭제된 파일을 지우는 경로를 따로 관리해야 한다.
+
+        **`media_types`를 주면 그 타입의 media만 갈아끼운다.** 스캐너는 체감 속도를
+        위해 "커버 먼저, 비디오 나중"으로 나눠 읽는데, 그때 `rows`에는 이번에 읽은
+        타입의 media만 들어 있다. 그대로 통째로 교체하면 **읽지도 않은 비디오/휠
+        정보가 캐시에서 사라진다** - 사용자에게는 "비디오가 갑자기 없어졌다"로 보이고,
+        그 상태로 Plan을 만들면 비디오가 복사 대상에서 통째로 빠진다.
+
+        그래서 이번에 건드리지 않는 타입의 행은 파일명 기준으로 들고 있다가 다시
+        넣는다. 읽은 타입 안에서 사라진 파일은 그대로 사라진다 - "아무것도 안 지운다"가
+        답이 아니라 "읽은 것만 지운다"가 답이다.
 
         rows: {"filename","rel_path","storage_id","size","mtime_ns","sha256",
                "volume_file_id","title","title_norm","has_metadata","has_media",
@@ -154,6 +164,8 @@ class CacheStore:
                "media":[{"media_type","rel_path","size","mtime_ns"}]} 의 목록
         """
         with transaction(self._conn):
+            carried = ({} if media_types is None
+                       else self._media_of_other_types(system, media_types))
             self._conn.execute("DELETE FROM roms WHERE system=?", (system,))
             for row in rows:
                 cur = self._conn.execute(
@@ -163,7 +175,8 @@ class CacheStore:
                     (system, row["filename"], row.get("rel_path", ""), row.get("storage_id", "internal"),
                      int(row.get("size", 0)), int(row.get("mtime_ns", 0)), row.get("sha256"),
                      row.get("volume_file_id"), row.get("title", ""), row.get("title_norm", ""),
-                     1 if row.get("has_metadata") else 0, 1 if row.get("has_media") else 0,
+                     1 if row.get("has_metadata") else 0,
+                     1 if (row.get("has_media") or carried.get(row["filename"])) else 0,
                      1 if row.get("present", True) else 0))
                 rom_uid = cur.lastrowid
                 if row.get("fields") is not None or row.get("frontend_raw") is not None:
@@ -172,11 +185,24 @@ class CacheStore:
                         (rom_uid, json.dumps(row.get("fields") or {}, ensure_ascii=False),
                          json.dumps(row.get("frontend_raw") or {}, ensure_ascii=False),
                          row.get("content_hash")))
-                for m in row.get("media") or []:
+                for m in (row.get("media") or []) + carried.get(row["filename"], []):
                     self._conn.execute(
                         "INSERT INTO media (rom_uid,media_type,rel_path,size,mtime_ns) VALUES (?,?,?,?,?)",
                         (rom_uid, m["media_type"], m.get("rel_path", ""),
                          int(m.get("size", 0)), int(m.get("mtime_ns", 0))))
+
+    def _media_of_other_types(self, system, media_types):
+        """이번 스캔이 건드리지 않는 media type의 행. {filename: [media, ...]}"""
+        scanned = set(media_types)
+        kept: dict[str, list] = {}
+        for row in self._conn.execute(
+                "SELECT r.filename, m.media_type, m.rel_path, m.size, m.mtime_ns"
+                "  FROM media m JOIN roms r ON r.rom_uid = m.rom_uid"
+                " WHERE r.system = ?", (system,)):
+            if row["media_type"] in scanned:
+                continue
+            kept.setdefault(row["filename"], []).append(dict(row))
+        return kept
 
     def set_system_stats(self, system, storage_id, media_storage_id=None, **counts):
         fields = {"rom_count": 0, "rom_bytes": 0, "media_count": 0, "media_bytes": 0,
