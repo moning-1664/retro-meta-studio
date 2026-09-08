@@ -67,7 +67,7 @@ def guarded(fn):
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except (WorkspaceError, RegistryError, KeyError) as e:
+        except (WorkspaceError, RegistryError, KeyError, ValueError) as e:
             return err(e)
         except Exception as e:  # noqa: BLE001 - 사용자에게 보여줄 오류로 바꾼다
             traceback.print_exc()
@@ -538,6 +538,20 @@ class Api:
     def archive_edit(self, rom_identity_id, fields):
         """Archive의 Metadata를 고친다. **Collection에는 반영되지 않는다**(§40)."""
         return ok(archive_service.edit(self.archive, rom_identity_id, fields))
+
+    @guarded
+    def archive_revisions(self, rom_identity_id, source_collection_id):
+        """한 출처의 Revision 이력(ARCHIVE_REVISION_POLICY.md §14 Revision History)."""
+        return ok(self.archive.revisions_of(rom_identity_id, source_collection_id))
+
+    @guarded
+    def archive_set_preferred(self, rom_identity_id, record_id):
+        """이 Revision을 Preferred로 지정한다(정책 §8). 내용은 바뀌지 않는다."""
+        return ok(archive_service.set_preferred(self.archive, rom_identity_id, int(record_id)))
+
+    @guarded
+    def archive_clear_preferred(self, rom_identity_id):
+        return ok(archive_service.clear_preferred(self.archive, rom_identity_id))
 
     @guarded
     def archive_to_collection(self, collection_id, rom_identity_ids):

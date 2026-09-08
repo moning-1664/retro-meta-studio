@@ -263,6 +263,52 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(refs[0]["abs_path"], r"E:\media\ffx.png")
         self.assertEqual(refs[0]["size"], 42)
 
+    def test_default_retention_keeps_all_history(self):
+        """ARCHIVE_REVISION_POLICY.md §23/§26: 기본값은 자동 삭제하지 않는다."""
+        for i in range(7):
+            self.archive.put_record(self.rid, "col-a", {"name": f"v{i}"})
+        self.assertEqual(len(self.archive.revisions_of(self.rid, "col-a")), 7)
+
+    def test_new_revision_links_to_its_parent(self):
+        """§16: 새 Revision은 같은 계보의 직전 Revision을 parent로 가리킨다."""
+        self.archive.put_record(self.rid, "col-a", {"name": "A"})
+        latest = self.archive.latest_record(self.rid, "col-a")
+        self.assertIsNone(latest["parent_record_id"])
+
+        self.archive.put_record(self.rid, "col-a", {"name": "B"})
+        newest = self.archive.latest_record(self.rid, "col-a")
+        self.assertEqual(newest["parent_record_id"], latest["record_id"])
+
+    def test_preferred_revision_does_not_change_its_content(self):
+        """§8: Preferred 지정은 선택 상태일 뿐, Revision 내용을 바꾸지 않는다."""
+        self.archive.put_record(self.rid, "col-a", {"name": "old"})
+        old = self.archive.latest_record(self.rid, "col-a")
+        self.archive.put_record(self.rid, "col-a", {"name": "new"})
+
+        self.archive.set_preferred(self.rid, old["record_id"])
+        preferred = self.archive.get_preferred(self.rid)
+        self.assertEqual(preferred["fields"]["name"], "old")
+        self.assertEqual(self.archive.latest_record(self.rid, "col-a")["fields"]["name"], "new")
+
+    def test_preferred_must_belong_to_the_identity(self):
+        other = self.archive.ensure_rom_identity(self.game, "PS2", "other")
+        self.archive.put_record(other, "col-a", {"name": "other game"})
+        foreign = self.archive.latest_record(other, "col-a")
+        with self.assertRaises(ValueError):
+            self.archive.set_preferred(self.rid, foreign["record_id"])
+
+    def test_retention_never_deletes_the_preferred_revision(self):
+        """§27.1: 개수 제한 정리도 Preferred는 지우지 않는다."""
+        self.archive.put_record(self.rid, "col-a", {"name": "v0"})
+        keep = self.archive.latest_record(self.rid, "col-a")
+        self.archive.set_preferred(self.rid, keep["record_id"])
+
+        for i in range(1, 4):
+            self.archive.put_record(self.rid, "col-a", {"name": f"v{i}"}, retention=RETENTION_LATEST_1)
+
+        remaining_ids = {r["record_id"] for r in self.archive.revisions_of(self.rid, "col-a")}
+        self.assertIn(keep["record_id"], remaining_ids)
+
 
 if __name__ == "__main__":
     unittest.main()

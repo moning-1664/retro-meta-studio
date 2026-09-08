@@ -21,12 +21,16 @@ import uuid
 
 from app.store.sqlite import Migration, connect, transaction
 
-# History Retention 정책(§39). 기본은 제한된 History.
+# History Retention 정책. ARCHIVE_REVISION_POLICY.md §23/§26: Revision은 자동
+# 삭제하지 않는 것이 기본값이다 - Archive의 목적이 historical preservation이므로,
+# 개수 제한(예: 최신 5개만 유지)을 기본으로 걸면 사용자 의도와 무관하게 과거
+# 상태가 조용히 사라진다. 제한된 History가 필요하면 호출부가 명시적으로 골라야
+# 한다(예: `put_record(..., retention=RETENTION_LATEST_5)`).
 RETENTION_NONE = "none"
 RETENTION_LATEST_1 = "latest-1"
 RETENTION_LATEST_5 = "latest-5"
 RETENTION_UNLIMITED = "unlimited"
-DEFAULT_RETENTION = RETENTION_LATEST_5
+DEFAULT_RETENTION = RETENTION_UNLIMITED
 
 MIGRATIONS = (
     Migration(1, (
@@ -137,6 +141,21 @@ MIGRATIONS = (
         "ALTER TABLE match_links ADD COLUMN volume_file_id TEXT",
         "CREATE INDEX ix_match_links_file ON match_links(collection_id, volume_file_id)",
     )),
+    Migration(6, (
+        # ARCHIVE_REVISION_POLICY.md §16-17: 변경 계보(provenance)와 생성 원인을
+        # 남긴다. Fingerprint(= content_hash)가 이미 내용 동일성을 판정하므로
+        # parent는 identity가 아니라 "무엇을 보고 있다가 고쳤는가"만 설명한다.
+        "ALTER TABLE archive_records ADD COLUMN parent_record_id INTEGER",
+        "ALTER TABLE archive_records ADD COLUMN created_by TEXT NOT NULL DEFAULT 'import'",
+        # ARCHIVE_REVISION_POLICY.md §8: Preferred는 Revision의 속성이 아니라
+        # ROM Identity가 "지금 어느 Revision을 선호하는가"를 가리키는 별도 상태다.
+        # Revision 내용을 바꾸지 않으므로 archive_records와 분리한 테이블에 둔다.
+        """CREATE TABLE preferred_revisions (
+               rom_identity_id TEXT PRIMARY KEY REFERENCES rom_identities(rom_identity_id) ON DELETE CASCADE,
+               record_id INTEGER NOT NULL REFERENCES archive_records(record_id) ON DELETE CASCADE,
+               updated_at REAL NOT NULL
+           )""",
+    )),
 )
 
 
@@ -222,15 +241,20 @@ class ArchiveStore:
     # Record / Revision
     # ------------------------------------------------------------------
     def put_record(self, rom_identity_id, source_collection_id, fields, frontend_raw=None,
-                   *, retention=DEFAULT_RETENTION) -> tuple[int, bool]:
+                   *, retention=DEFAULT_RETENTION, created_by="import") -> tuple[int, bool]:
         """Metadata를 보관한다. 내용이 바뀐 경우에만 새 Revision을 만든다(§39).
+
+        `created_by`는 이 Revision이 생긴 원인이다(§17.1: "export"/"user_edit"/"import"
+        등). 새 Revision의 `parent_record_id`는 같은 (identity, source) 계보에서 바로
+        직전 Revision을 가리킨다(§16) - Fingerprint(content_hash)가 내용 동일성을
+        판정하므로 parent는 계보 설명용일 뿐 identity 판정에는 쓰지 않는다.
 
         반환: (revision, created) - created=False면 같은 내용이라 아무것도 쓰지 않았다.
         """
         digest = content_hash(fields, frontend_raw)
         with transaction(self._conn):
             latest = self._conn.execute(
-                "SELECT revision, content_hash FROM archive_records"
+                "SELECT record_id, revision, content_hash FROM archive_records"
                 " WHERE rom_identity_id=? AND source_collection_id=?"
                 " ORDER BY revision DESC LIMIT 1",
                 (rom_identity_id, source_collection_id)).fetchone()
@@ -239,10 +263,12 @@ class ArchiveStore:
             revision = (int(latest["revision"]) + 1) if latest else 1
             self._conn.execute(
                 "INSERT INTO archive_records (rom_identity_id,source_collection_id,revision,content_hash,"
-                " fields_json,frontend_raw_json,updated_at) VALUES (?,?,?,?,?,?,?)",
+                " fields_json,frontend_raw_json,updated_at,parent_record_id,created_by)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
                 (rom_identity_id, source_collection_id, revision, digest,
                  json.dumps(fields or {}, ensure_ascii=False),
-                 json.dumps(frontend_raw or {}, ensure_ascii=False), time.time()))
+                 json.dumps(frontend_raw or {}, ensure_ascii=False), time.time(),
+                 (latest["record_id"] if latest else None), created_by))
             self._apply_retention_locked(rom_identity_id, source_collection_id, retention)
             return revision, True
 
@@ -250,11 +276,19 @@ class ArchiveStore:
         keep = {RETENTION_NONE: 1, RETENTION_LATEST_1: 1, RETENTION_LATEST_5: 5}.get(retention)
         if keep is None:  # unlimited
             return
+        # ARCHIVE_REVISION_POLICY.md §27.1: Preferred Revision은 개수 제한으로도
+        # 삭제하지 않는다. 지워질 후보에 Preferred가 끼어 있으면 그 행만 보존한다.
+        preferred = self._conn.execute(
+            "SELECT record_id FROM preferred_revisions WHERE rom_identity_id=?",
+            (rom_identity_id,)).fetchone()
+        preferred_id = preferred["record_id"] if preferred else None
         self._conn.execute(
             "DELETE FROM archive_records WHERE rom_identity_id=? AND source_collection_id=?"
             " AND revision <= (SELECT MAX(revision)-? FROM archive_records"
-            "                  WHERE rom_identity_id=? AND source_collection_id=?)",
-            (rom_identity_id, source_collection_id, keep, rom_identity_id, source_collection_id))
+            "                  WHERE rom_identity_id=? AND source_collection_id=?)"
+            " AND record_id IS NOT ?",
+            (rom_identity_id, source_collection_id, keep, rom_identity_id, source_collection_id,
+             preferred_id))
 
     def latest_record(self, rom_identity_id, source_collection_id) -> dict | None:
         row = self._conn.execute(
@@ -277,12 +311,49 @@ class ArchiveStore:
             "SELECT * FROM archive_records WHERE rom_identity_id=? AND source_collection_id=?"
             " ORDER BY revision DESC", (rom_identity_id, source_collection_id))]
 
+    def record_by_id(self, record_id) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM archive_records WHERE record_id=?", (record_id,)).fetchone()
+        return self._record_dict(row) if row else None
+
     @staticmethod
     def _record_dict(row) -> dict:
         return {"record_id": row["record_id"], "rom_identity_id": row["rom_identity_id"],
                 "source_collection_id": row["source_collection_id"], "revision": row["revision"],
                 "content_hash": row["content_hash"], "fields": json.loads(row["fields_json"]),
-                "frontend_raw": json.loads(row["frontend_raw_json"]), "updated_at": row["updated_at"]}
+                "frontend_raw": json.loads(row["frontend_raw_json"]), "updated_at": row["updated_at"],
+                "parent_record_id": row["parent_record_id"], "created_by": row["created_by"]}
+
+    # ------------------------------------------------------------------
+    # Preferred Revision (ARCHIVE_REVISION_POLICY.md §8-9)
+    # ------------------------------------------------------------------
+    def set_preferred(self, rom_identity_id, record_id) -> None:
+        """이 Identity가 `record_id`를 Preferred Revision으로 선호하게 한다.
+
+        Preferred는 Revision 자체의 속성이 아니라 선택 상태이므로, 지정해도
+        `archive_records`의 내용은 전혀 바뀌지 않는다(§8).
+        """
+        record = self.record_by_id(record_id)
+        if record is None or record["rom_identity_id"] != rom_identity_id:
+            raise ValueError("해당 Identity의 Revision이 아닙니다.")
+        with transaction(self._conn):
+            self._conn.execute(
+                "INSERT INTO preferred_revisions (rom_identity_id,record_id,updated_at) VALUES (?,?,?)"
+                " ON CONFLICT(rom_identity_id) DO UPDATE SET"
+                "   record_id=excluded.record_id, updated_at=excluded.updated_at",
+                (rom_identity_id, record_id, time.time()))
+
+    def get_preferred(self, rom_identity_id) -> dict | None:
+        row = self._conn.execute(
+            "SELECT record_id FROM preferred_revisions WHERE rom_identity_id=?",
+            (rom_identity_id,)).fetchone()
+        return self.record_by_id(row["record_id"]) if row else None
+
+    def clear_preferred(self, rom_identity_id) -> bool:
+        with transaction(self._conn):
+            cur = self._conn.execute(
+                "DELETE FROM preferred_revisions WHERE rom_identity_id=?", (rom_identity_id,))
+        return cur.rowcount > 0
 
     # ------------------------------------------------------------------
     # 목록 조회 (Archive Gamelist - 스펙 §43)

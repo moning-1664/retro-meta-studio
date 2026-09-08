@@ -205,6 +205,22 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(len(result["skipped"]), 1)
         self.assertIn("찾을 수 없습니다", result["skipped"][0]["reason"])
 
+    def test_preferred_revision_overrides_the_latest_source(self):
+        """정책 §8-9: Preferred가 지정되면 더 최근 출처보다 우선한다."""
+        self.api.archive_ingest(self.src)
+        rid = self._rid("MGS2.iso")
+        old = self.api.archive_revisions(rid, self.src)["data"][0]
+
+        self.api.archive_ingest(self.dst)  # 더 최근 출처가 생긴다
+        self.assertEqual(self.api.archive_detail(rid)["data"]["preferredRecordId"], None)
+
+        self.api.archive_set_preferred(rid, old["record_id"])
+        detail = self.api.archive_detail(rid)["data"]
+        self.assertEqual(detail["preferredRecordId"], old["record_id"])
+
+        self.api.archive_clear_preferred(rid)
+        self.assertIsNone(self.api.archive_detail(rid)["data"]["preferredRecordId"])
+
     def test_frontend_specific_fields_survive_the_round_trip(self):
         """Collection -> Archive -> Collection 왕복에서 미지원 필드가 살아남아야 한다(§50)."""
         self.api.archive_ingest(self.src)

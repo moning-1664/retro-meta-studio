@@ -96,6 +96,7 @@ def detail(archive, rom_identity_id) -> dict | None:
     sources = [s for s in archive.sources_of(rom_identity_id)
                if s["source_collection_id"] != ARCHIVE_EDIT_SOURCE]
     fields, frontend_raw = _resolve_fields(archive, rom_identity_id)
+    preferred = archive.get_preferred(rom_identity_id)
     return {
         "romIdentityId": rom_identity_id,
         "gameId": identity["game_id"],
@@ -108,6 +109,7 @@ def detail(archive, rom_identity_id) -> dict | None:
         "fields": fields,
         "frontendRaw": frontend_raw,
         "edited": archive.latest_record(rom_identity_id, ARCHIVE_EDIT_SOURCE) is not None,
+        "preferredRecordId": preferred["record_id"] if preferred else None,
         "sources": [
             {"collectionId": s["source_collection_id"], "revision": s["revision"],
              "updatedAt": s["updated_at"], "fields": s["fields"]}
@@ -119,6 +121,20 @@ def detail(archive, rom_identity_id) -> dict | None:
 
 
 ARCHIVE_EDIT_SOURCE = "__archive__"
+
+
+def set_preferred(archive, rom_identity_id, record_id) -> dict:
+    """사용자가 특정 Revision을 Preferred로 지정한다(§8).
+
+    Revision 내용 자체는 바뀌지 않는다 - 이후 조회에서 우선적으로 골라 쓸 뿐이다.
+    """
+    archive.set_preferred(rom_identity_id, record_id)
+    return {"romIdentityId": rom_identity_id, "preferredRecordId": record_id}
+
+
+def clear_preferred(archive, rom_identity_id) -> dict:
+    cleared = archive.clear_preferred(rom_identity_id)
+    return {"romIdentityId": rom_identity_id, "cleared": cleared}
 
 
 def edit(archive, rom_identity_id, fields) -> dict:
@@ -137,7 +153,16 @@ def edit(archive, rom_identity_id, fields) -> dict:
 
 
 def _resolve_fields(archive, rom_identity_id):
-    """이 항목에 적용할 Metadata. 사용자가 Archive에서 직접 고친 값이 있으면 그것을 쓴다."""
+    """이 항목에 적용할 Metadata.
+
+    우선순위(ARCHIVE_REVISION_POLICY.md §9, §14): Preferred → (Archive에서 직접
+    고친 값) → Latest. 사용자가 명시적으로 Preferred를 고르지 않았으면, 여태
+    해오던 대로 Archive 편집이 있으면 그것이 이기고, 없으면 가장 최근 출처를 쓴다
+    - 이 두 단계는 기존 동작 그대로다.
+    """
+    preferred = archive.get_preferred(rom_identity_id)
+    if preferred:
+        return preferred["fields"], preferred["frontend_raw"]
     edited = archive.latest_record(rom_identity_id, ARCHIVE_EDIT_SOURCE)
     if edited:
         return edited["fields"], edited["frontend_raw"]
