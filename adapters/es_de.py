@@ -26,7 +26,8 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from adapters.base import Detection, FrontendAdapter, GameEntry, Layout, MediaFile, register
+from adapters.base import (AdapterAction, Detection, FrontendAdapter, GameEntry,
+                           Layout, MediaFile, register)
 from app.model.constants import ESDE_IGNORED_SYSTEMS
 from utils import normalize_esde_date, normalize_esde_rating
 
@@ -299,6 +300,60 @@ class EsDeAdapter(FrontendAdapter):
             suffix = Path(item.path).suffix
             pairs.append((item.path, str(Path(layout.media_dir) / folder / f"{stem}{suffix}")))
         return pairs
+
+    # ------------------------------------------------------------------
+    # Frontend 고유 기능 (스펙 §22)
+    # ------------------------------------------------------------------
+    #: System이 Collection root 밖(외장 SD 등)에 있으면 ES-DE가 스스로 찾지 못한다.
+    #: 그 경우 custom systems XML로 ROM 경로를 알려줘야 한다.
+    CUSTOM_SYSTEMS_ACTION = "esde-custom-systems"
+
+    def extras(self):
+        return [AdapterAction(self.CUSTOM_SYSTEMS_ACTION, "ES-DE XML 생성")]
+
+    def write_custom_systems(self, collection) -> dict:
+        """`custom_systems/es_systems.xml`을 만든다(§22).
+
+        **Storage 기능이 아니라 ES-DE Adapter의 기능이다.** 다른 Frontend는 System을
+        다른 위치에 두는 문제를 각자의 방식으로 풀기 때문에, 이걸 일반 기능으로
+        올리면 ES-DE의 사정이 공통 모델로 새어 나간다.
+
+        Collection root 아래에 있는 System은 ES-DE가 알아서 찾으므로 적지 않는다 -
+        전부 적으면 사용자가 ES-DE에서 직접 손본 설정까지 덮어쓰게 된다.
+        """
+        root = Path(collection.root_path)
+        entries = []
+        for system in collection.systems:
+            layout = self.layout(collection, system.system)
+            rom_dir = Path(layout.rom_dir)
+            try:
+                rom_dir.relative_to(root)
+                continue   # root 안에 있으면 ES-DE가 스스로 찾는다
+            except ValueError:
+                entries.append((system.system, rom_dir))
+
+        path = root / "custom_systems" / "es_systems.xml"
+        if not entries:
+            return {"path": str(path), "systems": [], "written": False}
+
+        xml_root = ET.Element("systemList")
+        for name, rom_dir in entries:
+            node = ET.SubElement(xml_root, "system")
+            ET.SubElement(node, "name").text = name
+            ET.SubElement(node, "fullname").text = name.upper()
+            ET.SubElement(node, "path").text = str(rom_dir)
+            # 확장자와 실행 명령은 ES-DE 기본값을 쓰게 비워 둔다 - 우리가 추측해서
+            # 채우면 사용자의 에뮬레이터 설정을 덮어쓰는 셈이 된다.
+            ET.SubElement(node, "extension").text = ""
+            ET.SubElement(node, "command").text = ""
+            ET.SubElement(node, "platform").text = name
+            ET.SubElement(node, "theme").text = name
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tree = ET.ElementTree(xml_root)
+        ET.indent(tree, space="  ")
+        tree.write(path, encoding="utf-8", xml_declaration=True)
+        return {"path": str(path), "systems": [name for name, _ in entries], "written": True}
 
     # ------------------------------------------------------------------
     @staticmethod

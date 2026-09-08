@@ -80,7 +80,14 @@
     },
     get_media_image: () => ok(null),
     save_fields: (id, uid, fields) => ok({ title: fields.name || "" }),
-    frontends: () => ok([{ id: "es-de", label: "ES-DE" }]),
+    frontends: () => ok([
+      { id: "es-de", label: "ES-DE" }, { id: "pegasus", label: "Pegasus" },
+      { id: "launchbox", label: "LaunchBox" },
+      { id: "emulationstation", label: "EmulationStation" },
+    ]),
+    adapter_actions: () => ok([{ id: "esde-custom-systems", label: "ES-DE XML 생성" }]),
+    run_adapter_action: () => ok({ path: "D:\ES-DE\custom_systems\es_systems.xml",
+                                  systems: ["ps2"], written: true }),
     plan_state: () => ok({ total: 0, added: 0, deleted: 0, moved: 0, addedBytes: 0, deletedBytes: 0,
                           delta: {}, marks: { rows: {}, systems: [] },
                           capacity: mockDetail.storages.map((s) => ({
@@ -304,6 +311,8 @@
     cancelJob: (jobId) => call("cancel_job", jobId),
 
     frontends: () => call("frontends"),
+    adapterActions: (id) => call("adapter_actions", id),
+    runAdapterAction: (id, actionId) => call("run_adapter_action", id, actionId),
     pickFolder: (title) => call("pick_folder", title || ""),
     windowControl: (action) => call("window_control", action),
   };

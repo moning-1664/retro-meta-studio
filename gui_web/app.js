@@ -94,6 +94,8 @@
     autoPlan: true,
     // Compare Mode(§54-59). compare가 있으면 Gamelist가 비교 목록으로 바뀐다.
     // compareBase는 "기준으로 지정"만 해두고 아직 상대를 안 고른 중간 상태다.
+    // 이 Collection의 Frontend가 제공하는 고유 기능(§22).
+    adapterActions: [],
     compare: null,
     compareBase: null,
     compareFilter: "all",
@@ -340,6 +342,9 @@
     S.detail[id] = r.data;
     S.tabs.push(id);
     S.activeId = id;
+    // openTab은 ensureDetail을 거치지 않고 openCollection 응답을 그대로 쓴다 -
+    // Frontend 고유 기능은 여기서 따로 불러와야 한다.
+    await loadAdapterActions();
     resetList();
     renderAll();
     await reloadList();
@@ -361,6 +366,8 @@
     }
     const r = await api.collectionDetail(id);
     if (r.ok) S.detail[id] = r.data;
+    // Frontend마다 제공하는 고유 기능이 다르므로 탭을 바꿀 때마다 다시 묻는다.
+    if (id === S.activeId) await loadAdapterActions();
   }
 
   // ------------------------------------------------------------------
@@ -699,7 +706,42 @@
       }
       panel.appendChild(box);
     });
+
+    // Frontend 고유 기능(§22). Storage 같은 일반 기능으로 올리지 않고 여기 둔다 -
+    // ES-DE의 custom systems XML은 ES-DE의 사정이고, 다른 Frontend에는 다른 기능이
+    // 붙는다. 지원 기능이 없는 Frontend에서는 줄 자체가 나타나지 않는다.
+    if (S.adapterActions && S.adapterActions.length) {
+      const extras = h("div", { class: "cheader-extras" });
+      extras.appendChild(h("span", { class: "cheader-info-label" }, ["Frontend 기능"]));
+      S.adapterActions.forEach((action) => {
+        const btn = h("button", { class: "btn compact" }, [`[${action.label}]`]);
+        btn.addEventListener("click", () => runAdapterAction(action));
+        extras.appendChild(btn);
+      });
+      panel.appendChild(extras);
+    }
     host.appendChild(panel);
+  }
+
+  async function loadAdapterActions() {
+    S.adapterActions = [];
+    if (!S.activeId || isArchive()) return;
+    const r = await api.adapterActions(S.activeId);
+    if (r.ok) S.adapterActions = r.data;
+  }
+
+  async function runAdapterAction(action) {
+    if (blockedInCompare(`${action.label}을 실행`)) return;
+    const r = await api.runAdapterAction(S.activeId, action.id);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    const data = r.data || {};
+    if (data.written === false) {
+      // 만들 내용이 없는 것과 실패한 것은 다르다 - 왜 아무 일도 없었는지 말해준다.
+      showToast("Collection 밖에 있는 System이 없어 만들 XML이 없습니다.");
+      return;
+    }
+    const systems = (data.systems || []).join(", ");
+    showToast(`${action.label} 완료${systems ? ` - ${systems}` : ""}`);
   }
 
   // ------------------------------------------------------------------

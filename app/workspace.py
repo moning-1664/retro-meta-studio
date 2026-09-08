@@ -23,7 +23,10 @@ from app.store.registry import CHANGE_SCAN_UPDATED, MAX_OPEN_COLLECTIONS, Regist
 from app.scan.scanner import scan_collection
 from storage.local import LocalStorageProvider
 
-import adapters.es_de  # noqa: F401  - Adapter 등록을 위한 import
+import adapters.es_de             # noqa: F401  - Adapter 등록을 위한 import
+import adapters.pegasus           # noqa: F401
+import adapters.launchbox         # noqa: F401
+import adapters.emulationstation  # noqa: F401
 
 
 class WorkspaceError(Exception):

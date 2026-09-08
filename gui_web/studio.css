@@ -390,3 +390,4 @@ button.sb-badge { cursor: pointer; }
 }
 .compare-snapshot { color: var(--muted); font-size: var(--fs-eyebrow); font-variant-numeric: tabular-nums; }
 .cmp-identity { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.cheader-extras { display: flex; align-items: center; gap: 8px; padding-top: 4px; }

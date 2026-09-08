@@ -742,7 +742,33 @@ class Api:
     @guarded
     def frontends(self):
         from adapters import available
-        return ok([{"id": a.id, "label": a.display_name} for a in available()])
+        return ok([{"id": a.id, "label": a.display_name,
+                    "mediaTypes": list(a.media_types)} for a in available()])
+
+    @guarded
+    def adapter_actions(self, collection_id):
+        """이 Collection의 Frontend가 제공하는 고유 기능 목록(§22).
+
+        Storage 같은 일반 기능으로 올리지 않는다 - ES-DE의 custom systems XML은
+        ES-DE의 사정이고, 다른 Frontend는 같은 문제를 다른 방식으로 푼다.
+        """
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            return err("Collection을 찾을 수 없습니다.")
+        adapter = get_adapter(collection.frontend)
+        return ok([{"id": a.id, "label": a.label} for a in adapter.extras()])
+
+    @guarded
+    def run_adapter_action(self, collection_id, action_id):
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            return err("Collection을 찾을 수 없습니다.")
+        adapter = get_adapter(collection.frontend)
+        if action_id not in {a.id for a in adapter.extras()}:
+            return err("이 Frontend가 지원하지 않는 기능입니다.")
+        if action_id == getattr(adapter, "CUSTOM_SYSTEMS_ACTION", None):
+            return ok(adapter.write_custom_systems(collection))
+        return err("아직 구현되지 않은 기능입니다.")
 
     @guarded
     def pick_folder(self, title=""):

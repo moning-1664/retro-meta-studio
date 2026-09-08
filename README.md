@@ -21,7 +21,7 @@
 
 ## 현재 상태
 
-**Phase 6까지 완료.** `python main.py`로 실행된다. Collection 등록·스캔·탐색·메타데이터
+**Phase 7까지 완료.** `python main.py`로 실행된다. Collection 등록·스캔·탐색·메타데이터
 편집, Plan을 통한 복사/삭제/Storage 이동(인스턴스 간 복사 포함), 그리고 여러 Collection의
 Metadata를 출처와 함께 모으는 Archive, 그리고 이름이 어긋난 항목을 사람이 이어주는
 Match까지 동작한다.
@@ -35,7 +35,8 @@ Match까지 동작한다.
 | 4 | Archive (Source Tracking·Revision·Archive→Collection) | 완료 |
 | 5 | Match (Exact → Normalized → Heuristic 후보 UI) | 완료 |
 | 6 | Compare Mode (Same/Only A/Only B/Conflict + 좌우 Detail 비교) | 완료 |
-| 7~8 | 나머지 Frontend Adapters / MTP | 7이 다음 |
+| 7 | 나머지 Frontend Adapter(Pegasus/LaunchBox/EmulationStation) + Round-trip 검증 + ES-DE custom systems XML | 완료 |
+| 8 | MTP Provider (선택) | 필요성 재평가 후 |
 
 ## 구조
 

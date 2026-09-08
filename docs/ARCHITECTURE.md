@@ -346,7 +346,7 @@ Plan 생성 시점의 `(size, mtime_ns)`를 엔트리에 박아두고 Apply 직�
 | 4 | Archive: Source Tracking, Revision, Archive Gamelist, Archive→Collection | |
 | 5 | Match: Exact → Normalized → Heuristic 후보 UI (자동 병합 금지 §49) | 완료. `similar_rom.py`의 점수를 재사용하고, 자동으로 붙는 것은 Exact 하나뿐이다. 구현 중 §46(Game/ROM Identity 분리)이 실제로는 깨져 있던 것을 함께 고쳤다 - `docs/REPORTS/2026-09-08-phase5-match-and-test-harness.md` |
 | 6 | Compare Mode | 완료. 판정은 Match의 `classify()`를 재사용하되(그러려고 먼저 `MatchSubject <-> MatchSubject`로 일반화했다), **짝짓기 규칙은 다르다** - Compare는 목록을 1:1로 줄 세워야 하므로 파일명이 같으면 크기/해시가 달라도 짝으로 본다. `docs/REPORTS/2026-09-08-phase6-compare.md` |
-| 7 | 나머지 어댑터(Pegasus/LaunchBox/ES) + Round-trip 검증 + ES-DE custom systems XML | |
+| 7 | 나머지 어댑터(Pegasus/LaunchBox/ES) + Round-trip 검증 + ES-DE custom systems XML | 완료. 각 Frontend의 함정을 Adapter 안에 가뒀다 - Pegasus는 여러 줄 값과 미지 키, LaunchBox는 **제목 기준 media 파일명**, 원조 ES는 **gamelist가 media 경로를 들고 있음**. `docs/REPORTS/2026-09-08-phase7-adapters.md` |
 | 8 | MTP Provider (선택) | 필요성 재평가 후 착수 |
 
 Phase 2까지가 "새 구조가 실제로 굴러가는지" 판가름하는 구간이다. 여기서 기존 UI 재사용이
