@@ -191,7 +191,8 @@ def _scan_system(provider, adapter, layout, storage_id, media_types):
             missing_media += 1
         if entry is None:
             missing_metadata += 1
-        rows.append(_row(filename, entry, media, stat, storage_id, present=True))
+        rows.append(_row(filename, entry, media, stat, storage_id, present=True,
+                         adapter=adapter))
 
     # gamelist.xml에는 있지만 물리 ROM이 없는 항목도 정상적인 상태다. ES-DE는
     # 메타데이터와 media만 갖춘 Collection을 만들 수 있다.
@@ -207,7 +208,8 @@ def _scan_system(provider, adapter, layout, storage_id, media_types):
         if media:
             media_count += 1
             media_bytes += sum(m.size for m in media)
-        rows.append(_row(filename, entry, media, None, storage_id, present=False))
+        rows.append(_row(filename, entry, media, None, storage_id, present=False,
+                         adapter=adapter))
 
     stats = {
         "rom_count": len(rom_files),
@@ -226,7 +228,7 @@ def _title_of(entry, filename) -> str:
     return name or Path(filename).stem
 
 
-def _row(filename, entry, media, stat, storage_id, *, present):
+def _row(filename, entry, media, stat, storage_id, *, present, adapter=None):
     title = _title_of(entry, filename)
     return {
         "filename": filename,
@@ -242,6 +244,9 @@ def _row(filename, entry, media, stat, storage_id, *, present):
         "present": present,
         "fields": entry.fields if entry else {},
         "frontend_raw": entry.frontend_raw if entry else {},
+        # 즐겨찾기가 어느 태그에 들어 있는지는 Frontend마다 다르다. 판단은 Adapter가
+        # 하고 Cache는 결과만 컬럼으로 들고 있는다 - 그래야 목록에서 정렬·필터된다.
+        "favorite": bool(adapter and entry and adapter.is_favorite(entry.frontend_raw)),
         "media": [{"media_type": m.media_type, "rel_path": m.path,
                    "size": m.size, "mtime_ns": m.mtime_ns} for m in media],
     }

@@ -85,6 +85,11 @@ MIGRATIONS = (
                missing_media INTEGER NOT NULL DEFAULT 0
            )""",
     )),
+    Migration(2, (
+        # 즐겨찾기는 사용자가 직접 켜고 끄는 값이라 정렬·필터 대상이다. `frontend_raw`
+        # 안을 문자열로 뒤지면 SQL이 다루지 못하고 값이 false인 경우까지 걸린다.
+        "ALTER TABLE roms ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0",
+    )),
 )
 
 
@@ -170,14 +175,15 @@ class CacheStore:
             for row in rows:
                 cur = self._conn.execute(
                     "INSERT INTO roms (system,filename,rel_path,storage_id,size,mtime_ns,sha256,"
-                    " volume_file_id,title,title_norm,has_metadata,has_media,present)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " volume_file_id,title,title_norm,has_metadata,has_media,present,favorite)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (system, row["filename"], row.get("rel_path", ""), row.get("storage_id", "internal"),
                      int(row.get("size", 0)), int(row.get("mtime_ns", 0)), row.get("sha256"),
                      row.get("volume_file_id"), row.get("title", ""), row.get("title_norm", ""),
                      1 if row.get("has_metadata") else 0,
                      1 if (row.get("has_media") or carried.get(row["filename"])) else 0,
-                     1 if row.get("present", True) else 0))
+                     1 if row.get("present", True) else 0,
+                     1 if row.get("favorite") else 0))
                 rom_uid = cur.lastrowid
                 if row.get("fields") is not None or row.get("frontend_raw") is not None:
                     self._conn.execute(
@@ -240,16 +246,35 @@ class CacheStore:
     # ------------------------------------------------------------------
     # 목록 조회 (정렬/필터/페이징 전부 SQL)
     # ------------------------------------------------------------------
+    #: Header를 눌러 정렬할 수 있는 컬럼. 화면이 이 이름을 그대로 쓴다.
+    ORDERS = {
+        "title": "r.title_norm", "filename": "r.filename", "size": "r.size",
+        "system": "r.system", "favorite": "r.favorite",
+        "desc": "LOWER(COALESCE(json_extract(m.fields_json,'$.desc'),''))",
+        "region": "LOWER(COALESCE(json_extract(m.fields_json,'$.region'),''))",
+        "genre": "LOWER(COALESCE(json_extract(m.fields_json,'$.genre'),''))",
+        "rating": "CAST(COALESCE(json_extract(m.fields_json,'$.rating'),0) AS REAL)",
+    }
+
     def query_rows(self, *, systems=None, storage_ids=None, search=None, order="title",
-                   descending=False, limit=None, offset=0) -> list[dict]:
-        where, params = self._build_where(systems, storage_ids, search)
-        order_col = {"title": "title_norm", "filename": "filename", "size": "size",
-                     "system": "system"}.get(order, "title_norm")
+                   descending=False, limit=None, offset=0, favorites_only=False) -> list[dict]:
+        """목록 한 페이지. **정렬·필터·검색은 전부 SQL이 한다.**
+
+        Description/Region/Rating/Genre는 `metadata.fields_json` 안에 있어 JOIN해서
+        함께 꺼낸다 - 행마다 따로 물어보면 1,500개 목록에서 1,500번을 더 묻게 된다.
+        """
+        where, params = self._build_where(systems, storage_ids, search, favorites_only, "r.")
+        order_col = self.ORDERS.get(order, "r.title_norm")
         # sha256을 함께 싣는다 - Match 뱃지가 목록 경로에서 계산되는데, 해시가 빠지면
         # 뱃지와 Match 다이얼로그가 서로 다른 근거로 판정하게 된다.
-        sql = (f"SELECT rom_uid,system,filename,rel_path,storage_id,size,title,sha256,"
-               f" has_metadata,has_media,present FROM roms{where}"
-               f" ORDER BY {order_col} {'DESC' if descending else 'ASC'}, filename")
+        sql = (f"SELECT r.rom_uid,r.system,r.filename,r.rel_path,r.storage_id,r.size,"
+               f" r.title,r.sha256,r.has_metadata,r.has_media,r.present,r.favorite,"
+               f" json_extract(m.fields_json,'$.desc') AS desc_text,"
+               f" json_extract(m.fields_json,'$.region') AS region,"
+               f" json_extract(m.fields_json,'$.genre') AS genre,"
+               f" json_extract(m.fields_json,'$.rating') AS rating"
+               f" FROM roms r LEFT JOIN metadata m ON m.rom_uid = r.rom_uid{where}"
+               f" ORDER BY {order_col} {'DESC' if descending else 'ASC'}, r.filename")
         if limit is not None:
             sql += " LIMIT ? OFFSET ?"
             params = [*params, int(limit), int(offset)]
@@ -266,24 +291,28 @@ class CacheStore:
         return {row["system"]: int(row["n"]) for row in self._conn.execute(
             "SELECT system, COUNT(*) AS n FROM roms GROUP BY system")}
 
-    def count_rows(self, *, systems=None, storage_ids=None, search=None) -> int:
-        where, params = self._build_where(systems, storage_ids, search)
+    def count_rows(self, *, systems=None, storage_ids=None, search=None,
+                   favorites_only=False) -> int:
+        where, params = self._build_where(systems, storage_ids, search, favorites_only)
         row = self._conn.execute(f"SELECT COUNT(*) AS n FROM roms{where}", params).fetchone()
         return int(row["n"])
 
     @staticmethod
-    def _build_where(systems, storage_ids, search):
+    def _build_where(systems, storage_ids, search, favorites_only=False, prefix=""):
+        """`prefix`는 JOIN이 있는 쿼리에서 컬럼이 어느 표의 것인지 밝히기 위한 것이다."""
         clauses, params = [], []
         if systems:
-            clauses.append(f"system IN ({','.join('?' * len(systems))})")
+            clauses.append(f"{prefix}system IN ({','.join('?' * len(systems))})")
             params.extend(systems)
         if storage_ids:
-            clauses.append(f"storage_id IN ({','.join('?' * len(storage_ids))})")
+            clauses.append(f"{prefix}storage_id IN ({','.join('?' * len(storage_ids))})")
             params.extend(storage_ids)
         if search:
-            clauses.append("(title_norm LIKE ? OR filename LIKE ?)")
+            clauses.append(f"({prefix}title_norm LIKE ? OR {prefix}filename LIKE ?)")
             needle = f"%{str(search).strip().lower()}%"
             params.extend([needle, needle])
+        if favorites_only:
+            clauses.append(f"{prefix}favorite = 1")
         return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
 
     def all_entries(self, systems=None) -> list[dict]:
@@ -332,18 +361,39 @@ class CacheStore:
             "SELECT media_type,rel_path,size,mtime_ns FROM media WHERE rom_uid=? ORDER BY media_type", (rom_uid,))]
         return result
 
-    def update_metadata(self, rom_uid, fields, *, title=None, title_norm=None, content_hash=None):
+    def set_favorite(self, rom_uid, favorite):
+        """즐겨찾기 컬럼만 갱신한다. 파일 쓰기는 호출부(Adapter)가 한다."""
+        with transaction(self._conn):
+            self._conn.execute("UPDATE roms SET favorite=? WHERE rom_uid=?",
+                               (1 if favorite else 0, int(rom_uid)))
+
+    def update_metadata(self, rom_uid, fields, *, title=None, title_norm=None,
+                        content_hash=None, frontend_raw=None):
         """한 항목의 메타데이터를 갱신한다(사용자 편집 반영).
 
-        frontend_raw는 건드리지 않는다 - 사용자가 편집하는 것은 공통 필드뿐이고,
-        Frontend 고유 값은 읽은 그대로 보존되어야 한다(§50).
+        **`frontend_raw`는 기본적으로 건드리지 않는다** - 사용자가 편집하는 것은 공통
+        필드뿐이고, Frontend 고유 값은 읽은 그대로 보존되어야 한다(§50).
+
+        예외는 즐겨찾기처럼 **사용자가 직접 바꾸는 Frontend 고유 값**이다. ES-DE의
+        `<favorite>`은 우리 공통 필드가 아니지만 별표를 누르는 것은 분명 사용자
+        편집이다. 그럴 때만 명시적으로 넘긴다.
         """
         with transaction(self._conn):
-            self._conn.execute(
-                "INSERT INTO metadata (rom_uid,fields_json,content_hash) VALUES (?,?,?)"
-                " ON CONFLICT(rom_uid) DO UPDATE SET fields_json=excluded.fields_json,"
-                " content_hash=excluded.content_hash",
-                (rom_uid, json.dumps(fields or {}, ensure_ascii=False), content_hash))
+            if frontend_raw is None:
+                self._conn.execute(
+                    "INSERT INTO metadata (rom_uid,fields_json,content_hash) VALUES (?,?,?)"
+                    " ON CONFLICT(rom_uid) DO UPDATE SET fields_json=excluded.fields_json,"
+                    " content_hash=excluded.content_hash",
+                    (rom_uid, json.dumps(fields or {}, ensure_ascii=False), content_hash))
+            else:
+                self._conn.execute(
+                    "INSERT INTO metadata (rom_uid,fields_json,frontend_raw_json,content_hash)"
+                    " VALUES (?,?,?,?)"
+                    " ON CONFLICT(rom_uid) DO UPDATE SET fields_json=excluded.fields_json,"
+                    " frontend_raw_json=excluded.frontend_raw_json,"
+                    " content_hash=excluded.content_hash",
+                    (rom_uid, json.dumps(fields or {}, ensure_ascii=False),
+                     json.dumps(frontend_raw, ensure_ascii=False), content_hash))
             self._conn.execute("UPDATE roms SET has_metadata=1 WHERE rom_uid=?", (rom_uid,))
             if title is not None:
                 self._conn.execute("UPDATE roms SET title=?, title_norm=? WHERE rom_uid=?",

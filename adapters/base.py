@@ -238,6 +238,25 @@ class FrontendAdapter:
         raise NotImplementedError
 
     # ------------------------------------------------------------------
+    #: 즐겨찾기를 저장하는 태그/키 이름. None이면 그 Frontend는 즐겨찾기가 없다.
+    #: 사용자에게는 별표 하나지만 저장 위치는 Frontend마다 다르고, 우리 공통 필드도
+    #: 아니라서 `frontend_raw`를 통해 다룬다 - 그래야 Frontend가 다음에 열었을 때
+    #: 같은 별표를 본다. 우리 DB에만 적으면 Frontend에서는 즐겨찾기가 아니다.
+    FAVORITE_TAG: str | None = None
+
+    def favorite_raw(self, value: bool) -> dict:
+        """`frontend_raw["extra"]`에 넣을 즐겨찾기 항목."""
+        return {"tag": self.FAVORITE_TAG, "text": "true" if value else "false", "attrib": {}}
+
+    def is_favorite(self, frontend_raw) -> bool:
+        if not self.FAVORITE_TAG:
+            return False
+        for item in ((frontend_raw or {}).get("extra") or []):
+            if (item.get("tag") or item.get("key")) == self.FAVORITE_TAG:
+                return str(item.get("text") or item.get("value") or "").strip().lower() in (
+                    "true", "1", "yes")
+        return False
+
     def extras(self) -> list[AdapterAction]:
         return []
 

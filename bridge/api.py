@@ -214,6 +214,66 @@ class Api:
     # Storage / System
     # ------------------------------------------------------------------
     @guarded
+    def save_ui_state(self, collection_id, state):
+        """컬럼 너비/정렬/미리보기처럼 **사용자가 맞춰 놓은 화면 상태**를 저장한다.
+
+        Collection마다 다르게 기억한다 - System 구성이 다르면 보고 싶은 컬럼 폭도
+        다르다. 저장 위치(`collections.ui_state_json`)는 처음부터 있었는데 읽고 쓰는
+        길이 없어서, 앱을 닫으면 사용자가 맞춰 놓은 것이 전부 사라졌다.
+        """
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            return err("Collection을 찾을 수 없습니다.")
+        merged = {**(collection.ui_state or {}), **(state or {})}
+        self.registry.update_collection(collection_id, ui_state=merged)
+        return ok(merged)
+
+    @guarded
+    def get_ui_state(self, collection_id):
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            return err("Collection을 찾을 수 없습니다.")
+        return ok(collection.ui_state or {})
+
+    @guarded
+    def set_favorite(self, collection_id, rom_uid, favorite=True):
+        """즐겨찾기를 켜고 끈다. **Frontend의 파일에 그대로 기록한다.**
+
+        사용자에게는 별표 하나지만 저장 위치는 Frontend마다 다르다(ES-DE는
+        gamelist.xml의 `<favorite>`). 우리가 아는 공통 필드가 아니므로
+        `frontend_raw`를 통해 다룬다 - 그래야 ES-DE가 다음에 열었을 때 그 별표를
+        똑같이 본다. 우리 DB에만 적어 두면 Frontend에서는 즐겨찾기가 아니다.
+        """
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            return err("Collection을 찾을 수 없습니다.")
+        cache = self.workspace.open(collection_id)
+        row = cache.get_row(int(rom_uid))
+        if row is None:
+            return err("항목을 찾을 수 없습니다.")
+
+        adapter = get_adapter(collection.frontend)
+        tag = getattr(adapter, "FAVORITE_TAG", None)
+        if not tag:
+            return err(f"{adapter.display_name}는 즐겨찾기를 지원하지 않습니다.")
+
+        # **해제는 태그를 지우는 것이 아니라 false로 적는 것이다.** Adapter는 "모르는
+        # 태그를 버리지 않는다"가 원칙이라, raw에서 빼도 파일에 이미 있는 요소는
+        # 그대로 남는다. ES-DE도 `<favorite>false</favorite>`를 정상으로 읽는다.
+        raw = dict(row.get("frontend_raw") or {})
+        extra = [dict(item) for item in (raw.get("extra") or [])
+                 if (item.get("tag") or item.get("key")) != tag]
+        extra.append(adapter.favorite_raw(bool(favorite)))
+        raw["extra"] = extra
+
+        saved = self.save_fields(collection_id, rom_uid, row.get("fields") or {},
+                                 frontend_raw=raw)
+        if not saved["ok"]:
+            return saved
+        cache.set_favorite(int(rom_uid), favorite)
+        return ok({"romUid": int(rom_uid), "favorite": bool(favorite)})
+
+    @guarded
     def add_external_storage(self, collection_id, label, root_path):
         storage_id = self._next_storage_id(collection_id)
         self.registry.add_storage(collection_id, storage_id, kind="external",
@@ -243,11 +303,12 @@ class Api:
     # ------------------------------------------------------------------
     @guarded
     def list_rows(self, collection_id, systems=None, storage_ids=None, search=None,
-                  order="title", descending=False, limit=200, offset=0):
+                  order="title", descending=False, limit=200, offset=0,
+                  favorites_only=False):
         """가상 스크롤이 요청한 구간만 돌려준다. 정렬/필터/검색은 전부 SQL이 처리한다."""
         cache = self.workspace.open(collection_id)
         query = {"systems": systems or None, "storage_ids": storage_ids or None,
-                 "search": search or None}
+                 "search": search or None, "favorites_only": bool(favorites_only)}
         rows = cache.query_rows(**query, order=order, descending=bool(descending),
                                 limit=int(limit), offset=int(offset))
         return ok({"rows": [self._row_summary(r) for r in rows],
@@ -255,11 +316,23 @@ class Api:
 
     @staticmethod
     def _row_summary(row):
+        """Gamelist 한 행. 이전 프로젝트의 컬럼을 그리는 데 필요한 것을 전부 싣는다.
+
+            No. │ File │ Title │ Description │ Region │ Rating │ ★ │ Genre │ Status
+
+        Description이 여기 있는 것이 중요하다 - 이전 프로젝트의 목록은 제목이 아니라
+        설명 위주였고, 그래야 어떤 게임인지 목록에서 바로 판단할 수 있다.
+        """
         return {
             "romUid": row["rom_uid"], "system": row["system"], "file": row["filename"],
             "title": row["title"], "size": row["size"], "storageId": row["storage_id"],
             "hasMetadata": bool(row["has_metadata"]), "hasMedia": bool(row["has_media"]),
             "present": bool(row["present"]),
+            "desc": row["desc_text"] if "desc_text" in row.keys() else "",
+            "region": row["region"] if "region" in row.keys() else "",
+            "genre": row["genre"] if "genre" in row.keys() else "",
+            "rating": row["rating"] if "rating" in row.keys() else "",
+            "favorite": bool(row["favorite"]) if "favorite" in row.keys() else False,
         }
 
     @guarded
@@ -321,7 +394,7 @@ class Api:
     # 편집 (결정 D1 - 저장 즉시 파일에 기록, Plan 미경유)
     # ------------------------------------------------------------------
     @guarded
-    def save_fields(self, collection_id, rom_uid, fields):
+    def save_fields(self, collection_id, rom_uid, fields, frontend_raw=None):
         """메타데이터를 그 자리에서 Collection 파일에 쓴다.
 
         Plan을 거치지 않는다(D1) - Plan은 저장 용량이 변하는 작업만 담는다. 대신
@@ -343,13 +416,17 @@ class Api:
             return err("항목을 찾을 수 없습니다.")
 
         merged = {**row["fields"], **{k: v for k, v in (fields or {}).items()}}
+        # frontend_raw는 보통 읽은 그대로 다시 쓴다. 즐겨찾기처럼 사용자가 직접 바꾸는
+        # Frontend 고유 값일 때만 새 것이 들어온다.
+        raw = row["frontend_raw"] if frontend_raw is None else frontend_raw
         adapter = get_adapter(collection.frontend)
         layout = adapter.layout(collection, row["system"])
         adapter.write_index(layout, [GameEntry(filename=row["filename"], fields=merged,
-                                               frontend_raw=row["frontend_raw"])])
+                                               frontend_raw=raw)])
 
         title = (merged.get("name") or "").strip() or Path(row["filename"]).stem
-        cache.update_metadata(int(rom_uid), merged, title=title, title_norm=normalize_title(title))
+        cache.update_metadata(int(rom_uid), merged, title=title, title_norm=normalize_title(title),
+                              frontend_raw=None if frontend_raw is None else raw)
         return ok({"title": title})
 
     # ------------------------------------------------------------------

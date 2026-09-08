@@ -80,6 +80,9 @@ def title_to_filename(title: str) -> str:
 
 
 class LaunchBoxAdapter(FrontendAdapter):
+    #: 이 Frontend가 즐겨찾기를 적는 태그.
+    FAVORITE_TAG = "Favorite"
+
     id = "launchbox"
     display_name = "LaunchBox"
     media_types = tuple(IMAGE_FOLDERS) + ("videos",)

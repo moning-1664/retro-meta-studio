@@ -72,6 +72,9 @@ RESERVED_DIRS = {"gamelists", "downloaded_images", "downloaded_videos", "downloa
 
 
 class EmulationStationAdapter(FrontendAdapter):
+    #: 이 Frontend가 즐겨찾기를 적는 태그.
+    FAVORITE_TAG = "favorite"
+
     id = "emulationstation"
     display_name = "EmulationStation"
     media_types = tuple(TAG_FOR_TYPE)

@@ -62,6 +62,9 @@ NON_ROM_EXTENSIONS = {".xml", ".txt", ".jpg", ".jpeg", ".png", ".webp", ".db", "
 
 
 class EsDeAdapter(FrontendAdapter):
+    #: 이 Frontend가 즐겨찾기를 적는 태그.
+    FAVORITE_TAG = "favorite"
+
     id = "es-de"
     display_name = "ES-DE"
     media_types = tuple(MEDIA_FOLDERS)

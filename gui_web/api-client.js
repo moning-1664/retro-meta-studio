@@ -21,11 +21,16 @@
   ];
   const mockRows = [
     { romUid: 1, system: "ps2", file: "FFX.iso", title: "Final Fantasy X", size: 4400000000,
-      storageId: "ext-1", hasMetadata: true, hasMedia: true, present: true },
+      storageId: "ext-1", hasMetadata: true, hasMedia: true, present: true,
+      desc: "스피라를 여행하는 소환사와 가드의 이야기.", region: "JP", rating: "4.5",
+      genre: "RPG", favorite: true },
     { romUid: 2, system: "ps2", file: "MGS2.iso", title: "Metal Gear Solid 2", size: 4300000000,
-      storageId: "ext-1", hasMetadata: true, hasMedia: false, present: true },
+      storageId: "ext-1", hasMetadata: true, hasMedia: false, present: true,
+      desc: "빅 쉘에서 벌어지는 잠입 임무.", region: "USA", rating: "4.0",
+      genre: "Action", favorite: false },
     { romUid: 3, system: "snes", file: "SMW.sfc", title: "Super Mario World", size: 524288,
-      storageId: "internal", hasMetadata: false, hasMedia: false, present: true },
+      storageId: "internal", hasMetadata: false, hasMedia: false, present: true,
+      desc: "", region: "", rating: "", genre: "", favorite: false },
   ];
   const mockDetail = {
     id: "c1", name: "Master Library", frontend: "es-de", frontendLabel: "ES-DE",
@@ -41,6 +46,8 @@
   };
 
   const mockMatchLinks = {};
+  const mockFavorites = {};
+  const mockUiState = {};
 
   const mockCompare = { on: false, takenAt: 0 };
   const mockCompareRows = [
@@ -260,6 +267,19 @@
       delete mockMatchLinks[romUid];
       return ok({ cleared: had });
     },
+
+    // 즐겨찾기와 화면 상태. 목업은 메모리에만 담는다 - GUI 테스트가 "눌렀을 때
+    // 화면이 어떻게 되는가"를 보는 데는 그것으로 충분하고, 실제 파일에 적히는지는
+    // tests_e2e가 실제 Api로 확인한다.
+    set_favorite: (id, romUid, on) => {
+      mockFavorites[romUid] = !!on;
+      return ok({ romUid, favorite: !!on });
+    },
+    get_ui_state: (id) => ok({ ...mockUiState }),
+    save_ui_state: (id, state) => {
+      Object.assign(mockUiState, state || {});
+      return ok({ ...mockUiState });
+    },
   };
 
   // E2E 테스트용 전송. `?bridge=http`로 열면 목업 대신 **실제 파이썬 Api**에
@@ -311,7 +331,10 @@
 
     listRows: (id, q) => call("list_rows", id, q.systems || null, q.storageIds || null,
                               q.search || null, q.order || "title", !!q.descending,
-                              q.limit || 200, q.offset || 0),
+                              q.limit || 200, q.offset || 0, !!q.favoritesOnly),
+    setFavorite: (id, romUid, on) => call("set_favorite", id, romUid, !!on),
+    getUiState: (id) => call("get_ui_state", id),
+    saveUiState: (id, state) => call("save_ui_state", id, state),
     getRow: (id, romUid) => call("get_row", id, romUid),
     getMediaImage: (id, romUid, label, thumbnail) => call("get_media_image", id, romUid, label, !!thumbnail),
     saveFields: (id, romUid, fields) => call("save_fields", id, romUid, fields),
