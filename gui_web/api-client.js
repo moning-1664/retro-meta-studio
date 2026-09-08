@@ -262,8 +262,28 @@
     },
   };
 
+  // E2E 테스트용 전송. `?bridge=http`로 열면 목업 대신 **실제 파이썬 Api**에
+  // HTTP로 붙는다. 목업은 우리가 손으로 적은 모양이라 실제 반환과 어긋날 수 있고,
+  // 무엇보다 실제 파일을 건드리지 않는다 - "화면이 성공이라고 말한 것"과 "실제로
+  // 파일이 그렇게 됐는가"는 목업 위에서는 영원히 구별되지 않는다.
+  //
+  // 실제 앱에는 pywebview가 있으므로 이 경로를 타지 않는다.
+  const httpBridge = () =>
+    typeof location !== "undefined" && /[?&]bridge=http(&|$)/.test(location.search);
+
+  function callHttp(name, args) {
+    return fetch(`/__api/${name}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    })
+      .then((r) => r.json())
+      .catch((e) => ({ ok: false, error: String(e) }));
+  }
+
   function call(name, ...args) {
     if (!hasBridge()) {
+      if (httpBridge()) return callHttp(name, args);
       const fn = mock[name];
       return fn ? fn(...args) : Promise.resolve({ ok: false, error: `목업에 없는 호출: ${name}` });
     }
@@ -273,7 +293,7 @@
   }
 
   window.api = {
-    isMock: () => !hasBridge(),
+    isMock: () => !hasBridge() && !httpBridge(),
 
     listCollections: () => call("list_collections"),
     createCollection: (name, frontend, rootPath, target, arch) =>

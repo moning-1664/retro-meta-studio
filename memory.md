@@ -1086,3 +1086,60 @@ Cancel safety, Restart recovery, 다중 인스턴스.
 
 **검증**: 파이썬 468개(신규 37), Playwright 62개 전부 통과. 전체 스위트 4회 연속
 동일 결과. 실제 ES-DE 27 gamelist / 1,558게임 / 14,282값 차이 0, 원본 sha256 동일.
+
+---
+
+## 2026-09-08 — Phase 7.12: 실패 상태 검증 + 실제 파일시스템 E2E
+
+커밋: `ca7031f`(실패 상태), 그리고 이 항목의 E2E 하네스.
+
+### ★ 새로 생긴 것: `tests_e2e/` — 목업이 아닌 **진짜** E2E
+
+`tests_ui/` 62개는 `api-client.js`의 목업 위에서 돈다. **화면 로직은 보지만
+"성공했습니다" 토스트와 실제 파일 결과를 구별하지 못한다** - 목업은 파일을 안 건드린다.
+
+`tests_e2e/server.py`가 그 사슬을 잇는다.
+
+    브라우저 -> api-client.js -> HTTP -> bridge.api.Api -> FileOperationEngine
+             -> 실제 파일 -> Cache -> 다시 화면
+
+- `api-client.js`에 `?bridge=http` 전송을 추가했다. 그 쿼리로 열면 목업 대신 실제
+  Api에 HTTP로 붙는다. 실제 앱에는 pywebview가 있으므로 이 경로를 타지 않는다.
+- **검증은 화면이 아니라 디스크로 한다.** 스펙(Node)이 `fs`로 직접 읽는다.
+- 실행: `node node_modules/playwright/cli.js test --config playwright.e2e.config.js`
+- 매번 새 임시 작업 공간을 만든다. 사용자 자료는 건드리지 않는다.
+
+**하네스가 진짜로 무는지 확인했다**: `_copy_prepared`의 복사를 무력화하니 9개 중
+2개가 실패했다. 목업 테스트로는 절대 못 잡는 종류다.
+
+### 다음 사람이 알아야 할 것
+
+- **선택은 행 클릭이 아니라 체크박스다**(행 클릭은 상세 패널을 연다). Apply는 상태바의
+  `Apply (n)` 버튼 + 확인 모달이다. `#plan-bar` 같은 것은 없다.
+- 앱은 마지막에 열던 탭만 복원한다. 다른 Collection은 `.ctab-add` → `.picker-row`로 연다.
+- **media 링크 기록 단계는 원조 EmulationStation에만 있다.** ES-DE/Pegasus/LaunchBox는
+  폴더 규칙으로 찾으므로 `build_media_links()`가 빈 목록을 준다 - 그 실패 경로를
+  ES-DE로 테스트하려 하면 영원히 통과한다.
+
+### 고친 것
+
+- **DELETE가 ADD보다 약한 계약을 쓰고 있었다.** ADD는 size+mtime+volume_file_id인데
+  DELETE는 size+mtime뿐이었다. 되돌릴 수 없는 쪽이 오히려 삭제다 - `plan_delete`가
+  ROM과 media 전부에 `snapshot()`을 찍고 `snapshot_matches()`로 본다.
+- **롤백이 재시도를 막고 있었다.** 되돌리기는 옮기기라서 파일 식별자가 바뀌고, 다음
+  Validate가 "밖에서 바뀌었다"고 판정해 사용자의 승인을 무효로 만들었다. 원인 표시까지
+  틀렸다. `_refresh_approval()`이 되돌린 파일에 맞춰 승인을 다시 찍는다 - **우리가 직접
+  갖다 놓은 바이트이므로 같다는 것을 안다.**
+- **fixture flakiness를 뿌리째 없앴다.** `tests/fixtures.py`의 모든 파일 쓰기가
+  `write_file()`을 지나며 파일마다 다른 mtime을 찍는다. 두 트리를 잇달아 만들면 같은
+  크기 파일이 같은 시각을 갖게 되고, `classify_destination()`이 "이미 같은 파일"로
+  옳게 판정하는 바람에 충돌을 기대한 테스트가 실행할 때마다 다른 결과를 냈다.
+  `test_plan.py`에 이 문제가 오래 잠복해 있었다. **새 fixture도 `write_file()`을 쓸 것.**
+
+### 검증됨 (PASS)
+
+부분 스캔 중간 실패 시 Cache 보존, 덮어쓰기 각 단계(복사/gamelist/media링크/백업 자체)
+실패 시 파일·잔여물·상태·재시도, Plan Execute의 실제 파일 생성, Cancel 시 디스크 불변,
+외부 파일 추가/삭제 후 Rescan 반영.
+
+**검증**: 파이썬 486개, Playwright(목업) 62개, **E2E(실제 파일) 9개** 전부 통과.
