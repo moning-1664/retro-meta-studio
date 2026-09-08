@@ -28,13 +28,12 @@
 
 ## 현재 상태 (2026-09-08 기준)
 
-**Phase 5(Match) 완료 + 외부 리뷰 대응 hardening까지 main에 push됨.**
+**Phase 6(Compare Mode)까지 완료 + main에 push됨.**
 
-다음은 Phase 6(Compare Mode). **`compare_engine.py`를 일반화하기 전에 Match의
-`classify()`를 `MatchSubject ↔ MatchSubject`로 한 단계 일반화해야 한다** - 지금 계약은
-"Collection cache row ↔ Archive rom_identity"로 박혀 있어 Compare(Collection ↔ Collection)에
-그대로 쓸 수 없다. 이 판단의 근거는 아래 hardening 항목과
-`docs/REPORTS/2026-09-08-phase5-hardening.md` §8에 있다.
+다음은 Phase 7 — 나머지 Frontend Adapter(Pegasus / LaunchBox / EmulationStation) +
+Round-trip 검증 + ES-DE custom systems XML. `adapters/` 인터페이스는 Phase 1에서
+`frontend_raw` 보존을 강제해 두었으므로(R1) 그 계약을 따르면 된다. Round-trip 검증에는
+Phase 6에서 만든 Compare를 그대로 쓸 만하다.
 
 (이 절은 최신 상태를 담으므로 계속 갱신한다. 아래 날짜별 항목은 그 시점의 기록이므로
 고치지 않는다.)
@@ -164,3 +163,68 @@ Phase 5에서 이미 두 번 건드린 스키마를 또 흔드는 일이라 **Ph
 
 **검증**: 파이썬 211개(신규 15), Playwright 29개(신규 1) 전부 통과. 커밋 `65d4f7d`,
 `origin/main`에 push 완료.
+
+---
+
+## Phase 6 — Compare Mode (2026-09-08, Claude Code)
+
+스펙 §54-59. 상세는 `docs/REPORTS/2026-09-08-phase6-compare.md`.
+
+### 착수 전에 한 일 — 판정 계약을 한 단계 올렸다
+
+직전 항목에서 예고한 그대로 했다. `classify()`는 이제 **`MatchSubject ↔ MatchSubject`**를
+받는 대칭 함수다.
+
+- `engine.subject(...)` — 중립 형태를 만든다. `system/filename/title/size/sha256/fields/ref`.
+- `engine.subject_of_row(row)` — Collection cache row → subject.
+- `engine.subject_of_identity(identity, fields)` — Archive rom_identity → subject.
+  (개발사/출시일은 Identity가 아니라 Record에 있으므로 `fields`를 따로 받는다.)
+- `classify()` / `_metadata_match()` / `_heuristic_match()` 셋 다 `(a, b)` 대칭.
+- `source_of_row`는 **별칭으로 남아 있다** - Archive Match 경로를 건드리지 않으려고.
+
+**주의**: 엔진은 `ref` 값을 들여다보지 않는다. 호출자가 `rom_uid`든 `rom_identity_id`든
+넣어 두고 나중에 자기가 해석하는 칸이다. 여기에 엔진 로직을 붙이지 말 것.
+
+### Compare가 Match와 **다른 점** (여기가 제일 헷갈린다)
+
+판정 함수는 공유하지만 **짝짓기 규칙은 일부러 다르다.**
+
+| | Match (Archive) | Compare |
+|---|---|---|
+| 묻는 것 | "이 둘이 같은 ROM인가" | "두 목록을 어떻게 줄 세우나" |
+| 같은 이름 + 다른 크기 | Normalized 후보(자동 아님) | **짝으로 본다** |
+
+Match의 Exact 기준(크기/해시 확증)을 Compare에 그대로 쓰면 같은 이름의 다른 덤프가
+"양쪽에 각각 있음"으로 갈라져 보인다 - **그 차이를 보려고 Compare를 여는 것인데도.**
+그래서 Compare는 1차로 정확한 파일명(크기/해시 무관), 2차로 `classify()`가 Exact/Normalized로
+인정하면서 그런 상대가 **유일할 때만** 짝짓는다. 둘 이상이면 각자 "한쪽에만 있음"으로
+남긴다(§88). 나중에 "Compare도 Match랑 같은 기준을 쓰자"고 통일하려 들면 이 화면이
+망가지니 주의.
+
+### 상태 체계
+
+`same` / `conflict`(△) / `only_a`(−) / `only_b`(+). **Media 차이는 상태를 바꾸지 않고**
+`mediaDiff`로 따로 두어 `[Media]` 필터로 본다 - Media만 다른 것을 Conflict라 부르면
+"Metadata가 충돌한다"는 뜻이 흐려진다. Conflict 판정 필드는 게임을 서술하는 9개뿐이고
+`favorite`/`playcount` 같은 사람이 관리하는 값은 넣지 않는다(넣으면 온통 Conflict가 된다).
+
+### 다음 사람이 실수하기 쉬운 지점
+
+- **Compare 행의 키는 `romUid`가 아니라 `"<system>|<filename>"`이다.** 한쪽에만 있는 행은
+  `romUid`가 아예 없고, `romUid`는 재스캔마다 바뀐다(Phase 5에서 확인한 것과 같은 이유).
+- **비교 결과는 `start_compare` 때 한 번 계산해 `Api._compare`에 들고 있는다.** 필터를
+  누를 때마다 다시 훑도록 바꾸지 말 것 - 느린 것도 문제지만, 그 사이 스캔이 끼면 필터마다
+  다른 스냅샷을 보게 된다. Plan과 같이 **세션 한정**이라 앱을 끄면 사라진다.
+- **`CacheStore.all_entries()`를 새로 만들었다.** Compare처럼 전량이 필요할 때 쓴다.
+  행마다 `get_row()`를 부르면 한 건에 질의가 세 번이라 (좌 N + 우 M)번이 된다.
+- UI는 별도 화면이 아니다. `#filter-bar`가 비교 막대로 바뀌고 목록/상세는 같은 자리를
+  쓴다(`isCompare()`로 분기). `loadMatchCounts()`는 Compare에서 건너뛴다 - Compare 행에는
+  단일 `romUid`가 없다.
+
+**검증**: 파이썬 229개(신규 18), Playwright 36개(신규 7) 전부 통과. 커밋 `fe487bc`,
+`origin/main`에 push 완료.
+
+**다음**: Phase 7 — 나머지 Frontend Adapter(Pegasus / LaunchBox / EmulationStation) +
+Round-trip 검증 + ES-DE custom systems XML. Round-trip 검증에는 이번 Compare를 그대로
+쓸 만하다 - "ES-DE에서 읽어 Pegasus로 쓰고 다시 읽었을 때 필드가 그대로인가"는 결국
+두 Collection을 맞대는 일이다.
