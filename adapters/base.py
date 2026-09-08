@@ -157,6 +157,40 @@ class FrontendAdapter:
         """
         raise NotImplementedError
 
+    def strip_location_raw(self, frontend_raw) -> dict:
+        """**다른 위치로 옮겨 적을 때 따라가면 안 되는** 원본 값을 걷어낸다.
+
+        계약 2는 "모르는 필드를 버리지 말라"이지만, 값 중에는 **그 자리에서만 참인 것**이
+        있다. 원조 EmulationStation의 `<thumbnail>`/`<video>`가 그렇다 - 경로이기 때문에
+        다른 Collection에 그대로 적으면 남의 폴더나 없는 파일을 가리킨다.
+
+        기본은 아무것도 걷어내지 않는다. 위치에 매인 값이 있는 Adapter만 재정의한다.
+        같은 Collection 안에서 다시 쓸 때는 호출하지 않는다 - 그때는 그 값이 여전히 맞다.
+        """
+        return dict(frontend_raw or {})
+
+    def build_media_links(self, layout, filename, media) -> list[tuple[str, str]]:
+        """복사된 media를 이 Frontend의 **메타데이터에 기록해야 하면** 그 목록.
+
+        반환: `[(media_type, dest_path), ...]`. 계산만 하고 아무것도 쓰지 않는다 -
+        무엇을 바꿀지 정하는 일(Plan)과 실제로 쓰는 일(Apply)을 나누기 위함이다.
+
+        기본은 빈 목록이다. ES-DE / Pegasus / LaunchBox는 **폴더 규칙**으로 media를
+        찾으므로 파일만 제자리에 있으면 되고 기록할 것이 없다. 원조 EmulationStation만
+        gamelist.xml이 경로를 직접 들고 있어서 이 단계가 필요하다.
+        """
+        return []
+
+    def write_media_links(self, layout, links_by_filename) -> None:
+        """`build_media_links()`가 계산해 둔 것을 메타데이터에 기록한다.
+
+        **System 단위 bulk다**(계약 1). ROM 하나씩 받으면 gamelist.xml을 ROM 수만큼
+        다시 열고 쓰게 되어, 이 인터페이스가 애초에 막으려던 O(n^2)가 그대로 재현된다.
+
+        links_by_filename: {rom_filename: [(media_type, dest_path), ...]}
+        """
+        return None
+
     def media_pairs(self, layout, filename, media) -> list[tuple[str, str]]:
         """media를 이 Frontend의 규칙에 맞는 목적지로 매핑한 (src, dest) 목록.
 

@@ -192,13 +192,54 @@ class EmulationStationTests(unittest.TestCase):
     def test_write_media_links_updates_the_gamelist(self):
         """파일만 복사하고 gamelist를 안 고치면 ES가 그 media를 못 찾는다."""
         dest = Path(self.layout.media_dir) / "FFX-thumbnail.png"
-        self.adapter.write_media_links(self.layout, "FFX.iso", [("covers", str(dest))])
+        self.adapter.write_media_links(self.layout, {"FFX.iso": [("covers", str(dest))]})
         text = Path(self.layout.metadata_file).read_text(encoding="utf-8")
         self.assertIn("<thumbnail>", text)
 
         index = self.adapter.read_index(self.provider, self.layout)
         extra = {item["tag"]: item["text"] for item in index["FFX.iso"].frontend_raw["extra"]}
         self.assertIn("thumbnail", extra)
+
+    def test_build_media_links_does_not_touch_the_file(self):
+        """계산과 쓰기를 나눈 이유 - Plan 단계에서는 아무것도 바뀌면 안 된다."""
+        before = Path(self.layout.metadata_file).read_text(encoding="utf-8")
+        links = self.adapter.build_media_links(
+            self.layout, "FFX.iso", [MediaFile(media_type="covers", path="/src/a.png")])
+        self.assertEqual(links[0][0], "covers")
+        self.assertEqual(Path(self.layout.metadata_file).read_text(encoding="utf-8"), before)
+
+    def test_media_pairs_and_links_agree_on_the_destination(self):
+        """복사되는 곳과 gamelist에 적히는 곳이 갈라지면 파일은 있는데 화면엔 안 나온다."""
+        media = [MediaFile(media_type="covers", path="/src/a.png"),
+                 MediaFile(media_type="videos", path="/src/b.mp4")]
+        links = self.adapter.build_media_links(self.layout, "FFX.iso", media)
+        pairs = self.adapter.media_pairs(self.layout, "FFX.iso", media)
+        self.assertEqual([dest for _type, dest in links], [dest for _src, dest in pairs])
+
+    def test_write_media_links_writes_the_whole_system_at_once(self):
+        """ROM 하나씩 쓰면 gamelist.xml을 ROM 수만큼 다시 쓰게 된다(계약 1)."""
+        media_dir = Path(self.layout.media_dir)
+        self.adapter.write_media_links(self.layout, {
+            "FFX.iso": [("covers", str(media_dir / "FFX-thumbnail.png")),
+                        ("videos", str(media_dir / "FFX-video.mp4"))],
+        })
+        text = Path(self.layout.metadata_file).read_text(encoding="utf-8")
+        self.assertIn("<thumbnail>", text)
+        self.assertIn("FFX-video.mp4", text)
+
+    def test_links_for_unknown_games_are_ignored(self):
+        """gamelist에 없는 항목을 적으려 해도 조용히 넘어간다 - 유령 항목을 만들지 않는다."""
+        self.adapter.write_media_links(self.layout, {"Nope.iso": [("covers", "/x/a.png")]})
+        index = self.adapter.read_index(self.provider, self.layout)
+        self.assertEqual(list(index), ["FFX.iso"])
+
+    def test_other_adapters_have_nothing_to_link(self):
+        """폴더 규칙으로 찾는 Frontend는 기록할 것이 없다 - 기본 구현이 빈 목록이다."""
+        media = [MediaFile(media_type="covers", path="/src/a.png")]
+        for adapter in (EsDeAdapter(), PegasusAdapter(), LaunchBoxAdapter()):
+            layout = adapter.layout(make_collection(self.root, adapter.id), "ps2")
+            self.assertEqual(adapter.build_media_links(layout, "FFX.iso", media), [],
+                             adapter.id)
 
 
 class RoundTripTests(unittest.TestCase):

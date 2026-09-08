@@ -66,8 +66,12 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
         if progress_cb:
             progress_cb(done, total, label)
 
+    # {system: {filename: [(media_type, dest), ...]}} - 항목별로 모았다가 System 단위로
+    # 한 번에 기록한다. ROM 하나마다 gamelist.xml을 다시 쓰면 O(n^2)가 된다(계약 1).
+    media_links: dict[str, dict[str, list]] = {}
+
     for entry in adds:
-        _apply_add(entry, collection, adapter, provider, errors)
+        _apply_add(entry, collection, adapter, provider, errors, media_links)
         touched_systems.add(entry.system)
         step(entry.filename)
     for entry in deletes:
@@ -78,6 +82,8 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
         _apply_storage_change(entry, collection, adapter, cache, registry, provider, errors)
         touched_systems.add(entry.system)
         step(entry.system)
+
+    _write_media_links(adds, collection, adapter, media_links, errors)
 
     applied = [e for e in runnable if e.status == STATUS_APPLIED]
     failed = [e for e in runnable if e.status == STATUS_FAILED]
@@ -92,6 +98,27 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
         "applied": len(applied), "failed": len(failed), "partial": len(partial),
         "skipped": len(blocked), "errors": errors, "systems": sorted(touched_systems),
     }
+
+
+def _write_media_links(adds, collection, adapter, media_links, errors):
+    """모아둔 media 링크를 System 단위로 기록한다.
+
+    실패하면 그 System의 항목들을 **PARTIAL로 내린다.** 파일은 복사됐지만 Frontend가
+    그것을 못 찾는 상태이므로, 성공으로 처리해 Plan에서 지워버리면 사용자는 왜 media가
+    안 보이는지 알 길이 없어진다.
+    """
+    for system, links in media_links.items():
+        if not links:
+            continue
+        layout = adapter.layout(collection, system)
+        try:
+            adapter.write_media_links(layout, links)
+        except Exception as e:  # noqa: BLE001
+            message = f"media 경로 기록 실패: {e}"
+            for entry in adds:
+                if entry.system == system and entry.filename in links                         and entry.status == STATUS_APPLIED:
+                    entry.status, entry.error = STATUS_PARTIAL, message
+                    errors.append(f"{entry.filename}: {message}")
 
 
 # ----------------------------------------------------------------------
@@ -133,7 +160,12 @@ def _plan_copies(entry, layout, adapter, provider):
     return pairs, created
 
 
-def _apply_add(entry, collection, adapter, provider, errors):
+def _apply_add(entry, collection, adapter, provider, errors, media_links=None):
+    """`media_links`를 주면 이 항목이 남길 media 링크를 거기 모아 둔다.
+
+    실제 기록은 여기서 하지 않는다 - System 단위로 한 번만 쓰기 위해 호출부가 모았다가
+    마지막에 `adapter.write_media_links()`를 부른다(계약 1).
+    """
     layout = adapter.layout(collection, entry.system)
     pairs, created = _plan_copies(entry, layout, adapter, provider)
 
@@ -153,8 +185,12 @@ def _apply_add(entry, collection, adapter, provider, errors):
     # gamelist에만 있는 유령 항목이 남는다.
     fields = entry.payload or (entry.source or {}).get("fields") or {}
     try:
+        # ADD는 **다른 Collection에서 온 항목**을 이 Collection에 적는 것이다. 원본
+        # 보존값 중 "그 자리에서만 참인 것"(원조 ES의 media 경로 등)은 걷어내야 한다 -
+        # 그대로 적으면 gamelist가 남의 폴더를 가리킨다.
+        preserved = adapter.strip_location_raw((entry.source or {}).get("frontend_raw"))
         adapter.write_index(layout, [GameEntry(filename=entry.filename, fields=fields,
-                                               frontend_raw=(entry.source or {}).get("frontend_raw") or {})])
+                                               frontend_raw=preserved)])
     except Exception as e:  # noqa: BLE001
         # 메타데이터를 못 썼으면 이번에 만든 파일을 되돌린다. 안 그러면 다음 Apply가
         # "이미 존재하는 ROM"을 다시 만나 충돌로 막히거나 중복 처리하게 된다.
@@ -164,6 +200,19 @@ def _apply_add(entry, collection, adapter, provider, errors):
                        else f"Metadata 기록 실패 후 복사된 파일 정리에도 실패: {e}")
         errors.append(f"{entry.filename}: {entry.error}")
         return
+
+    # 이 Frontend가 media 경로를 메타데이터에 적어야 하면(원조 ES) 무엇을 적을지만
+    # 계산해 둔다. 실제로 있는 파일만 남긴다 - 복사가 건너뛰어진 media까지 적으면
+    # gamelist가 없는 파일을 가리키게 된다.
+    if media_links is not None:
+        from app.plan.builder import _MediaRef
+        refs = [_MediaRef(m) for m in ((entry.source or {}).get("media") or [])]
+        links = [(media_type, dest)
+                 for media_type, dest in adapter.build_media_links(layout, entry.filename, refs)
+                 if Path(dest).exists()]
+        if links:
+            media_links.setdefault(entry.system, {})[entry.filename] = links
+
     entry.status = STATUS_APPLIED
 
 

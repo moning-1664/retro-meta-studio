@@ -260,31 +260,78 @@ class EmulationStationAdapter(FrontendAdapter):
             for key, value in (item.get("attrib") or {}).items():
                 child.set(key, value)
 
-    def write_media_links(self, layout, filename, pairs) -> None:
-        """복사한 media의 경로를 gamelist에 적어준다.
+    def strip_location_raw(self, frontend_raw) -> dict:
+        """media 경로 태그를 걷어낸다.
+
+        원조 ES는 gamelist가 media 경로를 직접 들고 있어서, 그 값이 `frontend_raw`에
+        보존된다(계약 2). 그런데 그건 **그 Collection 안에서만 참인 경로**다. 다른
+        Collection으로 게임을 복사하면서 그대로 적으면 target의 gamelist가 source의
+        폴더(또는 아무 데도 없는 곳)를 가리키게 된다.
+
+        새 위치의 경로는 `build_media_links()`가 계산하고 `write_media_links()`가 적는다.
+        """
+        raw = dict(frontend_raw or {})
+        extra = raw.get("extra")
+        if extra:
+            raw["extra"] = [item for item in extra if item.get("tag") not in MEDIA_TAGS]
+        return raw
+
+    def build_media_links(self, layout, filename, media) -> list[tuple[str, str]]:
+        """이 게임의 media가 놓일 자리를 (media_type, dest)로 계산한다. 쓰지는 않는다.
+
+        타입당 하나만 쓴다 - gamelist의 태그 하나에 경로 하나만 들어가므로, 두 번째를
+        적으면 첫 번째를 덮어쓴다.
+        """
+        stem = Path(filename).stem
+        links, used = [], set()
+        for item in media:
+            tag = TAG_FOR_TYPE.get(item.media_type)
+            if not tag or item.media_type in used:
+                continue
+            used.add(item.media_type)
+            links.append((item.media_type,
+                          str(Path(layout.media_dir) / f"{stem}-{tag}{Path(item.path).suffix}")))
+        return links
+
+    def write_media_links(self, layout, links_by_filename) -> None:
+        """복사한 media의 경로를 gamelist에 적어준다. **System 단위로 한 번만 쓴다.**
 
         원조 ES는 gamelist가 가리키는 경로만 본다. 파일만 복사하고 이 단계를 빠뜨리면
         복사는 됐는데 화면에는 안 나오는 상태가 된다 - ES-DE에는 없는 단계다.
+
+        ROM 하나씩 쓰지 않는 이유는 계약 1 그대로다. 1,000개 게임에 media를 넣으면
+        gamelist.xml을 1,000번 다시 열고 쓰게 된다.
         """
+        if not links_by_filename:
+            return
         path = Path(layout.metadata_file)
         root = self._parse_file(path)
         if root is None:
             return
-        game = next((g for g in root.findall("game")
-                     if Path((g.findtext("path") or "").strip().replace("\\", "/")).name == filename),
-                    None)
-        if game is None:
-            return
-        base = path.parent
-        for media_type, dest in pairs:
-            tag = TAG_FOR_TYPE.get(media_type)
-            if not tag:
+
+        by_filename = {}
+        for game in root.findall("game"):
+            name = Path((game.findtext("path") or "").strip().replace("\\", "/")).name
+            if name:
+                by_filename[name] = game
+
+        base, changed = path.parent, False
+        for filename, links in links_by_filename.items():
+            game = by_filename.get(filename)
+            if game is None:
                 continue
-            try:
-                value = "./" + Path(dest).relative_to(base).as_posix()
-            except ValueError:
-                value = str(dest)   # gamelist 밖에 있으면 절대 경로로 적는다
-            self._set(game, tag, value)
+            for media_type, dest in links:
+                tag = TAG_FOR_TYPE.get(media_type)
+                if not tag:
+                    continue
+                try:
+                    value = "./" + Path(dest).relative_to(base).as_posix()
+                except ValueError:
+                    value = str(dest)   # gamelist 밖에 있으면 절대 경로로 적는다
+                self._set(game, tag, value)
+                changed = True
+        if not changed:
+            return
         tree = ET.ElementTree(root)
         ET.indent(tree, space="  ")
         tree.write(path, encoding="utf-8", xml_declaration=True)
@@ -307,15 +354,19 @@ class EmulationStationAdapter(FrontendAdapter):
         tree.write(path, encoding="utf-8", xml_declaration=True)
 
     def media_pairs(self, layout, filename, media) -> list[tuple[str, str]]:
-        stem = Path(filename).stem
+        """복사할 (src, dest). **`build_media_links()`가 계산한 dest를 그대로 쓴다.**
+
+        둘이 따로 계산하면 언젠가 갈라지고, 갈라지는 순간 "파일은 복사됐는데 gamelist는
+        다른 곳을 가리킨다"가 된다 - 원조 ES에서 가장 잦은 사고다.
+        """
+        destinations = dict(self.build_media_links(layout, filename, media))
         pairs, used = [], set()
         for item in media:
-            tag = TAG_FOR_TYPE.get(item.media_type)
-            if not tag or item.media_type in used:
+            dest = destinations.get(item.media_type)
+            if dest is None or item.media_type in used:
                 continue
             used.add(item.media_type)
-            pairs.append((item.path,
-                          str(Path(layout.media_dir) / f"{stem}-{tag}{Path(item.path).suffix}")))
+            pairs.append((item.path, dest))
         return pairs
 
     # ------------------------------------------------------------------
