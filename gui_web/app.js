@@ -82,6 +82,9 @@
     total: 0,
     queryToken: 0,
     selected: new Set(),
+    // romUid -> Match 후보 개수. Gamelist 뱃지(§49)용이며, 화면에 들어온 행에
+    // 대해서만 채운다 - 목록 전체를 미리 계산하면 스크롤이 느려진다.
+    matchCounts: {},
     focused: null,       // 선택된 romUid (상세 패널 대상)
     detailState: null,
     // Plan은 세션 한정이다(결정 D2). 백엔드 메모리에만 있고 여기서는 요약만 들고 있다.
@@ -710,6 +713,7 @@
   function resetList() {
     S.rowCache.clear();
     S.loadedPages.clear();
+    S.matchCounts = {};
     S.total = 0;
     S.selected.clear();
     S.focused = null;
@@ -747,6 +751,20 @@
     const totalEl = $("filter-total");
     if (totalEl) totalEl.textContent = `${formatCount(S.total)} items`;
     renderListWindow();
+    loadMatchCounts(r.data.rows, token);
+  }
+
+  /** Match 뱃지 개수는 목록 렌더링을 막지 않고 뒤따라 채운다(§49의 [n] 표시). */
+  async function loadMatchCounts(rows, token) {
+    if (isArchive() || !rows.length) return;
+    const uids = rows.map((row) => row.romUid);
+    const r = await api.matchCounts(S.activeId, uids);
+    if (!r.ok || token !== S.queryToken) return;
+    let changed = false;
+    Object.entries(r.data || {}).forEach(([uid, count]) => {
+      if (S.matchCounts[uid] !== count) { S.matchCounts[uid] = count; changed = true; }
+    });
+    if (changed) renderListWindow();
   }
 
   async function ensurePages(startIndex, endIndex) {
@@ -761,6 +779,7 @@
       if (!r.ok || token !== S.queryToken) { S.loadedPages.delete(page); continue; }
       r.data.rows.forEach((row, i) => S.rowCache.set(offset + i, row));
       renderListWindow();
+      loadMatchCounts(r.data.rows, token);
     }
   }
 
@@ -833,10 +852,20 @@
     el.appendChild(h("div", { class: "lc lc-check" }, [check]));
     el.appendChild(h("div", { class: "lc lc-index" }, [String(index + 1)]));
 
-    el.appendChild(h("div", { class: "lc lc-title" }, [
+    const titleCell = h("div", { class: "lc lc-title" }, [
       systemIcon(row.system, 15),
       h("span", { class: "lrow-title truncate" }, [row.title || row.file]),
-    ]));
+    ]);
+    // Exact로 확정되지 않은 후보가 있으면 개수만 조용히 알린다. 누르기 전까지는
+    // 아무것도 일어나지 않는다(§49 - 자동 병합 금지).
+    const matchCount = S.matchCounts[row.romUid];
+    if (matchCount) {
+      const badge = h("button", { class: "match-badge", title: "Match 후보 보기" },
+        [`[${matchCount}]`]);
+      badge.addEventListener("click", (e) => { e.stopPropagation(); openMatchDialog(row); });
+      titleCell.appendChild(badge);
+    }
+    el.appendChild(titleCell);
     el.appendChild(h("div", { class: "lc lc-system" }, [
       h("span", { class: "sys-badge" }, [String(row.system).toUpperCase()])]));
     el.appendChild(h("div", { class: "lc lc-status" }, [statusMark(row)]));
@@ -844,6 +873,89 @@
 
     el.addEventListener("click", () => openDetail(row));
     return el;
+  }
+
+  // ------------------------------------------------------------------
+  // Match (스펙 §45-49)
+  // ------------------------------------------------------------------
+  const TIER_LABEL = { exact: "정확", normalized: "이름 일치", metadata: "메타데이터", heuristic: "유사" };
+
+  /** 후보 목록. 고르기 전까지 아무것도 반영되지 않는다 - 그것이 이 화면의 요점이다. */
+  async function openMatchDialog(row) {
+    const r = await api.matchCandidates(S.activeId, row.romUid);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    const data = r.data;
+
+    let chosen = data.linkedRomIdentityId || null;
+    const list = h("div", { class: "match-list" });
+
+    if (!data.candidates.length) {
+      list.appendChild(h("div", { class: "empty-msg" }, ["후보를 찾지 못했습니다."]));
+    }
+    data.candidates.forEach((candidate) => {
+      const option = h("button", {
+        class: "match-option" + (candidate.romIdentityId === chosen ? " chosen" : ""),
+      });
+      option.appendChild(h("span", { class: "match-radio" }, [
+        candidate.romIdentityId === chosen ? "◉" : "○"]));
+      option.appendChild(h("div", { class: "match-option-main" }, [
+        h("div", { class: "match-option-title truncate" }, [candidate.title || candidate.filename]),
+        h("div", { class: "match-option-sub truncate" }, [
+          candidate.filename,
+          candidate.region ? ` · ${candidate.region}` : "",
+          candidate.size ? ` · ${formatBytes(candidate.size)}` : "",
+        ]),
+      ]));
+      option.appendChild(h("span", { class: "match-tier tier-" + candidate.tier },
+        [TIER_LABEL[candidate.tier] || candidate.tier]));
+      option.appendChild(h("span", { class: "match-score" }, [`${Math.round(candidate.score)}%`]));
+      option.addEventListener("click", () => {
+        chosen = candidate.romIdentityId;
+        list.querySelectorAll(".match-option").forEach((el, i) => {
+          const isChosen = data.candidates[i].romIdentityId === chosen;
+          el.classList.toggle("chosen", isChosen);
+          el.querySelector(".match-radio").textContent = isChosen ? "◉" : "○";
+        });
+        applyBtn.disabled = false;
+      });
+      list.appendChild(option);
+    });
+
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "match-source" }, [
+        h("span", { class: "match-source-label" }, ["Source"]),
+        h("span", { class: "truncate" }, [data.source.title || data.source.filename]),
+      ]),
+      h("div", { class: "field-label" }, ["Candidates"]),
+      list,
+      h("div", { class: "modal-hint" },
+        ["점수는 추천 순서일 뿐입니다. 어느 것도 자동으로 반영되지 않습니다."]),
+    ]);
+
+    const applyBtn = h("button", { class: "btn primary", disabled: !chosen }, ["Apply Match"]);
+    applyBtn.addEventListener("click", async () => {
+      closeModal();
+      const applied = await api.applyMatch(S.activeId, row.romUid, chosen);
+      if (!applied.ok) { showToast(applied.error, "error"); return; }
+      delete S.matchCounts[row.romUid];
+      renderListWindow();
+      showToast("Match를 확정했습니다. Archive에서 값을 가져오려면 Archive → Collection을 실행하세요.");
+    });
+
+    const actions = [h("button", { class: "btn", onClick: closeModal }, ["Cancel"])];
+    if (data.linkedRomIdentityId) {
+      const unlink = h("button", { class: "btn danger" }, ["Match 해제"]);
+      unlink.addEventListener("click", async () => {
+        closeModal();
+        const cleared = await api.clearMatch(S.activeId, row.romUid);
+        if (!cleared.ok) { showToast(cleared.error, "error"); return; }
+        await reloadList();
+        showToast("Match를 해제했습니다.");
+      });
+      actions.push(unlink);
+    }
+    actions.push(applyBtn);
+    showModal("Possible Matches", body, actions);
   }
 
   // ------------------------------------------------------------------

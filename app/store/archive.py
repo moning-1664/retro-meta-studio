@@ -91,7 +91,52 @@ MIGRATIONS = (
                PRIMARY KEY (rom_identity_id, source_collection_id)
            )""",
     )),
+    Migration(3, (
+        # ROM Identity를 가르는 진짜 키(§46). filename_norm은 괄호 안 정보를 통째로
+        # 버리기 때문에(normalize_title) "Game (USA)"와 "Game (Europe)"이 같은 값이
+        # 되어, 서로 다른 ROM이 하나의 Identity로 합쳐지고 있었다 - Archive에 먼저
+        # 들어온 쪽의 파일명/크기만 남고 나머지는 사라져, Archive -> Collection이
+        # 엉뚱한 지역판 파일을 가져오는 상태였다.
+        #
+        # rom_key는 파일명 stem을 대소문자/공백만 정리하고 괄호 내용은 **보존**한다.
+        # 매칭용 느슨한 정규화(filename_norm)는 그대로 두고 Match 엔진이 쓴다.
+        "ALTER TABLE rom_identities ADD COLUMN rom_key TEXT NOT NULL DEFAULT ''",
+        # 기존 행은 표시용 filename에서 채운다(없으면 filename_norm).
+        "UPDATE rom_identities SET rom_key = lower(trim(CASE WHEN filename <> ''"
+        "   THEN filename ELSE filename_norm END))",
+        "CREATE INDEX ix_rom_identities_key ON rom_identities(system, rom_key)",
+    )),
+    Migration(4, (
+        # 사용자가 확정한 Match(§49). 자동으로 붙지 않는 티어는 사용자가 고른 결과를
+        # 여기 남겨야 다음 Import/Ingest에서도 같은 Identity로 이어진다.
+        #
+        # 키를 rom_uid로 잡지 않는 이유: cache의 rom_uid는 AUTOINCREMENT이고
+        # replace_system()이 System 단위로 통째 DELETE 후 재삽입하므로 재스캔마다
+        # 값이 바뀐다. (system, filename)이 roms 테이블의 UNIQUE 자연키다.
+        """CREATE TABLE match_links (
+               collection_id TEXT NOT NULL,
+               system TEXT NOT NULL,
+               filename TEXT NOT NULL,
+               rom_identity_id TEXT NOT NULL REFERENCES rom_identities(rom_identity_id) ON DELETE CASCADE,
+               tier TEXT NOT NULL DEFAULT '',
+               score REAL NOT NULL DEFAULT 0,
+               created_at REAL NOT NULL,
+               PRIMARY KEY (collection_id, system, filename)
+           )""",
+        "CREATE INDEX ix_match_links_identity ON match_links(rom_identity_id)",
+    )),
 )
+
+
+def rom_key_of(filename: str) -> str:
+    """ROM Identity를 가르는 키. 확장자를 떼고 대소문자/공백만 정리한다.
+
+    괄호 안 정보((USA)/(Europe)/(Rev 1)/(Disc 1))는 **일부러 남긴다** - 그게 변종을
+    구분하는 유일한 단서인 경우가 대부분이기 때문이다. 느슨하게 묶는 일은 Match
+    엔진이 별도 티어에서 한다.
+    """
+    stem = str(filename or "").rsplit(".", 1)[0] if "." in str(filename or "") else str(filename or "")
+    return " ".join(stem.split()).strip().lower()
 
 
 def content_hash(fields, frontend_raw=None) -> str:
@@ -127,18 +172,27 @@ class ArchiveStore:
 
     def ensure_rom_identity(self, game_id, system, filename_norm, *, filename="",
                             size=None, sha256=None, region=None, disc_info=None) -> str:
+        """이 ROM의 Identity를 찾거나 만든다.
+
+        식별 키는 `rom_key`(파일명 stem을 대소문자/공백만 정리한 값)다. filename_norm은
+        괄호 안 정보를 버리므로 "Game (USA)"와 "Game (Europe)"이 같아져 서로 다른 ROM이
+        한 Identity로 합쳐진다 - §46이 금지하는 바로 그 상황이다. 두 변종은 같은
+        `game_id` 아래 **서로 다른** rom_identity로 남아야 하고, 그 둘을 잇는 것은
+        Match 엔진(Phase 5)의 일이다.
+        """
+        key = rom_key_of(filename or filename_norm)
         row = self._conn.execute(
-            "SELECT rom_identity_id FROM rom_identities WHERE system=? AND filename_norm=? AND game_id=?",
-            (system, filename_norm, game_id)).fetchone()
+            "SELECT rom_identity_id FROM rom_identities WHERE system=? AND rom_key=? AND game_id=?",
+            (system, key, game_id)).fetchone()
         if row:
             return row["rom_identity_id"]
         rid = uuid.uuid4().hex
         with transaction(self._conn):
             self._conn.execute(
                 "INSERT INTO rom_identities (rom_identity_id,game_id,system,filename_norm,filename,"
-                " size,sha256,region,disc_info) VALUES (?,?,?,?,?,?,?,?,?)",
+                " size,sha256,region,disc_info,rom_key) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (rid, game_id, system, filename_norm, filename or filename_norm,
-                 size, sha256, region, disc_info))
+                 size, sha256, region, disc_info, key))
         return rid
 
     def get_identity(self, rom_identity_id) -> dict | None:
@@ -268,6 +322,54 @@ class ArchiveStore:
     # ------------------------------------------------------------------
     # ROM / Media 원본 참조
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Match (§45-49)
+    # ------------------------------------------------------------------
+    def identities_in_system(self, system, *, exclude_collection=None) -> list[dict]:
+        """Match 후보 풀. 같은 System만 본다 - 시스템이 다르면 애초에 비교 대상이 아니다.
+
+        `exclude_collection`을 주면 그 Collection에서만 온 Identity는 뺀다. 자기
+        자신이 후보로 뜨는 것을 막기 위한 것이다.
+        """
+        sql = ("SELECT r.*, g.title, g.title_norm FROM rom_identities r"
+               " JOIN games g ON g.game_id = r.game_id WHERE r.system=?")
+        params = [system]
+        if exclude_collection:
+            sql += (" AND EXISTS (SELECT 1 FROM archive_records ar"
+                    "   WHERE ar.rom_identity_id = r.rom_identity_id"
+                    "     AND ar.source_collection_id <> ?)")
+            params.append(exclude_collection)
+        return [dict(row) for row in self._conn.execute(sql, params)]
+
+    def put_match_link(self, collection_id, system, filename, rom_identity_id, *, tier="", score=0.0):
+        with transaction(self._conn):
+            self._conn.execute(
+                "INSERT INTO match_links (collection_id,system,filename,rom_identity_id,tier,score,created_at)"
+                " VALUES (?,?,?,?,?,?,?)"
+                " ON CONFLICT(collection_id,system,filename) DO UPDATE SET"
+                "   rom_identity_id=excluded.rom_identity_id, tier=excluded.tier,"
+                "   score=excluded.score, created_at=excluded.created_at",
+                (collection_id, system, filename, rom_identity_id, tier, float(score), time.time()))
+
+    def get_match_link(self, collection_id, system, filename) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM match_links WHERE collection_id=? AND system=? AND filename=?",
+            (collection_id, system, filename)).fetchone()
+        return dict(row) if row else None
+
+    def match_links_of(self, collection_id) -> dict:
+        """{(system, filename): rom_identity_id} - 목록 한 번에 표시할 때 쓴다."""
+        return {(r["system"], r["filename"]): r["rom_identity_id"] for r in self._conn.execute(
+            "SELECT system, filename, rom_identity_id FROM match_links WHERE collection_id=?",
+            (collection_id,))}
+
+    def delete_match_link(self, collection_id, system, filename) -> bool:
+        with transaction(self._conn):
+            cur = self._conn.execute(
+                "DELETE FROM match_links WHERE collection_id=? AND system=? AND filename=?",
+                (collection_id, system, filename))
+        return cur.rowcount > 0
+
     def put_rom_source(self, rom_identity_id, source_collection_id, abs_path, size=0):
         with transaction(self._conn):
             self._conn.execute(

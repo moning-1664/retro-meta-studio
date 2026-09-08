@@ -24,6 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from adapters import get_adapter
+from app.match import service as match_service
 from adapters.base import GameEntry
 from utils import normalize_title
 
@@ -47,11 +48,17 @@ def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=No
     ingested = revised = 0
     for row in rows:
         title, title_norm = _identity_of(row)
-        game_id = archive.ensure_game(title, title_norm)
-        rom_identity_id = archive.ensure_rom_identity(
-            game_id, row["system"], normalize_title(Path(row["filename"]).stem),
-            filename=row["filename"], size=row["size"] or None,
-            sha256=row["sha256"], region=(row["fields"] or {}).get("region") or None)
+        # 사용자가 확정해 둔 Match가 있으면 새 Identity를 만들지 않고 그쪽에 붙인다
+        # (§49). 이름이 달라서 자동으로는 못 붙는 항목을 사람이 이어준 결과이므로,
+        # 다시 Ingest할 때마다 갈라지면 그 선택이 매번 무의미해진다.
+        rom_identity_id = match_service.linked_identity(
+            archive, collection.id, row["system"], row["filename"])
+        if rom_identity_id is None:
+            game_id = archive.ensure_game(title, title_norm)
+            rom_identity_id = archive.ensure_rom_identity(
+                game_id, row["system"], normalize_title(Path(row["filename"]).stem),
+                filename=row["filename"], size=row["size"] or None,
+                sha256=row["sha256"], region=(row["fields"] or {}).get("region") or None)
 
         kwargs = {"retention": retention} if retention else {}
         _revision, created = archive.put_record(

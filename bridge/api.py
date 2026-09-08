@@ -27,6 +27,7 @@ from app.plan import builder, clipboard
 from app.plan.applier import apply_plan
 from app.plan.validator import check_capacity, validate
 from app.archive import service as archive_service
+from app.match import service as match_service
 from app.store.archive import ArchiveStore
 from app.store.registry import CHANGE_APPLIED, RegistryError, RegistryStore
 from app.workspace import Workspace, WorkspaceError
@@ -545,6 +546,51 @@ class Api:
             "planned": added["added"], "conflicts": added.get("conflicts", 0),
             "skipped": result["skipped"] + added.get("skipped", []),
         })
+
+    # ------------------------------------------------------------------
+    # Match (스펙 §45-49)
+    # ------------------------------------------------------------------
+    @guarded
+    def match_candidates(self, collection_id, rom_uid):
+        """이 ROM과 같은 것일 수 있는 Archive 항목들. **자동으로 붙이지 않는다**(§49).
+
+        사용자가 Match 버튼을 눌렀을 때만 불리는 경로이므로 Heuristic까지 본다.
+        """
+        cache = self.workspace.open(collection_id)
+        row = cache.get_row(int(rom_uid))
+        if row is None:
+            return err("항목을 찾을 수 없습니다.")
+        return ok(match_service.candidates_for(self.archive, collection_id, row, deep=True))
+
+    @guarded
+    def match_counts(self, collection_id, rom_uids):
+        """Gamelist 뱃지용 후보 개수. 화면에 보이는 행만 넘길 것.
+
+        가벼운 티어(Exact/Normalized)만 세므로, 여기서 0이어도 Match 다이얼로그를
+        열면 Heuristic 후보가 나올 수 있다.
+        """
+        cache = self.workspace.open(collection_id)
+        rows = [cache.get_row(int(uid)) for uid in (rom_uids or [])]
+        rows = [r for r in rows if r is not None]
+        counts = match_service.counts_for_rows(self.archive, collection_id, rows)
+        return ok({str(uid): n for uid, n in counts.items()})
+
+    @guarded
+    def apply_match(self, collection_id, rom_uid, rom_identity_id):
+        """사용자가 고른 후보를 확정한다. 파일도 Metadata도 아직 건드리지 않는다."""
+        cache = self.workspace.open(collection_id)
+        row = cache.get_row(int(rom_uid))
+        if row is None:
+            return err("항목을 찾을 수 없습니다.")
+        return ok(match_service.apply_match(self.archive, collection_id, row, rom_identity_id))
+
+    @guarded
+    def clear_match(self, collection_id, rom_uid):
+        cache = self.workspace.open(collection_id)
+        row = cache.get_row(int(rom_uid))
+        if row is None:
+            return err("항목을 찾을 수 없습니다.")
+        return ok({"cleared": match_service.clear_match(self.archive, collection_id, row)})
 
     # ------------------------------------------------------------------
     # Job

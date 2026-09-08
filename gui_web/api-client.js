@@ -40,6 +40,8 @@
     ],
   };
 
+  const mockMatchLinks = {};
+
   const mock = {
     list_collections: () => ok(mockCollections),
     collection_detail: () => ok(mockDetail),
@@ -150,6 +152,32 @@
       return ok(true);
     },
     plan_remove_entry: () => ok({ removed: 1 }),
+
+    // Match(§45-49). 자동으로 붙는 것은 Exact뿐이라는 규칙을 목업에서도 지킨다 -
+    // 여기서 autoMatch를 채워버리면 화면 쪽 "사용자가 골라야 한다"를 검증할 수 없다.
+    match_counts: () => ok({ 2: 2 }),
+    match_candidates: (id, romUid) => ok({
+      source: { system: "ps2", filename: "MGS2.iso", title: "Metal Gear Solid 2", size: 4300000000 },
+      candidates: [
+        { romIdentityId: "ri-1", filename: "Metal Gear Solid 2 (Japan).iso",
+          title: "Metal Gear Solid 2", region: "Japan", size: 4300000001,
+          tier: "normalized", score: 85, linked: false },
+        { romIdentityId: "ri-2", filename: "Metal Gear Solid 2 Substance.iso",
+          title: "Metal Gear Solid 2: Substance", region: "USA", size: 4500000000,
+          tier: "heuristic", score: 71.4, linked: false },
+      ],
+      linkedRomIdentityId: mockMatchLinks[romUid] || null,
+      autoMatch: null,
+    }),
+    apply_match: (id, romUid, romIdentityId) => {
+      mockMatchLinks[romUid] = romIdentityId;
+      return ok({ romIdentityId, tier: "normalized", score: 85 });
+    },
+    clear_match: (id, romUid) => {
+      const had = !!mockMatchLinks[romUid];
+      delete mockMatchLinks[romUid];
+      return ok({ cleared: had });
+    },
   };
 
   function call(name, ...args) {
@@ -205,6 +233,11 @@
     archiveDetail: (romIdentityId) => call("archive_detail", romIdentityId),
     archiveEdit: (romIdentityId, fields) => call("archive_edit", romIdentityId, fields),
     archiveToCollection: (id, ids) => call("archive_to_collection", id, ids),
+
+    matchCandidates: (id, romUid) => call("match_candidates", id, romUid),
+    matchCounts: (id, romUids) => call("match_counts", id, romUids),
+    applyMatch: (id, romUid, romIdentityId) => call("apply_match", id, romUid, romIdentityId),
+    clearMatch: (id, romUid) => call("clear_match", id, romUid),
 
     startScan: (id, force) => call("start_scan", id, !!force),
     jobProgress: (jobId) => call("get_job_progress", jobId),

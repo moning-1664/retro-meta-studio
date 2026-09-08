@@ -219,7 +219,9 @@ class CacheStore:
         where, params = self._build_where(systems, storage_ids, search)
         order_col = {"title": "title_norm", "filename": "filename", "size": "size",
                      "system": "system"}.get(order, "title_norm")
-        sql = (f"SELECT rom_uid,system,filename,rel_path,storage_id,size,title,"
+        # sha256을 함께 싣는다 - Match 뱃지가 목록 경로에서 계산되는데, 해시가 빠지면
+        # 뱃지와 Match 다이얼로그가 서로 다른 근거로 판정하게 된다.
+        sql = (f"SELECT rom_uid,system,filename,rel_path,storage_id,size,title,sha256,"
                f" has_metadata,has_media,present FROM roms{where}"
                f" ORDER BY {order_col} {'DESC' if descending else 'ASC'}, filename")
         if limit is not None:

@@ -302,3 +302,41 @@ button.sb-badge { cursor: pointer; }
 .ctab-spacer { flex: 1; min-width: 12px; }
 .ctab.archive { color: var(--info); border-style: dashed; }
 .ctab.archive.active { border-style: solid; border-color: var(--info); background: var(--card2); }
+
+/* Match (스펙 §45-49) - 후보가 있다는 것만 조용히 알리고, 누르기 전에는
+   아무 일도 일어나지 않는다. 그래서 뱃지는 눈에 띄되 경고처럼 보이지 않게 한다. */
+.match-badge {
+  margin-left: 6px; padding: 0 6px; flex: none;
+  border: 1px solid var(--info); border-radius: var(--radius-pill);
+  background: transparent; color: var(--info);
+  font-size: var(--fs-eyebrow); font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.match-badge:hover { background: var(--card2); }
+
+.match-source {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 7px 9px; margin-bottom: 10px;
+  background: var(--card2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.match-source-label { color: var(--muted); font-size: var(--fs-eyebrow); flex: none; }
+
+.match-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+.match-option {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  padding: 7px 9px; background: var(--card2);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); cursor: pointer;
+}
+.match-option:hover { border-color: var(--accent); }
+.match-option.chosen { border-color: var(--accent); background: var(--card); }
+.match-radio { flex: none; color: var(--accent); }
+.match-option-main { flex: 1; min-width: 0; }
+.match-option-title { font-size: var(--fs-body); }
+.match-option-sub { color: var(--muted); font-size: var(--fs-eyebrow); }
+.match-tier {
+  flex: none; padding: 1px 7px; border-radius: var(--radius-pill);
+  border: 1px solid var(--border); color: var(--muted); font-size: var(--fs-eyebrow);
+}
+.match-tier.tier-exact { border-color: var(--ok, var(--accent)); color: var(--ok, var(--accent)); }
+.match-tier.tier-heuristic { border-color: var(--warning); color: var(--warning); }
+.match-score { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }

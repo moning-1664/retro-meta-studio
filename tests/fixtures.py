@@ -113,6 +113,10 @@ def build_scaled_esde_tree(root: Path, *, systems=("ps2", "snes"), per_system=50
     """
     suffix = {"": " (USA)", "region": " (Europe)", "rev": " (USA) (Rev 1)", "ext": " (USA)"}[variant]
     ext = ".zip" if variant == "ext" else ".iso"
+    # 변종마다 크기를 어긋나게 둔다. 지역판은 실제로 다른 덤프라 바이트 수가 같을
+    # 이유가 없고, 크기까지 같으면 Match 엔진이 (정규화 파일명 + 크기)로 Exact를
+    # 확정해 버려서 "확증이 없으면 자동으로 붙이지 않는다"를 검증할 수 없다.
+    size_offset = {"": 0, "region": 7, "rev": 13, "ext": 3}[variant]
 
     for system in systems:
         gamelist_dir = root / "gamelists" / system
@@ -131,7 +135,7 @@ def build_scaled_esde_tree(root: Path, *, systems=("ps2", "snes"), per_system=50
                 title = f"{title} (Rev 1)"
             filename = f"{base}{suffix}{ext}"
 
-            (rom_dir / filename).write_bytes(b"r" * (rom_bytes + i))
+            (rom_dir / filename).write_bytes(b"r" * (rom_bytes + i + size_offset))
             if with_media:
                 stem = Path(filename).stem
                 (root / "downloaded_media" / system / "covers" / f"{stem}.png").write_bytes(b"c" * 32)
