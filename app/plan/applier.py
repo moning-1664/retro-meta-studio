@@ -70,10 +70,8 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
     # 한 번에 기록한다. ROM 하나마다 gamelist.xml을 다시 쓰면 O(n^2)가 된다(계약 1).
     media_links: dict[str, dict[str, list]] = {}
 
-    for entry in adds:
-        _apply_add(entry, collection, adapter, provider, errors, media_links)
-        touched_systems.add(entry.system)
-        step(entry.filename)
+    _apply_adds(adds, collection, adapter, provider, errors, media_links, step)
+    touched_systems.update(entry.system for entry in adds)
     for entry in deletes:
         _apply_delete(entry, collection, adapter, cache, provider, errors)
         touched_systems.add(entry.system)
@@ -160,68 +158,130 @@ def _plan_copies(entry, layout, adapter, provider):
     return pairs, created
 
 
-def _apply_add(entry, collection, adapter, provider, errors, media_links=None):
-    """`media_links`를 주면 이 항목이 남길 media 링크를 거기 모아 둔다.
+#: 한 번의 복사 호출에 묶는 항목 수.
+#:
+#: `_apply_add`가 항목마다 `file_ops.copy_files()`를 부르던 때, 실측으로 항목당 약
+#: 50ms가 들었고 그중 80%가 **복사 호출 자체**였다(200게임 Apply 9.79s -> 복사 호출을
+#: 없애면 1.98s). Robocopy 프로세스가 항목마다 새로 뜨는 비용이다.
+#:
+#: 그렇다고 전부 한 번에 묶지는 않는다. 복사는 Apply에서 가장 오래 걸리는 구간이라,
+#: 통째로 묶으면 그 동안 진행률이 멈춰 사용자는 앱이 죽은 것으로 본다. 묶음 하나가
+#: 끝날 때마다 그 안의 항목들을 진행률에 반영한다.
+COPY_BATCH = 25
 
-    실제 기록은 여기서 하지 않는다 - System 단위로 한 번만 쓰기 위해 호출부가 모았다가
-    마지막에 `adapter.write_media_links()`를 부른다(계약 1).
-    """
+
+def _prepare_add(entry, collection, adapter, provider):
+    """복사할 쌍을 계산만 한다. 파일은 건드리지 않는다."""
     layout = adapter.layout(collection, entry.system)
     pairs, created = _plan_copies(entry, layout, adapter, provider)
+    return {"entry": entry, "layout": layout, "pairs": pairs, "created": created}
 
-    if pairs:
-        dest_dirs = [dest.parent for _, dest in pairs]
-        results = file_ops.copy_files(dest_dirs, pairs)
-        failed = [dest for _, dest in pairs if not results.get(str(dest))]
-        if failed:
-            # 파일 단계에서 실패했으면 메타데이터는 쓰지 않는다. 이번에 새로 만든
-            # 파일만 정리한다 - 원래 있던 파일은 건드리지 않는다.
-            _rollback_files(created, errors, entry)
-            entry.status, entry.error = STATUS_FAILED, f"{len(failed)}개 파일 복사 실패"
-            errors.append(f"{entry.filename}: 파일 복사 실패")
-            return
 
-    # 파일이 자리를 잡은 뒤에 메타데이터를 쓴다. 순서가 반대면 복사 실패 시
-    # gamelist에만 있는 유령 항목이 남는다.
+def _copy_prepared(prepared, errors, step):
+    """묶어서 복사하고, 결과를 항목별로 되돌려 준다.
+
+    **호출은 묶지만 실패의 단위는 항목 그대로다.** `copy_files()`가 목적지별 성공
+    여부를 돌려주므로, 한 항목이 실패해도 되돌리는 것은 그 항목이 이번에 새로 만든
+    파일뿐이다 - 묶었다고 남의 파일까지 되돌리면 안 된다.
+    """
+    for start in range(0, len(prepared), COPY_BATCH):
+        batch = prepared[start:start + COPY_BATCH]
+        pairs = [pair for item in batch for pair in item["pairs"]]
+        results = {}
+        if pairs:
+            dest_dirs = sorted({str(dest.parent) for _src, dest in pairs})
+            results = file_ops.copy_files(dest_dirs, pairs)
+
+        for item in batch:
+            entry = item["entry"]
+            failed = [dest for _src, dest in item["pairs"] if not results.get(str(dest))]
+            if failed:
+                # 파일 단계에서 실패했으면 메타데이터는 쓰지 않는다. 이번에 새로 만든
+                # 파일만 정리한다 - 원래 있던 파일은 건드리지 않는다.
+                _rollback_files(item["created"], errors, entry)
+                entry.status, entry.error = STATUS_FAILED, f"{len(failed)}개 파일 복사 실패"
+                errors.append(f"{entry.filename}: 파일 복사 실패")
+            step(entry.filename)
+
+
+def _entry_to_write(entry, adapter):
+    """Plan 항목을 이 Collection에 적을 GameEntry로.
+
+    ADD는 **다른 Collection에서 온 항목**을 이 Collection에 적는 것이다. 원본
+    보존값(frontend_raw)에는 두 가지 함정이 있다.
+
+    1) 다른 Frontend의 값이면 **모양부터 다르다**(ES-DE는 {"tag","text"}, Pegasus는
+       {"key","value"}). 그대로 넘기면 되살리다 깨진다 - 실제로 ES-DE -> Pegasus
+       Convert가 KeyError로 실패했다. Frontend 간 변환에서 frontend_raw가 따라가지
+       않는 것은 §50-51의 정의이기도 하다.
+    2) 같은 Frontend라도 경로처럼 "그 자리에서만 참인 값"은 걷어내야 한다.
+    """
     fields = entry.payload or (entry.source or {}).get("fields") or {}
-    try:
-        # ADD는 **다른 Collection에서 온 항목**을 이 Collection에 적는 것이다.
-        # 원본 보존값(frontend_raw)에는 두 가지 함정이 있다.
-        #
-        # 1) 다른 Frontend의 값이면 **모양부터 다르다**(ES-DE는 {"tag","text"},
-        #    Pegasus는 {"key","value"}). 그대로 넘기면 되살리다 깨진다 - 실제로
-        #    ES-DE -> Pegasus Convert가 KeyError로 실패했다. Frontend 간 변환에서
-        #    frontend_raw가 따라가지 않는 것은 §50-51의 정의이기도 하다.
-        # 2) 같은 Frontend라도 경로처럼 "그 자리에서만 참인 값"은 걷어내야 한다.
-        source_raw = (entry.source or {}).get("frontend_raw")
-        preserved = (adapter.strip_location_raw(source_raw)
-                     if adapter.raw_is_mine(source_raw) else {})
-        adapter.write_index(layout, [GameEntry(filename=entry.filename, fields=fields,
-                                               frontend_raw=preserved)])
-    except Exception as e:  # noqa: BLE001
-        # 메타데이터를 못 썼으면 이번에 만든 파일을 되돌린다. 안 그러면 다음 Apply가
-        # "이미 존재하는 ROM"을 다시 만나 충돌로 막히거나 중복 처리하게 된다.
-        recovered = _rollback_files(created, errors, entry)
-        entry.status = STATUS_FAILED if recovered else STATUS_PARTIAL
-        entry.error = (f"Metadata 기록 실패: {e}" if recovered
-                       else f"Metadata 기록 실패 후 복사된 파일 정리에도 실패: {e}")
-        errors.append(f"{entry.filename}: {entry.error}")
-        return
+    source_raw = (entry.source or {}).get("frontend_raw")
+    preserved = (adapter.strip_location_raw(source_raw)
+                 if adapter.raw_is_mine(source_raw) else {})
+    return GameEntry(filename=entry.filename, fields=fields, frontend_raw=preserved)
 
-    # 이 Frontend가 media 경로를 메타데이터에 적어야 하면(원조 ES) 무엇을 적을지만
-    # 계산해 둔다. 실제로 있는 파일만 남긴다 - 복사가 건너뛰어진 media까지 적으면
-    # gamelist가 없는 파일을 가리키게 된다.
-    if media_links is not None:
-        from app.plan.builder import _MediaRef
-        refs = [_MediaRef(m) for m in ((entry.source or {}).get("media") or [])]
-        links = [(media_type, dest)
-                 for media_type, dest in adapter.build_media_links(layout, entry.filename, refs)
-                 if Path(dest).exists()]
-        if links:
-            media_links.setdefault(entry.system, {})[entry.filename] = links
 
-    entry.status = STATUS_APPLIED
+def _write_metadata(prepared, adapter, errors, media_links):
+    """복사가 끝난 항목들의 메타데이터를 **System 단위로 한 번에** 쓴다.
 
+    파일이 자리를 잡은 뒤에 쓴다 - 순서가 반대면 복사 실패 시 gamelist에만 있는 유령
+    항목이 남는다.
+
+    실패했을 때 되돌리는 정책은 항목마다 쓰던 때와 같다: **이번에 복사한 파일을
+    되돌린다.** 안 그러면 다음 Apply가 "이미 존재하는 ROM"을 만나 충돌로 막히거나
+    중복 처리한다. 묶어 쓰기 때문에 그 대상이 그 System의 항목 전체로 늘어날 뿐이고,
+    어차피 디스크/권한 문제라면 항목마다 썼어도 전부 실패해 같은 결과가 된다.
+    """
+    by_system = {}
+    for item in prepared:
+        if item["entry"].status == STATUS_FAILED:
+            continue   # 복사 단계에서 이미 실패했다
+        by_system.setdefault(item["entry"].system, []).append(item)
+
+    for system, group in by_system.items():
+        layout = group[0]["layout"]
+        try:
+            adapter.write_index(layout, [_entry_to_write(item["entry"], adapter)
+                                         for item in group])
+        except Exception as e:  # noqa: BLE001
+            for item in group:
+                entry = item["entry"]
+                recovered = _rollback_files(item["created"], errors, entry)
+                entry.status = STATUS_FAILED if recovered else STATUS_PARTIAL
+                entry.error = (f"Metadata 기록 실패: {e}" if recovered
+                               else f"Metadata 기록 실패 후 복사된 파일 정리에도 실패: {e}")
+                errors.append(f"{entry.filename}: {entry.error}")
+            continue
+
+        for item in group:
+            entry = item["entry"]
+            # 이 Frontend가 media 경로를 메타데이터에 적어야 하면(원조 ES) 무엇을
+            # 적을지만 계산해 둔다. 실제로 있는 파일만 남긴다 - 복사가 건너뛰어진
+            # media까지 적으면 gamelist가 없는 파일을 가리키게 된다.
+            if media_links is not None:
+                from app.plan.builder import _MediaRef
+                refs = [_MediaRef(m) for m in ((entry.source or {}).get("media") or [])]
+                links = [(media_type, dest)
+                         for media_type, dest
+                         in adapter.build_media_links(item["layout"], entry.filename, refs)
+                         if Path(dest).exists()]
+                if links:
+                    media_links.setdefault(entry.system, {})[entry.filename] = links
+            entry.status = STATUS_APPLIED
+
+
+def _apply_adds(adds, collection, adapter, provider, errors, media_links, step):
+    """ADD 전체를 세 단계로 실행한다: 준비 -> 묶어 복사 -> System당 메타데이터.
+
+    항목마다 복사하고 항목마다 메타데이터를 쓰던 것을 묶은 것이다. **관찰 가능한
+    동작(어떤 항목이 성공/실패하고 무엇이 되돌려지는가)은 그대로 두고 호출 횟수만
+    줄인다.**
+    """
+    prepared = [_prepare_add(entry, collection, adapter, provider) for entry in adds]
+    _copy_prepared(prepared, errors, step)
+    _write_metadata(prepared, adapter, errors, media_links)
 
 def _rollback_files(paths, errors, entry) -> bool:
     """이번 작업이 새로 만든 파일만 지운다. 전부 지웠으면 True."""
