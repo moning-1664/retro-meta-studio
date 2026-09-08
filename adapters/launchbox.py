@@ -36,7 +36,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from adapters.base import Detection, FrontendAdapter, GameEntry, Layout, MediaFile, register
+from adapters.base import (Detection, FrontendAdapter, GameEntry, Layout, MediaFile, read_xml, register, write_xml)
 
 #: 공통 모델 <-> `<Game>` 태그.
 FIELD_TAGS = {
@@ -241,10 +241,7 @@ class LaunchBoxAdapter(FrontendAdapter):
                 by_filename[entry.filename] = game
             self.from_common(game, entry, layout)
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tree = ET.ElementTree(root)
-        ET.indent(tree, space="  ")
-        tree.write(path, encoding="utf-8", xml_declaration=True)
+        write_xml(path, root)
 
     def from_common(self, game, entry, layout=None) -> None:
         fields = entry.fields or {}
@@ -288,9 +285,7 @@ class LaunchBoxAdapter(FrontendAdapter):
                 removed = True
         if not removed:
             return
-        tree = ET.ElementTree(root)
-        ET.indent(tree, space="  ")
-        tree.write(path, encoding="utf-8", xml_declaration=True)
+        write_xml(path, root)
 
     def media_pairs(self, layout, filename, media) -> list[tuple[str, str]]:
         """media를 `Images/<system>/<폴더>/<제목>.<확장자>`로 매핑한다.
@@ -319,16 +314,14 @@ class LaunchBoxAdapter(FrontendAdapter):
         element.text = "" if value in (None, "") else str(value)
 
     def _parse(self, provider, metadata_file):
-        if not metadata_file or not provider.exists(metadata_file):
+        if not metadata_file:
             return None
-        return self._parse_file(Path(metadata_file))
+        return self._parse_file(metadata_file, provider)
 
     @staticmethod
-    def _parse_file(path):
-        try:
-            return ET.parse(path).getroot()
-        except (ET.ParseError, OSError):
-            return None
+    def _parse_file(path, provider=None):
+        """파일이 없거나 깨졌으면 None. Provider를 지나므로 MTP에서도 동작한다."""
+        return read_xml(path, provider)
 
 
 register(LaunchBoxAdapter())

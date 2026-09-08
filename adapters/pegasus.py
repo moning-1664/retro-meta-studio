@@ -36,7 +36,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from adapters.base import Detection, FrontendAdapter, GameEntry, Layout, MediaFile, register
+from adapters.base import (Detection, FrontendAdapter, GameEntry, Layout, MediaFile,
+                           read_text_document, register, write_text_document)
 
 METADATA_FILENAME = "metadata.pegasus.txt"
 
@@ -275,9 +276,8 @@ class PegasusAdapter(FrontendAdapter):
         기존 파일의 헤더(`collection:` 등)와 entries에 없는 게임 블록은 건드리지
         않는다 - Export가 기존 데이터를 조용히 지우면 안 된다(§70).
         """
-        path = Path(layout.metadata_file)
-        text = path.read_text(encoding="utf-8", errors="ignore") if path.exists() else ""
-        header, blocks = parse_metadata(text)
+        path = layout.metadata_file
+        header, blocks = parse_metadata(read_text_document(path))
 
         by_filename = {}
         for index, block in enumerate(blocks):
@@ -297,8 +297,7 @@ class PegasusAdapter(FrontendAdapter):
         if header:
             chunks.append("\n".join(header))
         chunks.extend(format_block(block) for block in blocks)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n\n".join(chunks) + "\n", encoding="utf-8")
+        write_text_document(path, "\n\n".join(chunks) + "\n")
 
     def from_common(self, entry, existing=None) -> list[tuple[str, str]]:
         """공통 필드 + 보존해둔 원본 -> 블록의 (key, value) 목록.
@@ -342,17 +341,18 @@ class PegasusAdapter(FrontendAdapter):
         return pairs
 
     def remove_entries(self, layout, filenames) -> None:
-        path = Path(layout.metadata_file)
-        if not path.exists():
+        path = layout.metadata_file
+        text = read_text_document(path)
+        if not text:
             return
-        header, blocks = parse_metadata(path.read_text(encoding="utf-8", errors="ignore"))
+        header, blocks = parse_metadata(text)
         wanted = set(filenames)
         kept = [b for b in blocks if Path(_block_value(b, "file")).name not in wanted]
         if len(kept) == len(blocks):
             return
         chunks = ["\n".join(header)] if header else []
         chunks.extend(format_block(block) for block in kept)
-        path.write_text(("\n\n".join(chunks) + "\n") if chunks else "", encoding="utf-8")
+        write_text_document(path, ("\n\n".join(chunks) + "\n") if chunks else "")
 
     def media_pairs(self, layout, filename, media) -> list[tuple[str, str]]:
         """media type을 게임 폴더 안의 정해진 파일명으로 바꾼다.
@@ -375,7 +375,7 @@ class PegasusAdapter(FrontendAdapter):
         if not metadata_file or not provider.exists(metadata_file):
             return None
         try:
-            return Path(metadata_file).read_text(encoding="utf-8", errors="ignore")
+            return read_text_document(metadata_file, provider)
         except OSError:
             # 파일 하나가 안 읽힌다고 Collection 전체 스캔이 실패하면 안 된다.
             return None

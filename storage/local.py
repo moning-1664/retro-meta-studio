@@ -78,6 +78,38 @@ class LocalStorageProvider(StorageProvider):
         return NativeWorkerEngine()
 
     # ------------------------------------------------------------------
+    def read_bytes(self, path) -> "bytes | None":
+        try:
+            return Path(path).read_bytes()
+        except OSError:
+            return None
+
+    def write_bytes(self, path, data: bytes) -> bool:
+        """임시 파일에 쓰고 자리를 바꾼다 - **반쯤 쓰인 gamelist를 남기지 않는다.**
+
+        여기서 중간에 실패하면 그 System의 메타데이터를 통째로 잃는다. 같은 폴더
+        안에서 바꿔치기해야 `os.replace`가 원자적이다(다른 볼륨이면 아니다).
+        """
+        target = Path(path)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_name(target.name + ".rms-tmp")
+            tmp.write_bytes(data)
+        except OSError:
+            return False
+        try:
+            os.replace(tmp, target)
+            return True
+        except OSError:
+            # 바꿔치기에 실패했으면 임시 파일을 남기지 않는다 - 다음 스캔에서
+            # 정체불명의 파일이 목록에 뜬다.
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            return False
+
+    # ------------------------------------------------------------------
     @staticmethod
     def _file_id(st) -> str | None:
         dev, ino = getattr(st, "st_dev", 0), getattr(st, "st_ino", 0)

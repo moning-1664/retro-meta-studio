@@ -21,7 +21,7 @@ from app.model.collection import STORAGE_INTERNAL
 from app.store.cache import CacheStore
 from app.store.registry import CHANGE_SCAN_UPDATED, MAX_OPEN_COLLECTIONS, RegistryStore
 from app.scan.scanner import scan_collection
-from storage.local import LocalStorageProvider
+import storage
 
 import adapters.es_de             # noqa: F401  - Adapter 등록을 위한 import
 import adapters.pegasus           # noqa: F401
@@ -54,7 +54,7 @@ class Workspace:
         추가한다(스펙 §9).
         """
         adapter = get_adapter(frontend)
-        provider = LocalStorageProvider.for_path(root_path)
+        provider = storage.for_path(root_path)
         detection = adapter.detect(provider, root_path)
         if not detection.matched:
             raise WorkspaceError(f"{adapter.display_name} 구조를 찾을 수 없습니다: {detection.message}")
@@ -91,7 +91,7 @@ class Workspace:
     # 스캔
     # ------------------------------------------------------------------
     def provider_for(self, collection):
-        return LocalStorageProvider.for_path(collection.root_path)
+        return storage.for_path(collection.root_path)
 
     def scan(self, collection_id, *, media_types=None, force=False, progress_cb=None,
              systems=None) -> dict:

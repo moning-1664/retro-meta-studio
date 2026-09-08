@@ -28,6 +28,7 @@ ES-DE -> 공통 모델 -> Pegasus -> 공통 모델 -> ES-DE 왕복에서 원래 
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
 
@@ -242,6 +243,77 @@ class FrontendAdapter:
 
 
 _ADAPTERS: dict[str, FrontendAdapter] = {}
+
+
+# ----------------------------------------------------------------------
+# 메타데이터 문서 읽기/쓰기 - **Adapter는 파일을 직접 열지 않는다**
+# ----------------------------------------------------------------------
+# `ET.parse(path)`나 `path.write_text()`를 Adapter 안에서 직접 부르면 경로가 없는
+# 저장소(MTP)에서는 손도 못 댄다. 네 Adapter가 전부 같은 일을 하고 있었으므로
+# 여기로 모았다 - MTP 지원이 들어갈 자리도 여기 하나다.
+#
+# Provider는 인자로 받지 않고 **경로에서 얻는다**. `write_index(layout, entries)`처럼
+# Provider를 받을 자리가 없는 계약이 이미 있어서, 그것을 다 바꾸는 대신 경로가
+# 저장소 종류를 말하게 했다(`storage.for_path()`).
+
+
+def _provider_for(path, provider=None):
+    if provider is not None:
+        return provider
+    import storage
+    return storage.for_path(path)
+
+
+def read_document(path, provider=None) -> "bytes | None":
+    """메타데이터 파일 전체. 없거나 못 읽으면 None."""
+    if not path:
+        return None
+    return _provider_for(path, provider).read_bytes(path)
+
+
+def write_document(path, data: bytes, provider=None) -> bool:
+    """메타데이터 파일 전체를 쓴다. 부모 디렉터리는 Provider가 만든다."""
+    return _provider_for(path, provider).write_bytes(path, data)
+
+
+def read_xml(path, provider=None):
+    """XML 루트 요소. 파일이 없거나 깨졌으면 None - 예외를 던지지 않는다.
+
+    gamelist 하나가 깨졌다고 Collection 전체 스캔이 실패하면 안 된다. 그 System만
+    메타데이터 없는 상태로 보이는 편이 낫다.
+    """
+    data = read_document(path, provider)
+    if data is None:
+        return None
+    try:
+        return ET.fromstring(data)
+    except ET.ParseError:
+        return None
+
+
+def serialize_xml(root) -> bytes:
+    """들여쓰기와 XML 선언을 붙여 직렬화한다.
+
+    들여쓰기를 하는 이유는 사람이 열어볼 파일이기 때문이다 - ET의 기본값은 전부
+    한 줄이라 Frontend가 직접 만든 파일과 너무 다르게 보인다.
+    """
+    tree = ET.ElementTree(root)
+    ET.indent(tree, space="  ")
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def write_xml(path, root, provider=None) -> bool:
+    return write_document(path, serialize_xml(root), provider)
+
+
+def read_text_document(path, provider=None, encoding="utf-8", errors="ignore") -> str:
+    """텍스트 메타데이터(Pegasus). 없으면 빈 문자열 - 호출부가 새로 만들면 된다."""
+    data = read_document(path, provider)
+    return "" if data is None else data.decode(encoding, errors=errors)
+
+
+def write_text_document(path, text: str, provider=None, encoding="utf-8") -> bool:
+    return write_document(path, text.encode(encoding), provider)
 
 
 def register(adapter: FrontendAdapter):

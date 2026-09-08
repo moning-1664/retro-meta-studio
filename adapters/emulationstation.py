@@ -40,7 +40,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from adapters.base import Detection, FrontendAdapter, GameEntry, Layout, MediaFile, register
+from adapters.base import (Detection, FrontendAdapter, GameEntry, Layout, MediaFile, read_xml, register, write_xml)
 from app.model.constants import ESDE_IGNORED_SYSTEMS
 from utils import normalize_esde_date, normalize_esde_rating
 
@@ -226,10 +226,7 @@ class EmulationStationAdapter(FrontendAdapter):
                 by_filename[entry.filename] = game
             self.from_common(game, entry)
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tree = ET.ElementTree(root)
-        ET.indent(tree, space="  ")
-        tree.write(path, encoding="utf-8", xml_declaration=True)
+        write_xml(path, root)
 
     def from_common(self, game, entry) -> None:
         fields = entry.fields or {}
@@ -332,9 +329,7 @@ class EmulationStationAdapter(FrontendAdapter):
                 changed = True
         if not changed:
             return
-        tree = ET.ElementTree(root)
-        ET.indent(tree, space="  ")
-        tree.write(path, encoding="utf-8", xml_declaration=True)
+        write_xml(path, root)
 
     def remove_entries(self, layout, filenames) -> None:
         path = Path(layout.metadata_file)
@@ -349,9 +344,7 @@ class EmulationStationAdapter(FrontendAdapter):
                 removed = True
         if not removed:
             return
-        tree = ET.ElementTree(root)
-        ET.indent(tree, space="  ")
-        tree.write(path, encoding="utf-8", xml_declaration=True)
+        write_xml(path, root)
 
     def media_pairs(self, layout, filename, media) -> list[tuple[str, str]]:
         """복사할 (src, dest). **`build_media_links()`가 계산한 dest를 그대로 쓴다.**
@@ -378,16 +371,14 @@ class EmulationStationAdapter(FrontendAdapter):
         element.text = "" if value in (None, "") else str(value)
 
     def _parse(self, provider, metadata_file):
-        if not metadata_file or not provider.exists(metadata_file):
+        if not metadata_file:
             return None
-        return self._parse_file(Path(metadata_file))
+        return self._parse_file(metadata_file, provider)
 
     @staticmethod
-    def _parse_file(path):
-        try:
-            return ET.parse(path).getroot()
-        except (ET.ParseError, OSError):
-            return None
+    def _parse_file(path, provider=None):
+        """파일이 없거나 깨졌으면 None. Provider를 지나므로 MTP에서도 동작한다."""
+        return read_xml(path, provider)
 
 
 register(EmulationStationAdapter())

@@ -28,7 +28,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from adapters.base import (AdapterAction, Detection, FrontendAdapter, GameEntry,
-                           Layout, MediaFile, register)
+                           Layout, MediaFile, read_document, register, serialize_xml,
+                           write_document, write_xml)
 from app.model.constants import ESDE_IGNORED_SYSTEMS
 from utils import normalize_esde_date, normalize_esde_rating
 
@@ -385,10 +386,7 @@ class EsDeAdapter(FrontendAdapter):
             ET.SubElement(node, "platform").text = name
             ET.SubElement(node, "theme").text = name
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tree = ET.ElementTree(xml_root)
-        ET.indent(tree, space="  ")
-        tree.write(path, encoding="utf-8", xml_declaration=True)
+        write_xml(path, xml_root)
         return {"path": str(path), "systems": [name for name, _ in entries], "written": True}
 
     # ------------------------------------------------------------------
@@ -410,9 +408,9 @@ class EsDeAdapter(FrontendAdapter):
         element.text = text
 
     def _parse(self, provider, metadata_file):
-        if not metadata_file or not provider.exists(metadata_file):
+        if not metadata_file:
             return None
-        return self._parse_file(Path(metadata_file))
+        return self._read_document(metadata_file, provider)[0]
 
     @staticmethod
     def _parse_file(path):
@@ -443,7 +441,7 @@ class EsDeAdapter(FrontendAdapter):
         return EsDeAdapter._read_document(path)[0]
 
     @staticmethod
-    def _read_document(path):
+    def _read_document(path, provider=None):
         """`(gameList 루트, 그 앞 원문, 그 뒤 원문)`.
 
         `<gameList>`만 꺼내 읽고 그대로 다시 쓰면 **그 밖에 있던 것이 사라진다.**
@@ -454,15 +452,16 @@ class EsDeAdapter(FrontendAdapter):
         있다가 되돌려 놓는다. 파싱해서 다시 만들면 우리가 모르는 형태를 우리 모양으로
         바꿔 쓰게 된다.
         """
-        try:
-            return ET.parse(path).getroot(), "", ""
-        except ET.ParseError:
-            return EsDeAdapter._parse_multi_root(path)
-        except OSError:
+        data = read_document(path, provider)
+        if data is None:
             return None, "", ""
+        try:
+            return ET.fromstring(data), "", ""
+        except ET.ParseError:
+            return EsDeAdapter._parse_multi_root(data)
 
     @staticmethod
-    def _parse_multi_root(path):
+    def _parse_multi_root(data):
         """엄밀한 파서가 거절한 gamelist를 최대한 살려 읽는다. `<gameList>`만 돌려준다.
 
         실제 백업에서 나온 두 가지를 다룬다.
@@ -475,10 +474,7 @@ class EsDeAdapter(FrontendAdapter):
         `&`는 감싸기가 실패했을 때만 손댄다. 이미 올바른 실체 참조(`&amp;`, `&#39;`)는
         건드리지 않는다.
         """
-        try:
-            text = Path(path).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            return None, "", ""
+        text = data.decode("utf-8", errors="replace")
         # XML 선언은 문서 맨 앞에만 올 수 있으므로 감싸기 전에 떼어낸다.
         body = re.sub(r"^\s*<\?xml[^>]*\?>", "", text, count=1)
         for candidate in (body, re.sub(r"&(?!#?\w+;)", "&amp;", body)):
@@ -502,20 +498,16 @@ class EsDeAdapter(FrontendAdapter):
         return body[:start].strip(), body[end:].strip()
 
     @staticmethod
-    def _write_document(path, root, before="", after=""):
+    def _write_document(path, root, before="", after="", provider=None):
         """`<gameList>`를 쓰되 그 밖에 있던 원문은 있던 자리에 되돌려 놓는다."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tree = ET.ElementTree(root)
-        # ET.write()는 기본적으로 들여쓰기 없이 한 줄로 쓴다. ES-DE가 직접 만드는
-        # gamelist.xml처럼 태그마다 줄을 나눠야 사람이 열어봤을 때 읽을 수 있다.
-        ET.indent(tree, space="  ")
         if not before and not after:
-            tree.write(path, encoding="utf-8", xml_declaration=True)
-            return
+            return write_document(path, serialize_xml(root), provider)
+        tree = ET.ElementTree(root)
+        ET.indent(tree, space="  ")
         chunks = ['<?xml version="1.0"?>']
         chunks += [part for part in (before, ET.tostring(root, encoding="unicode"), after)
                    if part]
-        path.write_text("\n".join(chunks) + "\n", encoding="utf-8")
+        return write_document(path, ("\n".join(chunks) + "\n").encode("utf-8"), provider)
 
 
 register(EsDeAdapter())

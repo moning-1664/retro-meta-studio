@@ -32,7 +32,7 @@ from app.compare import engine as compare_engine
 from app.convert import service as convert_service
 from app.match import service as match_service
 from app.metadata import service as metadata_service
-from storage.local import LocalStorageProvider
+import storage
 from app.store.archive import ArchiveStore
 from app.store.registry import CHANGE_APPLIED, RegistryError, RegistryStore
 from app.workspace import Workspace, WorkspaceError
@@ -619,7 +619,7 @@ class Api:
         collection = self.registry.get_collection(collection_id)
         if collection is None:
             return err("Collection을 찾을 수 없습니다.")
-        provider = LocalStorageProvider.for_path(collection.root_path)
+        provider = storage.for_path(collection.root_path)
         return ok(metadata_service.status(collection, provider))
 
     @guarded
@@ -628,7 +628,7 @@ class Api:
         collection = self.registry.get_collection(collection_id)
         if collection is None:
             return err("Collection을 찾을 수 없습니다.")
-        provider = LocalStorageProvider.for_path(collection.root_path)
+        provider = storage.for_path(collection.root_path)
         return ok(metadata_service.generate(collection, provider, systems))
 
     # ------------------------------------------------------------------
