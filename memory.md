@@ -28,8 +28,8 @@
 
 ## 현재 상태 (2026-09-08 기준)
 
-**Phase 7.3까지 완료, main에 push됨.** Adapter 4종, Match, Compare, Convert, Plan,
-Archive가 동작하고, Apply 성능 문제(항목별 호출)도 닫혔다.
+**Phase 7.4까지 완료, main에 push됨.** Adapter 4종, Match, Compare, Convert, Plan,
+Archive가 동작하고, Apply 성능과 Match 링크의 rename 취약성도 닫혔다.
 
 지켜야 할 성질 여섯:
 - **Compare는 읽기 전용이다.** 새 변경 동작에는 `blockedInCompare()`를 넣을 것.
@@ -43,10 +43,11 @@ Archive가 동작하고, Apply 성능 문제(항목별 호출)도 닫혔다.
   실패와 되돌리기의 단위는 항목 그대로다.
 
 **성능 기준선**(회귀 판단용): 400게임 Apply 1.20s, 1,000게임+media 12.36s,
-5,000게임+media 61.34s. 남은 시간은 실제 파일 I/O다.
+5,000게임+media 61.34s.
 
-다음: 이월분 두 개 — `match_links`의 rename 취약성(Phase 5), Compare Row key 구조화
-(Phase 6, 우선순위 낮음). 그 다음이 Phase 8(MTP, 선택).
+남은 것: Compare Row key 구조화(Phase 6에서 이월, 우선순위 낮음), Phase 8(MTP, 선택).
+의도적으로 남긴 한계: 다른 볼륨으로 파일을 옮기면 Match 링크가 끊긴다(해시가 필요한데
+비용 때문에 보류), SHA-256 비교.
 
 (이 절은 최신 상태를 담으므로 계속 갱신한다. 아래 날짜별 항목은 그 시점의 기록이므로
 고치지 않는다.)
@@ -649,3 +650,58 @@ I/O이지 프로세스 기동 몫이 아니다.** 여기서 더 줄이려면 복
 
 **다음**: 이월분 두 개 — `match_links`가 파일명 rename에 끊기는 문제(Phase 5에서 이월),
 Compare Row key 구조화(Phase 6에서 이월, 우선순위 낮음). 그 다음이 Phase 8(MTP, 선택).
+
+---
+
+## Phase 7.4 — Match 링크가 파일 rename에도 살아남게 (2026-09-08, Claude Code)
+
+Phase 5에서 이월된 문제를 닫았다. 상세는
+`docs/REPORTS/2026-09-08-phase7.4-match-rename.md`.
+
+### 이월할 때 적었던 이유가 틀렸다
+
+Phase 5에서 "고치려면 Cache에 안정적인 rom key를 심어야 하니 스키마를 또 흔든다"고
+미뤘는데, **Cache가 이미 `volume_file_id`(`st_dev:st_ino`)를 들고 있었다.** Windows
+실측: rename과 내용 수정에는 유지되고 새로 만든 파일과는 다르다.
+
+### 설계 — 주 키는 그대로, 파일 ID는 보조 수단
+
+`(collection_id, system, filename)`이 여전히 주 키다. 파일 ID를 주 키로 **삼지 말 것**:
+네트워크 공유/비NTFS에서는 값이 없고, 다른 볼륨으로 옮기면 바뀐다.
+
+파일 ID는 `match_links`의 열로 저장해 두 가지에만 쓴다.
+
+1. **이름이 같아도 파일 ID가 다르면 남남으로 본다.** rename 뒤 같은 이름의 다른 파일이
+   생기면 이름만 보고 옛 링크를 물려주게 된다.
+2. **이름으로 못 찾으면 파일 ID로 되찾고, 그 자리에서 `filename`을 고쳐 놓는다**(자가
+   복구). 되찾기만 하고 두면 그 뒤로도 매번 파일 ID로 뒤져야 한다.
+
+파일 ID가 없으면(`None`) 예전과 똑같이 이름으로만 찾는다 - 그 환경에서 rename하면
+링크가 끊기는 것은 **의도된 그대로**다.
+
+### 계약 변경
+
+`match_service.linked_identity(archive, collection_id, row)` — 예전에는
+`(system, filename)`을 받았는데 이제 **cache row를 통째로** 받는다(`volume_file_id`가
+필요하다). `archive/service.py::ingest_collection`이 호출부다.
+
+`ArchiveStore.get_match_link(...)`에 `volume_file_id=` 키워드가 붙었다. 안 넘기면
+예전처럼 이름으로만 찾는다 - **넘기는 것을 빠뜨리면 rename 복구가 조용히 죽는다.**
+
+### 가장 중요한 테스트
+
+`test_ingest_follows_the_renamed_link` — Match를 확정하는 이유가 "Ingest가 그 Identity에
+붙게 하는 것"이므로, 링크가 끊기면 **Archive에 중복 Identity가 생긴다.** 이게 이 기능의
+실제 효용이다.
+
+파일 ID 조회를 임시로 꺼 보니 5개가 실패했다(Phase 7.1의 확인 절차를 그대로 따랐다).
+
+### 남은 한계 (의도적)
+
+**다른 볼륨으로 파일을 옮기면 링크가 끊긴다** - 파일 ID가 바뀌기 때문이다. 여기서 더
+가려면 해시가 필요한데, 비용 때문에 계속 보류 중인 그 선택지다.
+
+**검증**: 파이썬 341개(신규 10), Playwright 51개 전부 통과. 커밋 `fb88289`,
+`origin/main`에 push 완료.
+
+**다음**: Compare Row key 구조화(Phase 6에서 이월, 우선순위 낮음), Phase 8(MTP, 선택).
