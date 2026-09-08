@@ -28,27 +28,29 @@
 
 ## 현재 상태 (2026-09-08 기준)
 
-**Phase 7.7까지 완료, main에 push됨.** 앱이 실제로 뜨고, **사용자의 실제 ES-DE 백업
-1,546게임을 오류 없이 읽는다.**
+**Phase 7.8까지 완료, main에 push됨.** 앱이 실제로 뜨고, 사용자의 실제 자료 둘 다 읽는다.
+
+- ES-DE 백업(메타데이터) → **1,546게임**, 오류 0
+- `C:\Games\ROMs`(ROM만) → **25개 시스템 3,164게임**, 스캔 0.7s
 
 지켜야 할 성질:
-- **Compare는 읽기 전용이다.** 새 변경 동작에는 `blockedInCompare()`를 넣을 것.
+- **Compare는 읽기 전용이다.** 새 변경 동작에는 `blockedInCompare()`.
 - **Adapter는 모르는 필드를 버리지 않는다.** 위치에 매인 값은 `strip_location_raw()`,
-  다른 Frontend의 값은 `raw_is_mine()`으로 걸러낸다.
+  다른 Frontend의 값은 `raw_is_mine()`으로 거른다.
 - **`to_common()`은 `tag_raw()`로 출처를 남긴다.**
 - **Adapter 쓰기는 System 단위 bulk다.**
 - **Adapter가 포맷 지식을 독점한다.**
 - **호출을 묶는 것과 실패를 묶는 것은 별개다.**
-- **창은 frameless다.** `easy_drag=False` 유지, 최소 크기는 `main.py::MIN_SIZE`와
-  `app.js::MIN_WINDOW` 두 곳.
-- **실제 자료의 XML은 깨져 있을 수 있다.** ES-DE 3.x의 다중 루트와 맨 `&`를 복구해서
-  읽는다 - 그 복구를 되돌리면 실제 컬렉션의 32%가 사라진다.
+- **창은 frameless다.** `easy_drag=False`, 최소 크기는 `main.py`와 `app.js` 두 곳.
+- **실제 자료의 XML은 깨져 있을 수 있다.** 다중 루트와 맨 `&`를 복구해서 읽는다 -
+  되돌리면 실제 컬렉션의 32%가 사라진다.
+- **사용자 폴더에 함부로 쓰지 않는다.** 열기만 해서는 아무 파일도 만들지 않고,
+  이미 있는 gamelist는 덮어쓰지 않으며, 메타데이터를 추측해서 채우지 않는다.
 
-**성능 기준선**: 400게임 Apply 1.20s, 1,000게임+media 12.36s, 5,000게임+media 61.34s.
-**실제 자료 기준선**: ES-DE 백업 스캔 1,546게임 / 오류 0.
+**성능 기준선**: 400게임 Apply 1.20s, 5,000게임+media 61.34s, ROM 3,164개 스캔 0.7s.
 
-다음 후보: **ROM 트리만 있는 Collection 열기**(사용자의 `C:\Games\ROMs`가 아직 안 열린다 -
-41/43이 metadata 없는 순수 ROM 폴더), ARRM 배치 지원, Compare Row key 구조화(낮음),
+다음 후보: **ARRM 배치 지원**(`<system>/media/gamelist.xml` - 사용자의 mame2003/n3ds가
+이 형태라 ROM은 보이는데 메타데이터가 안 붙는다), Compare Row key 구조화(낮음),
 Phase 8(MTP, 선택).
 
 (이 절은 최신 상태를 담으므로 계속 갱신한다. 아래 날짜별 항목은 그 시점의 기록이므로
@@ -862,3 +864,53 @@ fixture는 **우리가 아는 모양만** 만든다. 위 다섯은 전부 우리
 - 나머지 2개는 ARRM 배치(`<system>/media/gamelist.xml` + `media/<system>/<타입>/`)
 
 ES-DE 백업과 함께 쓰면 열리지만, ROM 트리만 가진 사용자는 아직 시작할 수 없다.
+
+---
+
+## Phase 7.8 — ROM만 있는 Collection (2026-09-08, Claude Code, 사용자 요청)
+
+스크래핑을 한 번도 안 한 컬렉션(ROM 폴더만, gamelist.xml 없음)을 열 수 있게 했다.
+사용자의 실제 `C:\Games\ROMs`가 그 모습이었고 **그동안은 열리지도 않았다**.
+이제 **25개 시스템 3,164게임**이 0.7초에 열린다. 상세는
+`docs/REPORTS/2026-09-08-phase7.8-rom-only.md`.
+
+### 흐름 (사용자가 정한 것)
+
+```
+ROM만 있는 폴더 추가
+  ↓ "메타데이터가 없습니다. 만들까요?"   ← **불러오기 전에** 묻는다
+  ├─ 나중에  → 그대로 열림. Gamelist에 파일명이 제목 자리에.
+  │            항목을 고쳐 저장하면 그때 gamelist.xml이 생긴다.
+  └─ 만들기  → ROM 목록만 담은 gamelist.xml을 System마다 생성
+```
+
+**묻는 시점을 "스캔 후"로 옮기지 말 것.** 이미 메타데이터 없는 목록을 본 뒤에 물으면
+그 안내가 무엇을 정하는 건지 알기 어렵다. `openAddCollection`의 제출 핸들러에서
+`offerMetadataBootstrap()` → `openTab()` 순서다.
+
+### 새 계약 / 규칙
+
+- `EsDeAdapter.detect()`가 `gamelists`/`downloaded_media`가 없을 때 **ROM이 든 System
+  폴더**를 찾아 `confidence 0.3`으로 받아들인다. **확신을 올리지 말 것** - 어느
+  Frontend의 ROM 폴더든 이 모양이라 ES-DE라고 확신할 근거가 없다.
+- `_systems_with_roms()`는 **ROM처럼 생긴 파일이 하나라도 있는 폴더만** System으로 본다.
+  이걸 빼면 `themes`나 사용자 잡동사니가 딸려 온다.
+- `app/metadata/service.py`
+  - `status()` — **ROM이 있는데 gamelist가 없는** System만 `missing`에 담는다.
+  - `generate()` — **추측해서 채우지 않는다**(name은 파일명 stem, 나머지는 빈칸).
+    **이미 있는 gamelist는 절대 건드리지 않는다**(비어 있는 것도 사용자 의도일 수 있다).
+- **열어 보기만 했을 때 사용자 폴더에 아무것도 쓰지 않는다** - 테스트로 고정돼 있다.
+
+### 목업이 항상 "메타데이터 없음"을 돌려준다
+
+`api-client.js`의 `metadata_status` 목업은 늘 missing을 준다(그래야 안내 흐름을 GUI
+테스트로 볼 수 있다). 그래서 **Collection을 새로 만드는 모든 UI 스펙은 "나중에"를
+한 번 눌러야 한다** - 이걸 모르면 새 스펙을 쓸 때 왜 탭이 안 열리는지 헤맨다.
+
+### 아직 안 되는 것
+
+`C:\Games\ROMs`의 `mame2003`, `n3ds`는 ARRM 배치
+(`<system>/media/gamelist.xml` + `media/<system>/<타입>/`)라 **ROM은 보이지만 그
+gamelist는 못 읽는다.** 다음 후보.
+
+**검증**: 파이썬 371개(신규 15), Playwright 62개(신규 5) 전부 통과. 커밋 `aeba619`.
