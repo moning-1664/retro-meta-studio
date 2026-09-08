@@ -28,24 +28,29 @@
 
 ## 현재 상태 (2026-09-08 기준)
 
-**Phase 7.2까지 완료, main에 push됨.** Adapter 4종, Match, Compare, Convert, Plan,
-Archive가 동작한다.
+**Phase 7.2 + 그 hardening까지 완료, main에 push됨.** Adapter 4종, Match, Compare,
+Convert, Plan, Archive가 동작하고 Frontend 간 변환이 실제 파일시스템 왕복으로 검증됐다.
 
-지켜야 할 성질 넷:
+지켜야 할 성질 다섯:
 - **Compare는 읽기 전용이다.** 새 변경 동작에는 `blockedInCompare()`를 넣을 것.
 - **Adapter는 모르는 필드를 버리지 않는다.** 단 경로처럼 위치에 매인 값은
-  `strip_location_raw()`로 걷어낸다.
+  `strip_location_raw()`로, **다른 Frontend의 값은 `raw_is_mine()`으로** 걸러낸다.
+- **`to_common()`은 `tag_raw()`로 출처를 남긴다.** 안 남기면 남의 raw를 못 걸러낸다.
 - **Adapter 쓰기는 System 단위 bulk다.** ROM 하나씩 쓰는 형태로 되돌리지 말 것.
-- **Adapter가 포맷 지식을 독점한다.** `supported_fields`/`media_types` 같은 한계를
-  서비스 쪽에 하드코딩하지 말 것.
+- **Adapter가 포맷 지식을 독점한다.** `supported_fields`/`media_types`를 서비스 쪽에
+  하드코딩하지 말 것.
 
-**알려진 잔여 문제(우선순위 올라감)**: `_apply_add`가 항목마다 `write_index()`를 부른다.
-Convert가 대량 항목을 한 번에 Plan에 올리는 경로를 만들어서 이제 실제로 드러나기 쉽다 -
-1,000개 변환 시 gamelist.xml을 1,000번 다시 쓴다. 고치려면 되돌리기 정책을 먼저 정해야
-한다(Phase 7.1 항목 참고).
+**다음 과제(측정 근거 있음)**: Apply가 항목당 약 50ms인데 그중 **복사 호출이 80%,
+`write_index`가 20%**다. `_apply_add`가 항목마다 `file_ops.copy_files()`를 불러 Robocopy
+프로세스가 매번 뜨는 것이 병목이다. 먼저 복사 호출을 묶고, 그 다음 `write_index`를 묶는다.
+**둘 다 되돌리기 정책을 먼저 정해야 한다** - 지금은 항목 하나가 실패하면 그 항목의 파일만
+되돌리는데, 묶으면 그 경계가 사라진다.
 
-다음 후보: 위 `write_index` bulk화, Phase 7.3(이월분: `match_links` rename,
-Compare Row key 구조화), Phase 8(MTP, 선택).
+(앞선 Phase 7.1/7.2 항목에 "write_index의 O(n²)가 다음 과제"라고 적혀 있으나, 그건 재
+보지 않고 단정한 것이라 **틀렸다.** Phase 7.2 Hardening 항목의 측정을 볼 것.)
+
+그 다음은 Phase 7.3 이월분(`match_links` rename, Compare Row key 구조화),
+Phase 8(MTP, 선택).
 
 (이 절은 최신 상태를 담으므로 계속 갱신한다. 아래 날짜별 항목은 그 시점의 기록이므로
 고치지 않는다.)
@@ -514,3 +519,77 @@ Convert가 **대량 항목을 한 번에 Plan에 올리는 경로**를 만들었
 
 **다음**: Phase 7.3(이월분: `match_links` rename, Compare Row key 구조화) 또는 위의
 `write_index` bulk화. Phase 8(MTP)은 여전히 선택 항목이다.
+
+---
+
+## Phase 7.2 Hardening — 변환의 마지막 10% 검증 (2026-09-08, Claude Code)
+
+리뷰가 지목한 9개 항목 처리. 상세는 `docs/REPORTS/2026-09-08-phase7.2-hardening.md`.
+
+### 실제 버그 — `frontend_raw`가 Frontend 간 Convert를 통째로 깨뜨리고 있었다
+
+`frontend_raw`는 **Frontend마다 모양이 다르다**.
+
+```
+ES-DE   : {"tag": "playcount", "text": "17", "attrib": {}}
+Pegasus : {"key": "sort-by",   "value": "..."}
+```
+
+Convert가 source의 raw를 그대로 실어 보내 target Adapter가 되살리려다
+`KeyError: 'key'` → **미지 태그가 하나라도 있으면 Apply가 통째로 실패**했다.
+
+**고친 방식: 값이 자기 출처를 밝힌다.**
+- `RAW_FRONTEND_KEY = "_frontend"` — `frontend_raw` 안에 들어가는 출처 표시.
+- `adapter.tag_raw(raw)` — `to_common()` 마지막에 붙인다. **새 Adapter를 만들면 여기도
+  반드시 부를 것**(`AdapterContractTests`가 검사한다).
+- `adapter.raw_is_mine(raw)` — 소비하는 쪽에서 판정.
+
+출처를 **값 안에** 넣었기 때문에 Clipboard 핸드오프 파일이나 Archive DB를 거쳐도 따라간다.
+소비처 두 곳(`_apply_add`, `archive/service.py::to_collection`)에서 남의 것이면 버리고
+내 것이면 `strip_location_raw()`만 적용한다.
+
+**출처 표시가 없으면 내 것으로 본다.** 예전에 저장된 값에는 표시가 없는데, 없다고 버리면
+계약 2를 어기는 쪽이 된다. 이 기본값을 뒤집지 말 것.
+
+### fixture가 현실보다 깨끗하면 테스트가 통과한다
+
+Phase 7.2 테스트가 이 버그를 놓친 이유는 `build_custom_esde_tree()`가 미지 태그를 만들지
+않아서다. **Convert/왕복 테스트를 새로 쓸 때는 미지 태그와 media를 실제로 심을 것** -
+`tests/test_convert_integration.py::esde_source()`가 그 형태다.
+
+### 확인만 하고 넘어간 것
+
+`cache`의 media 키 이름이 `rel_path`인데 **실제로는 절대 경로**다(`scanner.py`가
+`m.path`를 그대로 넣는다). 동작은 정상이고 테스트로 고정했다. 이름을 고치려면 cache
+스키마와 clipboard 핸드오프 포맷을 함께 건드려야 해서 미뤘다 - **`rel_path`를 보고
+상대 경로라고 가정하지 말 것.**
+
+### 벤치마크 — 앞서 내가 적은 우선순위가 틀렸다 (정정)
+
+Phase 7.1·7.2 항목에 "`write_index()`의 O(n²)가 다음 과제"라고 적었는데, **재 보지 않고
+단정한 것이라 틀렸다.**
+
+| | 1,000 게임 | 5,000 게임 |
+|---|---|---|
+| Convert 미리보기 | 0.04s | 0.22s |
+| Convert → Plan | 0.28s | 1.47s |
+
+미리보기/Plan은 문제없다. Apply는 100/200/400게임 = 4.55/9.67/20.50s로 **선형이되
+항목당 약 50ms**다(O(n²)가 아니다).
+
+그 50ms를 갈라 보면(200게임 기준 9.79s):
+
+| 복사 호출만 제거 | **1.98s** |
+|---|---|
+| write_index만 제거 | 7.87s |
+
+**복사가 80%, `write_index`가 20%.** `_apply_add`가 항목마다 `file_ops.copy_files()`를
+불러 **Robocopy 프로세스가 매번 새로 뜨는 것**이 진짜 병목이다.
+
+→ 먼저 고칠 것은 **항목별 복사 호출을 묶는 것**이고 `write_index` bulk화는 그 다음이다.
+둘 다 "항목마다 vs 묶어서"라는 같은 모양이라, **되돌리기 정책을 한 번 정하면 함께
+처리할 수 있다** - 지금은 항목 하나가 실패하면 그 항목의 파일만 되돌리는데, 묶으면 그
+경계가 사라진다. "어디까지 되돌릴 것인가"를 정하는 것이 그 작업의 본체다.
+
+**검증**: 파이썬 323개(신규 18), Playwright 51개 전부 통과. 커밋 `5bc9e6f`,
+`origin/main`에 push 완료.
