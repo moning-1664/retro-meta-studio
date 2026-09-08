@@ -95,6 +95,9 @@ class Api:
         # 기반 탐지에 걸린다는 실사용 보고가 있다(file_ops.py 참고).
         file_ops.select_engine(self.registry.get_setting("copy_engine", file_ops.ENGINE_AUTO))
         self._window = None
+        # 창 버튼의 최대화/복원 토글 상태. pywebview가 현재 상태를 알려주지 않아
+        # 우리가 들고 있는다.
+        self._maximized = False
         # Compare Mode도 Plan처럼 세션 한정이다 - 껐다 켜면 비교 상태는 사라진다.
         # {"baseId":..., "otherId":..., "rows":[...]} 또는 None.
         self._compare = None
@@ -825,9 +828,32 @@ class Api:
         if action == "minimize":
             window.minimize()
         elif action == "maximize":
-            window.toggle_fullscreen()
+            # 전체화면(toggle_fullscreen)이 아니라 **최대화/복원**이다. frameless 창에서는
+            # 이 버튼이 네이티브 제목 표시줄의 최대화를 대신하므로, 전체화면으로 들어가
+            # 작업 표시줄까지 덮으면 사용자가 빠져나올 방법을 잃는다.
+            if self._maximized:
+                window.restore()
+            else:
+                window.maximize()
+            self._maximized = not self._maximized
         elif action == "close":
             window.destroy()
+        return ok(True)
+
+    @guarded
+    def window_resize(self, width, height):
+        """창 크기를 바꾼다. frameless 창의 크기 조절 손잡이가 쓴다.
+
+        frameless 창은 네이티브 크기 조절 테두리를 잃는다. 그 스타일을 Win32로
+        되붙이는 방법은 창 생성 자체를 불안정하게 만들어 쓰지 않기로 했고, 대신
+        UI의 손잡이가 이 메서드를 부른다.
+        """
+        import webview
+        window = self._window or (webview.windows[0] if webview.windows else None)
+        if window is None:
+            return err("창을 찾을 수 없습니다.")
+        window.resize(max(1, int(width)), max(1, int(height)))
+        self._maximized = False
         return ok(True)
 
     @guarded

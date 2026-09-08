@@ -116,6 +116,7 @@
     cancel_job: () => ok(true),
     pick_folder: () => ok("D:\\ES-DE"),
     window_control: () => ok(true),
+    window_resize: () => ok(true),
 
     // --- 상태를 바꾸는 호출 ---------------------------------------------
     // GUI 테스트(tests_ui/)는 pywebview 없이 이 목업 위에서 돈다. 여기 없는 이름은
@@ -328,5 +329,6 @@
     runAdapterAction: (id, actionId) => call("run_adapter_action", id, actionId),
     pickFolder: (title) => call("pick_folder", title || ""),
     windowControl: (action) => call("window_control", action),
+    windowResize: (width, height) => call("window_resize", width, height),
   };
 })();

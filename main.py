@@ -65,6 +65,20 @@ def main():
         js_api=api,
         width=width, height=height, min_size=min_size, x=x, y=y,
         background_color="#0d1520",
+        # 앱이 자기 제목 표시줄을 그린다(`gui_web`의 `#titlebar` + `window_control`).
+        # 이 옵션이 없으면 네이티브 제목 표시줄과 **두 개가 겹쳐 보인다** - CSS에
+        # `-webkit-app-region: drag`가 이미 있는 것에서 보이듯 frameless를 전제로
+        # 쓰인 코드인데 그동안 이 옵션만 빠져 있었다.
+        frameless=True,
+        # `easy_drag`는 빈 영역 어디를 끌어도 창이 움직인다. 내비의 System을 다른
+        # Storage로 끌어다 놓는 동작(§10)과 충돌하므로 끄고, 제목 표시줄에만
+        # `pywebview-drag-region` 클래스를 붙여 그곳으로만 옮기게 한다.
+        easy_drag=False,
+        # frameless 창은 네이티브 크기 조절 테두리(WS_THICKFRAME)를 잃는다. Win32로
+        # 그 스타일을 되붙여 봤지만 **창 생성 자체가 불안정해져서**(창이 아예 안 뜨는
+        # 경우가 재현됨) 그 방법은 버렸다. 대신 화면 오른쪽 아래 손잡이를 끌면
+        # `window_resize` 브릿지로 크기를 바꾼다(gui_web의 `.resize-grip`).
+        resizable=True,
     )
     api._window = window
     try:

@@ -214,11 +214,13 @@
   function renderTitlebar() {
     const bar = $("titlebar");
     clear(bar);
-    bar.appendChild(h("div", { class: "brand" }, [
+    // `pywebview-drag-region`이 붙은 곳을 끌어야 창이 움직인다(frameless 창).
+    // 창 버튼에는 붙이지 않는다 - 버튼을 누를 때 창이 딸려 움직이면 안 된다.
+    bar.appendChild(h("div", { class: "brand pywebview-drag-region" }, [
       h("span", { class: "brand-icon" }, [icon("database", 17)]),
       h("span", { class: "brand-title" }, ["RetroMeta Studio"]),
     ]));
-    bar.appendChild(h("div", { class: "titlebar-spacer" }));
+    bar.appendChild(h("div", { class: "titlebar-spacer pywebview-drag-region" }));
     const controls = h("div", { class: "window-controls" });
     [["menu", "minimize"], ["layoutGrid", "maximize"], ["x", "close"]].forEach(([ico, action]) => {
       controls.appendChild(h("button", { class: "icon-btn", title: action,
@@ -1424,7 +1426,16 @@
     clear(panel);
     const state = S.detailState;
     panel.classList.toggle("open", !!state);
-    if (!state) return;
+    if (!state) {
+      // 패널이 늘 자리를 차지하므로 빈 칸을 그냥 두지 않는다.
+      panel.appendChild(h("div", { id: "detail-panel-inner" }, [
+        h("div", { class: "panel-empty-state" }, [
+          icon("gamepad", 22),
+          h("div", { class: "panel-empty-msg" }, ["게임을 선택하면 여기에 표시됩니다"]),
+        ]),
+      ]));
+      return;
+    }
 
     if (state.compare) { renderCompareDetail(panel); return; }
 
@@ -2019,7 +2030,43 @@
     if (r.ok) S.collections = r.data;
   }
 
+  //: 레이아웃이 견디는 최소 크기. main.py의 MIN_SIZE와 같은 값이어야 한다 -
+  //  여기서 더 작게 줄일 수 있게 두면 창은 줄어드는데 안쪽이 깨진다.
+  const MIN_WINDOW = { width: 900, height: 640 };
+
+  /** frameless 창에는 네이티브 크기 조절 테두리가 없다. 손잡이를 끌어 대신한다. */
+  function bindResizeGrip() {
+    const grip = $("resize-grip");
+    if (!grip) return;
+
+    grip.addEventListener("mousedown", (down) => {
+      down.preventDefault();
+      const start = { x: down.screenX, y: down.screenY,
+                      width: window.outerWidth, height: window.outerHeight };
+      let pending = null;
+
+      const onMove = (move) => {
+        const width = Math.max(MIN_WINDOW.width, start.width + (move.screenX - start.x));
+        const height = Math.max(MIN_WINDOW.height, start.height + (move.screenY - start.y));
+        // 브릿지 호출은 프레임당 한 번으로 묶는다 - mousemove마다 부르면 창이 끊겨 보인다.
+        if (pending) return;
+        pending = requestAnimationFrame(() => {
+          pending = null;
+          api.windowResize(Math.round(width), Math.round(height));
+        });
+      };
+      const onUp = () => {
+        if (pending) cancelAnimationFrame(pending);
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  }
+
   function bindEvents() {
+    bindResizeGrip();
     const scroll = $("list-scroll");
     let ticking = false;
     scroll.addEventListener("scroll", () => {
