@@ -28,7 +28,9 @@
 
 ## 현재 상태 (2026-09-08 기준)
 
-**Phase 7.9까지 완료, main에 push됨.** 앱이 실제로 뜨고, 사용자의 실제 자료 둘 다 읽으며,
+**Phase 7.10까지 완료, main에 push됨.** (Phase 8 MTP는 안정성 작업을 위해 8.1에서 중단)
+
+**Phase 7.9까지 완료.** 앱이 실제로 뜨고, 사용자의 실제 자료 둘 다 읽으며,
 **다시 써도 파일이 그대로다**(실제 27개 gamelist / 값 14,282개 기준 차이 0).
 
 - ES-DE 백업(메타데이터) → **1,546게임**, 오류 0
@@ -981,3 +983,54 @@ gamelist 27개 / 게임 1,558개 / 값 14,282개 → 달라진 파일 0, 달라�
 `mame2003`/`n3ds`의 ARRM 배치는 **사용자 지시로 이번 범위에서 제외**했다.
 
 **검증**: 파이썬 380개(신규 9), Playwright 62개 전부 통과.
+
+---
+
+## 2026-09-08 — Phase 7.10: Apply 안정성 보강 (P0 3 + P1 6)
+
+리포트 없음(이 항목이 리포트를 겸한다). 커밋 `5d3abd5`.
+
+**Phase 8(MTP)은 중단하고 안정성 작업을 먼저 했다.** 사용자 지시: 기능을 더 붙이기
+전에 데이터 손실 가능성부터 막을 것. Phase 8.1(Adapter가 Provider를 우회하지 않게 한
+리팩터링)은 커밋 `7250ae3`으로 이미 들어가 있고, 그 위에 얹었다.
+
+### 다음 사람이 알아야 할 원칙 세 가지
+
+1. **사용자가 승인한 것은 "그 시점의 그 파일"이다.** "Apply 시점에 그 경로에 있는
+   아무 파일"이 아니다. Plan을 만들 때 `snapshot()`(size/mtimeNs/fileId)을 찍고 Apply
+   직전에 `snapshot_matches()`로 대조한다. 둘 다 `app/plan/builder.py`에 있다.
+2. **복사 성공 != 작업 성공.** 기존 파일을 덮어쓸 때는 `_backup_replaced()`로 원본을
+   `.rms-backup`으로 치워 두고, **그 항목의 작업 전체(gamelist + media 링크)가 끝난
+   뒤에** `_settle_backups()`에서 지운다. 실패하면 되돌린다.
+3. **Cache는 예상값, 파일 시스템이 진실.** 막을지 말지는 `volume_info().free_bytes`로
+   정한다. Cache 사용량은 화면에 보여줄 `planBytes` 계산에만 쓴다.
+
+### 고친 것
+
+| | 무엇이 문제였나 |
+|---|---|
+| P0 부분 스캔 | `replace_system()`이 System 행을 통째로 지워서, 커버만 읽는 부분 스캔이 **비디오/휠 캐시를 삭제**했다. 이제 안 읽은 타입은 이어받는다(`_media_of_other_types`). 읽은 타입 안에서 사라진 파일은 그대로 사라진다. |
+| P0 덮어쓰기 대상 | 승인 시점 target snapshot이 없어서 **바뀐 파일을 그대로 덮어썼다.** conflict에 `destSnapshot` 추가 + validate에서 대조 + `_plan_copies`에서 한 번 더. |
+| P0 덮어쓰기 롤백 | 롤백이 **새로 만든 파일만** 지워서, 덮어쓴 뒤 gamelist 실패하면 원본이 영영 사라졌다. 백업 후 실패 시 복구. |
+| P1 원본 변경 | 크기만 봤다. mtime/fileId까지 본다. |
+| P1 delete media | ROM만 봤다. media snapshot도 본다(삭제는 되돌릴 수 없다). |
+| P1 용량 | Cache 사용량으로 판정했다. 실제 free space로 판정한다. |
+| P1 신규 System | 무조건 Internal이었다. **`layout()`에 물어보면 안 된다** - 등록 안 된 System에는 언제나 Collection root를 준다(순환). 각 Storage root 밑에 그 폴더가 실제로 있는지 본다. |
+| P1 경로 경계 | `startswith`라 `D:\ROM_BACKUP`이 `D:\ROM`에 걸렸다. `== root or startswith(root + "\")`. longest-match는 유지. |
+| P1 delta | validation이 사라진 media를 빼면서 예상 바이트는 그대로 뒀다. `Plan.revise()`로 누적 합계까지 맞춘다 - `entry.physical_delta`를 직접 대입하면 Plan 합계가 틀어진 채 남는다. |
+
+### 알려진 한계 (숨기지 말 것)
+
+**같은 tick 안의 제자리 덮어쓰기는 감지할 수 없다.** mtime도 fileId도 안 바뀐다.
+잡으려면 해싱해야 하는데 4GB ISO 수천 개에는 못 쓴다. 이 한계는
+`OverwriteTargetIsRecheckedTests.test_the_known_limit_is_written_down`에 테스트로
+적어 뒀다 - 나중에 깊은 검증(hash) 옵션을 붙일 때 출발점.
+
+### 지킨 제약
+
+스키마 변경 없음. 새 파일 변경 경로 없음(`file_ops.move_files`/`delete_files`만 추가).
+SHA256 전면 도입 없음. Phase 7.9의 ES-DE write-back 보존 동작 그대로.
+
+**검증**: 파이썬 431개(신규 37), Playwright 62개 전부 통과. 실제 ES-DE 백업
+27 gamelist / 1,558게임 / 14,282값 차이 0, 원본 sha256 동일. 수정을 되돌리면 신규
+37개 중 **18개가 실패**한다.
