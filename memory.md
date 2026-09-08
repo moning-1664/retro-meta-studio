@@ -28,7 +28,10 @@
 
 ## 현재 상태 (2026-09-08 기준)
 
-**Phase 6(Compare Mode)까지 완료 + main에 push됨.**
+**Phase 6(Compare Mode) + 리뷰 대응 hardening까지 완료, main에 push됨.**
+
+**Compare는 읽기 전용이다.** 새 변경 동작을 추가하면 그 함수 입구에도
+`blockedInCompare()`를 넣을 것 - 자세한 이유는 아래 Phase 6 Hardening 항목에 있다.
 
 다음은 Phase 7 — 나머지 Frontend Adapter(Pegasus / LaunchBox / EmulationStation) +
 Round-trip 검증 + ES-DE custom systems XML. `adapters/` 인터페이스는 Phase 1에서
@@ -228,3 +231,75 @@ Match의 Exact 기준(크기/해시 확증)을 Compare에 그대로 쓰면 같�
 Round-trip 검증 + ES-DE custom systems XML. Round-trip 검증에는 이번 Compare를 그대로
 쓸 만하다 - "ES-DE에서 읽어 Pegasus로 쓰고 다시 읽었을 때 필드가 그대로인가"는 결국
 두 Collection을 맞대는 일이다.
+
+---
+
+## Phase 6 Hardening — 외부 리뷰 대응 (2026-09-08, Claude Code)
+
+리뷰 백로그(P0 1건, P1 4건, P2 2건) 처리. 상세는
+`docs/REPORTS/2026-09-08-phase6-hardening.md`. **다음 사람이 반드시 알아야 할 것만** 추린다.
+
+### 가장 중요 — Compare는 **읽기 전용**이다. 이 성질을 깨뜨리지 말 것
+
+리뷰는 "확인해 보라"는 항목으로 올렸는데, 확인해 보니 실제로 세 갈래로 변경이 가능했다.
+
+1. **Ctrl+V가 붙여넣기를 실행했다.** 단축키 핸들러가 `S.activeId`만 보고 Compare 여부를
+   안 봤고, `pasteIntoActive()`는 **선택 항목이 없어도 동작한다** - Auto Plan이 꺼져
+   있으면 `applyPlan()`까지 이어져 실제 파일이 움직였다.
+2. **Ctrl+S가 저장 경로를 탔다.** Compare 상세도 `S.detailState.tab === "metadata"`라서
+   저장 조건을 통과했다.
+3. **내비 드래그로 System 이동이 가능했다.** `Add External Storage`와 Storage 우클릭
+   메뉴(제거 포함)도 살아 있었다.
+
+**지금의 방어 구조 (둘 다 필요하다)**:
+- `blockedInCompare(what)` — 변경 함수 6개(`copySelection`/`pasteIntoActive`/
+  `deleteSelection`/`handleSaveDetail`/`moveSystemToStorage`/`openAddStorage`) **입구**에서
+  막고 안내 토스트를 낸다.
+- 화면에서도 지운다 — 상태바는 Compare 중 Copy/Paste/Delete/Apply를 그리지 않고
+  `읽기 전용` 배지만 두고, 내비는 `draggable`을 붙이지 않는다.
+
+**새 변경 동작을 추가할 때는 그 함수 입구에도 `blockedInCompare()`를 넣을 것.** 버튼을
+숨기는 것만으로는 부족하다 - 단축키와 드래그처럼 버튼을 거치지 않는 길이 있다.
+반대로 단축키를 통째로 `return`시키는 방식도 쓰지 말 것 - 아무 반응이 없으면 사용자는
+"키가 안 먹네"로 여긴다(그렇게 만들었다가 되돌렸다).
+
+### `Same`의 의미 — "ROM 파일이 같다"가 아니다
+
+`Same` = 양쪽에 대응 항목이 있고 **비교 대상 Metadata가 동일**. 크기가 달라도 Same일 수
+있고, 그 차이는 상세의 Size 줄에서 본다. 이 정의는 엔진 docstring / 필터 버튼 툴팁 /
+`CompareContractTests` 세 곳에 박아 뒀다 - Compare를 "ROM identity 비교"로 바꾸려 들면
+테스트가 깨진다. Pairing 정책(같은 파일명이면 크기/해시가 달라도 짝)은 그대로 유지다.
+
+**Metadata / Media / 크기는 서로 독립적인 신호다.** 하나로 뭉뚱그리지 말 것.
+
+### 스냅샷
+
+`start_compare`가 `takenAt`을 함께 돌려주고 비교 막대가 `Snapshot HH:MM:SS`와
+`[Refresh]`를 보여준다. Refresh는 `start_compare()`를 다시 부르는 것뿐이고, **자동 갱신은
+하지 않는다**(필터마다 결과가 달라지면 안 되므로).
+
+### 성능 — 재고 나서 고쳤다
+
+`_pair()`의 2차 탐색이 O(N×M)이라는 지적에, 먼저 측정했다.
+
+| 5,000 × 5,000 | 인덱스 전 | 인덱스 후 |
+|---|---|---|
+| 현실적(1차에서 전부 짝지어짐) | 0.03s | 0.029s |
+| 최악(이름을 하나도 공유 안 함) | **7.32s** | **0.121s** |
+
+`classify()`가 Exact/Normalized를 주는 조건이 "정규화 파일명 / 정규화 제목 / 해시가 같음"
+셋뿐이므로 그 세 키로 후보를 먼저 좁혔다(Phase 5의 Archive 후보 인덱스와 같은 방향).
+**후보 밖 항목은 애초에 Exact/Normalized가 될 수 없으므로 결과는 동일하다** - 이 등가성이
+깨지지 않게, 나중에 `classify()`에 새 판정 근거를 추가한다면 이 인덱스 키도 함께 늘려야
+한다.
+
+### 남겨 둔 것 (의도적)
+
+- Compare Row key의 구조화(`"system|filename"` → 구조체). Windows 파일명에 `|`가 못
+  들어가므로 지금은 실질적 버그가 아니다. 다른 플랫폼까지 넓힐 때 함께.
+- SHA-256 Compare. filesystem I/O 비용 때문에 후순위 - 필요하면 사용자가 요청한 항목만
+  lazy 계산하는 방향.
+- `match_links`가 파일명 rename에 끊기는 문제(Phase 5에서 이월). 여전히 Phase 7 이후.
+
+**검증**: 파이썬 236개(신규 7), Playwright 41개(신규 5) 전부 통과. 커밋 `4a70552`,
+`origin/main`에 push 완료.
