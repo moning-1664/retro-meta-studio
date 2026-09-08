@@ -28,22 +28,20 @@
 
 ## 현재 상태 (2026-09-08 기준)
 
-**Phase 7까지 완료, main에 push됨.** Adapter 4종(ES-DE / Pegasus / LaunchBox /
-EmulationStation), Match, Compare, Plan, Archive가 모두 동작한다.
+**Phase 7.1까지 완료, main에 push됨.** Adapter 4종, Match, Compare, Plan, Archive가
+동작하고, EmulationStation media 링크도 Apply까지 이어진다.
 
-지켜야 할 성질 둘:
-- **Compare는 읽기 전용이다.** 새 변경 동작을 추가하면 그 함수 입구에도
-  `blockedInCompare()`를 넣을 것(Phase 6 Hardening 항목 참고).
-- **Adapter는 모르는 필드를 버리지 않는다.** 새 Adapter를 추가할 때 `adapters/base.py`의
-  두 계약을 먼저 읽을 것(Phase 7 항목 참고).
+지켜야 할 성질 셋:
+- **Compare는 읽기 전용이다.** 새 변경 동작에는 `blockedInCompare()`를 넣을 것.
+- **Adapter는 모르는 필드를 버리지 않는다.** 단, **경로처럼 그 자리에서만 참인 값**은
+  `strip_location_raw()`로 걷어낸다(다른 Collection에 그대로 적으면 남의 폴더를 가리킴).
+- **Adapter 쓰기는 System 단위 bulk다.** ROM 하나씩 쓰는 형태로 되돌리지 말 것.
 
-**미완으로 남긴 것**: `EmulationStationAdapter.write_media_links()`가 Plan Apply에
-연결되지 않았다 - 원조 ES로 media를 내보내면 파일은 복사되는데 화면에 안 나온다.
-그 경로를 만들 때 반드시 함께 연결할 것.
+**알려진 잔여 문제**: `_apply_add`가 항목마다 `write_index()`를 부른다(메타데이터 쪽
+O(n²)). 되돌리기 정책을 먼저 정해야 해서 별도 작업으로 남겼다 - Phase 7.1 항목 참고.
 
-다음 후보는 Phase 8(MTP, 선택 항목)보다 ① 위 write_media_links 연결,
-② Adapter 간 변환 UI(§349 Import), ③ 이월분(`match_links` rename / Compare Row key /
-SHA-256) 쪽이 먼저다.
+다음은 Phase 7.2(Adapter 간 변환 UI) → 7.3(이월분: `match_links` rename, Compare Row
+key) → Phase 8(MTP, 선택).
 
 (이 절은 최신 상태를 담으므로 계속 갱신한다. 아래 날짜별 항목은 그 시점의 기록이므로
 고치지 않는다.)
@@ -381,3 +379,70 @@ UI 연결 시 주의: `openTab()`은 `ensureDetail()`을 거치지 않고 `openC
 ① `write_media_links()`의 Apply 연결, ② Adapter 간 변환 UI(§349 Import: Source → Match
 → Target), ③ 이월분(`match_links` rename 취약성 / Compare Row key 구조화 / SHA-256 비교)
 쪽이 먼저다.
+
+---
+
+## Phase 7.1 — EmulationStation media 링크를 Plan/Apply에 연결 (2026-09-08, Claude Code)
+
+Phase 7이 남긴 구멍을 닫았다. 상세는 `docs/REPORTS/2026-09-08-phase7.1-es-media-links.md`.
+
+### 계약이 늘었다 (Adapter를 만질 때 주의)
+
+`FrontendAdapter`에 셋이 추가됐다. **전부 기본 no-op**이라 폴더 규칙으로 media를 찾는
+Adapter(ES-DE / Pegasus / LaunchBox)는 아무 영향이 없다.
+
+- `build_media_links(layout, filename, media) -> [(media_type, dest)]` — **계산만 한다.**
+  파일도 메타데이터도 건드리지 않는다. Plan 단계에서 불러도 안전해야 한다.
+- `write_media_links(layout, links_by_filename)` — **System 단위 bulk.** ROM 하나씩
+  받는 형태로 되돌리지 말 것(Phase 7에서 그렇게 만들었다가 이번에 고쳤다). 게임 1,000개면
+  gamelist.xml을 1,000번 다시 쓰게 되어 계약 1이 막으려던 O(n²)가 재현된다.
+- `strip_location_raw(frontend_raw)` — **다른 위치로 옮겨 적을 때 따라가면 안 되는 원본
+  값**을 걷어낸다. 아래 참고.
+
+`EmulationStationAdapter.media_pairs()`는 `build_media_links()` 위에 세워져 있다.
+**둘을 따로 계산하도록 되돌리지 말 것** - 복사되는 곳과 gamelist에 적히는 곳이 갈라지면
+"파일은 있는데 화면엔 안 나온다"가 된다.
+
+### 찾은 버그 — `frontend_raw`의 경로가 다른 Collection으로 샜다
+
+계약 2("모르는 필드를 버리지 않는다")로 보존되는 값 중에 **그 자리에서만 참인 것**이 있다.
+원조 ES의 `<thumbnail>`/`<video>`는 경로라서, 게임을 다른 Collection으로 복사하면
+`write_index()`가 source의 경로를 target gamelist에 그대로 적는다.
+
+`strip_location_raw()`로 갈랐다 — 계약 2는 유지하되 위치에 매인 값은 새 위치로
+따라가지 않는다. **같은 Collection 안에서 다시 쓸 때는 호출하지 않으므로 제자리 보존은
+그대로다.** `_apply_add`(= 다른 Collection에서 온 항목을 적는 경로)에서만 부른다.
+
+### 테스트가 우연히 통과했던 일 — 방법으로 남겨둘 것
+
+통합 테스트 11개가 한 번에 전부 통과하길래 **수정을 임시로 되돌려 확인**했더니 2개만
+실패했다. 핵심 테스트가 수정 없이도 통과하고 있었다 - fixture의 source와 target을 둘 다
+우리 layout 규칙으로 만들어서 source의 상대 경로가 target에서도 우연히 해석된 탓이다.
+
+fixture를 **RetroPie 스타일**(`downloaded_images/<system>/<stem>.png`)로 바꾸자 수정
+없이는 6개가 실패한다. **ES 관련 fixture를 손댈 때 source의 media 배치를 우리 규칙과
+같게 만들지 말 것** - 그 순간 이 테스트들이 아무것도 검증하지 않게 된다.
+
+새 기능에 테스트를 붙였는데 처음부터 전부 통과하면, 한 번은 수정을 되돌려 실제로
+실패하는지 확인하는 것이 좋다.
+
+### 실패 처리 정책
+
+- media 복사 실패 → **링크 단계에 도달하지 않는다**(파일이 자리를 잡은 뒤 메타데이터).
+- 링크 기록 실패 → 그 System의 항목을 **PARTIAL로 내리고 Plan에 남긴다.** 파일은
+  복사됐는데 Frontend가 못 찾는 상태를 성공으로 처리하면 사용자는 원인을 알 수 없다.
+- 복사되지 않은 media는 링크로 적지 않는다(존재하는 dest만).
+
+### 알려진 잔여 문제 (아직 안 고침)
+
+**`write_index()`가 ADD 항목마다 호출된다.** `_apply_add`가 항목 하나씩
+`adapter.write_index(layout, [entry])`를 부르므로, media 링크에서 고친 것과 같은 O(n²)가
+메타데이터 쪽에 남아 있다. 함께 고치지 않은 이유는 **실패 처리의 단위가 바뀌기
+때문**이다 - 지금은 항목 하나가 실패하면 그 항목의 파일만 되돌리는데, bulk로 묶으면 그
+경계가 사라진다. 되돌리기 정책을 먼저 정해야 하는 별도 작업이다.
+
+**검증**: 파이썬 292개(신규 16), Playwright 45개 전부 통과. 커밋 `db9b023`,
+`origin/main`에 push 완료.
+
+**다음**: Phase 7.2(Adapter 간 변환 UI) → 7.3(Match/Compare 이월분: `match_links` rename,
+Compare Row key) → Phase 8(MTP, 선택).
