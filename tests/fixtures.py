@@ -15,8 +15,10 @@
 이쪽을 쓴다.
 """
 
-from pathlib import Path
+import itertools
+import os
 import tempfile
+from pathlib import Path
 
 from app.model.collection import Collection, StorageLocation, SystemEntry, STORAGE_INTERNAL
 
@@ -58,17 +60,48 @@ GAMELIST = """<?xml version="1.0"?>
 """
 
 
+# ----------------------------------------------------------------------
+# 파일 쓰기 - **수정 시각을 파일마다 어긋나게 찍는다**
+# ----------------------------------------------------------------------
+#
+# 이걸 하지 않으면 테스트가 실행할 때마다 다른 결과를 낸다. Windows 시계는 약
+# 15.6ms마다 갱신되는데 fixture는 그보다 훨씬 빨리 만들어진다. 그래서 서로 다른 두
+# 트리(source와 target)를 잇달아 만들면 **같은 이름·같은 크기의 파일이 같은 수정
+# 시각을 갖는 일**이 자주 생긴다.
+#
+# `classify_destination()`은 "크기와 시각이 정확히 같으면 이미 같은 파일"로 본다.
+# 실제 파일에서는 옳은 판정이다(복사 도구가 타임스탬프를 보존하므로). 하지만 fixture가
+# 우연히 그 조건을 만들면, 충돌을 기대한 테스트가 어떤 날은 통과하고 어떤 날은
+# 실패한다. 흔들리는 쪽은 fixture이므로 fixture에서 고친다.
+#
+# 시각을 일부러 맞춰야 하는 테스트는 `shutil.copy2()`처럼 명시적으로 그렇게 한다.
+
+_TICK = itertools.count(1)
+
+
+def write_file(path: Path, data) -> Path:
+    """fixture 파일을 쓰고 다른 파일과 겹치지 않는 수정 시각을 찍는다."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(data, str):
+        path.write_text(data, encoding="utf-8")
+    else:
+        path.write_bytes(data)
+    stamp = path.stat().st_mtime_ns - next(_TICK) * 10 ** 9
+    os.utime(path, ns=(stamp, stamp))
+    return path
+
+
 def build_esde_tree(root: Path) -> Path:
     """실제 ES-DE 레이아웃을 흉내낸 최소 트리."""
     (root / "gamelists" / "ps2").mkdir(parents=True)
-    (root / "gamelists" / "ps2" / "gamelist.xml").write_text(GAMELIST, encoding="utf-8")
+    write_file(root / "gamelists" / "ps2" / "gamelist.xml", GAMELIST)
     for folder in ("covers", "screenshots", "videos"):
         (root / "downloaded_media" / "ps2" / folder).mkdir(parents=True)
-    (root / "downloaded_media" / "ps2" / "covers" / "FFX.png").write_bytes(b"x" * 10)
-    (root / "downloaded_media" / "ps2" / "videos" / "FFX.mp4").write_bytes(b"v" * 100)
+    write_file(root / "downloaded_media" / "ps2" / "covers" / "FFX.png", b"x" * 10)
+    write_file(root / "downloaded_media" / "ps2" / "videos" / "FFX.mp4", b"v" * 100)
     (root / "ps2").mkdir()
-    (root / "ps2" / "FFX.iso").write_bytes(b"r" * 1000)
-    (root / "ps2" / "MGS2.iso").write_bytes(b"r" * 2000)
+    write_file(root / "ps2" / "FFX.iso", b"r" * 1000)
+    write_file(root / "ps2" / "MGS2.iso", b"r" * 2000)
     # ES-DE가 만들지만 게임 시스템이 아닌 폴더
     (root / "gamelists" / "cleanup").mkdir()
     return root
@@ -135,12 +168,12 @@ def build_scaled_esde_tree(root: Path, *, systems=("ps2", "snes"), per_system=50
                 title = f"{title} (Rev 1)"
             filename = f"{base}{suffix}{ext}"
 
-            (rom_dir / filename).write_bytes(b"r" * (rom_bytes + i + size_offset))
+            write_file(rom_dir / filename, b"r" * (rom_bytes + i + size_offset))
             if with_media:
                 stem = Path(filename).stem
-                (root / "downloaded_media" / system / "covers" / f"{stem}.png").write_bytes(b"c" * 32)
+                write_file(root / "downloaded_media" / system / "covers" / f"{stem}.png", b"c" * 32)
                 if i % 3 == 0:
-                    (root / "downloaded_media" / system / "videos" / f"{stem}.mp4").write_bytes(b"v" * 64)
+                    write_file(root / "downloaded_media" / system / "videos" / f"{stem}.mp4", b"v" * 64)
 
             entries.append(
                 f"  <game>\n"
@@ -150,9 +183,8 @@ def build_scaled_esde_tree(root: Path, *, systems=("ps2", "snes"), per_system=50
                 f"    <players>1</players>\n"
                 f"  </game>"
             )
-        (gamelist_dir / "gamelist.xml").write_text(
-            '<?xml version="1.0"?>\n<gameList>\n' + "\n".join(entries) + "\n</gameList>\n",
-            encoding="utf-8")
+        write_file(gamelist_dir / "gamelist.xml",
+                   '<?xml version="1.0"?>\n<gameList>\n' + "\n".join(entries) + "\n</gameList>\n")
     return root
 
 
@@ -178,7 +210,7 @@ def build_custom_esde_tree(root: Path, system: str, entries, *, with_media=False
     for entry in entries:
         filename = entry["filename"]
         if entry.get("rom", True):
-            (rom_dir / filename).write_bytes(b"r" * int(entry.get("size", 1024)))
+            write_file(rom_dir / filename, b"r" * int(entry.get("size", 1024)))
         parts = [
             "  <game>",
             f"    <path>./{_xml_escape(filename)}</path>",
@@ -192,8 +224,7 @@ def build_custom_esde_tree(root: Path, system: str, entries, *, with_media=False
 
     header = '<?xml version="1.0"?>\n<gameList>\n'
     body = "\n".join(games)
-    (gamelist_dir / "gamelist.xml").write_text(header + body + "\n</gameList>\n",
-                                               encoding="utf-8")
+    write_file(gamelist_dir / "gamelist.xml", header + body + "\n</gameList>\n")
     return root
 
 

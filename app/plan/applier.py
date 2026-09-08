@@ -185,7 +185,7 @@ def _prepare_add(entry, collection, adapter, provider):
     layout = adapter.layout(collection, entry.system)
     pairs, created, replaced, blocked = _plan_copies(entry, layout, adapter, provider)
     return {"entry": entry, "layout": layout, "pairs": pairs, "created": created,
-            "replaced": replaced, "blocked": blocked, "backups": []}
+            "replaced": replaced, "blocked": blocked, "backups": [], "provider": provider}
 
 
 def _backup_replaced(item, errors) -> bool:
@@ -222,10 +222,34 @@ def _restore_backups(item, errors) -> bool:
         file_ops.delete_files(occupied)
     results = file_ops.move_files([(backup, dest) for dest, backup in backups])
     failed = [dest for dest, _b in backups if not results.get(str(dest))]
+    _refresh_approval(item, [dest for dest, _b in backups if results.get(str(dest))])
     if failed:
         errors.append(f"{item['entry'].filename}: 원본을 되돌리지 못했습니다 - {failed[0]} 등")
         return False
     return True
+
+
+def _refresh_approval(item, restored):
+    """되돌려 놓은 파일에 맞춰 승인 기록을 다시 찍는다.
+
+    **우리가 직접 되돌린 파일은 "밖에서 바뀐 파일"이 아니다.** 그런데 되돌리기는
+    옮기기라서 파일 식별자가 달라지고, 그대로 두면 다음 Validate가 "대상이 바뀌었다"고
+    판정해 사용자의 승인을 무효로 만든다. 실패한 뒤 재시도가 막히고, 게다가 원인이
+    "밖에서 누가 건드렸다"로 잘못 표시된다.
+
+    내용이 같다는 것은 우리가 안다 - 방금 우리가 그 바이트를 도로 갖다 놓았다.
+    """
+    if not restored:
+        return
+    from app.plan.builder import snapshot
+
+    provider = item.get("provider")
+    if provider is None:
+        return
+    wanted = {str(dest) for dest in restored}
+    for conflict in item["entry"].conflicts or []:
+        if str(conflict.get("dest")) in wanted:
+            conflict["destSnapshot"] = snapshot(provider, conflict["dest"])
 
 
 def _settle_backups(prepared, errors):

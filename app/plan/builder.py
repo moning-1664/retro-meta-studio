@@ -302,8 +302,16 @@ class _MediaRef:
         self.size = int(data.get("size") or 0)
 
 
-def plan_delete(plan, collection, cache, rom_uids):
-    """선택한 항목을 삭제 예정으로 올린다. 실제 파일은 그대로 둔다(스펙 §29)."""
+def plan_delete(plan, collection, cache, rom_uids, provider=None):
+    """선택한 항목을 삭제 예정으로 올린다. 실제 파일은 그대로 둔다(스펙 §29).
+
+    **삭제는 되돌릴 수 없으므로 ADD와 같은 수준으로 대상을 특정한다.** ROM과 media
+    모두 `snapshot()`(size + mtime + volume_file_id)을 찍어 둔다. 크기와 시각만 보면
+    "A를 지우고 같은 자리에 B를 만들었는데 우연히 크기와 시각이 같은" 경우를 통과시킨다 -
+    확률이 낮아도 파괴적 작업에서 ADD보다 약한 계약을 쓸 이유가 없다.
+
+    provider를 주지 않으면 Cache의 값만 쓴다(예전 동작). 호출부는 주는 것이 맞다.
+    """
     adapter = get_adapter(collection.frontend)
     entries = []
     for rom_uid in rom_uids:
@@ -325,12 +333,21 @@ def plan_delete(plan, collection, cache, rom_uids):
         for media in row["media"]:
             estimated += int(media["size"] or 0)
             _bump(delta, media_storage, -int(media["size"] or 0))
-            media_snapshots[str(media["rel_path"])] = {
-                "size": int(media["size"] or 0), "mtimeNs": int(media["mtime_ns"] or 0)}
+            path = str(media["rel_path"])
+            taken = snapshot(provider, path) if provider is not None else None
+            media_snapshots[path] = taken or {
+                "size": int(media["size"] or 0), "mtimeNs": int(media["mtime_ns"] or 0),
+                "fileId": None}
+
+        rom_path = Path(layout.rom_dir) / row["filename"]
+        rom_snapshot = (snapshot(provider, rom_path) if provider is not None else None) or {
+            "size": int(row["size"] or 0), "mtimeNs": int(row["mtime_ns"] or 0),
+            "fileId": row.get("volume_file_id")}
 
         entry = PlanEntry(op=OP_DELETE, system=system, filename=row["filename"],
                           rom_uid=int(rom_uid), storage_from=rom_storage,
-                          source={"mediaSnapshots": media_snapshots},
+                          source={"mediaSnapshots": media_snapshots,
+                                  "romSnapshot": rom_snapshot},
                           estimated_bytes=estimated, physical_delta=delta)
         plan.add(entry)
         entries.append(entry)

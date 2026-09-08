@@ -143,11 +143,17 @@ def _validate_delete(entry, collection, cache, provider, adapter):
         return  # metadata만 있는 항목. 지울 ROM 파일이 없다.
 
     layout = adapter.layout(collection, row["system"])
-    stat = provider.stat(Path(layout.rom_dir) / row["filename"])
-    if stat is None:
+    rom_path = Path(layout.rom_dir) / row["filename"]
+    if provider.stat(rom_path) is None:
         entry.status, entry.error = "invalid", "ROM 파일이 이미 사라졌습니다."
         return
-    if stat.size != int(row["size"] or 0) or stat.mtime_ns != int(row["mtime_ns"] or 0):
+
+    # **ADD와 같은 계약으로 본다**(size + mtime + volume_file_id). 삭제가 ADD보다
+    # 약한 검증을 쓸 이유가 없다 - 되돌릴 수 없는 쪽이 오히려 삭제다.
+    saved_rom = (entry.source or {}).get("romSnapshot") or {
+        "size": int(row["size"] or 0), "mtimeNs": int(row["mtime_ns"] or 0),
+        "fileId": row["volume_file_id"]}
+    if not snapshot_matches(provider, rom_path, saved_rom):
         entry.status = "invalid"
         entry.error = "ROM 파일이 외부에서 변경되었습니다. 다시 스캔한 뒤 삭제해주세요."
         return
@@ -157,11 +163,9 @@ def _validate_delete(entry, collection, cache, provider, adapter):
     #
     # 이미 사라진 media는 문제가 아니다 - 지우려던 목적이 이미 달성됐다.
     for saved_path, saved in ((entry.source or {}).get("mediaSnapshots") or {}).items():
-        current = provider.stat(saved_path)
-        if current is None:
+        if provider.stat(saved_path) is None:
             continue
-        if (current.size != int(saved.get("size", -1))
-                or current.mtime_ns != int(saved.get("mtimeNs", -1))):
+        if not snapshot_matches(provider, saved_path, saved):
             entry.status = "invalid"
             entry.error = "media 파일이 외부에서 변경되었습니다. 다시 스캔한 뒤 삭제해주세요."
             return

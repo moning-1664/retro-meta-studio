@@ -419,8 +419,9 @@ class Api:
 
     @guarded
     def plan_delete(self, collection_id, rom_uids):
-        collection, cache, _ = self._plan_context(collection_id)
-        result = builder.plan_delete(self._plan(collection_id), collection, cache, rom_uids)
+        collection, cache, provider = self._plan_context(collection_id)
+        result = builder.plan_delete(self._plan(collection_id), collection, cache, rom_uids,
+                                     provider)
         return ok(result)
 
     @guarded
