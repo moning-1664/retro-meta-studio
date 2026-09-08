@@ -1,0 +1,29 @@
+# 나중에 사용자에게 물어볼 것
+
+이 파일은 작업 중 판단이 필요했지만 사용자 확인 없이 진행하기보다 recommend만 실행하고
+미룬 항목을 모아둔다. 각 항목은 결정되면 지우고 `memory.md`에 결론을 남긴다.
+
+## 2026-09-09 — Archive Revision 정책 Phase D 착수 여부
+
+**배경**: `docs/ARCHIVE_REVISION_POLICY.md`의 Phase A(+일부 C)는 커밋 `b9b92eb`로
+구현됐다(계보 추적, Preferred Revision, 무제한 보존 기본값). 남은 Phase D는
+**VALUE/ABSENT/CLEARED 구분**과 **field-level BestEffort Import**인데, 이건
+메타데이터 편집 UI(저장/충돌 표시 화면)까지 고쳐야 하는 별도 작업이다.
+
+**recommend**: 지금 바로 착수하지 않는다. 이유:
+1. 현재 앱이 정상 동작하는 상태에서 UI 편집 흐름을 건드리는 것은 사용자가 실제로
+   그 화면을 쓸 때 회귀 위험이 있다 - 다른 Phase처럼 "필요성이 확인된 뒤" 진행하는 게
+   안전하다.
+2. `docs/TEST_MATRIX.md` §12의 ARCHIVE-002~004도 아직 TC로 정리되지 않아, Phase D를
+   시작하면 검증 하네스부터 새로 만들어야 한다(작지 않은 선행 작업).
+
+**다음에 물어볼 것**: Phase D(VALUE/ABSENT/CLEARED + field-level Import)를 언제
+진행할지, 아니면 스펙에서 실제로 필요해질 때까지 미룰지.
+
+## 2026-09-09 — Phase 8 (MTP Provider) 재평가
+
+`docs/ARCHITECTURE.md` §7에 "필요성 재평가 후 착수"로 남아 있는 선택 항목. 안정성
+작업(Phase 7.9~7.13)이 이번에 일단락됐으니, MTP(모바일/휴대용 기기 직결) 지원이
+실제로 필요한 사용 시나리오인지 사용자에게 확인이 필요하다. 필요 없다면 스펙에서
+아예 빼는 것도 고려할 만하다(문서에 계속 "미결" 항목으로 남는 것 자체가 다음
+세션의 혼란 요인).

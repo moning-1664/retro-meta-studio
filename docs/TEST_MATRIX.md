@@ -165,7 +165,7 @@ Level: **U**nit / **I**ntegration(실제 filesystem·DB) / **G**UI / **E2E** / *
 |---|---|---|
 | Cache ↔ 외부 filesystem | CACHE-EXT-001~004 (외부 추가/삭제/rename 후 Refresh) | 스캔 경로는 있으나 "외부 변경 → Refresh → 일치" 전용 TC 없음 |
 | Collection Load | COL-001~006 (metadata only / partial media / 깨진 gamelist) | 일부는 기존 테스트에 흩어져 있으나 매트릭스로 정리되지 않음 |
-| Archive | ARCHIVE-002~004 (동일 game 충돌 시 current 결정 규칙) | **정책 자체가 문서로 확정되지 않음** |
+| Archive | ARCHIVE-002~004 (동일 game 충돌 시 current 결정 규칙) | 정책은 `docs/ARCHIVE_REVISION_POLICY.md`로 확정되고 Phase A(+일부 C)가 구현됨(커밋 `b9b92eb`) - VALUE/ABSENT/CLEARED 구분과 field-level BestEffort Import(정책 §10-12, Phase D)는 메타데이터 편집 UI까지 건드리는 별도 작업이라 미착수. TC 자체도 아직 매트릭스로 정리되지 않음 |
 | Collection → Collection | CC-001~003 (Exact/Similar/Unrelated 붙여넣기) | Match 단위 테스트는 있으나 붙여넣기 workflow TC 없음 |
 | Identity | ID-001~005 (region/system/한글 정규화) | `test_match.py`가 일부 덮으나 매트릭스 미정리 |
 | Media | MEDIA-001~005 (전 타입, preview, drag 교체) | GUI 상호작용 |
