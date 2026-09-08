@@ -21,9 +21,9 @@
 
 ## 현재 상태
 
-**Phase 3까지 완료.** `python main.py`로 실행된다. Collection 등록·스캔·탐색·메타데이터
-편집에 더해, Collection 사이 복사/붙여넣기와 삭제·Storage 이동을 Plan으로 미리 계산하고
-확정할 수 있다. 앱을 두 개 띄워 한쪽에서 복사하고 다른 쪽에서 붙여넣는 것도 동작한다.
+**Phase 4까지 완료.** `python main.py`로 실행된다. Collection 등록·스캔·탐색·메타데이터
+편집, Plan을 통한 복사/삭제/Storage 이동(인스턴스 간 복사 포함), 그리고 여러 Collection의
+Metadata를 출처와 함께 모으는 Archive까지 동작한다.
 
 | Phase | 내용 | 상태 |
 |---|---|---|
@@ -31,8 +31,9 @@
 | 1 | Core Model + ES-DE Adapter + Cache 스캔 | 완료 |
 | 2 | Collection UI (탭/헤더/내비/Gamelist) + 기존 Detail 패널 연결 | 완료 |
 | 3 | Plan (Auto Plan·용량 계산·Apply·인스턴스 간 복사/붙여넣기) | 완료 |
-| 4 | Archive (Source Tracking·Revision·Archive→Collection) | 다음 |
-| 5~8 | Match / Compare / Frontend Adapters / MTP | |
+| 4 | Archive (Source Tracking·Revision·Archive→Collection) | 완료 |
+| 5 | Match (Exact → Normalized → Heuristic) | 다음 |
+| 6~8 | Compare / Frontend Adapters / MTP | |
 
 ## 구조
 

@@ -1,0 +1,193 @@
+"""
+app/archive/service.py
+=======================
+Collection과 Archive 사이의 오가는 동작.
+
+**Archive는 Canonical Source가 아니다**(스펙 §37, §92). 여러 Collection에서 모은
+Metadata와 Identity를 출처와 함께 보관할 뿐이고, 실제 파일의 진실은 언제나 파일
+시스템이다.
+
+가장 중요한 규칙: **Archive에서 수정해도 Collection은 자동으로 바뀌지 않는다**(§40).
+반영하려면 사용자가 명시적으로 Archive → Collection을 실행해야 한다.
+
+## Archive → Collection이 두 갈래인 이유
+
+- 대상 Collection에 그 ROM이 **이미 있으면** 바뀌는 것은 메타데이터뿐이다. 바이트가
+  움직이지 않으므로 Plan을 거치지 않고 바로 파일에 쓴다(결정 D1).
+- **없으면** ROM과 Media를 실제로 복사해야 하므로 용량이 변한다. 이건 Plan으로 간다.
+
+이 구분은 D1("Plan은 바이트가 움직이는 작업만")을 그대로 따른 것이다.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from adapters import get_adapter
+from adapters.base import GameEntry
+from utils import normalize_title
+
+
+def _identity_of(row) -> tuple[str, str]:
+    """(표시용 제목, 매칭용 정규화 제목). 제목이 없으면 파일명 stem을 쓴다."""
+    title = (row.get("title") or "").strip() or Path(row["filename"]).stem
+    return title, normalize_title(title)
+
+
+def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=None) -> dict:
+    """Collection의 항목을 Archive에 수집한다(스펙 §42).
+
+    출처는 Collection 이름이 아니라 ID로 기록한다 - 이름이 바뀌어도 관계가 유지되어야
+    한다(§38). 같은 내용을 다시 넣으면 Revision을 만들지 않는다(§39).
+    """
+    rows = ([cache.get_row(int(uid)) for uid in rom_uids] if rom_uids is not None
+            else [cache.get_row(r["rom_uid"]) for r in cache.query_rows()])
+    rows = [r for r in rows if r is not None]
+
+    ingested = revised = 0
+    for row in rows:
+        title, title_norm = _identity_of(row)
+        game_id = archive.ensure_game(title, title_norm)
+        rom_identity_id = archive.ensure_rom_identity(
+            game_id, row["system"], normalize_title(Path(row["filename"]).stem),
+            filename=row["filename"], size=row["size"] or None,
+            sha256=row["sha256"], region=(row["fields"] or {}).get("region") or None)
+
+        kwargs = {"retention": retention} if retention else {}
+        _revision, created = archive.put_record(
+            rom_identity_id, collection.id, row["fields"], row["frontend_raw"], **kwargs)
+        ingested += 1
+        revised += 1 if created else 0
+
+        # 파일은 복제하지 않고 원본 위치만 기록한다(§37, D3).
+        adapter = get_adapter(collection.frontend)
+        layout = adapter.layout(collection, row["system"])
+        if row["present"]:
+            archive.put_rom_source(rom_identity_id, collection.id,
+                                   Path(layout.rom_dir) / row["filename"], row["size"] or 0)
+        for media in row["media"]:
+            archive.put_media_ref(rom_identity_id, media["media_type"], collection.id,
+                                  media["rel_path"], media["size"] or 0)
+
+    return {"ingested": ingested, "revised": revised,
+            "unchanged": ingested - revised, "sourceCollectionId": collection.id}
+
+
+def detail(archive, rom_identity_id) -> dict | None:
+    """Archive 항목 하나의 상세. 출처별 Metadata를 함께 준다(§44)."""
+    identity = archive.get_identity(rom_identity_id)
+    if identity is None:
+        return None
+    sources = archive.sources_of(rom_identity_id)
+    # 표시용 기본값은 가장 최근에 갱신된 출처의 내용으로 한다.
+    latest = max(sources, key=lambda s: s["updated_at"], default=None)
+    return {
+        "romIdentityId": rom_identity_id,
+        "gameId": identity["game_id"],
+        "system": identity["system"],
+        "filename": identity["filename"] or identity["filename_norm"],
+        "title": identity["title"],
+        "region": identity["region"],
+        "size": identity["size"],
+        "sha256": identity["sha256"],
+        "fields": (latest or {}).get("fields") or {},
+        "frontendRaw": (latest or {}).get("frontend_raw") or {},
+        "sources": [
+            {"collectionId": s["source_collection_id"], "revision": s["revision"],
+             "updatedAt": s["updated_at"], "fields": s["fields"]}
+            for s in sources
+        ],
+        "media": archive.media_refs(rom_identity_id),
+        "romSources": archive.rom_sources(rom_identity_id),
+    }
+
+
+ARCHIVE_EDIT_SOURCE = "__archive__"
+
+
+def edit(archive, rom_identity_id, fields) -> dict:
+    """Archive의 Metadata를 직접 고친다(§40).
+
+    **Collection에는 반영하지 않는다.** 사용자가 Archive → Collection을 명시적으로
+    실행해야 한다. 그래서 출처를 실제 Collection ID가 아니라 "Archive에서 직접 편집"을
+    뜻하는 고정 값으로 남긴다 - 어느 Collection에서 온 값인지와 사용자가 손댄 값이
+    섞이면 출처 추적(§38)이 의미를 잃는다.
+    """
+    identity = archive.get_identity(rom_identity_id)
+    if identity is None:
+        raise KeyError("Archive 항목을 찾을 수 없습니다.")
+    revision, created = archive.put_record(rom_identity_id, ARCHIVE_EDIT_SOURCE, fields)
+    return {"revision": revision, "changed": created}
+
+
+def _resolve_fields(archive, rom_identity_id):
+    """이 항목에 적용할 Metadata. 사용자가 Archive에서 직접 고친 값이 있으면 그것을 쓴다."""
+    edited = archive.latest_record(rom_identity_id, ARCHIVE_EDIT_SOURCE)
+    if edited:
+        return edited["fields"], edited["frontend_raw"]
+    sources = archive.sources_of(rom_identity_id)
+    latest = max(sources, key=lambda s: s["updated_at"], default=None)
+    return (latest or {}).get("fields") or {}, (latest or {}).get("frontend_raw") or {}
+
+
+def to_collection(archive, collection, cache, provider, rom_identity_ids) -> dict:
+    """Archive 항목을 대상 Collection으로 보낸다(§41, Scenario 8).
+
+    반환: {"updated": n, "items": [...], "skipped": [...]}
+    - updated: 대상에 이미 있어서 메타데이터만 즉시 반영한 항목 수(D1 - Plan 미경유)
+    - items:   대상에 없어서 Plan에 올려야 하는 항목들(plan_add가 기대하는 형태)
+    - skipped: 원본 파일을 찾을 수 없어 가져올 수 없는 항목들
+    """
+    adapter = get_adapter(collection.frontend)
+    index = {(r["system"], r["filename"]): r["rom_uid"] for r in cache.query_rows()}
+
+    updated, items, skipped = 0, [], []
+    for rom_identity_id in rom_identity_ids:
+        identity = archive.get_identity(rom_identity_id)
+        if identity is None:
+            continue
+        system = identity["system"]
+        filename = identity["filename"] or identity["filename_norm"]
+        fields, frontend_raw = _resolve_fields(archive, rom_identity_id)
+
+        rom_uid = index.get((system, filename))
+        row = cache.get_row(rom_uid) if rom_uid is not None else None
+
+        if row is not None:
+            # Metadata는 바이트가 움직이지 않으므로 바로 파일에 쓴다(D1).
+            layout = adapter.layout(collection, system)
+            merged = {**(row["fields"] or {}), **fields}
+            adapter.write_index(layout, [GameEntry(filename=filename, fields=merged,
+                                                   frontend_raw=row["frontend_raw"] or frontend_raw)])
+            title = (merged.get("name") or "").strip() or Path(filename).stem
+            cache.update_metadata(rom_uid, merged, title=title, title_norm=normalize_title(title))
+            updated += 1
+
+        # **Metadata와 파일은 독립적으로 다룬다.** gamelist에는 항목이 있는데 ROM이
+        # 없는 상태(ES-DE에서 흔하다)라면, 메타데이터를 갱신하면서 동시에 빠진 ROM을
+        # 가져와야 한다. "이미 있는 항목"으로 뭉뚱그리면 그 경우를 영영 못 채운다.
+        need_rom = row is None or not row["present"]
+        have_media = {m["media_type"] for m in (row["media"] if row else [])}
+
+        rom = None
+        if need_rom:
+            rom = next((s for s in archive.rom_sources(rom_identity_id)
+                        if provider.exists(s["abs_path"])), None)
+        media = [{"type": m["media_type"], "path": m["abs_path"], "size": m["size"]}
+                 for m in archive.media_refs(rom_identity_id)
+                 if m["media_type"] not in have_media and provider.exists(m["abs_path"])]
+
+        if rom is None and not media:
+            if row is None:
+                # 메타데이터만 남고 실제 파일 출처가 전부 사라진 경우다. 조용히 넘기지
+                # 않고 무엇이 빠졌는지 알린다(D3와 같은 태도).
+                skipped.append({"filename": filename, "reason": "원본 파일을 찾을 수 없습니다."})
+            continue
+
+        items.append({
+            "system": system, "filename": filename,
+            "rom": {"path": rom["abs_path"], "size": rom["size"]} if rom else None,
+            "media": media, "fields": fields, "frontend_raw": frontend_raw,
+        })
+
+    return {"updated": updated, "items": items, "skipped": skipped}

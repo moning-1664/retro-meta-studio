@@ -76,6 +76,21 @@ MIGRATIONS = (
                PRIMARY KEY (rom_identity_id, media_type, source_collection_id)
            )""",
     )),
+    Migration(2, (
+        # 표시용 원본 파일명. filename_norm은 매칭용이라 사람이 읽기엔 부적합하다.
+        "ALTER TABLE rom_identities ADD COLUMN filename TEXT NOT NULL DEFAULT ''",
+        # ROM 원본 위치. Archive는 파일을 복제하지 않지만(§37), Archive -> Collection
+        # 복사에서 "어디서 가져올지"는 알아야 한다. media와 같은 취급이다(결정 D3):
+        # 경로가 살아 있으면 가져오고, 사라졌으면 그 항목만 건너뛴다.
+        """CREATE TABLE archive_rom_sources (
+               rom_identity_id TEXT NOT NULL REFERENCES rom_identities(rom_identity_id) ON DELETE CASCADE,
+               source_collection_id TEXT NOT NULL,
+               abs_path TEXT NOT NULL,
+               size INTEGER NOT NULL DEFAULT 0,
+               updated_at REAL NOT NULL,
+               PRIMARY KEY (rom_identity_id, source_collection_id)
+           )""",
+    )),
 )
 
 
@@ -110,7 +125,7 @@ class ArchiveStore:
                                (game_id, title, title_norm, time.time()))
         return game_id
 
-    def ensure_rom_identity(self, game_id, system, filename_norm, *,
+    def ensure_rom_identity(self, game_id, system, filename_norm, *, filename="",
                             size=None, sha256=None, region=None, disc_info=None) -> str:
         row = self._conn.execute(
             "SELECT rom_identity_id FROM rom_identities WHERE system=? AND filename_norm=? AND game_id=?",
@@ -120,10 +135,18 @@ class ArchiveStore:
         rid = uuid.uuid4().hex
         with transaction(self._conn):
             self._conn.execute(
-                "INSERT INTO rom_identities (rom_identity_id,game_id,system,filename_norm,size,sha256,region,disc_info)"
-                " VALUES (?,?,?,?,?,?,?,?)",
-                (rid, game_id, system, filename_norm, size, sha256, region, disc_info))
+                "INSERT INTO rom_identities (rom_identity_id,game_id,system,filename_norm,filename,"
+                " size,sha256,region,disc_info) VALUES (?,?,?,?,?,?,?,?,?)",
+                (rid, game_id, system, filename_norm, filename or filename_norm,
+                 size, sha256, region, disc_info))
         return rid
+
+    def get_identity(self, rom_identity_id) -> dict | None:
+        row = self._conn.execute(
+            "SELECT r.*, g.title, g.title_norm FROM rom_identities r"
+            " JOIN games g ON g.game_id = r.game_id WHERE r.rom_identity_id=?",
+            (rom_identity_id,)).fetchone()
+        return dict(row) if row else None
 
     def rom_identities_of_game(self, game_id) -> list[dict]:
         return [dict(r) for r in self._conn.execute(
@@ -194,6 +217,70 @@ class ArchiveStore:
                 "source_collection_id": row["source_collection_id"], "revision": row["revision"],
                 "content_hash": row["content_hash"], "fields": json.loads(row["fields_json"]),
                 "frontend_raw": json.loads(row["frontend_raw_json"]), "updated_at": row["updated_at"]}
+
+    # ------------------------------------------------------------------
+    # 목록 조회 (Archive Gamelist - 스펙 §43)
+    # ------------------------------------------------------------------
+    def list_rows(self, *, search=None, systems=None, limit=None, offset=0) -> list[dict]:
+        """Archive도 일반 Collection과 같은 Gamelist로 보여준다(§43).
+
+        Collection 목록과 같은 모양으로 돌려줘서 UI가 같은 렌더링을 쓰게 한다.
+        """
+        where, params = self._row_filter(search, systems)
+        sql = (
+            "SELECT r.rom_identity_id, r.game_id, r.system, r.filename, r.region,"
+            "       g.title, g.title_norm,"
+            "       (SELECT COUNT(DISTINCT source_collection_id) FROM archive_records"
+            "         WHERE rom_identity_id = r.rom_identity_id) AS source_count,"
+            "       (SELECT MAX(updated_at) FROM archive_records"
+            "         WHERE rom_identity_id = r.rom_identity_id) AS updated_at"
+            f" FROM rom_identities r JOIN games g ON g.game_id = r.game_id{where}"
+            " ORDER BY g.title_norm, r.filename"
+        )
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params = [*params, int(limit), int(offset)]
+        return [dict(r) for r in self._conn.execute(sql, params)]
+
+    def count_rows(self, *, search=None, systems=None) -> int:
+        where, params = self._row_filter(search, systems)
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM rom_identities r"
+            f" JOIN games g ON g.game_id = r.game_id{where}", params).fetchone()
+        return int(row["n"])
+
+    @staticmethod
+    def _row_filter(search, systems):
+        clauses, params = [], []
+        if systems:
+            clauses.append(f"r.system IN ({','.join('?' * len(systems))})")
+            params.extend(systems)
+        if search:
+            clauses.append("(g.title_norm LIKE ? OR r.filename LIKE ?)")
+            needle = f"%{str(search).strip().lower()}%"
+            params.extend([needle, needle])
+        return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
+
+    def systems(self) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(
+            "SELECT system, COUNT(*) AS count FROM rom_identities GROUP BY system ORDER BY system")]
+
+    # ------------------------------------------------------------------
+    # ROM / Media 원본 참조
+    # ------------------------------------------------------------------
+    def put_rom_source(self, rom_identity_id, source_collection_id, abs_path, size=0):
+        with transaction(self._conn):
+            self._conn.execute(
+                "INSERT INTO archive_rom_sources (rom_identity_id,source_collection_id,abs_path,size,updated_at)"
+                " VALUES (?,?,?,?,?)"
+                " ON CONFLICT(rom_identity_id,source_collection_id) DO UPDATE SET"
+                " abs_path=excluded.abs_path, size=excluded.size, updated_at=excluded.updated_at",
+                (rom_identity_id, source_collection_id, str(abs_path), int(size), time.time()))
+
+    def rom_sources(self, rom_identity_id) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(
+            "SELECT * FROM archive_rom_sources WHERE rom_identity_id=? ORDER BY updated_at DESC",
+            (rom_identity_id,))]
 
     # ------------------------------------------------------------------
     # Media 참조

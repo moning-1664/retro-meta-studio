@@ -91,6 +91,14 @@
     autoPlan: true,
   };
 
+  //: Archive는 Collection이 아니지만 같은 Gamelist/Detail UI를 쓴다(스펙 §43).
+  //  별도 화면을 만들지 않고 특수한 탭 id 하나로 취급한다.
+  const ARCHIVE_ID = "archive";
+  const isArchive = () => S.activeId === ARCHIVE_ID;
+
+  const MEDIA_LABEL = { "3dboxes": "3DBoxes", covers: "Covers", marquees: "Marquees",
+    miximages: "Miximages", screenshots: "Screenshots", videos: "Videos", wheel: "Wheel" };
+
   const activeDetail = () => S.detail[S.activeId] || null;
   const activeScope = () => S.scope[S.activeId] || { kind: "all" };
 
@@ -228,6 +236,14 @@
     const add = h("button", { class: "ctab-add", title: "Collection 열기/추가" }, [icon("plus", 13)]);
     add.addEventListener("click", openCollectionPicker);
     bar.appendChild(add);
+
+    bar.appendChild(h("div", { class: "ctab-spacer" }));
+    const archiveTab = h("div", { class: "ctab archive" + (isArchive() ? " active" : ""),
+      title: "여러 Collection에서 수집한 Metadata 보관소" }, [
+      icon("database", 13), h("span", { class: "ctab-name" }, ["Archive"]),
+    ]);
+    archiveTab.addEventListener("click", () => selectTab(ARCHIVE_ID));
+    bar.appendChild(archiveTab);
   }
 
   function openTabMenu(collection, event) {
@@ -264,6 +280,7 @@
 
   async function selectTab(id) {
     if (S.activeId === id) return;
+    if (id !== ARCHIVE_ID && !S.tabs.includes(id)) { await openTab(id); return; }
     S.activeId = id;
     resetList();
     await ensureDetail(id);
@@ -305,6 +322,18 @@
   }
 
   async function ensureDetail(id) {
+    if (id === ARCHIVE_ID) {
+      // Archive에는 Storage 개념이 없다. Collection 헤더와 같은 모양으로만 맞춘다.
+      const [systems, rows] = await Promise.all([api.archiveSystems(), api.archiveRows({ limit: 1 })]);
+      S.detail[ARCHIVE_ID] = {
+        id: ARCHIVE_ID, name: "Archive", frontendLabel: "보관소",
+        target: null, os: null, arch: null, rootPath: "", storages: [],
+        systemCount: (systems.ok ? systems.data : []).length,
+        totalGames: rows.ok ? rows.data.total : 0,
+        archiveSystems: systems.ok ? systems.data : [],
+      };
+      return;
+    }
     const r = await api.collectionDetail(id);
     if (r.ok) S.detail[id] = r.data;
   }
@@ -411,6 +440,21 @@
     nav.appendChild(h("div", { class: "nav-eyebrow" }, ["SYSTEMS"]));
 
     const scope = activeScope();
+    if (isArchive()) {
+      const all = navRow("All", detail.totalGames, scope.kind === "all", () => setScope({ kind: "all" }));
+      all.classList.add("nav-all");
+      all.insertBefore(icon("database", 13), all.firstChild);
+      nav.appendChild(all);
+      (detail.archiveSystems || []).forEach((sys) => {
+        const row = navRow(sys.system.toUpperCase(), sys.count,
+          scope.kind === "system" && scope.id === sys.system,
+          () => setScope({ kind: "system", id: sys.system }));
+        row.classList.add("nav-system");
+        row.insertBefore(systemIcon(sys.system, 14), row.firstChild);
+        nav.appendChild(row);
+      });
+      return;
+    }
     const allRow = navRow("All", detail.totalGames, scope.kind === "all", () => setScope({ kind: "all" }));
     allRow.classList.add("nav-all");
     allRow.insertBefore(icon("layoutList", 13), allRow.firstChild);
@@ -574,6 +618,10 @@
     compact.appendChild(main);
 
     const right = h("div", { class: "cheader-right" });
+    if (isArchive()) {
+      host.appendChild(compact);
+      return;
+    }
     const rescan = h("button", { class: "btn compact", title: "다시 스캔" },
       [icon("refresh", 12), h("span", {}, ["Rescan"])]);
     rescan.addEventListener("click", () => runScan(S.activeId));
@@ -683,10 +731,14 @@
     head.appendChild(h("div", { class: "lh lh-desc" }, ["File"]));
   }
 
+  function fetchRows(query) {
+    return isArchive() ? api.archiveRows(query) : api.listRows(S.activeId, query);
+  }
+
   async function reloadList() {
     if (!S.activeId) { renderListWindow(); return; }
     const token = ++S.queryToken;
-    const r = await api.listRows(S.activeId, { ...currentQuery(), limit: PAGE_SIZE, offset: 0 });
+    const r = await fetchRows({ ...currentQuery(), limit: PAGE_SIZE, offset: 0 });
     if (!r.ok) { showToast(r.error, "error"); return; }
     if (token !== S.queryToken) return;   // 더 최신 요청이 있으면 버린다
     S.total = r.data.total;
@@ -705,7 +757,7 @@
       if (page < 0 || S.loadedPages.has(page)) continue;
       S.loadedPages.add(page);
       const offset = page * PAGE_SIZE;
-      const r = await api.listRows(S.activeId, { ...currentQuery(), limit: PAGE_SIZE, offset });
+      const r = await fetchRows({ ...currentQuery(), limit: PAGE_SIZE, offset });
       if (!r.ok || token !== S.queryToken) { S.loadedPages.delete(page); continue; }
       r.data.rows.forEach((row, i) => S.rowCache.set(offset + i, row));
       renderListWindow();
@@ -802,9 +854,29 @@
   async function openDetail(row) {
     S.focused = row.romUid;
     renderListWindow();
+    const tab = (S.detailState && S.detailState.tab) || "metadata";
+
+    if (isArchive()) {
+      const r = await api.archiveDetail(row.romIdentityId);
+      if (!r.ok || !r.data) { showToast(r.error || "항목을 찾을 수 없습니다.", "error"); return; }
+      const d = r.data;
+      S.detailState = {
+        archive: true, romUid: d.romIdentityId, romIdentityId: d.romIdentityId,
+        system: d.system, file: d.filename, fields: d.fields, size: d.size,
+        present: true, sha256: d.sha256, sources: d.sources,
+        media: (d.media || []).reduce((acc, m) => {
+          acc[MEDIA_LABEL[m.media_type] || m.media_type] = "pending"; return acc;
+        }, {}),
+        tab, draft: null,
+      };
+      renderDetailPanel();
+      renderStatusBar();
+      return;
+    }
+
     const r = await api.getRow(S.activeId, row.romUid);
     if (!r.ok) { showToast(r.error, "error"); return; }
-    S.detailState = { ...r.data, tab: (S.detailState && S.detailState.tab) || "metadata", draft: null };
+    S.detailState = { ...r.data, tab, draft: null };
     renderDetailPanel();
     renderStatusBar();
   }
@@ -845,7 +917,10 @@
     inner.appendChild(header);
 
     const tabs = h("div", { class: "detail-tabs" });
-    [["metadata", "Metadata"], ["media", "Media"], ["rom", "ROM"]].forEach(([key, label]) => {
+    const tabDefs = state.archive
+      ? [["metadata", "Metadata"], ["media", "Media"], ["sources", "Sources"]]
+      : [["metadata", "Metadata"], ["media", "Media"], ["rom", "ROM"]];
+    tabDefs.forEach(([key, label]) => {
       const tab = h("button", { class: "detail-tab" + (state.tab === key ? " active" : "") }, [label]);
       tab.addEventListener("click", () => { captureDraft(); state.tab = key; renderDetailPanel(); });
       tabs.appendChild(tab);
@@ -855,6 +930,7 @@
     const body = h("div", { class: "detail-body" });
     if (state.tab === "metadata") renderMetadataTab(body);
     else if (state.tab === "media") renderMediaTab(body);
+    else if (state.tab === "sources") renderSourcesTab(body);
     else renderRomTab(body);
     inner.appendChild(body);
 
@@ -975,6 +1051,31 @@
     if (media.Videos) body.appendChild(tile("Video", "Videos", "video"));
   }
 
+  // 출처별 Metadata를 나란히 보여준다(스펙 §44). 같은 게임이 여러 Collection에서
+  // 왔을 때 어느 쪽 값이 맞는지 사용자가 판단할 수 있어야 한다.
+  function renderSourcesTab(body) {
+    const sources = S.detailState.sources || [];
+    if (!sources.length) {
+      body.appendChild(h("div", { class: "empty-msg" }, ["출처 정보가 없습니다."]));
+      return;
+    }
+    sources.forEach((source) => {
+      const box = h("div", { class: "storage-box" });
+      const name = source.collectionId === "__archive__"
+        ? "Archive에서 직접 편집"
+        : (S.collections.find((c) => c.id === source.collectionId) || {}).name || source.collectionId;
+      box.appendChild(h("div", { class: "storage-box-title" }, [`${name} · rev ${source.revision}`]));
+      [["Title", "name"], ["Genre", "genre"], ["Developer", "developer"],
+       ["Release", "releasedate"], ["Region", "region"]].forEach(([label, key]) => {
+        box.appendChild(h("div", { class: "health-row" }, [
+          h("span", {}, [label]),
+          h("span", { class: "truncate" }, [(source.fields || {})[key] || "-"]),
+        ]));
+      });
+      body.appendChild(box);
+    });
+  }
+
   function renderRomTab(body) {
     const state = S.detailState;
     const rows = [
@@ -997,10 +1098,18 @@
     if (!state) return;
     captureDraft();
     const fields = { ...state.fields, ...(state.draft || {}) };
-    const r = await api.saveFields(S.activeId, state.romUid, fields);
+    const r = state.archive
+      ? await api.archiveEdit(state.romIdentityId, fields)
+      : await api.saveFields(S.activeId, state.romUid, fields);
     if (!r.ok) { showToast(r.error, "error"); return; }
     state.fields = fields;
     state.draft = null;
+    if (state.archive) {
+      // Archive 편집은 Collection에 자동 반영되지 않는다(스펙 §40). 그 사실을 매번 말해준다.
+      showToast("Archive에 저장했습니다. Collection에 반영하려면 \"Collection으로 보내기\"를 누르세요.");
+      renderListWindow();
+      return;
+    }
 
     // 저장은 즉시 파일에 반영된다(결정 D1). 목록의 제목만 갱신한다.
     const cached = [...S.rowCache.entries()].find(([, row]) => row.romUid === state.romUid);
@@ -1013,7 +1122,7 @@
   // Plan
   // ------------------------------------------------------------------
   async function refreshPlan() {
-    if (!S.activeId) { S.plan = null; return; }
+    if (!S.activeId || isArchive()) { S.plan = null; renderStatusBar(); return; }
     const r = await api.planState(S.activeId);
     S.plan = r.ok ? r.data : null;
     renderHeader();
@@ -1186,6 +1295,58 @@
   }
 
   // ------------------------------------------------------------------
+  // Archive (스펙 §37-44)
+  // ------------------------------------------------------------------
+  async function ingestToArchive() {
+    const selected = S.selected.size ? [...S.selected] : null;
+    const label = selected ? `선택한 ${formatCount(selected.length)}개` : "전체";
+    const r = await api.archiveIngest(S.activeId, selected);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    const d = r.data;
+    showToast(`${label} 수집 완료 — 새 내용 ${formatCount(d.revised)}개, ` +
+              `변경 없음 ${formatCount(d.unchanged)}개`);
+  }
+
+  function openSendToCollection() {
+    const targets = S.tabs.filter((t) => t !== ARCHIVE_ID);
+    const list = h("div", { class: "picker-list" });
+    targets.forEach((id) => {
+      const collection = S.collections.find((c) => c.id === id);
+      if (!collection) return;
+      const row = h("button", { class: "picker-row" }, [
+        icon("gamepad", 14),
+        h("div", { class: "picker-main" }, [
+          h("div", { class: "picker-name" }, [collection.name]),
+          h("div", { class: "picker-sub truncate" }, [collection.rootPath]),
+        ]),
+      ]);
+      row.addEventListener("click", () => { closeModal(); sendToCollection(id); });
+      list.appendChild(row);
+    });
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "modal-text" },
+        [`선택한 ${formatCount(S.selected.size)}개를 어느 Collection으로 보낼까요?`]),
+      list,
+      h("div", { class: "modal-hint" }, [
+        "이미 있는 게임은 Metadata만 바로 반영되고, 없는 게임은 파일을 가져와야 하므로 " +
+        "Plan에 올라갑니다."]),
+    ]);
+    showModal("Collection으로 보내기", body, [h("button", { class: "btn", onClick: closeModal }, ["취소"])]);
+  }
+
+  async function sendToCollection(collectionId) {
+    const r = await api.archiveToCollection(collectionId, [...S.selected]);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    const d = r.data;
+    let message = `Metadata 반영 ${formatCount(d.updated)}개`;
+    if (d.planned) message += ` · Plan에 추가 ${formatCount(d.planned)}개`;
+    if (d.conflicts) message += ` · 충돌 ${formatCount(d.conflicts)}개`;
+    if ((d.skipped || []).length) message += ` · 원본 없어 제외 ${formatCount(d.skipped.length)}개`;
+    showToast(message, d.planned || d.conflicts ? "warning" : "info");
+    if (S.detail[collectionId]) await ensureDetail(collectionId);
+  }
+
+  // ------------------------------------------------------------------
   // 하단 상태 바
   // ------------------------------------------------------------------
   function renderStatusBar() {
@@ -1230,6 +1391,25 @@
     bar.appendChild(middle);
 
     const actions = h("div", { class: "sb-actions" });
+    if (isArchive()) {
+      const targets = S.tabs.filter((t) => t !== ARCHIVE_ID);
+      const send = h("button", {
+        class: "btn compact primary", disabled: !S.selected.size || !targets.length,
+        title: targets.length ? "선택 항목을 Collection으로 보냅니다"
+                              : "먼저 대상 Collection을 열어주세요",
+      }, ["Collection으로 보내기"]);
+      if (S.selected.size && targets.length) send.addEventListener("click", openSendToCollection);
+      actions.appendChild(send);
+      bar.appendChild(actions);
+      return;
+    }
+
+    const ingest = h("button", { class: "btn compact",
+      title: "이 Collection의 Metadata를 Archive에 수집합니다" },
+      [icon("database", 12), h("span", {}, ["Archive에 수집"])]);
+    ingest.addEventListener("click", ingestToArchive);
+    actions.appendChild(ingest);
+
     const autoBtn = h("button", { class: "btn compact" + (S.autoPlan ? " primary" : ""),
       title: "Auto Plan: 변경을 바로 적용하지 않고 먼저 계산합니다" },
       [S.autoPlan ? "✓ Auto Plan" : "Auto Plan OFF"]);

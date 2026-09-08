@@ -26,6 +26,8 @@ from app.model.plan import Plan
 from app.plan import builder, clipboard
 from app.plan.applier import apply_plan
 from app.plan.validator import check_capacity, validate
+from app.archive import service as archive_service
+from app.store.archive import ArchiveStore
 from app.store.registry import CHANGE_APPLIED, RegistryError, RegistryStore
 from app.workspace import Workspace, WorkspaceError
 from bridge.jobs import JobManager
@@ -82,6 +84,8 @@ class Api:
         # 꺼지면 사라진다.
         self._plans: dict[str, Plan] = {}
         self._clipboard_dir = (Path(cache_dir).parent / "clipboard") if cache_dir else paths.CLIPBOARD_DIR
+        archive_path = (Path(cache_dir).parent / "archive.db") if cache_dir else paths.ARCHIVE_DB
+        self.archive = ArchiveStore(archive_path)
         clipboard.prune(self._clipboard_dir)
         # 파일 복사 엔진 선택. 기본은 Robocopy다 - 서명 없는 자체 워커는 백신 행동
         # 기반 탐지에 걸린다는 실사용 보고가 있다(file_ops.py 참고).
@@ -98,6 +102,7 @@ class Api:
         if not self.jobs.shutdown(timeout=5.0):
             return
         self.workspace.close()
+        self.archive.close()
         self.registry.close()
 
     # ------------------------------------------------------------------
@@ -481,6 +486,65 @@ class Api:
 
         job_id = self.jobs.run_phased((collection_id,), [("적용", run)], kind="apply")
         return ok({"jobId": job_id})
+
+    # ------------------------------------------------------------------
+    # Archive (스펙 §37-44)
+    # ------------------------------------------------------------------
+    @guarded
+    def archive_ingest(self, collection_id, rom_uids=None):
+        """Collection의 항목을 Archive에 수집한다. 출처는 Collection ID로 남는다."""
+        collection, cache, _ = self._plan_context(collection_id)
+        return ok(archive_service.ingest_collection(self.archive, collection, cache, rom_uids))
+
+    @guarded
+    def archive_rows(self, search=None, systems=None, limit=200, offset=0):
+        """Archive Gamelist. Collection 목록과 같은 모양으로 돌려준다(§43)."""
+        query = {"search": search or None, "systems": systems or None}
+        rows = self.archive.list_rows(**query, limit=int(limit), offset=int(offset))
+        return ok({
+            "rows": [{
+                "romUid": r["rom_identity_id"], "romIdentityId": r["rom_identity_id"],
+                "system": r["system"], "file": r["filename"], "title": r["title"],
+                "sources": r["source_count"], "updatedAt": r["updated_at"],
+                "hasMetadata": True, "hasMedia": False, "present": True, "size": 0,
+                "storageId": "archive",
+            } for r in rows],
+            "total": self.archive.count_rows(**query), "offset": int(offset),
+        })
+
+    @guarded
+    def archive_systems(self):
+        return ok(self.archive.systems())
+
+    @guarded
+    def archive_detail(self, rom_identity_id):
+        data = archive_service.detail(self.archive, rom_identity_id)
+        return ok(data) if data else err("Archive 항목을 찾을 수 없습니다.")
+
+    @guarded
+    def archive_edit(self, rom_identity_id, fields):
+        """Archive의 Metadata를 고친다. **Collection에는 반영되지 않는다**(§40)."""
+        return ok(archive_service.edit(self.archive, rom_identity_id, fields))
+
+    @guarded
+    def archive_to_collection(self, collection_id, rom_identity_ids):
+        """Archive 항목을 Collection으로 보낸다(§41).
+
+        이미 있는 항목은 메타데이터만 즉시 반영하고(D1), 없는 항목은 파일을 옮겨야
+        하므로 Plan에 올린다.
+        """
+        collection, cache, provider = self._plan_context(collection_id)
+        result = archive_service.to_collection(self.archive, collection, cache, provider,
+                                               rom_identity_ids)
+        added = {"added": 0, "skipped": [], "conflicts": 0}
+        if result["items"]:
+            added = builder.plan_add(self._plan(collection_id), collection, provider,
+                                     result["items"])
+        return ok({
+            "updated": result["updated"],
+            "planned": added["added"], "conflicts": added.get("conflicts", 0),
+            "skipped": result["skipped"] + added.get("skipped", []),
+        })
 
     # ------------------------------------------------------------------
     # Job

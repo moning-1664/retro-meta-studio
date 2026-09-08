@@ -297,3 +297,8 @@ button.sb-badge { cursor: pointer; }
   border: 1px solid var(--border); border-radius: var(--radius-sm);
 }
 .conflict-main { flex: 1; min-width: 0; }
+
+/* Archive 탭은 오른쪽 끝에 고정해 Collection 탭과 구분한다. */
+.ctab-spacer { flex: 1; min-width: 12px; }
+.ctab.archive { color: var(--info); border-style: dashed; }
+.ctab.archive.active { border-style: solid; border-color: var(--info); background: var(--card2); }
