@@ -246,7 +246,7 @@ class EsDeAdapter(FrontendAdapter):
         Export가 기존 데이터를 조용히 삭제하면 안 된다(§70).
         """
         path = Path(layout.metadata_file)
-        root = self._parse_file(path)
+        root, before, after = self._read_document(path)
         if root is None:
             root = ET.Element("gameList")
 
@@ -264,12 +264,7 @@ class EsDeAdapter(FrontendAdapter):
                 by_filename[entry.filename] = game
             self.from_common(game, entry)
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tree = ET.ElementTree(root)
-        # ET.write()는 기본적으로 들여쓰기 없이 한 줄로 쓴다. ES-DE가 직접 만드는
-        # gamelist.xml처럼 태그마다 줄을 나눠야 사람이 열어봤을 때 읽을 수 있다.
-        ET.indent(tree, space="  ")
-        tree.write(path, encoding="utf-8", xml_declaration=True)
+        self._write_document(path, root, before, after)
 
     def from_common(self, game, entry) -> None:
         """공통 필드와 보존해둔 원본을 `<game>` 요소에 다시 적용한다."""
@@ -288,7 +283,11 @@ class EsDeAdapter(FrontendAdapter):
         rating = (str(fields.get("rating") or "")).strip()
         if rating:
             try:
-                self._set(game, "rating", f"{float(rating) / 5:.2f}")
+                # ES-DE는 `0.9`, `1`처럼 필요한 자리만 쓴다. `:.2f`로 고정하면 값은
+                # 그대로인데 파일만 `0.90`, `1.00`으로 바뀌어, 저장할 때마다 실제
+                # 백업 기준 1,119줄이 뜻 없이 달라진다.
+                self._set(game, "rating",
+                          f"{float(rating) / 5:.2f}".rstrip("0").rstrip(".") or "0")
             except (TypeError, ValueError):
                 pass
 
@@ -313,7 +312,7 @@ class EsDeAdapter(FrontendAdapter):
         게임들은 그대로 남는다.
         """
         path = Path(layout.metadata_file)
-        root = self._parse_file(path)
+        root, before, after = self._read_document(path)
         if root is None:
             return
         wanted = set(filenames)
@@ -325,9 +324,7 @@ class EsDeAdapter(FrontendAdapter):
                 removed = True
         if not removed:
             return
-        tree = ET.ElementTree(root)
-        ET.indent(tree, space="  ")
-        tree.write(path, encoding="utf-8", xml_declaration=True)
+        self._write_document(path, root, before, after)
 
     def media_pairs(self, layout, filename, media) -> list[tuple[str, str]]:
         stem = Path(filename).stem
@@ -397,10 +394,20 @@ class EsDeAdapter(FrontendAdapter):
     # ------------------------------------------------------------------
     @staticmethod
     def _set(game, tag, value):
+        """값을 넣는다. **없던 태그를 빈 값으로 새로 만들지는 않는다.**
+
+        원래 `<region>`이 없던 파일을 저장하면 게임마다 `<region/>`이 생겼다. ES-DE가
+        읽는 값은 달라지지 않지만, 사용자가 파일을 열어 보거나 버전 관리에 넣어 두면
+        1,500줄짜리 잡음이 된다. 반대로 **이미 있던 태그를 비우는 것은 그대로 한다** -
+        사용자가 지운 값이니 지워져야 한다.
+        """
+        text = "" if value in (None, "") else str(value)
         element = game.find(tag)
         if element is None:
+            if not text:
+                return
             element = ET.SubElement(game, tag)
-        element.text = "" if value in (None, "") else str(value)
+        element.text = text
 
     def _parse(self, provider, metadata_file):
         if not metadata_file or not provider.exists(metadata_file):
@@ -430,13 +437,29 @@ class EsDeAdapter(FrontendAdapter):
         메타데이터 488개(전체의 32%)를 통째로 잃는다.
 
         그래서 실패하면 임시 루트로 감싸 다시 읽고 그 안의 `<gameList>`를 꺼낸다.
+        읽기만 할 때 쓴다 - 다시 쓸 거라면 `_read_document()`를 써야 `<gameList>` 밖의
+        내용이 살아남는다.
+        """
+        return EsDeAdapter._read_document(path)[0]
+
+    @staticmethod
+    def _read_document(path):
+        """`(gameList 루트, 그 앞 원문, 그 뒤 원문)`.
+
+        `<gameList>`만 꺼내 읽고 그대로 다시 쓰면 **그 밖에 있던 것이 사라진다.**
+        실제 백업에서 9개 시스템이 `<alternativeEmulator>`를 형제로 갖고 있었고,
+        저장 한 번에 사용자가 고른 에뮬레이터 설정이 통째로 날아갔다.
+
+        우리가 해석하지 않는 부분은 해석하지 않은 채로 - 원문 문자열 그대로 - 들고
+        있다가 되돌려 놓는다. 파싱해서 다시 만들면 우리가 모르는 형태를 우리 모양으로
+        바꿔 쓰게 된다.
         """
         try:
-            return ET.parse(path).getroot()
+            return ET.parse(path).getroot(), "", ""
         except ET.ParseError:
             return EsDeAdapter._parse_multi_root(path)
         except OSError:
-            return None
+            return None, "", ""
 
     @staticmethod
     def _parse_multi_root(path):
@@ -455,7 +478,7 @@ class EsDeAdapter(FrontendAdapter):
         try:
             text = Path(path).read_text(encoding="utf-8", errors="replace")
         except OSError:
-            return None
+            return None, "", ""
         # XML 선언은 문서 맨 앞에만 올 수 있으므로 감싸기 전에 떼어낸다.
         body = re.sub(r"^\s*<\?xml[^>]*\?>", "", text, count=1)
         for candidate in (body, re.sub(r"&(?!#?\w+;)", "&amp;", body)):
@@ -465,8 +488,34 @@ class EsDeAdapter(FrontendAdapter):
                 continue
             found = wrapper.find("gameList")
             if found is not None:
-                return found
-        return None
+                return (found,) + EsDeAdapter._split_around_gamelist(body)
+        return None, "", ""
+
+    @staticmethod
+    def _split_around_gamelist(body):
+        """`<gameList>` 앞뒤에 있던 원문을 그대로 잘라 낸다."""
+        start = body.find("<gameList")
+        if start < 0:
+            return "", ""
+        end = body.rfind("</gameList>")
+        end = end + len("</gameList>") if end >= 0 else len(body)
+        return body[:start].strip(), body[end:].strip()
+
+    @staticmethod
+    def _write_document(path, root, before="", after=""):
+        """`<gameList>`를 쓰되 그 밖에 있던 원문은 있던 자리에 되돌려 놓는다."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tree = ET.ElementTree(root)
+        # ET.write()는 기본적으로 들여쓰기 없이 한 줄로 쓴다. ES-DE가 직접 만드는
+        # gamelist.xml처럼 태그마다 줄을 나눠야 사람이 열어봤을 때 읽을 수 있다.
+        ET.indent(tree, space="  ")
+        if not before and not after:
+            tree.write(path, encoding="utf-8", xml_declaration=True)
+            return
+        chunks = ['<?xml version="1.0"?>']
+        chunks += [part for part in (before, ET.tostring(root, encoding="unicode"), after)
+                   if part]
+        path.write_text("\n".join(chunks) + "\n", encoding="utf-8")
 
 
 register(EsDeAdapter())

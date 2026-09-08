@@ -216,5 +216,111 @@ class EsDeReservedFolderTests(unittest.TestCase):
         self.assertIn("sfc", systems)
 
 
+class WriteBackPreservesTheFileTests(unittest.TestCase):
+    """**읽을 수 있게 된 것만으로는 부족하다 - 다시 써도 잃지 않아야 한다.**
+
+    Phase 7.7에서 `<alternativeEmulator>`가 앞에 오는 gamelist를 읽게 만들었지만,
+    읽을 때 `<gameList>`만 꺼내고 그대로 다시 쓰는 바람에 **저장 한 번에
+    `<alternativeEmulator>`가 사라졌다.** 사용자가 그 System에 대해 고른 에뮬레이터
+    설정이 통째로 날아간다.
+
+    실제 백업 26개 중 9개가 이 형태였다. 파일 단위로 태그를 세어 보고서야 드러났다 -
+    round-trip 테스트는 **우리가 읽는 것**만 비교하므로 우리가 아예 안 읽는 부분이
+    사라지는 것은 잡지 못한다.
+    """
+
+    def setUp(self):
+        self.adapter = EsDeAdapter()
+        self.dir = temp_root("rms_writeback_")
+        self._case = 0
+
+    def _layout(self, gamelist, system="sfc", roms=("Zelda.sfc", "Mario.sfc")):
+        self._case += 1
+        root = es_de_tree(self.dir / f"case{self._case}",
+                          system=system, gamelist=gamelist, roms=roms)
+        return self.adapter.layout(make_collection(root, system), system)
+
+    def _rewrite(self, layout):
+        """읽어서 그대로 다시 쓴다 - Apply/Export가 하는 일과 같다."""
+        index = self.adapter.read_index(PROVIDER, layout)
+        self.adapter.write_index(layout, list(index.values()))
+        return Path(layout.metadata_file).read_text(encoding="utf-8")
+
+    def test_alternative_emulator_survives_a_rewrite(self):
+        after = self._rewrite(self._layout(ALTERNATIVE_EMULATOR_GAMELIST))
+        self.assertIn("<alternativeEmulator>", after,
+                      "저장했더니 사용자가 고른 에뮬레이터 설정이 사라졌다")
+        self.assertIn("Snes9x 2010", after)
+
+    def test_the_games_are_still_there_too(self):
+        layout = self._layout(ALTERNATIVE_EMULATOR_GAMELIST)
+        self._rewrite(layout)
+        index = self.adapter.read_index(PROVIDER, layout)
+        self.assertEqual(sorted(index), ["Mario.sfc", "Zelda.sfc"])
+        self.assertEqual(index["Zelda.sfc"].fields["name"], "The Legend of Zelda")
+
+    def test_it_survives_a_second_rewrite(self):
+        """한 번은 살아남고 두 번째에 사라지면 더 찾기 어렵다."""
+        layout = self._layout(ALTERNATIVE_EMULATOR_GAMELIST)
+        self._rewrite(layout)
+        self.assertIn("Snes9x 2010", self._rewrite(layout))
+
+    def test_removing_a_game_does_not_remove_it_either(self):
+        layout = self._layout(ALTERNATIVE_EMULATOR_GAMELIST)
+        self.adapter.remove_entries(layout, ["Mario.sfc"])
+        after = Path(layout.metadata_file).read_text(encoding="utf-8")
+        self.assertIn("Snes9x 2010", after)
+        self.assertNotIn("Mario.sfc", after)
+        self.assertIn("Zelda.sfc", after)
+
+    def test_the_result_is_still_readable_by_us(self):
+        """되돌려 놓은 원문이 파일을 깨뜨리면 안 된다."""
+        layout = self._layout(BOTH_PROBLEMS_GAMELIST, system="nes", roms=("Rock & Roll.nes",))
+        self._rewrite(layout)
+        index = self.adapter.read_index(PROVIDER, layout)
+        self.assertEqual(index["Rock & Roll.nes"].fields["name"], "Rock & Roll Racing")
+
+    def test_a_normal_gamelist_gains_no_prologue(self):
+        """`<alternativeEmulator>`가 없던 파일에 없던 것을 만들어 넣지 않는다."""
+        normal = ('<?xml version="1.0"?>\n<gameList>\n'
+                  '  <game><path>./Zelda.sfc</path><name>Zelda</name></game>\n</gameList>\n')
+        after = self._rewrite(self._layout(normal, roms=("Zelda.sfc",)))
+        self.assertNotIn("alternativeEmulator", after)
+
+    def test_empty_tags_are_not_invented(self):
+        """원래 없던 `<region>`을 게임마다 빈 값으로 만들어 넣지 않는다.
+
+        ES-DE가 읽는 값은 달라지지 않지만, 1,539개 항목에 전부 붙으면 사용자가 파일을
+        열어 봤을 때도 버전 관리에 넣어 뒀을 때도 잡음이 된다.
+        """
+        after = self._rewrite(self._layout(ALTERNATIVE_EMULATOR_GAMELIST))
+        for tag in ("region", "players", "publisher", "developer"):
+            self.assertNotIn(f"<{tag}", after, f"없던 <{tag}>가 생겼다")
+
+    def test_rating_keeps_the_shape_es_de_wrote(self):
+        """값은 같은데 `0.9`가 `0.90`이 되면 저장할 때마다 파일이 달라진다.
+
+        실제 백업의 rating은 전부 `0.8`/`0.9`/`1` 꼴이었고, 우리가 `:.2f`로 쓰는
+        바람에 1,119줄이 뜻 없이 바뀌고 있었다.
+        """
+        rated = ('<?xml version="1.0"?>\n<gameList>\n'
+                 '  <game><path>./Zelda.sfc</path><name>Zelda</name>'
+                 '<rating>0.9</rating></game>\n'
+                 '  <game><path>./Mario.sfc</path><name>Mario</name>'
+                 '<rating>1</rating></game>\n</gameList>\n')
+        after = self._rewrite(self._layout(rated))
+        self.assertIn("<rating>0.9</rating>", after)
+        self.assertIn("<rating>1</rating>", after)
+
+    def test_a_field_the_user_cleared_is_still_cleared(self):
+        """반대로 **있던 값을 지운 것**은 지워져야 한다 - 안 쓰는 것과 다르다."""
+        layout = self._layout(ALTERNATIVE_EMULATOR_GAMELIST)
+        index = self.adapter.read_index(PROVIDER, layout)
+        entry = index["Zelda.sfc"]
+        entry.fields["genre"] = ""
+        self.adapter.write_index(layout, [entry])
+        self.assertEqual(
+            self.adapter.read_index(PROVIDER, layout)["Zelda.sfc"].fields["genre"], "")
+
 if __name__ == "__main__":
     unittest.main()
