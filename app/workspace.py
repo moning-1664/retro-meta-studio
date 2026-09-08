@@ -17,7 +17,8 @@ from pathlib import Path
 
 from adapters import get_adapter
 from app import paths
-from app.model.collection import STORAGE_INTERNAL
+from app.model.collection import (Collection, StorageLocation,
+                                  STORAGE_INTERNAL)
 from app.store.cache import CacheStore
 from app.store.registry import CHANGE_SCAN_UPDATED, MAX_OPEN_COLLECTIONS, RegistryStore
 from app.scan.scanner import scan_collection
@@ -47,22 +48,63 @@ class Workspace:
     # ------------------------------------------------------------------
     # Collection 생성 / 열기
     # ------------------------------------------------------------------
-    def create_collection(self, name, frontend, root_path, **kwargs):
-        """경로를 훑어 System을 찾아내고 Internal Storage에 배치한 Collection을 만든다.
+    #: ROM이 Collection root 밖에 있을 때 그 폴더에 붙이는 Storage id.
+    ROM_STORAGE_ID = "roms"
 
-        External Storage는 만들지 않는다 - 사용자가 나중에 "Add External Storage"로
-        추가한다(스펙 §9).
+    def create_collection(self, name, frontend, root_path, *, rom_path=None,
+                          media_path=None, **kwargs):
+        """경로를 훑어 System을 찾아내고 Collection을 만든다.
+
+        `root_path`는 **메타데이터가 있는 곳**이다(ES-DE라면 `gamelists/`가 있는 폴더).
+
+        `rom_path`를 따로 주면 ROM은 그쪽에서 찾는다. ES-DE는 원래 메타데이터와 ROM을
+        떼어 놓는 Frontend이고(안드로이드의 외장 SD가 그 경우다), 사용자의 실제 배치도
+        그렇다. 하나만 받으면 **ROM만 있거나 메타데이터만 있는 Collection**밖에 만들 수
+        없다.
+
+        ROM 폴더는 별도 Storage로 붙인다 - 용량이 다른 디스크에 쌓이므로 그렇게 해야
+        내장/외장 표시가 실제와 맞는다(§9).
+
+        `media_path`는 media가 또 다른 곳에 있을 때만 준다. 대개는 root 밑이다.
         """
         adapter = get_adapter(frontend)
-        provider = storage.for_path(root_path)
-        detection = adapter.detect(provider, root_path)
-        if not detection.matched:
-            raise WorkspaceError(f"{adapter.display_name} 구조를 찾을 수 없습니다: {detection.message}")
+        detection = adapter.detect(storage.for_path(root_path), root_path)
+
+        rom_root = str(rom_path).strip() if rom_path else ""
+        rom_systems = ()
+        if rom_root and not self._same_path(rom_root, root_path):
+            rom_systems = self._systems_under(adapter, frontend, rom_root)
+
+        systems = sorted(set(detection.systems) | set(rom_systems))
+        if not systems:
+            raise WorkspaceError(
+                f"{adapter.display_name} 구조를 찾을 수 없습니다: {detection.message}")
 
         collection = self.registry.create_collection(name, frontend, root_path, **kwargs)
-        for system in detection.systems:
-            self.registry.upsert_system(collection.id, system, STORAGE_INTERNAL)
+        if rom_systems:
+            self.registry.add_storage(collection.id, self.ROM_STORAGE_ID, kind="external",
+                                      label="ROM", root_path=rom_root)
+        for system in systems:
+            # ROM이 그 폴더에 실제로 있는 System만 그쪽으로 보낸다. 메타데이터만 있는
+            # System을 ROM Storage에 붙이면 있지도 않은 곳을 가리키게 된다.
+            storage_id = self.ROM_STORAGE_ID if system in rom_systems else STORAGE_INTERNAL
+            self.registry.upsert_system(
+                collection.id, system, storage_id,
+                media_path=str(Path(media_path) / system) if media_path else None)
         return self.registry.get_collection(collection.id)
+
+    @staticmethod
+    def _same_path(a, b) -> bool:
+        return str(a).replace("/", "\\").rstrip("\\").lower() == \
+               str(b).replace("/", "\\").rstrip("\\").lower()
+
+    @staticmethod
+    def _systems_under(adapter, frontend, rom_root) -> tuple:
+        """그 폴더에서 ROM이 있는 System 이름들. 없으면 빈 튜플."""
+        probe = Collection(id="probe", name="probe", frontend=frontend, root_path=rom_root,
+                           storages=[StorageLocation(STORAGE_INTERNAL, STORAGE_INTERNAL,
+                                                     "ROM", rom_root)])
+        return tuple(adapter.list_systems(storage.for_path(rom_root), probe))
 
     def open(self, collection_id) -> CacheStore:
         if collection_id in self._open:

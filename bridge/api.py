@@ -129,9 +129,16 @@ class Api:
         return ok([self._collection_summary(c) for c in self.registry.list_collections()])
 
     @guarded
-    def create_collection(self, name, frontend, root_path, target=None, arch=None):
+    def create_collection(self, name, frontend, root_path, target=None, arch=None,
+                          rom_path=None, media_path=None):
+        """`root_path`는 메타데이터가 있는 곳, `rom_path`는 ROM이 있는 곳이다.
+
+        ES-DE는 이 둘을 떼어 놓는 것이 기본이라 하나만 받으면 반쪽짜리 Collection만
+        만들 수 있다(§9).
+        """
         collection = self.workspace.create_collection(
-            name, frontend, root_path, target=target or None, arch=arch or None)
+            name, frontend, root_path, target=target or None, arch=arch or None,
+            rom_path=rom_path or None, media_path=media_path or None)
         return ok(self._collection_summary(collection))
 
     @guarded

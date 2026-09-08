@@ -110,9 +110,11 @@ def detail(archive, rom_identity_id) -> dict | None:
         "frontendRaw": frontend_raw,
         "edited": archive.latest_record(rom_identity_id, ARCHIVE_EDIT_SOURCE) is not None,
         "preferredRecordId": preferred["record_id"] if preferred else None,
+        # `recordId`가 있어야 화면에서 "이 Revision을 우선 쓴다"를 지정할 수 있다.
+        # 없으면 별표를 걸 대상을 가리킬 방법이 없다.
         "sources": [
-            {"collectionId": s["source_collection_id"], "revision": s["revision"],
-             "updatedAt": s["updated_at"], "fields": s["fields"]}
+            {"recordId": s["record_id"], "collectionId": s["source_collection_id"],
+             "revision": s["revision"], "updatedAt": s["updated_at"], "fields": s["fields"]}
             for s in sources
         ],
         "media": archive.media_refs(rom_identity_id),

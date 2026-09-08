@@ -22,17 +22,17 @@ test("목록에서 다른 Collection을 고르면 탭이 하나 더 열린다", 
 
 test("새 Collection 추가는 이름과 폴더가 둘 다 있어야 진행된다", async ({ page }) => {
   await page.locator(".ctab-add").click();
-  await modalButton(page, "새 Collection 추가").click();
-  await expect(page.locator(".modal-title")).toHaveText("새 Collection");
+  await modalButton(page, "Import").click();
+  await expect(page.locator(".modal-title")).toHaveText("Collection 가져오기");
 
   // 폴더를 비워둔 채 누르면 경고만 뜨고 모달이 닫히지 않아야 한다.
   await page.locator(".modal-body .field-input").first().fill("이름만 있음");
   await modalButton(page, "추가").click();
   await expect(page.locator("#toast")).toContainText("이름과 폴더");
-  await expect(page.locator(".modal-title")).toHaveText("새 Collection");
+  await expect(page.locator(".modal-title")).toHaveText("Collection 가져오기");
 
   // 찾아보기(목업 pick_folder)로 경로를 채우면 추가된다.
-  await page.locator(".modal-body .btn", { hasText: "찾아보기" }).click();
+  await page.locator(".modal-body .btn", { hasText: "찾아보기" }).first().click();
   await modalButton(page, "추가").click();
 
   // 메타데이터가 없는 Collection이면 만들지 먼저 묻는다(§Phase 7.8) - 그 안내를

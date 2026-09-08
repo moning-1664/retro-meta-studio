@@ -475,7 +475,7 @@
     showModal("Collection 열기", body, [
       h("button", { class: "btn", onClick: closeModal }, ["닫기"]),
       h("button", { class: "btn primary", onClick: () => { closeModal(); openAddCollection(); } },
-        [icon("plus", 12), h("span", {}, ["새 Collection 추가"])]),
+        [icon("upload", 12), h("span", {}, ["Import"])]),
     ]);
   }
 
@@ -484,7 +484,15 @@
     const frontends = frontendsR.ok ? frontendsR.data : [{ id: "es-de", label: "ES-DE" }];
 
     const nameInput = h("input", { class: "field-input", placeholder: "예: Android ES-DE" });
-    const pathInput = h("input", { class: "field-input", placeholder: "Collection 폴더" });
+    // **경로를 셋으로 나눈다.** ES-DE는 메타데이터와 ROM을 떼어 놓는 것이 기본이라
+    // (안드로이드의 외장 SD가 그 경우다) 하나만 받으면 반쪽짜리 Collection만 만들 수
+    // 있었다 - ROM만 있거나 메타데이터만 있거나.
+    const pathInput = h("input", { class: "field-input",
+      placeholder: "gamelists / downloaded_media 가 있는 폴더" });
+    const romInput = h("input", { class: "field-input",
+      placeholder: "비워두면 위 폴더에서 찾습니다" });
+    const mediaInput = h("input", { class: "field-input",
+      placeholder: "비워두면 Metadata 폴더 아래에서 찾습니다" });
     const frontendSel = h("select", { class: "field-input" },
       frontends.map((f) => h("option", { value: f.id }, [f.label])));
     const targetSel = h("select", { class: "field-input" }, [
@@ -500,19 +508,34 @@
       h("option", { value: "arm32" }, ["ARM32"]),
     ]);
 
-    const browse = h("button", { class: "btn", onClick: async () => {
-      const r = await api.pickFolder("Collection 폴더 선택");
-      if (r.ok && r.data) {
-        pathInput.value = r.data;
-        if (!nameInput.value.trim()) nameInput.value = String(r.data).split(/[\\/]/).filter(Boolean).pop() || "";
+    const browseInto = (input, title, alsoName) => h("button", { class: "btn", onClick: async () => {
+      const r = await api.pickFolder(title);
+      if (!r.ok || !r.data) return;
+      input.value = r.data;
+      if (alsoName && !nameInput.value.trim()) {
+        nameInput.value = String(r.data).split(/[\\/]/).filter(Boolean).pop() || "";
       }
     } }, [icon("folderOpen", 12), h("span", {}, ["찾아보기"])]);
 
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "field-label" }, ["이름"]), nameInput,
       h("div", { class: "field-label" }, ["Frontend"]), frontendSel,
-      h("div", { class: "field-label" }, ["폴더"]),
-      h("div", { class: "field-row" }, [pathInput, browse]),
+
+      h("div", { class: "field-label" }, ["Metadata 폴더"]),
+      h("div", { class: "field-row" },
+        [pathInput, browseInto(pathInput, "Metadata 폴더 선택", true)]),
+
+      h("div", { class: "field-label" }, ["ROM 폴더 (선택)"]),
+      h("div", { class: "field-row" }, [romInput, browseInto(romInput, "ROM 폴더 선택")]),
+
+      h("div", { class: "field-label" }, ["Media 폴더 (선택)"]),
+      h("div", { class: "field-row" }, [mediaInput, browseInto(mediaInput, "Media 폴더 선택")]),
+
+      h("div", { class: "modal-hint" }, [
+        "ROM과 메타데이터가 다른 곳에 있어도 됩니다. 둘 중 하나만 있어도 열 수 있고, " +
+        "나중에 나머지를 붙일 수 있습니다.",
+      ]),
+
       h("div", { class: "field-grid two" }, [
         h("div", {}, [h("div", { class: "field-label" }, ["Target"]), targetSel]),
         h("div", {}, [h("div", { class: "field-label" }, ["Architecture"]), archSel]),
@@ -521,14 +544,19 @@
         ["Target/OS/Architecture는 서로 다른 값입니다. 모르면 Unknown으로 두세요."]),
     ]);
 
-    showModal("새 Collection", body, [
+    showModal("Collection 가져오기", body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       h("button", { class: "btn primary", onClick: async () => {
-        const name = nameInput.value.trim(), path = pathInput.value.trim();
+        const name = nameInput.value.trim();
+        const romPath = romInput.value.trim();
+        // Metadata 폴더를 비우고 ROM만 준 경우도 정상이다 - 스크래핑을 한 번도 안 한
+        // 컬렉션이 그 모습이다. 그때는 ROM 폴더가 곧 Collection root가 된다.
+        const path = pathInput.value.trim() || romPath;
         if (!name || !path) { showToast("이름과 폴더를 입력하세요.", "warning"); return; }
         closeModal();
         const r = await api.createCollection(name, frontendSel.value, path,
-                                             targetSel.value || null, archSel.value || null);
+                                             targetSel.value || null, archSel.value || null,
+                                             romPath, mediaInput.value.trim());
         if (!r.ok) { showToast(r.error, "error"); return; }
         await loadCollections();
         // **불러오기 전에** 묻는다 - 스캔이 끝난 뒤에 물으면 사용자는 이미 "메타데이터가
@@ -973,6 +1001,13 @@
     const refresh = h("button", { class: "icon-btn", title: "다시 스캔" }, [icon("refresh", 12)]);
     refresh.addEventListener("click", () => runScan(S.activeId));
     bar.appendChild(refresh);
+
+    // Import는 눈에 보이는 자리에 있어야 한다. 예전에는 «+» 탭을 눌러 창을 하나 더
+    // 거쳐야만 닿아서, 기능이 없는 것과 구별되지 않았다.
+    const importBtn = h("button", { class: "icon-btn", title: "Collection 가져오기 (Import)" },
+                        [icon("upload", 12)]);
+    importBtn.addEventListener("click", openAddCollection);
+    bar.appendChild(importBtn);
 
     // 탐색기의 미리보기 창과 같다. **끄면 목록이 그 자리까지 넓어진다** - 상세를
     // 안 보는 동안 화면 3분의 1을 비워둘 이유가 없다.
@@ -1867,7 +1902,7 @@
 
     const tabs = h("div", { class: "detail-tabs" });
     const tabDefs = state.archive
-      ? [["metadata", "Metadata"], ["media", "Media"], ["sources", "Sources"]]
+      ? [["metadata", "Metadata"], ["media", "Media"], ["sources", "Revision"]]
       : [["metadata", "Metadata"], ["media", "Media"], ["rom", "ROM"]];
     tabDefs.forEach(([key, label]) => {
       const tab = h("button", { class: "detail-tab" + (state.tab === key ? " active" : "") }, [label]);
@@ -2024,29 +2059,64 @@
     body.appendChild(grid);
   }
 
-  // 출처별 Metadata를 나란히 보여준다(스펙 §44). 같은 게임이 여러 Collection에서
-  // 왔을 때 어느 쪽 값이 맞는지 사용자가 판단할 수 있어야 한다.
+  // Revision 목록(스펙 §44, `docs/ARCHIVE_REVISION_POLICY.md`).
+  //
+  // 같은 게임이 여러 Collection에서 왔을 때 **어느 값을 쓸지 사용자가 고른다.** 그래서
+  // 필드를 표로 늘어놓는 대신 제목과 설명 몇 줄만 보여준다 - 어느 판이 더 나은
+  // 설명을 갖고 있는지가 실제 판단 기준이기 때문이다. 나머지 필드는 Metadata 탭이
+  // 이미 보여주고 있다.
+  //
+  // 오른쪽 별표가 **Preferred Revision**이다. 골라 두면 Collection으로 보낼 때 그 판이
+  // 먼저 쓰인다(Preferred -> Latest -> Older).
   function renderSourcesTab(body) {
-    const sources = S.detailState.sources || [];
+    const state = S.detailState;
+    const sources = state.sources || [];
     if (!sources.length) {
-      body.appendChild(h("div", { class: "empty-msg" }, ["출처 정보가 없습니다."]));
+      body.appendChild(h("div", { class: "empty-msg" }, ["아직 수집된 Revision이 없습니다."]));
       return;
     }
+
+    const preferredId = state.preferredRecordId || null;
     sources.forEach((source) => {
-      const box = h("div", { class: "storage-box" });
+      const chosen = source.recordId != null && source.recordId === preferredId;
+      const box = h("div", { class: "revision-row" + (chosen ? " chosen" : "") });
+
+      const main = h("div", { class: "revision-main" });
+      const fields = source.fields || {};
+      main.appendChild(h("div", { class: "revision-title truncate" },
+                          [fields.name || state.file || "(제목 없음)"]));
+      main.appendChild(h("div", { class: "revision-desc" }, [fields.desc || "설명 없음"]));
+
       const name = source.collectionId === "__archive__"
         ? "Archive에서 직접 편집"
-        : (S.collections.find((c) => c.id === source.collectionId) || {}).name || source.collectionId;
-      box.appendChild(h("div", { class: "storage-box-title" }, [`${name} · rev ${source.revision}`]));
-      [["Title", "name"], ["Genre", "genre"], ["Developer", "developer"],
-       ["Release", "releasedate"], ["Region", "region"]].forEach(([label, key]) => {
-        box.appendChild(h("div", { class: "health-row" }, [
-          h("span", {}, [label]),
-          h("span", { class: "truncate" }, [(source.fields || {})[key] || "-"]),
-        ]));
-      });
+        : (S.collections.find((c) => c.id === source.collectionId) || {}).name
+          || source.collectionId;
+      main.appendChild(h("div", { class: "revision-meta" }, [`${name} · rev ${source.revision}`]));
+      box.appendChild(main);
+
+      // 별표 하나로 "이 판을 쓴다"를 정한다. 다시 누르면 자동 선택(Latest)으로 돌아간다.
+      const star = h("button", {
+        class: "fav-btn" + (chosen ? " on" : ""),
+        title: chosen ? "선택 해제 (가장 최근 판을 씁니다)" : "이 Revision을 우선 사용",
+      }, [chosen ? "★" : "☆"]);
+      star.addEventListener("click", () => togglePreferredRevision(source, chosen));
+      box.appendChild(star);
+
       body.appendChild(box);
     });
+  }
+
+  async function togglePreferredRevision(source, chosen) {
+    const state = S.detailState;
+    if (!state || source.recordId == null) return;
+    const r = chosen
+      ? await api.archiveClearPreferred(state.romIdentityId)
+      : await api.archiveSetPreferred(state.romIdentityId, source.recordId);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    state.preferredRecordId = chosen ? null : source.recordId;
+    renderDetailPanel();
+    showToast(chosen ? "우선 Revision을 해제했습니다. 가장 최근 판을 씁니다."
+                     : "이 Revision을 우선 사용합니다.");
   }
 
   function renderRomTab(body) {
@@ -2379,10 +2449,14 @@
     }
     if (isArchive()) {
       const targets = S.tabs.filter((t) => t !== ARCHIVE_ID);
+      // 못 쓰는 버튼은 **왜 못 쓰는지 말해야 한다.** 예전에는 선택이 없어서 꺼져
+      // 있을 때도 "선택 항목을 보냅니다"라고 적혀 있어서, 기능이 고장 난 것처럼 보였다.
+      const why = !targets.length ? "보낼 Collection을 먼저 열어주세요"
+                : !S.selected.size ? "보낼 항목을 먼저 고르세요"
+                : "선택 항목을 Collection으로 보냅니다";
       const send = h("button", {
         class: "btn compact primary", disabled: !S.selected.size || !targets.length,
-        title: targets.length ? "선택 항목을 Collection으로 보냅니다"
-                              : "먼저 대상 Collection을 열어주세요",
+        title: why,
       }, ["Collection으로 보내기"]);
       if (S.selected.size && targets.length) send.addEventListener("click", openSendToCollection);
       actions.appendChild(send);

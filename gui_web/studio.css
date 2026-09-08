@@ -193,6 +193,25 @@ body { font-size: var(--fs-body); }
 /* 미리보기를 끄면 목록이 그 자리까지 넓어진다. */
 #detail-panel.hidden { display: none; }
 
+/* Archive Revision 목록.
+   필드를 표로 늘어놓는 대신 제목과 설명만 보여준다 - 어느 판이 더 나은 설명을 갖고
+   있는지가 실제 판단 기준이고, 나머지 필드는 Metadata 탭이 이미 보여준다. */
+.revision-row {
+  display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card2); margin: 6px 10px;
+}
+.revision-row.chosen { border-color: var(--accent); }
+.revision-main { flex: 1; min-width: 0; }
+.revision-title { font-size: var(--fs-body); color: var(--text); }
+/* 설명은 세 줄까지만. 더 보고 싶으면 Metadata 탭이 있다. */
+.revision-desc {
+  margin-top: 3px; font-size: var(--fs-caption); color: var(--muted);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.revision-meta { margin-top: 4px; font-size: var(--fs-eyebrow); color: var(--list-muted); }
+
 /* Gamelist */
 #list-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--list-bg); }
 /* 컬럼 폭은 화면에서 정한다(gridTemplateColumns) - 사용자가 끌어서 바꾸고 그 값이

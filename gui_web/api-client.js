@@ -114,6 +114,8 @@
     archive_systems: () => ok([]),
     archive_detail: () => ok(null),
     archive_edit: () => ok({ revision: 1, changed: true }),
+    archive_set_preferred: (id, recordId) => ok({ romIdentityId: id, recordId }),
+    archive_clear_preferred: (id) => ok({ romIdentityId: id, recordId: null }),
     archive_to_collection: () => ok({ updated: 0, planned: 0, skipped: [] }),
     plan_delete: () => ok({ deleted: 1 }),
     plan_resolve_conflict: () => ok({ resolution: "skip" }),
@@ -322,8 +324,9 @@
     isMock: () => !hasBridge() && !httpBridge(),
 
     listCollections: () => call("list_collections"),
-    createCollection: (name, frontend, rootPath, target, arch) =>
-      call("create_collection", name, frontend, rootPath, target, arch),
+    createCollection: (name, frontend, rootPath, target, arch, romPath, mediaPath) =>
+      call("create_collection", name, frontend, rootPath, target, arch,
+           romPath || null, mediaPath || null),
     renameCollection: (id, name) => call("rename_collection", id, name),
     updateCollectionTarget: (id, target, arch, os) => call("update_collection_target", id, target, arch, os),
     deleteCollection: (id) => call("delete_collection", id),
@@ -363,6 +366,10 @@
     archiveSystems: () => call("archive_systems"),
     archiveDetail: (romIdentityId) => call("archive_detail", romIdentityId),
     archiveEdit: (romIdentityId, fields) => call("archive_edit", romIdentityId, fields),
+    archiveSetPreferred: (romIdentityId, recordId) =>
+      call("archive_set_preferred", romIdentityId, recordId),
+    archiveClearPreferred: (romIdentityId) =>
+      call("archive_clear_preferred", romIdentityId),
     archiveToCollection: (id, ids) => call("archive_to_collection", id, ids),
 
     matchCandidates: (id, romUid) => call("match_candidates", id, romUid),

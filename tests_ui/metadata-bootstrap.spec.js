@@ -9,9 +9,9 @@ test.beforeEach(async ({ page }) => { await openApp(page); });
 
 async function addCollection(page, name = "ROM만") {
   await page.locator(".ctab-add").click();
-  await modalButton(page, "새 Collection 추가").click();
+  await modalButton(page, "Import").click();
   await page.locator(".modal-body .field-input").first().fill(name);
-  await page.locator(".modal-body .btn", { hasText: "찾아보기" }).click();
+  await page.locator(".modal-body .btn", { hasText: "찾아보기" }).first().click();
   await modalButton(page, "추가").click();
 }
 
