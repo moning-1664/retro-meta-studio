@@ -54,7 +54,9 @@ TIER_RANK = {TIER_EXACT: 0, TIER_NORMALIZED: 1, TIER_METADATA: 2, TIER_HEURISTIC
 AUTO_TIERS = (TIER_EXACT,)
 
 #: Heuristic 후보로 인정할 최소 점수(similar_rom 기준 100점 만점).
-HEURISTIC_THRESHOLD = 55.0
+#: similar_rom.py의 기본 임계값과 같은 값으로 맞춘다 - 두 곳이 서로 다른 기준으로
+#: "닮았다"를 판정하면, 유사롬 목록과 Match 후보가 어긋나 보이는 이유를 설명할 수 없다.
+HEURISTIC_THRESHOLD = 60.0
 
 #: 후보 목록에 보여줄 최대 개수. 스펙의 예시 화면이 3~5개 규모다.
 DEFAULT_LIMIT = 8
