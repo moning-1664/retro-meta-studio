@@ -28,10 +28,10 @@
 
 ## 현재 상태 (2026-09-08 기준)
 
-**Phase 7.5까지 완료, main에 push됨.** Adapter 4종, Match, Compare, Convert, Plan,
-Archive가 동작하고 **실제 앱이 뜨는 것까지 확인**했다(`python main.py`).
+**Phase 7.5까지 + frameless 전환 완료, main에 push됨.** 실제 앱이 뜨고 UI가 정상
+렌더링되는 것까지 확인했다(`python main.py`).
 
-지켜야 할 성질 여섯:
+지켜야 할 성질:
 - **Compare는 읽기 전용이다.** 새 변경 동작에는 `blockedInCompare()`를 넣을 것.
 - **Adapter는 모르는 필드를 버리지 않는다.** 단 위치에 매인 값은 `strip_location_raw()`,
   다른 Frontend의 값은 `raw_is_mine()`으로 걸러낸다.
@@ -39,13 +39,11 @@ Archive가 동작하고 **실제 앱이 뜨는 것까지 확인**했다(`python 
 - **Adapter 쓰기는 System 단위 bulk다.**
 - **Adapter가 포맷 지식을 독점한다.**
 - **호출을 묶는 것과 실패를 묶는 것은 별개다.**
+- **창은 frameless다.** `easy_drag=False`를 유지하고, 창 이동은
+  `pywebview-drag-region`, 크기 조절은 `#resize-grip`이 맡는다. 최소 크기는
+  `main.py::MIN_SIZE`와 `app.js::MIN_WINDOW` 두 곳에 있으니 **같이 바꿀 것**.
 
 **성능 기준선**: 400게임 Apply 1.20s, 1,000게임+media 12.36s, 5,000게임+media 61.34s.
-
-**사용자 판단이 필요한 것**: 제목 표시줄이 두 개다(네이티브 + 커스텀). CSS와
-`window_control`은 frameless를 전제로 쓰였는데 `main.py`가 그 옵션을 안 넘긴다.
-`frameless=True`로 가면 창 크기 조절/이동 방식이 바뀌어 손으로 확인해야 한다 -
-Phase 7.5 항목 참고.
 
 남은 것: Compare Row key 구조화(우선순위 낮음), Phase 8(MTP, 선택).
 의도적 한계: 다른 볼륨으로 옮기면 Match 링크가 끊긴다, SHA-256 비교.
@@ -750,4 +748,56 @@ pywebview 설정에 달리게 된다**(`easy_drag`는 System 드래그앤드롭�
 사용자 판단을 받기로 하고 남겨 뒀다.
 
 **검증**: 파이썬 346개(신규 5), Playwright 51개 전부 통과. 커밋 `1f15892`,
+`origin/main`에 push 완료.
+
+---
+
+## frameless 전환과 상세 패널 고정 (2026-09-08, Claude Code, 사용자 요청)
+
+### frameless — 제목 표시줄이 두 개이던 것을 하나로
+
+`main.py`에 `frameless=True`를 넘긴다. **`easy_drag=False`는 반드시 유지할 것** -
+켜면 빈 영역 어디를 끌어도 창이 움직여서 내비의 System 드래그앤드롭(§10)과 충돌한다.
+창을 옮기는 것은 제목 표시줄에 붙인 `pywebview-drag-region` 클래스가 맡는다
+(`renderTitlebar`의 `.brand`와 `.titlebar-spacer`에만 붙어 있고 **창 버튼에는 없다** -
+버튼에 붙이면 누를 때 창이 딸려 움직인다).
+
+최대화 버튼은 `toggle_fullscreen`이 아니라 **maximize/restore 토글**이다. 전체화면은
+작업 표시줄까지 덮어 빠져나올 방법을 잃게 만든다. 토글 상태는 `Api._maximized`가 든다.
+
+### 크기 조절 — Win32 방식은 **시도했다가 버렸다** (다시 하지 말 것)
+
+frameless 창은 `WS_THICKFRAME`을 잃어 가장자리를 끌 수 없다. Win32
+`SetWindowLong`으로 그 스타일을 되붙이는 방법을 먼저 시도했다.
+
+- 최소 probe에서는 **된다**(False → True 확인).
+- 그런데 실제 앱에서는 그 작업을 하는 스레드가 창 생성과 얽혀 **창이 아예 뜨지
+  않았다.** 스레드 호출만 빼면 정상으로 뜨는 것을 격리해 확인했고, 2.5초 지연을 줘도
+  재현됐다.
+
+**그래서 지금은 UI 손잡이(`#resize-grip`)가 `window_resize` 브릿지를 부른다.**
+pywebview의 `window.resize()`가 frameless 창에서 동작하는 것은 probe로 확인했다
+(584x361 → 760x520). 브릿지 호출은 `requestAnimationFrame`으로 프레임당 한 번으로
+묶는다 - `mousemove`마다 부르면 창이 끊겨 보인다.
+
+**최소 크기는 두 곳에 있다**: `main.py`의 `MIN_SIZE`와 `app.js`의 `MIN_WINDOW`.
+**같은 값을 유지할 것** - UI에서 더 작게 줄일 수 있게 두면 창은 줄어드는데 안쪽
+레이아웃이 깨진다.
+
+### 우측 상세 패널 — 슬라이드에서 고정 컬럼으로
+
+예전에는 `width: 0 ↔ 340px`를 `transition`으로 오가서, 게임을 고를 때마다 패널이
+밀려 나오고 **목록 폭이 그때그때 달라졌다**. 옛 `style.css`에 그 transition이 아직
+살아 있으므로 `studio.css`에서 폭과 전환을 모두 덮어쓴다.
+
+지금은 늘 340px 자리를 차지하고, 아무것도 안 고른 상태에서는 빈 칸 대신
+`.panel-empty-state` 안내를 보여준다.
+
+### 실기 확인
+
+`tests_ui/window-chrome.spec.js`가 끌기 영역/손잡이/최소 크기/패널 고정을 고정하지만,
+**제목 표시줄이 하나인지와 창이 화면 안에 들어가는지는 실제로 띄워야 보인다.**
+이번에도 띄워서 스크린샷으로 확인했다(창 1024x961 at (20,65), WS_CAPTION=False).
+
+**검증**: 파이썬 346개, Playwright 57개(신규 6) 전부 통과. 커밋 `f1391b0`,
 `origin/main`에 push 완료.
