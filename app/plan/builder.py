@@ -275,6 +275,14 @@ def unapproved_overwrites(entry, layout, adapter, provider) -> list:
     같은 크기·시각의 파일이 이미 있는 경우(ACTION_IDENTICAL)는 덮어쓰는 것이 아니라
     건드리지 않는 것이므로 여기 들어오지 않는다.
     """
+    # **건너뛰기로 정했으면 그 파일은 아예 쓰지 않는다.** 쓰지 않을 파일에 승인이
+    # 필요할 리 없다 - 승인이 필요한 것은 덮어쓰려는 파일이다.
+    #
+    # 이걸 구별하지 않았더니, 대상에 같은 ROM이 이미 있는 상태에서 메타데이터만
+    # 가져오려는 붙여넣기가 통째로 막혔다(사용자가 "한 번도 복사가 안 된다"고 한 것).
+    if entry.resolution == RESOLVE_SKIP:
+        return []
+
     approved = approved_targets(entry)
     blocked = []
     for src_path, dest, size in add_destinations(entry, layout, adapter):

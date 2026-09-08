@@ -2196,6 +2196,17 @@
     await refreshPlan();
     const skipped = (r.data.skipped || []).length;
     const suffix = skipped ? ` (원본이 없어 ${skipped}개 제외)` : "";
+    const conflicts = r.data.conflicts || 0;
+
+    // **결정이 필요하면 그 자리에서 말한다.** 예전에는 "N개를 Plan에 올렸습니다"만
+    // 보여줘서, Apply를 누른 뒤에야 "충돌로 건너뜀"을 만났다. 대상에 이미 같은 ROM이
+    // 있는 붙여넣기(메타데이터만 가져오려는 흔한 경우)가 늘 여기 걸린다.
+    if (conflicts) {
+      showToast(`${formatCount(r.data.added)}개를 Plan에 올렸습니다${suffix}. ` +
+                `${formatCount(conflicts)}개는 대상에 이미 있어 결정이 필요합니다.`, "warning");
+      openConflictDialog();
+      return;
+    }
     if (S.autoPlan) showToast(`${formatCount(r.data.added)}개를 Plan에 올렸습니다${suffix}.`);
     else await applyPlan();
   }
@@ -2234,8 +2245,11 @@
           h("div", { class: "picker-sub truncate" }, [conflictLine(entry)]),
         ]),
       ]);
-      ["건너뛰기", "덮어쓰기"].forEach((label, i) => {
-        const btn = h("button", { class: "btn compact" }, [label]);
+      // "건너뛰기"는 그 항목을 통째로 건너뛴다고 읽힌다. 실제로 하는 일은
+      // **파일은 그대로 두고 메타데이터만 반영**이고, 대개는 그것이 사용자가 원한 것이다.
+      [["메타데이터만", "파일은 그대로 두고 메타데이터/미디어만 반영합니다"],
+       ["파일 덮어쓰기", "대상 파일을 새 파일로 교체합니다"]].forEach(([label, tip], i) => {
+        const btn = h("button", { class: "btn compact", title: tip }, [label]);
         btn.addEventListener("click", async () => {
           await api.planResolveConflict(S.activeId, entry.key, i === 0 ? "skip" : "overwrite");
           await refreshPlan();
@@ -2252,8 +2266,11 @@
 
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "modal-text" }, [
-        `목적지에 같은 이름의 다른 파일이 있는 항목 ${formatCount(entries.length)}개입니다. ` +
+        `대상에 같은 이름의 파일이 이미 있는 항목 ${formatCount(entries.length)}개입니다. ` +
         "크기가 같아도 내용이 다를 수 있어 자동으로 덮어쓰지 않습니다."]),
+      h("div", { class: "modal-hint" }, [
+        "이미 가지고 있는 ROM에 메타데이터와 미디어만 채우려는 것이라면 " +
+        "«메타데이터만»을 고르세요. 파일은 건드리지 않습니다."]),
       list,
     ]);
     showModal("충돌 확인", body, [
@@ -2262,7 +2279,7 @@
         closeModal();
         await api.planResolveAllConflicts(S.activeId, "skip");
         await refreshPlan();
-      } }, ["모두 건너뛰기"]),
+      } }, ["모두 메타데이터만"]),
       h("button", { class: "btn danger", onClick: () => {
         showConfirm("모두 덮어쓰기",
           `${formatCount(entries.length)}개 항목의 기존 파일을 새 파일로 교체합니다. 되돌릴 수 없습니다.`,

@@ -34,7 +34,7 @@ import file_ops
 from adapters import get_adapter
 from adapters.base import GameEntry
 from app.model.plan import (
-    OP_ADD, OP_DELETE, OP_STORAGE_CHANGE, RESOLVE_OVERWRITE,
+    OP_ADD, OP_DELETE, OP_STORAGE_CHANGE, RESOLVE_OVERWRITE, RESOLVE_SKIP,
     STATUS_APPLIED, STATUS_FAILED, STATUS_PARTIAL,
 )
 from app.plan.builder import ACTION_CONFLICT, ACTION_IDENTICAL, classify_destination
@@ -151,6 +151,10 @@ def _plan_copies(entry, layout, adapter, provider):
         if action == ACTION_IDENTICAL:
             continue  # 이미 같은 파일이 있다. 건드릴 이유가 없다.
         if action == ACTION_CONFLICT:
+            # 사용자가 "이 파일은 그대로 두라"고 정했으면 건드리지 않는다. 메타데이터는
+            # 그대로 쓴다 - 그것이 이 붙여넣기의 목적이다.
+            if entry.resolution == RESOLVE_SKIP:
+                continue
             # 여기가 마지막 방어선이다. 승인받은 그 파일일 때만 덮어쓴다.
             if str(dest) not in approved or not snapshot_matches(provider, dest,
                                                                  approved[str(dest)]):
