@@ -28,15 +28,22 @@
 
 ## 현재 상태 (2026-09-08 기준)
 
-**Phase 6(Compare Mode) + 리뷰 대응 hardening까지 완료, main에 push됨.**
+**Phase 7까지 완료, main에 push됨.** Adapter 4종(ES-DE / Pegasus / LaunchBox /
+EmulationStation), Match, Compare, Plan, Archive가 모두 동작한다.
 
-**Compare는 읽기 전용이다.** 새 변경 동작을 추가하면 그 함수 입구에도
-`blockedInCompare()`를 넣을 것 - 자세한 이유는 아래 Phase 6 Hardening 항목에 있다.
+지켜야 할 성질 둘:
+- **Compare는 읽기 전용이다.** 새 변경 동작을 추가하면 그 함수 입구에도
+  `blockedInCompare()`를 넣을 것(Phase 6 Hardening 항목 참고).
+- **Adapter는 모르는 필드를 버리지 않는다.** 새 Adapter를 추가할 때 `adapters/base.py`의
+  두 계약을 먼저 읽을 것(Phase 7 항목 참고).
 
-다음은 Phase 7 — 나머지 Frontend Adapter(Pegasus / LaunchBox / EmulationStation) +
-Round-trip 검증 + ES-DE custom systems XML. `adapters/` 인터페이스는 Phase 1에서
-`frontend_raw` 보존을 강제해 두었으므로(R1) 그 계약을 따르면 된다. Round-trip 검증에는
-Phase 6에서 만든 Compare를 그대로 쓸 만하다.
+**미완으로 남긴 것**: `EmulationStationAdapter.write_media_links()`가 Plan Apply에
+연결되지 않았다 - 원조 ES로 media를 내보내면 파일은 복사되는데 화면에 안 나온다.
+그 경로를 만들 때 반드시 함께 연결할 것.
+
+다음 후보는 Phase 8(MTP, 선택 항목)보다 ① 위 write_media_links 연결,
+② Adapter 간 변환 UI(§349 Import), ③ 이월분(`match_links` rename / Compare Row key /
+SHA-256) 쪽이 먼저다.
 
 (이 절은 최신 상태를 담으므로 계속 갱신한다. 아래 날짜별 항목은 그 시점의 기록이므로
 고치지 않는다.)
@@ -303,3 +310,74 @@ Round-trip 검증 + ES-DE custom systems XML. Round-trip 검증에는 이번 Com
 
 **검증**: 파이썬 236개(신규 7), Playwright 41개(신규 5) 전부 통과. 커밋 `4a70552`,
 `origin/main`에 push 완료.
+
+---
+
+## Phase 7 — 나머지 Frontend Adapter와 Round-trip 검증 (2026-09-08, Claude Code)
+
+Pegasus / LaunchBox / EmulationStation Adapter 추가(총 4종) + Frontend 간 왕복 검증
++ ES-DE custom systems XML(§22). 상세는 `docs/REPORTS/2026-09-08-phase7-adapters.md`.
+
+### Adapter 인터페이스는 바꾸지 않았다
+
+Phase 1의 두 계약(bulk만 노출 / 모르는 필드를 `frontend_raw`에 보존)이 그대로
+작동해서, `adapters/base.py`를 한 줄도 고치지 않고 세 종류를 얹었다. **새 Adapter를
+추가할 때도 이 계약을 먼저 읽을 것.** 낱개 read/write 메서드를 추가하지 말 것 -
+그걸 허용하면 이전 프로젝트의 O(n²)가 되살아난다.
+
+새 Adapter는 `app/workspace.py` 상단에 import를 추가해야 등록된다(`register()`가
+모듈 import 시점에 돈다).
+
+### Frontend별 함정 — 여기가 이 Phase의 알맹이다
+
+- **Pegasus**: `metadata.pegasus.txt`는 **들여쓴 줄이 앞 키의 값으로 이어진다**
+  (주로 `description`). 그리고 이전 프로젝트 writer가 블록을 아는 필드만으로 다시
+  만들어 사용자 키(`sort-by`, `x-favorite`)를 날렸다 - 지금은 모든 줄을 **순서까지**
+  보존한다. 파일 헤더(`collection:`/`shortname:`/`launch:`)도 유지한다.
+- **LaunchBox**: **media 파일명이 ROM이 아니라 게임 제목을 따른다.** `FFX.iso`의 커버가
+  `Final Fantasy X.jpg`다. ROM stem으로만 인덱싱하면 커버를 하나도 못 찾으므로,
+  플랫폼 XML의 `<Title>`로 "제목 → stem" 대응표를 만들어 되돌린다. `<ApplicationPath>`는
+  상대/절대가 섞여 있어 **원본 그대로 보존**한다(재조립하면 사용자 경로가 깨진다).
+- **EmulationStation(원조)**: **gamelist.xml이 media 경로를 직접 들고 있다**
+  (`<image>`/`<video>`/`<marquee>`). 배포판마다 위치가 달라 폴더 규칙을 가정하면
+  media를 통째로 놓친다. 이 Adapter만 media 인덱스를 gamelist가 가리키는 경로에서
+  만든다. `detect()`도 `downloaded_media`가 함께 있으면 ES-DE일 수 있으므로 확신을
+  0.9 → 0.5로 낮춰 사용자가 고르게 한다.
+
+### Round-trip의 정의 (헷갈리기 쉬움)
+
+| 왕복 | 지켜야 하는 것 |
+|---|---|
+| 같은 Frontend 제자리 | 공통 필드 **+ `frontend_raw`** |
+| Frontend 간(ES-DE → Pegasus → ES-DE) | **공통 필드만** |
+
+두 번째에서 `frontend_raw`가 따라가지 않는 것은 **결함이 아니라 정의다** - ES-DE의
+`<playcount>`를 Pegasus 블록에 적을 수는 없다. "왕복인데 값이 없어졌다"고 판단해
+frontend_raw를 Frontend 사이로 옮기려 들지 말 것. Pegasus 왕복에서 `region`이 빠지는
+것도 포맷에 그 키가 없어서이며, 테스트가 `skip=("region",)`으로 명시해 둔다.
+
+### 남겨 둔 연결 하나 (중요, 아직 미완)
+
+**`EmulationStationAdapter.write_media_links()`가 Plan Apply 경로에 연결되지 않았다.**
+원조 ES는 gamelist가 가리키는 경로만 보므로, media를 복사한 뒤 이걸 부르지 않으면
+**파일은 복사됐는데 화면에는 안 나온다.** Adapter에는 구현돼 있고 테스트도 있지만
+`app/plan/applier.py`가 아직 호출하지 않는다. EmulationStation Collection으로 media를
+내보내는 경로를 만들 때 반드시 함께 연결할 것.
+
+### ES-DE Custom Systems XML (§22)
+
+`AdapterAction`으로 노출 → 헤더 확장의 `[ES-DE XML 생성]`. Storage 같은 일반 기능으로
+올리지 않았다(ES-DE의 사정이다). **Collection root 안의 System은 적지 않는다** - ES-DE가
+스스로 찾고, 전부 적으면 사용자가 손본 설정을 덮어쓴다. 확장자/실행 명령도 비워 둔다.
+
+UI 연결 시 주의: `openTab()`은 `ensureDetail()`을 거치지 않고 `openCollection` 응답을
+그대로 쓴다. Frontend별로 달라지는 것을 탭 열기에서 불러오려면 `openTab()`에도 직접
+넣어야 한다(이번에 `loadAdapterActions()`가 여기서 빠져 GUI 테스트가 잡았다).
+
+**검증**: 파이썬 276개(신규 40), Playwright 45개(신규 4) 전부 통과. 커밋 `b1b5475`,
+`origin/main`에 push 완료.
+
+**다음 후보**: Phase 8(MTP)은 스펙에서도 "필요성 재평가 후"인 선택 항목이다. 그보다
+① `write_media_links()`의 Apply 연결, ② Adapter 간 변환 UI(§349 Import: Source → Match
+→ Target), ③ 이월분(`match_links` rename 취약성 / Compare Row key 구조화 / SHA-256 비교)
+쪽이 먼저다.
