@@ -37,12 +37,22 @@ from utils import normalize_esde_date, normalize_esde_rating
 KNOWN_TAGS = ("path", "name", "desc", "genre", "developer", "publisher",
               "releasedate", "region", "players", "rating")
 
+#: ES-DE가 실제로 쓰는 media 폴더 전부. 사용자의 백업에서 확인한 이름 그대로다.
+#:
+#: 여기 없는 폴더는 **스캔에서 통째로 빠진다** - 파일은 디스크에 있는데 앱은 없는 것으로
+#: 알고, Plan을 만들면 복사 대상에서도 용량 계산에서도 빠진다. 그래서 아는 것만
+#: 적어두면 안 되고 실제 폴더 이름을 따라가야 한다.
 MEDIA_FOLDERS = {
     "3dboxes": "3dboxes",
+    "backcovers": "backcovers",
     "covers": "covers",
+    "fanart": "fanart",
+    "manuals": "manuals",
     "marquees": "marquees",
     "miximages": "miximages",
+    "physicalmedia": "physicalmedia",
     "screenshots": "screenshots",
+    "titlescreens": "titlescreens",
     "videos": "videos",
     "wheel": "wheel",
 }
@@ -56,7 +66,10 @@ RESERVED_DIRS = {"gamelists", "downloaded_media", "themes", "custom_systems",
                  # `screensavers`가 게임 시스템으로 잡혀 빈 항목이 목록에 뜬다.
                  "temp", "controllers", "screensavers", "cache", "backups"}
 
-MEDIA_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".mp4", ".avi"}
+#: media로 인정하는 확장자. **`.pdf`가 들어 있는 이유는 설명서(manuals) 때문이다** -
+#: ES-DE의 manuals 폴더는 PDF이고, 이것이 빠져 있어서 사용자의 백업에서 설명서 660개가
+#: 통째로 스캔되지 않았다. 그림이 아니라고 media가 아닌 것은 아니다.
+MEDIA_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".mp4", ".avi", ".webm", ".pdf"}
 NON_ROM_EXTENSIONS = {".xml", ".txt", ".jpg", ".jpeg", ".png", ".webp", ".db", ".ini",
                       ".cfg", ".srm", ".sav", ".state", ".bak", ".tmp"}
 

@@ -80,7 +80,13 @@
     get_row: (id, romUid) => {
       const r = mockRows.find((x) => x.romUid === romUid) || mockRows[0];
       return ok({ romUid: r.romUid, system: r.system, file: r.file, size: r.size, present: true,
-                  sha256: null, media: r.hasMedia ? { Covers: "pending" } : {},
+                  sha256: null, favorite: !!mockFavorites[r.romUid] || !!r.favorite,
+                  // media가 종류별로 있는 경우와 없는 경우를 함께 보여줘야 격자 배치를
+                  // 확인할 수 있다. Video/Manual은 [v]로만 표시되는 종류다.
+                  media: r.hasMedia
+                    ? { Covers: "pending", Screenshots: "pending", Videos: "video://exists",
+                        Manuals: "pending" }
+                    : {},
                   fields: { name: r.title, desc: "설명이 여기에 표시됩니다.", genre: "RPG",
                             developer: "Square", publisher: "Square Enix",
                             releasedate: "2001-07-19", region: "USA", players: "1", rating: "4.5" } });

@@ -159,6 +159,40 @@ body { font-size: var(--fs-body); }
 .filter-spacer { flex: 1; }
 .filter-total { font-size: var(--fs-caption); color: var(--muted); font-variant-numeric: tabular-nums; }
 
+/* Detail - Media 격자.
+   **타일마다 16:9를 고정한다.** 예전에는 Screenshot이 없으면 그 타일 높이가 0이 되어
+   패널 배치가 통째로 무너졌다. 있든 없든 자리는 그대로여야 한다. */
+.media-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 10px;
+}
+.media-tile {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card2); padding: 6px; cursor: default;
+}
+.media-tile-label {
+  font-size: var(--fs-eyebrow); color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.media-tile-preview {
+  aspect-ratio: 16 / 9; width: 100%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--card3); border-radius: var(--radius-sm); overflow: hidden;
+  color: var(--list-muted);
+}
+.media-tile-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.media-tile.empty .media-tile-preview { opacity: .45; }
+/* 영상·설명서는 그릴 수 없다. 있으면 [v] 하나로 말한다. */
+.media-flag {
+  font-weight: 600; font-size: 15px; color: var(--list-muted);
+  border: 1px solid var(--border); border-radius: 3px;
+  min-width: 22px; height: 20px; display: flex; align-items: center; justify-content: center;
+}
+.media-flag.on { color: var(--success, #4caf50); border-color: currentColor; }
+
+/* 미리보기를 끄면 목록이 그 자리까지 넓어진다. */
+#detail-panel.hidden { display: none; }
+
 /* Gamelist */
 #list-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--list-bg); }
 /* 컬럼 폭은 화면에서 정한다(gridTemplateColumns) - 사용자가 끌어서 바꾸고 그 값이

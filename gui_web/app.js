@@ -136,8 +136,12 @@
   const ARCHIVE_ID = "archive";
   const isArchive = () => S.activeId === ARCHIVE_ID;
 
-  const MEDIA_LABEL = { "3dboxes": "3DBoxes", covers: "Covers", marquees: "Marquees",
-    miximages: "Miximages", screenshots: "Screenshots", videos: "Videos", wheel: "Wheel" };
+  const MEDIA_LABEL = {
+    "3dboxes": "3DBoxes", backcovers: "BackCovers", covers: "Covers", fanart: "FanArt",
+    manuals: "Manuals", marquees: "Marquees", miximages: "Miximages",
+    physicalmedia: "PhysicalMedia", screenshots: "Screenshots",
+    titlescreens: "TitleScreens", videos: "Videos", wheel: "Wheel",
+  };
 
   const activeDetail = () => S.detail[S.activeId] || null;
   const activeScope = () => S.scope[S.activeId] || { kind: "all" };
@@ -970,6 +974,20 @@
     refresh.addEventListener("click", () => runScan(S.activeId));
     bar.appendChild(refresh);
 
+    // 탐색기의 미리보기 창과 같다. **끄면 목록이 그 자리까지 넓어진다** - 상세를
+    // 안 보는 동안 화면 3분의 1을 비워둘 이유가 없다.
+    const preview = h("button", {
+      class: "icon-btn" + (S.previewOn ? " on" : ""),
+      title: S.previewOn ? "미리보기 끄기" : "미리보기 켜기",
+    }, [icon("previewPane", 13)]);
+    preview.addEventListener("click", () => {
+      S.previewOn = !S.previewOn;
+      saveUiState();
+      renderFilterBar();
+      applyPreviewMode();
+    });
+    bar.appendChild(preview);
+
     bar.appendChild(h("div", { class: "filter-spacer" }));
 
     // Plan 조작은 여기 있어야 한다. 하단 상태바에 있으면 목록에서 고르고 바로 누르기가
@@ -1717,6 +1735,8 @@
   async function openDetail(row) {
     S.focused = row.romUid;
     renderListWindow();
+    // 미리보기를 꺼 둔 상태에서는 고르기만 하고 패널을 열지 않는다(탐색기와 같다).
+    if (!S.previewOn) return;
     const tab = (S.detailState && S.detailState.tab) || "metadata";
 
     if (isArchive()) {
@@ -1757,6 +1777,38 @@
     Object.keys(fieldRefs).forEach((k) => { if (fieldRefs[k]) S.detailState.draft[k] = fieldRefs[k].value; });
   }
 
+  /** 미리보기를 끄면 상세 패널을 접고 목록이 그 자리까지 넓어진다. */
+  function applyPreviewMode() {
+    const panel = $("detail-panel");
+    if (!panel) return;
+    panel.classList.toggle("hidden", !S.previewOn);
+    if (S.previewOn) renderDetailPanel();
+  }
+
+  /** 상세 패널의 별표. 목록의 별표와 같은 곳을 가리켜야 한다. */
+  async function toggleFavoriteFromDetail(button) {
+    const state = S.detailState;
+    if (!state || blockedInCompare("즐겨찾기를 변경")) return;
+    const next = !state.favorite;
+    state.favorite = next;
+    button.textContent = next ? "★" : "☆";
+    button.classList.toggle("on", next);
+
+    const r = await api.setFavorite(S.activeId, state.romUid, next);
+    if (!r.ok) {
+      state.favorite = !next;
+      button.textContent = state.favorite ? "★" : "☆";
+      button.classList.toggle("on", state.favorite);
+      showToast(r.error, "error");
+      return;
+    }
+    // 목록의 별표도 같이 바뀌어야 한다 - 둘이 다르면 어느 쪽이 맞는지 알 수 없다.
+    for (const row of S.rowCache.values()) {
+      if (row && row.romUid === state.romUid) row.favorite = next;
+    }
+    renderListWindow();
+  }
+
   function renderDetailPanel() {
     const panel = $("detail-panel");
     clear(panel);
@@ -1785,6 +1837,29 @@
         h("div", { class: "detail-system" }, [systemIcon(state.system, 13), String(state.system).toUpperCase()]),
       ]),
     ]);
+
+    if (!state.archive) {
+      // 즐겨찾기와 실행은 게임을 보고 있을 때 바로 손이 가는 자리에 있어야 한다.
+      const star = h("button", {
+        class: "icon-btn fav-btn" + (state.favorite ? " on" : ""),
+        title: state.favorite ? "즐겨찾기 해제" : "즐겨찾기",
+      }, [state.favorite ? "★" : "☆"]);
+      star.addEventListener("click", () => toggleFavoriteFromDetail(star));
+      header.appendChild(star);
+
+      // 실행은 아직 연결되지 않았다. **버튼을 없애는 대신 못 한다고 말한다** -
+      // 사라진 기능은 언제 돌아오는지 알 수 없지만, 눌러서 안내를 받으면 안다.
+      const play = h("button", {
+        class: "icon-btn", title: state.present ? "실행 (RetroArch 연동 예정)" : "ROM 파일이 없습니다",
+        disabled: !state.present,
+      }, [icon("gamepad", 14)]);
+      if (state.present) {
+        play.addEventListener("click", () => showToast(
+          "RetroArch 연동은 다음 버전에서 들어옵니다.", "warning"));
+      }
+      header.appendChild(play);
+    }
+
     const close = h("button", { class: "icon-btn", title: "닫기 (Esc)" }, [icon("x", 13)]);
     close.addEventListener("click", closeDetail);
     header.appendChild(close);
@@ -1863,10 +1938,12 @@
     topFixed.appendChild(nameInput);
     body.appendChild(topFixed);
 
-    // Description은 남는 세로 공간을 우선 흡수한다(스펙 §34).
+    // Description은 **10줄쯤을 기본으로 두고 넘치면 안에서 스크롤한다.**
+    // 남는 세로 공간을 전부 흡수하게 두면 설명이 긴 게임에서 아래 필드들이 화면
+    // 밖으로 밀려나, 장르 하나 고치려고 스크롤을 내려야 한다.
     const descWrap = h("div", { class: "detail-body-desc-wrap" });
     descWrap.appendChild(h("div", { class: "field-label" }, ["Description"]));
-    const desc = h("textarea", { class: "field-input" });
+    const desc = h("textarea", { class: "field-input", rows: 10 });
     desc.value = value("desc");
     fieldRefs.desc = desc;
     descWrap.appendChild(desc);
@@ -1893,36 +1970,58 @@
     if (r.ok && r.data && S.detailState && S.detailState.romUid === romUid) img.src = r.data;
   }
 
+  //: 화면에 보여줄 media와 그 표시 방식.
+  //
+  //  `file`인 것(영상·설명서)은 그림이 아니라 **있는지 없는지**만 알면 된다. 영상을
+  //  data URI로 실어 오면 브릿지가 감당하지 못하고, 설명서는 PDF라 애초에 그릴 수 없다.
+  //  그래서 그 둘은 [v] 하나로 표시한다 - 이전 프로젝트가 쓰던 방식이다.
+  const MEDIA_SLOTS = [
+    { label: "Cover", key: "Covers" },
+    { label: "Marquee", key: "Marquees" },
+    { label: "MixImage", key: "Miximages" },
+    { label: "Wheel", key: "Wheel" },
+    { label: "Screenshot", key: "Screenshots" },
+    { label: "TitleScreen", key: "TitleScreens" },
+    { label: "3DBox", key: "3DBoxes" },
+    { label: "BackCover", key: "BackCovers" },
+    { label: "FanArt", key: "FanArt" },
+    { label: "PhysicalMedia", key: "PhysicalMedia" },
+    { label: "Video", key: "Videos", file: true },
+    { label: "Manual", key: "Manuals", file: true },
+  ];
+
   function renderMediaTab(body) {
     body.classList.add("media-tab-body");
     const media = S.detailState.media || {};
 
-    const tile = (label, key, cls) => {
-      const zone = h("div", { class: `media-tile ${cls || ""}`.trim() });
-      zone.appendChild(h("div", { class: "media-tile-label" }, [label]));
+    const grid = h("div", { class: "media-grid" });
+    MEDIA_SLOTS.forEach((slot) => {
+      const has = !!media[slot.key];
+      const zone = h("div", {
+        class: "media-tile" + (slot.file ? " file-slot" : "") + (has ? "" : " empty"),
+        title: slot.label + (has ? "" : " 없음"),
+      });
+      zone.appendChild(h("div", { class: "media-tile-label" }, [slot.label]));
+
+      // **비어 있어도 자리는 그대로다.** 예전에는 Screenshot이 없으면 높이가 무너져
+      // 패널 전체 배치가 흔들렸다. 타일마다 16:9를 고정한다.
       const preview = h("div", { class: "media-tile-preview" });
-      if (key === "Videos" && media[key]) {
-        preview.appendChild(h("div", { class: "dropzone-empty" }, [icon("upload", 18), "영상 등록됨"]));
-      } else if (media[key]) {
-        const img = h("img", { alt: label });
+      if (slot.file) {
+        // 있는지 없는지만 말한다. 있으면 [v].
+        preview.appendChild(h("div", { class: "media-flag" + (has ? " on" : "") },
+                              [has ? "v" : ""]));
+      } else if (has) {
+        const img = h("img", { alt: slot.label });
         preview.appendChild(img);
-        loadMediaImage(img, key, false);
+        loadMediaImage(img, slot.key, false);
       } else {
-        preview.appendChild(h("div", { class: "dropzone-empty" }, [icon("imageOff", 18), `${label} 없음`]));
+        // "Screenshot 없음"을 열두 번 적으면 그것만 눈에 들어온다. 아이콘 하나로 족하다.
+        preview.appendChild(icon("imageOff", 16));
       }
       zone.appendChild(preview);
-      return zone;
-    };
-
-    const hero = h("div", { class: "media-quad-grid" }, [
-      tile("Cover", "Covers", "cover"),
-      tile("Marquee", "Marquees", "marquee"),
-      tile("MixImage", "Miximages", "miximage"),
-      tile("Wheel", "Wheel", "wheel"),
-    ]);
-    body.appendChild(hero);
-    body.appendChild(h("div", { class: "media-lower-grid" }, [tile("Screenshot", "Screenshots", "screenshot")]));
-    if (media.Videos) body.appendChild(tile("Video", "Videos", "video"));
+      grid.appendChild(zone);
+    });
+    body.appendChild(grid);
   }
 
   // 출처별 Metadata를 나란히 보여준다(스펙 §44). 같은 게임이 여러 Collection에서

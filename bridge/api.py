@@ -41,9 +41,13 @@ import file_ops
 from utils import normalize_title
 
 #: JS가 쓰는 표시용 라벨 <-> 저장소의 소문자 키
-MEDIA_LABELS = {"3dboxes": "3DBoxes", "covers": "Covers", "marquees": "Marquees",
-                "miximages": "Miximages", "screenshots": "Screenshots",
-                "videos": "Videos", "wheel": "Wheel"}
+MEDIA_LABELS = {
+    "covers": "Covers", "marquees": "Marquees", "miximages": "Miximages",
+    "screenshots": "Screenshots", "videos": "Videos", "wheel": "Wheel",
+    "3dboxes": "3DBoxes", "backcovers": "BackCovers", "fanart": "FanArt",
+    "manuals": "Manuals", "physicalmedia": "PhysicalMedia",
+    "titlescreens": "TitleScreens",
+}
 MEDIA_KEYS = {v: k for k, v in MEDIA_LABELS.items()}
 
 THUMBNAIL_MAX = 256
@@ -351,6 +355,8 @@ class Api:
             "romUid": row["rom_uid"], "system": row["system"], "file": row["filename"],
             "fields": row["fields"], "media": media, "size": row["size"],
             "present": bool(row["present"]), "sha256": row["sha256"],
+            # 상세 패널의 별표도 목록과 같은 곳을 가리켜야 한다.
+            "favorite": bool(row.get("favorite")),
         })
 
     @guarded
