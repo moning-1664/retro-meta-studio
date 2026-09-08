@@ -11,67 +11,11 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from adapters.es_de import EsDeAdapter
-from app.model.collection import Collection, StorageLocation, SystemEntry, STORAGE_INTERNAL
+from app.model.collection import StorageLocation, SystemEntry
 from app.store.cache import CacheStore
 from app.scan.scanner import scan_collection
 from storage.local import LocalStorageProvider
-
-GAMELIST = """<?xml version="1.0"?>
-<gameList>
-  <game id="42" source="ScreenScraper">
-    <path>./FFX.iso</path>
-    <name>Final Fantasy X</name>
-    <desc>A role-playing game.</desc>
-    <genre>RPG</genre>
-    <developer>Square</developer>
-    <publisher>Square Enix</publisher>
-    <releasedate>20010719T000000</releasedate>
-    <players>1</players>
-    <rating>0.9</rating>
-    <favorite>true</favorite>
-    <playcount>17</playcount>
-    <lastplayed>20240101T120000</lastplayed>
-    <sortname>Final Fantasy 10</sortname>
-    <altemulator>PCSX2</altemulator>
-  </game>
-  <game>
-    <path>./MGS2.iso</path>
-    <name>Metal Gear Solid 2</name>
-  </game>
-  <game>
-    <path>./MetadataOnly.iso</path>
-    <name>ROM 없는 항목</name>
-  </game>
-  <folder>
-    <path>./Extras</path>
-    <name>Extras</name>
-  </folder>
-</gameList>
-"""
-
-
-def build_esde_tree(root: Path):
-    """실제 ES-DE 레이아웃을 흉내낸 최소 트리."""
-    (root / "gamelists" / "ps2").mkdir(parents=True)
-    (root / "gamelists" / "ps2" / "gamelist.xml").write_text(GAMELIST, encoding="utf-8")
-    for folder in ("covers", "screenshots", "videos"):
-        (root / "downloaded_media" / "ps2" / folder).mkdir(parents=True)
-    (root / "downloaded_media" / "ps2" / "covers" / "FFX.png").write_bytes(b"x" * 10)
-    (root / "downloaded_media" / "ps2" / "videos" / "FFX.mp4").write_bytes(b"v" * 100)
-    (root / "ps2").mkdir()
-    (root / "ps2" / "FFX.iso").write_bytes(b"r" * 1000)
-    (root / "ps2" / "MGS2.iso").write_bytes(b"r" * 2000)
-    # ES-DE가 만들지만 게임 시스템이 아닌 폴더
-    (root / "gamelists" / "cleanup").mkdir()
-    return root
-
-
-def make_collection(root):
-    return Collection(
-        id="col-1", name="Test", frontend="es-de", root_path=str(root),
-        storages=[StorageLocation(STORAGE_INTERNAL, STORAGE_INTERNAL, "Internal", str(root))],
-        systems=[SystemEntry("ps2", STORAGE_INTERNAL)],
-    )
+from tests.fixtures import build_esde_tree, make_collection
 
 
 class AdapterTests(unittest.TestCase):

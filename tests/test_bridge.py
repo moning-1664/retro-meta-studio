@@ -6,30 +6,12 @@ UI가 실제로 부르는 경로를 그대로 통과시켜서, JS 없이도 Phas
 """
 
 import tempfile
-import threading
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from bridge.api import Api
-from tests.test_es_de_adapter import build_esde_tree
-
-
-def wait_job(api, job_id, timeout=10.0):
-    """phased job은 한 단계가 끝나며 다음 단계를 새 job으로 잇는다. 그래서 이 job
-    하나가 done이 되어도 체인 전체는 아직 돌고 있을 수 있다 - 전부 끝날 때까지
-    기다려야 tearDown이 워커가 쓰고 있는 DB 연결을 닫는 사고가 나지 않는다."""
-    event = threading.Event()
-    for _ in range(int(timeout / 0.02)):
-        job = api.jobs.get(job_id)
-        if job and job["done"]:
-            break
-        event.wait(0.02)
-    else:
-        raise AssertionError("작업이 끝나지 않았습니다.")
-    if not api.jobs.wait_idle(timeout):
-        raise AssertionError("후속 phase가 끝나지 않았습니다.")
-    return api.jobs.get(job_id)
+from tests.fixtures import build_esde_tree, wait_job
 
 
 class BridgeTests(unittest.TestCase):

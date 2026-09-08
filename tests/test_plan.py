@@ -5,23 +5,12 @@ Phase 3의 핵심은 "실제 파일은 확정 전까지 절대 바뀌지 않는�
 """
 
 import tempfile
-import threading
 import unittest
 from pathlib import Path
 
 from app.model.plan import OP_ADD, OP_DELETE, OP_STORAGE_CHANGE, Plan, PlanEntry
 from bridge.api import Api
-from tests.test_es_de_adapter import build_esde_tree
-
-
-def wait_idle(api, timeout=15.0):
-    if not api.jobs.wait_idle(timeout):
-        raise AssertionError("작업이 끝나지 않았습니다.")
-
-
-def scan(api, cid):
-    api.start_scan(cid)
-    wait_idle(api)
+from tests.fixtures import build_esde_tree, scan, wait_idle
 
 
 class PlanModelTests(unittest.TestCase):

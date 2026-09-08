@@ -88,6 +88,68 @@
     cancel_job: () => ok(true),
     pick_folder: () => ok("D:\\ES-DE"),
     window_control: () => ok(true),
+
+    // --- 상태를 바꾸는 호출 ---------------------------------------------
+    // GUI 테스트(tests_ui/)는 pywebview 없이 이 목업 위에서 돈다. 여기 없는 이름은
+    // {ok:false}로 떨어져서, 그 화면은 "검증한 것처럼 보이지만 실제로는 오류 경로만"
+    // 지나간다 (tests/test_wiring.py::test_mock_covers_every_call이 누락을 감시한다).
+    // 그래서 ok(true)로 때우지 않고 목업 배열을 실제로 고친다 - 그래야 "이름을 바꾸면
+    // 탭 제목도 바뀐다" 같은 것을 GUI 테스트가 확인할 수 있다.
+    create_collection: (name, frontend, rootPath, target, arch) => {
+      const created = {
+        id: "c" + (mockCollections.length + 1), name, frontend: frontend || "es-de",
+        frontendLabel: frontend === "es-de" ? "ES-DE" : frontend, target: target || "windows",
+        os: null, arch: arch || "x64", rootPath: rootPath || "D:\New", systemCount: 0,
+      };
+      mockCollections.push(created);
+      return ok(created);
+    },
+    rename_collection: (id, name) => {
+      const c = mockCollections.find((x) => x.id === id);
+      if (!c) return Promise.resolve({ ok: false, error: "없는 Collection" });
+      c.name = name;
+      if (mockDetail.id === id) mockDetail.name = name;
+      return ok(true);
+    },
+    update_collection_target: (id, target, arch, os) => {
+      const c = mockCollections.find((x) => x.id === id);
+      if (!c) return Promise.resolve({ ok: false, error: "없는 Collection" });
+      Object.assign(c, { target, arch, os: os || null });
+      return ok(true);
+    },
+    delete_collection: (id) => {
+      const i = mockCollections.findIndex((x) => x.id === id);
+      if (i < 0) return Promise.resolve({ ok: false, error: "없는 Collection" });
+      mockCollections.splice(i, 1);
+      return ok(true);
+    },
+    add_external_storage: (id, label, rootPath) => {
+      const storage = {
+        id: "ext-" + (mockDetail.storages.length + 1), kind: "external",
+        label: label || "External", rootPath: rootPath || "F:\ROMs",
+        actualBytes: 0, capacityBytes: 256e9, freeBytes: 256e9, systems: [],
+      };
+      mockDetail.storages.push(storage);
+      return ok(storage);
+    },
+    remove_storage: (id, storageId) => {
+      const i = mockDetail.storages.findIndex((s) => s.id === storageId);
+      if (i < 0) return Promise.resolve({ ok: false, error: "없는 Storage" });
+      if (mockDetail.storages[i].kind === "internal") {
+        return Promise.resolve({ ok: false, error: "Internal Storage는 제거할 수 없습니다." });
+      }
+      mockDetail.storages.splice(i, 1);
+      return ok(true);
+    },
+    move_system: (id, system, storageId) => {
+      for (const s of mockDetail.storages) s.systems = s.systems.filter((x) => x.system !== system);
+      const target = mockDetail.storages.find((s) => s.id === storageId);
+      if (!target) return Promise.resolve({ ok: false, error: "없는 Storage" });
+      target.systems.push({ system, count: mockRows.filter((r) => r.system === system).length });
+      mockRows.forEach((r) => { if (r.system === system) r.storageId = storageId; });
+      return ok(true);
+    },
+    plan_remove_entry: () => ok({ removed: 1 }),
   };
 
   function call(name, ...args) {
