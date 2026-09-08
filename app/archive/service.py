@@ -74,13 +74,22 @@ def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=No
 
 
 def detail(archive, rom_identity_id) -> dict | None:
-    """Archive 항목 하나의 상세. 출처별 Metadata를 함께 준다(§44)."""
+    """Archive 항목 하나의 상세. 출처별 Metadata를 함께 준다(§44).
+
+    표시용 `fields`는 `_resolve_fields()`와 **같은 규칙**을 쓴다 - 사용자가 Archive에서
+    직접 고친 값이 있으면 그것이 이긴다(§40). 여기서만 "가장 최근 출처"를 쓰면,
+    편집한 값이 화면에는 안 보이는데 Archive->Collection으로는 그 값이 나가는
+    불일치가 생긴다.
+
+    `sources`는 실제 Collection 출처만 담는다 - 사용자가 직접 고친 기록은 Collection이
+    아니므로 출처 비교(§44) 목록에 섞이면 안 되고, `edited` 플래그로만 알린다.
+    """
     identity = archive.get_identity(rom_identity_id)
     if identity is None:
         return None
-    sources = archive.sources_of(rom_identity_id)
-    # 표시용 기본값은 가장 최근에 갱신된 출처의 내용으로 한다.
-    latest = max(sources, key=lambda s: s["updated_at"], default=None)
+    sources = [s for s in archive.sources_of(rom_identity_id)
+               if s["source_collection_id"] != ARCHIVE_EDIT_SOURCE]
+    fields, frontend_raw = _resolve_fields(archive, rom_identity_id)
     return {
         "romIdentityId": rom_identity_id,
         "gameId": identity["game_id"],
@@ -90,8 +99,9 @@ def detail(archive, rom_identity_id) -> dict | None:
         "region": identity["region"],
         "size": identity["size"],
         "sha256": identity["sha256"],
-        "fields": (latest or {}).get("fields") or {},
-        "frontendRaw": (latest or {}).get("frontend_raw") or {},
+        "fields": fields,
+        "frontendRaw": frontend_raw,
+        "edited": archive.latest_record(rom_identity_id, ARCHIVE_EDIT_SOURCE) is not None,
         "sources": [
             {"collectionId": s["source_collection_id"], "revision": s["revision"],
              "updatedAt": s["updated_at"], "fields": s["fields"]}

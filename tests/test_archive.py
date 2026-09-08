@@ -11,12 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from bridge.api import Api
-from tests.test_es_de_adapter import build_esde_tree
-
-
-def wait_idle(api, timeout=15.0):
-    if not api.jobs.wait_idle(timeout):
-        raise AssertionError("작업이 끝나지 않았습니다.")
+from tests.fixtures import build_esde_tree, wait_idle
 
 
 class ArchiveTests(unittest.TestCase):
