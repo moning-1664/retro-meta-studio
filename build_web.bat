@@ -65,12 +65,12 @@ REM --- 5. Clean previous build ---
 echo [5/6] Cleaning previous build output...
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
-if exist RetroMetadataManagerWeb.spec del /q RetroMetadataManagerWeb.spec
+if exist RetroMetaStudio.spec del /q RetroMetaStudio.spec
 echo.
 
 REM --- 6. Build with PyInstaller (bundle gui_web/ and the native worker as data) ---
 echo [6/6] Building with PyInstaller (this may take a few minutes)...
-pyinstaller --noconfirm --onefile --windowed --name RetroMetadataManagerWeb --add-data "gui_web;gui_web" %WORKER_DATA% main_gui.py
+pyinstaller --noconfirm --onefile --windowed --name RetroMetaStudio --add-data "gui_web;gui_web" %WORKER_DATA% main.py
 
 if errorlevel 1 (
     echo.
@@ -82,7 +82,7 @@ if errorlevel 1 (
 echo.
 echo ===============================================
 echo  Build complete!
-echo  Executable: dist\RetroMetadataManagerWeb.exe
+echo  Executable: dist\RetroMetaStudio.exe
 echo.
 echo  Note: On first run, config.json and a backup\ folder
 echo        will be created automatically next to the exe.
