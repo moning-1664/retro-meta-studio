@@ -75,7 +75,8 @@ test("행을 고르면 좌우를 나란히 놓은 상세가 열린다", async ({
   await expect(panel.locator(".cmp-side-name").nth(1)).toContainText("Android ES-DE");
 
   // 다른 값만 강조된다 - 같은 값까지 칠하면 어디가 다른지 보이지 않는다.
-  const changed = panel.locator(".cmp-row.changed");
+  // (파일명/크기 표는 별도이므로 Metadata 표만 센다.)
+  const changed = panel.locator(".cmp-table:not(.cmp-identity) .cmp-row.changed");
   await expect(changed).toHaveCount(1);
   await expect(changed).toContainText("Genre");
   await expect(changed).toContainText("RPG");
@@ -96,4 +97,49 @@ test("Exit Compare로 원래 Gamelist가 돌아온다", async ({ page }) => {
   await expect(page.locator("#filter-bar.compare")).toHaveCount(0);
   await expect(page.locator(".search-input")).toBeVisible();
   await expect(page.locator(".lrow")).toHaveCount(3);
+});
+
+test("Compare는 읽기 전용이다 - 변경 버튼이 상태바에서 사라진다", async ({ page }) => {
+  // Paste와 Apply는 선택이 없어도 눌리는 버튼이라, 남겨두면 비교 화면에서 그대로
+  // 변경이 일어난다.
+  await expect(page.locator(".sb-actions .btn", { hasText: "Paste" })).toBeVisible();
+  await startCompare(page);
+  await expect(page.locator(".sb-actions .btn")).toHaveCount(0);
+  await expect(page.locator(".sb-actions")).toContainText("읽기 전용");
+});
+
+test("Compare 중 Ctrl+V는 붙여넣기 대신 거절 안내를 낸다", async ({ page }) => {
+  await startCompare(page);
+  await page.locator(".lrow").first().click();      // 포커스를 목록에 둔다
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+v");
+  await expect(page.locator("#toast")).toContainText("Compare 중에는");
+});
+
+test("Compare 중에는 System을 끌어 옮길 수 없다", async ({ page }) => {
+  await startCompare(page);
+  await expect(page.locator(".nav-system").first()).not.toHaveAttribute("draggable", "true");
+  await expect(page.locator(".nav-action", { hasText: "Add External Storage" })).toHaveCount(0);
+});
+
+test("스냅샷 시각과 Refresh를 보여준다", async ({ page }) => {
+  await startCompare(page);
+  await expect(page.locator(".compare-snapshot")).toContainText("Snapshot");
+  const refresh = page.locator("#filter-bar .btn", { hasText: "Refresh" });
+  await expect(refresh).toBeVisible();
+  // 다시 찍어도 화면이 비교 상태를 유지해야 한다.
+  await refresh.click();
+  await expect(page.locator("#filter-bar.compare")).toBeVisible();
+  await expect(page.locator(".lrow")).toHaveCount(5);
+});
+
+test("상세가 값 비교보다 먼저 파일명/크기를 보여준다", async ({ page }) => {
+  await startCompare(page);
+  await page.locator(".lrow", { hasText: "Conflict Game" }).click();
+  const identity = page.locator(".cmp-identity .cmp-row");
+  await expect(identity).toHaveCount(2);
+  await expect(identity.nth(0)).toContainText("File");
+  // 같은 이름인데 크기가 다르면 다른 덤프일 수 있다 - 다른 값으로 표시된다.
+  await expect(identity.nth(1)).toContainText("Size");
+  await expect(identity.nth(1)).toHaveClass(/changed/);
 });

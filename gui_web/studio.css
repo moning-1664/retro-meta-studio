@@ -388,3 +388,5 @@ button.sb-badge { cursor: pointer; }
   padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
   color: var(--muted); font-size: var(--fs-eyebrow);
 }
+.compare-snapshot { color: var(--muted); font-size: var(--fs-eyebrow); font-variant-numeric: tabular-nums; }
+.cmp-identity { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }

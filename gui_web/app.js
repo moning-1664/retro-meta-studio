@@ -493,7 +493,9 @@
       head.appendChild(h("span", { class: "nav-group-name" }, [storage.label.toUpperCase()]));
       head.appendChild(h("span", { class: "nav-count" }, [formatCount(total)]));
       head.addEventListener("click", () => setScope({ kind: "storage", id: storage.id }));
-      head.addEventListener("contextmenu", (e) => { e.preventDefault(); openStorageMenu(storage, e); });
+      if (!isCompare()) {
+        head.addEventListener("contextmenu", (e) => { e.preventDefault(); openStorageMenu(storage, e); });
+      }
       group.appendChild(head);
 
       storage.systems.forEach((sys) => {
@@ -502,10 +504,14 @@
           () => setScope({ kind: "system", id: sys.system }));
         row.classList.add("nav-system");
         row.insertBefore(systemIcon(sys.system, 14), row.firstChild);
-        row.setAttribute("draggable", "true");
-        row.addEventListener("dragstart", (e) => {
-          e.dataTransfer.setData("text/plain", JSON.stringify({ system: sys.system, from: storage.id }));
-        });
+        // Compare 중에는 System을 끌어 옮길 수 없다 - 그 드롭 하나가 Plan을 바꾸고,
+        // Auto Plan이 꺼져 있으면 실제 파일까지 옮긴다.
+        if (!isCompare()) {
+          row.setAttribute("draggable", "true");
+          row.addEventListener("dragstart", (e) => {
+            e.dataTransfer.setData("text/plain", JSON.stringify({ system: sys.system, from: storage.id }));
+          });
+        }
         group.appendChild(row);
       });
 
@@ -524,9 +530,11 @@
       nav.appendChild(group);
     });
 
-    const add = h("button", { class: "nav-action" }, [icon("plus", 12), h("span", {}, ["Add External Storage"])]);
-    add.addEventListener("click", openAddStorage);
-    nav.appendChild(add);
+    if (!isCompare()) {
+      const add = h("button", { class: "nav-action" }, [icon("plus", 12), h("span", {}, ["Add External Storage"])]);
+      add.addEventListener("click", openAddStorage);
+      nav.appendChild(add);
+    }
   }
 
   function navRow(label, count, active, onClick) {
@@ -546,6 +554,7 @@
   }
 
   async function moveSystemToStorage(system, storageId) {
+    if (blockedInCompare("System을 이동")) return;
     // 실제 파일은 아직 움직이지 않는다. Plan에 올려두고 확정할 때 옮긴다(스펙 §10, §28).
     const r = await api.planStorageChange(S.activeId, system, storageId);
     if (!r.ok) { showToast(r.error, "error"); return; }
@@ -558,6 +567,7 @@
   }
 
   function openAddStorage() {
+    if (blockedInCompare("Storage를 추가")) return;
     const labelInput = h("input", { class: "field-input", value: "External SD" });
     const pathInput = h("input", { class: "field-input", placeholder: "예: E:\\ROMs" });
     const browse = h("button", { class: "btn", onClick: async () => {
@@ -695,8 +705,17 @@
   // ------------------------------------------------------------------
   // 필터 바
   // ------------------------------------------------------------------
-  const COMPARE_FILTERS = [["all", "All"], ["same", "Same"], ["only_a", "Only A"],
-                           ["only_b", "Only B"], ["conflict", "Conflict"], ["media", "Media"]];
+  // 상태의 뜻을 버튼 툴팁으로 고정한다. 특히 **Same은 "같은 ROM 파일"이라는 뜻이 아니다** -
+  // 양쪽에 대응 항목이 있고 비교 대상 Metadata가 같다는 뜻이다. 크기가 달라도 Same일 수
+  // 있고, 그 차이는 상세의 Size 줄에서 본다.
+  const COMPARE_FILTERS = [
+    ["all", "All", "양쪽을 맞댄 전체 목록"],
+    ["same", "Same", "양쪽에 있고 비교 대상 Metadata가 같음 (ROM 파일이 같다는 뜻은 아님 - 크기는 상세에서 확인)"],
+    ["only_a", "Only A", "기준 Collection에만 있음"],
+    ["only_b", "Only B", "상대 Collection에만 있음"],
+    ["conflict", "Conflict", "양쪽에 있는데 비교 대상 Metadata가 다름"],
+    ["media", "Media", "Media 구성이 다름 (상태와 별개 신호)"],
+  ];
 
   function renderCompareBar(bar) {
     const state = S.compare;
@@ -707,10 +726,11 @@
     ]));
 
     const filters = h("div", { class: "compare-filters" });
-    COMPARE_FILTERS.forEach(([key, label]) => {
+    COMPARE_FILTERS.forEach(([key, label, hint]) => {
       const count = (state.counts || {})[key];
       const btn = h("button", {
         class: "compare-filter" + (S.compareFilter === key ? " active" : "") + " f-" + key,
+        title: hint,
       }, [label, count === undefined ? "" : h("span", { class: "compare-filter-count" },
                                               [formatCount(count)])]);
       btn.addEventListener("click", async () => {
@@ -724,9 +744,27 @@
     bar.appendChild(filters);
 
     bar.appendChild(h("div", { class: "filter-spacer" }));
+
+    // 이 결과는 시작 시점의 스냅샷이다(필터를 눌러도 다시 읽지 않는다). 그 사이
+    // Collection이 바뀌었을 수 있으므로 언제 찍은 것인지 밝히고, 다시 찍는 길을 준다.
+    if (state.takenAt) {
+      bar.appendChild(h("span", { class: "compare-snapshot", title: "이 시각의 스냅샷입니다" },
+        [`Snapshot ${formatClock(state.takenAt)}`]));
+    }
+    const refresh = h("button", { class: "btn compact", title: "지금 상태로 다시 비교합니다" },
+      ["Refresh"]);
+    refresh.addEventListener("click", () => runCompare(state.baseId, state.otherId));
+    bar.appendChild(refresh);
+
     const exit = h("button", { class: "btn compact" }, ["Exit Compare"]);
     exit.addEventListener("click", exitCompare);
     bar.appendChild(exit);
+  }
+
+  function formatClock(epochSeconds) {
+    const d = new Date(epochSeconds * 1000);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   }
 
   function renderFilterBar() {
@@ -794,6 +832,17 @@
   }
 
   const isCompare = () => !!S.compare;
+
+  /** Compare는 **읽기 전용**이다(§54-59). 변경 동작의 문 앞마다 이걸 세운다.
+   *
+   * 화면에서 버튼을 숨기는 것만으로는 부족하다 - 단축키(Ctrl+V, Delete)와 내비
+   * 드래그처럼 버튼을 거치지 않는 길이 있고, 그 길로 들어오면 비교 중인 상태에서
+   * Plan이 바뀌거나(Auto Plan이 꺼져 있으면) 실제 파일까지 움직인다. */
+  function blockedInCompare(what) {
+    if (!isCompare()) return false;
+    showToast(`Compare 중에는 ${what}할 수 없습니다. Exit Compare 후 진행하세요.`, "warning");
+    return true;
+  }
 
   function fetchRows(query) {
     if (isCompare()) return api.compareRows({ ...query, status: S.compareFilter });
@@ -1037,6 +1086,22 @@
       h("div", { class: "cmp-side-name" + (d.right ? "" : " absent") },
         [d.otherName, h("span", { class: "cmp-side-mark" }, [d.right ? "" : " (없음)"])]),
     ]));
+
+    // 같은 이름인데 크기가 다르면 다른 덤프일 수 있다 - 값 비교보다 먼저 알아야 한다.
+    // (크기는 Cache에 이미 있으므로 파일을 다시 읽지 않는다. SHA256 비교는 별건이다.)
+    const identity = h("div", { class: "cmp-table cmp-identity" });
+    [["File", "filename", (v) => v || "-"],
+     ["Size", "size", (v) => (v ? formatBytes(v) : "-")]].forEach(([label, key, fmt]) => {
+      const left = (d.left || {})[key];
+      const right = (d.right || {})[key];
+      const differs = !!d.left && !!d.right && left !== right;
+      const line = h("div", { class: "cmp-row" + (differs ? " changed" : "") });
+      line.appendChild(h("div", { class: "cmp-label" }, [label]));
+      line.appendChild(h("div", { class: "cmp-value" }, [d.left ? fmt(left) : "-"]));
+      line.appendChild(h("div", { class: "cmp-value" }, [d.right ? fmt(right) : "-"]));
+      identity.appendChild(line);
+    });
+    body.appendChild(identity);
 
     const rows = [
       ["Title", "name"], ["Description", "desc"], ["Genre", "genre"],
@@ -1408,6 +1473,7 @@
   }
 
   async function handleSaveDetail() {
+    if (blockedInCompare("저장")) return;
     const state = S.detailState;
     if (!state) return;
     captureDraft();
@@ -1448,6 +1514,7 @@
     ((S.plan && S.plan.capacity) || []).find((c) => c.storageId === storageId) || null;
 
   async function copySelection() {
+    if (blockedInCompare("복사")) return;
     if (!S.selected.size) { showToast("복사할 항목을 선택하세요.", "warning"); return; }
     const r = await api.copySelection(S.activeId, [...S.selected]);
     if (!r.ok) { showToast(r.error, "error"); return; }
@@ -1457,6 +1524,7 @@
   }
 
   async function pasteIntoActive() {
+    if (blockedInCompare("붙여넣기")) return;
     const r = await api.paste(S.activeId);
     if (!r.ok) { showToast(r.error, "error"); return; }
     await refreshPlan();
@@ -1467,6 +1535,7 @@
   }
 
   async function deleteSelection() {
+    if (blockedInCompare("삭제")) return;
     if (!S.selected.size) { showToast("삭제할 항목을 선택하세요.", "warning"); return; }
     const count = S.selected.size;
     const run = async () => {
@@ -1705,6 +1774,13 @@
     bar.appendChild(middle);
 
     const actions = h("div", { class: "sb-actions" });
+    if (isCompare()) {
+      // 비교 중에는 Copy/Paste/Delete/Apply를 내놓지 않는다. Paste와 Apply는 선택이
+      // 없어도 눌리는 버튼이라, 두면 비교 화면에서 그대로 변경이 일어난다.
+      actions.appendChild(h("span", { class: "sb-badge" }, ["읽기 전용"]));
+      bar.appendChild(actions);
+      return;
+    }
     if (isArchive()) {
       const targets = S.tabs.filter((t) => t !== ARCHIVE_ID);
       const send = h("button", {
@@ -1808,13 +1884,17 @@
       if (e.key === "Escape") { if ($("modal-root").firstChild) closeModal(); else closeDetail(); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        if (S.detailState && S.detailState.tab === "metadata") handleSaveDetail();
+        // Compare 상세도 tab이 "metadata"라서, 이 조건만으로는 비교 화면에서 저장
+        // 경로로 들어가 버린다(state.romUid가 없어 엉뚱한 호출이 된다).
+        if (!isCompare() && S.detailState && S.detailState.tab === "metadata") handleSaveDetail();
         return;
       }
       // 입력 중에는 목록 단축키가 끼어들면 안 된다.
       const tag = (e.target && e.target.tagName) || "";
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       if (!S.activeId) return;
+      // 비교 중에도 단축키를 삼키지는 않는다 - 각 동작이 blockedInCompare()로 막으면서
+      // "왜 안 되는지"를 말해준다. 조용히 무시하면 사용자는 키가 안 먹었다고 여긴다.
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") { e.preventDefault(); copySelection(); }
       else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") { e.preventDefault(); pasteIntoActive(); }
       else if (e.key === "Delete") { e.preventDefault(); deleteSelection(); }

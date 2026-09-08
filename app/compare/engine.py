@@ -89,15 +89,41 @@ def _pair(left_entries, right_entries) -> tuple[list[tuple], set, set]:
             break
 
     # 2차: 엔진이 Exact/Normalized로 인정하고, 그런 상대가 **유일할** 때만.
+    #
+    # [성능] 남은 것끼리 전부 맞대면 O(N x M)이다. 실측(5,000 x 5,000)으로 1차에서
+    # 전부 짝지어지는 현실적인 경우는 0.03초였지만, 두 Collection이 이름을 하나도
+    # 공유하지 않는 최악의 경우는 7.3초가 걸렸다. classify()가 Exact/Normalized를
+    # 주는 조건은 "정규화 파일명이 같거나 / 정규화 제목이 같거나 / 해시가 같거나"뿐이므로,
+    # 그 세 키로 후보를 먼저 좁히면 결과는 그대로면서 비교 횟수만 준다
+    # (Phase 5에서 Archive 후보 검색을 인덱스로 좁힌 것과 같은 방향이다).
     remaining_right = [j for j in range(len(right_entries)) if j not in used_right]
     if remaining_right:
         right_subjects = {j: _subject(right_entries[j]) for j in remaining_right}
+        by_filename, by_title, by_sha = {}, {}, {}
+        for j in remaining_right:
+            subject = right_subjects[j]
+            system = subject["system"]
+            if subject["filename_norm"]:
+                by_filename.setdefault((system, subject["filename_norm"]), []).append(j)
+            if subject["title_norm"]:
+                by_title.setdefault((system, subject["title_norm"]), []).append(j)
+            if subject["sha256"]:
+                by_sha.setdefault((system, subject["sha256"]), []).append(j)
+
         for i, left in enumerate(left_entries):
             if i in used_left:
                 continue
             left_subject = _subject(left)
+            system = left_subject["system"]
+            candidates = set()
+            for index, key in ((by_filename, left_subject["filename_norm"]),
+                               (by_title, left_subject["title_norm"]),
+                               (by_sha, left_subject["sha256"])):
+                if key:
+                    candidates.update(index.get((system, key), ()))
+
             hits = []
-            for j in remaining_right:
+            for j in sorted(candidates):
                 if j in used_right:
                     continue
                 tier, _score, _why = match_engine.classify(left_subject, right_subjects[j])

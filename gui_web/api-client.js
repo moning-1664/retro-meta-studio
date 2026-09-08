@@ -42,7 +42,7 @@
 
   const mockMatchLinks = {};
 
-  const mockCompare = { on: false };
+  const mockCompare = { on: false, takenAt: 0 };
   const mockCompareRows = [
     { key: "ps2|Same.iso", system: "ps2", file: "Same.iso", title: "Same Game",
       size: 100, status: "same", mediaDiff: false, changedFields: [] },
@@ -58,7 +58,7 @@
   const mockCompareState = () => ({
     baseId: "c1", otherId: "c2", baseName: "Master Library", otherName: "Android ES-DE",
     counts: { all: 5, same: 2, conflict: 1, only_a: 1, only_b: 1, media: 1 },
-    systems: ["ps2"],
+    systems: ["ps2"], takenAt: mockCompare.takenAt,
   });
 
   const mock = {
@@ -176,6 +176,7 @@
     // 실제로 목록을 바꾸는지까지 GUI 테스트로 확인할 수 있어야 하기 때문이다.
     start_compare: (baseId, otherId) => {
       mockCompare.on = true;
+      mockCompare.takenAt = Date.now() / 1000;
       return ok(mockCompareState());
     },
     compare_state: () => ok(mockCompare.on ? mockCompareState() : null),
@@ -188,15 +189,17 @@
     compare_detail: (key) => {
       const row = mockCompareRows.find((r) => r.key === key) || mockCompareRows[0];
       const has = (side) => side === "left" ? row.status !== "only_b" : row.status !== "only_a";
-      const side = (name, genre) => has(name) ? {
-        romUid: 1, filename: row.file, title: row.title, size: row.size, present: true,
+      const side = (name, genre, size) => has(name) ? {
+        romUid: 1, filename: row.file, title: row.title, size, present: true,
         mediaTypes: ["covers"], fields: { name: row.title, genre, desc: "설명" },
       } : null;
       return ok({
         key: row.key, system: row.system, file: row.file, status: row.status,
         changedFields: row.changedFields, mediaDiff: row.mediaDiff,
         baseName: "Master Library", otherName: "Android ES-DE",
-        left: side("left", "RPG"), right: side("right", row.changedFields.length ? "Action" : "RPG"),
+        left: side("left", "RPG", row.size),
+        right: side("right", row.changedFields.length ? "Action" : "RPG",
+                    row.changedFields.length ? row.size + 50 : row.size),
       });
     },
     exit_compare: () => { mockCompare.on = false; return ok(true); },

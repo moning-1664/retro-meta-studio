@@ -202,5 +202,114 @@ class CompareApiTests(unittest.TestCase):
         self.assertIsNone(self.api.compare_state()["data"])
 
 
+class CompareContractTests(unittest.TestCase):
+    """Compare의 의미를 못박는 계약 테스트.
+
+    **`Same`은 "같은 ROM 파일"이라는 뜻이 아니다.** 양쪽에 대응 항목이 있고 비교 대상
+    Metadata가 같다는 뜻일 뿐이다. 크기가 달라도 Metadata가 같으면 Same이고, 그 차이는
+    별도 신호(크기)로 보여준다. 이 구분이 무너지면 Compare가 "ROM Identity 비교"로
+    변질되어, 같은 게임의 다른 덤프를 나란히 놓고 보려던 목적을 잃는다.
+    """
+
+    def test_same_means_metadata_is_identical_not_the_rom(self):
+        """같은 이름 + 다른 크기 + 같은 Metadata -> Same (크기 차이는 남는다)."""
+        left = [entry(1, "Game.iso", size=100, fields={"name": "Game", "genre": "RPG"})]
+        right = [entry(9, "Game.iso", size=200, fields={"name": "Game", "genre": "RPG"})]
+        rows = engine.compare(left, right)
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["status"], engine.STATUS_SAME,
+                         "Metadata가 같으면 크기가 달라도 Same이다")
+        self.assertEqual(row["changedFields"], [])
+        # 크기 차이 자체는 상세에서 볼 수 있게 양쪽 값이 살아 있어야 한다.
+        self.assertNotEqual(row["left"]["size"], row["right"]["size"])
+
+    def test_metadata_media_and_size_differ_independently(self):
+        """셋은 서로 독립적인 신호다 - 하나로 뭉뚱그리지 않는다."""
+        left = [entry(1, "Game.iso", size=100, fields={"name": "Game", "genre": "RPG"},
+                      media=["covers"])]
+        right = [entry(9, "Game.iso", size=120, fields={"name": "Game", "genre": "Action"},
+                       media=["covers", "videos"])]
+        row = engine.compare(left, right)[0]
+
+        self.assertEqual(row["status"], engine.STATUS_CONFLICT)   # Metadata가 다르다
+        self.assertEqual(row["changedFields"], ["genre"])
+        self.assertTrue(row["mediaDiff"])                          # Media도 다르다
+        self.assertNotEqual(row["left"]["size"], row["right"]["size"])  # 크기도 다르다
+
+    def test_media_difference_alone_never_becomes_a_conflict(self):
+        left = [entry(1, "Game.iso", fields={"name": "Game"}, media=["covers"])]
+        right = [entry(9, "Game.iso", fields={"name": "Game"}, media=["covers", "videos"])]
+        row = engine.compare(left, right)[0]
+        self.assertEqual(row["status"], engine.STATUS_SAME)
+        self.assertTrue(row["mediaDiff"])
+
+
+class CompareSnapshotTests(unittest.TestCase):
+    """비교 결과는 시작 시점의 **스냅샷**이다.
+
+    필터를 누를 때마다 다시 읽지 않는 것은 성능 때문만이 아니다 - 그 사이 스캔이 끼면
+    필터마다 다른 상태를 보게 되어, 사용자가 "방금 Only A였던 게 왜 사라졌지"를 겪는다.
+    최신으로 보려면 명시적으로 다시 시작한다.
+    """
+
+    def setUp(self):
+        self.dir = temp_root("rms_cmp_snap_")
+        self.base_root = build_custom_esde_tree(self.dir / "base", "ps2", [
+            {"filename": "Game.iso", "title": "Game", "genre": "RPG", "size": 100},
+        ])
+        other_root = build_custom_esde_tree(self.dir / "other", "ps2", [
+            {"filename": "Game.iso", "title": "Game", "genre": "RPG", "size": 100},
+        ])
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.base = self.api.create_collection("Base", "es-de", str(self.base_root))["data"]["id"]
+        self.other = self.api.create_collection("Other", "es-de", str(other_root))["data"]["id"]
+        for cid in (self.base, self.other):
+            scan(self.api, cid)
+
+    def tearDown(self):
+        self.api.close()
+
+    def _row_uid(self, collection_id, filename):
+        rows = self.api.list_rows(collection_id, limit=50)["data"]["rows"]
+        return next(r["romUid"] for r in rows if r["file"] == filename)
+
+    def test_state_reports_when_the_snapshot_was_taken(self):
+        state = self.api.start_compare(self.base, self.other)["data"]
+        self.assertIsNotNone(state["takenAt"], "언제 찍은 스냅샷인지 화면이 말할 수 있어야 한다")
+
+    def test_the_snapshot_does_not_change_underneath_the_user(self):
+        self.api.start_compare(self.base, self.other)
+        self.assertEqual(self.api.compare_rows()["data"]["rows"][0]["status"], "same")
+
+        # 비교 중에 기준 Collection의 Metadata가 바뀐다.
+        uid = self._row_uid(self.base, "Game.iso")
+        self.api.save_fields(self.base, uid, {"name": "Game", "genre": "Action"})
+
+        again = self.api.compare_rows()["data"]["rows"][0]
+        self.assertEqual(again["status"], "same",
+                         "이미 찍은 스냅샷은 그대로여야 한다 - 필터마다 결과가 달라지면 안 된다")
+
+    def test_starting_again_picks_up_the_change(self):
+        self.api.start_compare(self.base, self.other)
+        uid = self._row_uid(self.base, "Game.iso")
+        self.api.save_fields(self.base, uid, {"name": "Game", "genre": "Action"})
+
+        self.api.start_compare(self.base, self.other)   # 다시 찍는다(= 화면의 Refresh)
+        row = self.api.compare_rows()["data"]["rows"][0]
+        self.assertEqual(row["status"], "conflict")
+        self.assertEqual(row["changedFields"], ["genre"])
+
+    def test_exit_then_start_also_picks_up_the_change(self):
+        self.api.start_compare(self.base, self.other)
+        uid = self._row_uid(self.base, "Game.iso")
+        self.api.save_fields(self.base, uid, {"name": "Game", "genre": "Action"})
+
+        self.api.exit_compare()
+        self.api.start_compare(self.base, self.other)
+        self.assertEqual(self.api.compare_rows()["data"]["rows"][0]["status"], "conflict")
+
+
 if __name__ == "__main__":
     unittest.main()

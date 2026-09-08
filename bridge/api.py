@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import traceback
+import time
 from pathlib import Path
 
 from adapters import get_adapter
@@ -626,7 +627,7 @@ class Api:
         right = self.workspace.open(other_collection_id).all_entries()
         rows = compare_engine.compare(left, right)
         self._compare = {"baseId": base_collection_id, "otherId": other_collection_id,
-                         "rows": rows}
+                         "rows": rows, "takenAt": time.time()}
         return ok(self._compare_state())
 
     @guarded
@@ -644,6 +645,9 @@ class Api:
             "otherName": other.name if other else "?",
             "counts": compare_engine.summarize(rows),
             "systems": sorted({r["system"] for r in rows}),
+            # 이 결과는 시작 시점의 스냅샷이다. 그 사이 Collection이 바뀌었을 수
+            # 있으므로 언제 찍은 것인지 화면이 말해줄 수 있어야 한다.
+            "takenAt": self._compare.get("takenAt"),
         }
 
     @guarded
