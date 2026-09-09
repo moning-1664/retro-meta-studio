@@ -2451,6 +2451,16 @@
     const preview = h("div", { class: "media-tile-preview" });
     if (has) {
       const img = h("img", { alt: slot.label });
+      // Screenshot 상자는 CSS가 4:3으로 잡아 두지만, 세로로 더 긴 그림은 그 안에
+      // 넣으면 위아래가 빈다. 실제 그림 비율을 알고 나면(로드 후) 상자를 그 비율로
+      // 늘려서 빈 자리를 없앤다 - 아래 media-rest가 밀려나는 건 허용한다(CSS 참고).
+      if (extraClass === "wide") {
+        img.addEventListener("load", () => {
+          if (img.naturalWidth && img.naturalHeight > img.naturalWidth) {
+            zone.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+          }
+        });
+      }
       preview.appendChild(img);
       loadMediaImage(img, slot.key, false);
       zone.classList.add("clickable");
