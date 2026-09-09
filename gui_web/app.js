@@ -168,6 +168,11 @@
     S.colWidths = { ...DEFAULT_COL_WIDTHS };
     if (!collectionId || collectionId === ARCHIVE_ID) return;
     const r = await api.getUiState(collectionId);
+    // Collection을 빠르게 A -> B -> A로 오가면 B의 응답이 늦게 도착해 다시 열어 둔
+    // A의 상태를 덮어쓸 수 있다. 응답이 왔을 때 여전히 이 Collection을 보고 있을
+    // 때만 반영한다 - selectTab/openTab이 요청 시작 시점에 S.activeId를 이미
+    // 그 값으로 맞춰 두므로, 이후 활성 탭이 바뀌었다면 이 응답은 낡은 것이다.
+    if (S.activeId !== collectionId) return;
     if (!r.ok || !r.data) return;
     if (r.data.colWidths) S.colWidths = { ...DEFAULT_COL_WIDTHS, ...r.data.colWidths };
     if (r.data.sort) { S.order = r.data.sort.key || S.order; S.descending = !!r.data.sort.desc; }
@@ -175,6 +180,7 @@
   }
 
   let uiStateTimer = null;
+  let pendingUiStateFlush = null;   // 아직 안 나간 저장 요청 - 종료 직전에 즉시 보낸다
   function saveUiState() {
     if (!S.activeId || S.activeId === ARCHIVE_ID) return;
     clearTimeout(uiStateTimer);   // 끄는 동안 매 픽셀마다 저장하지 않는다
@@ -184,7 +190,21 @@
       sort: { key: S.order, desc: !!S.descending },
       previewOn: S.previewOn !== false,
     };
-    uiStateTimer = setTimeout(() => api.saveUiState(id, payload), 300);
+    pendingUiStateFlush = () => api.saveUiState(id, payload);
+    uiStateTimer = setTimeout(() => {
+      pendingUiStateFlush = null;
+      api.saveUiState(id, payload);
+    }, 300);
+  }
+
+  /** 종료 직전에 아직 안 나간 저장을 즉시 보낸다. 안 그러면 컬럼 폭을 조절한 직후
+   * 창을 닫을 때 debounce 타이머가 실행되기 전에 앱이 종료되어 그 변경이 사라진다. */
+  async function flushPendingUiState() {
+    if (!pendingUiStateFlush) return;
+    clearTimeout(uiStateTimer);
+    const send = pendingUiStateFlush;
+    pendingUiStateFlush = null;
+    await send();
   }
 
   // ------------------------------------------------------------------
@@ -305,7 +325,12 @@
      ["\u00d7", "close", "닫기"]].forEach(([glyph, action, label]) => {
       controls.appendChild(h("button", {
         class: "win-btn" + (action === "close" ? " close" : ""), title: label,
-        onClick: () => api.windowControl(action),
+        // 닫기 전에 아직 안 나간 UI 상태 저장(컬럼 폭 등)을 먼저 내보낸다 -
+        // debounce 타이머가 돌기 전에 창이 닫히면 방금 바꾼 값이 사라진다.
+        onClick: async () => {
+          if (action === "close") await flushPendingUiState();
+          api.windowControl(action);
+        },
       }, [glyph]));
     });
     bar.appendChild(controls);
@@ -624,15 +649,20 @@
       head.appendChild(h("span", { class: "nav-count" }, [formatCount(total)]));
       head.addEventListener("click", () => setScope({ kind: "storage", id: storage.id }));
       // 폴더처럼 접었다 편다. System이 많은 Storage가 목록을 다 차지하지 않게.
+      //
+      // 키는 Collection ID와 함께 묶는다. Storage id("ext-1" 등)는 Collection마다
+      // 처음부터 다시 매겨지므로, storage.id만으로 저장하면 Collection A에서 접은
+      // ext-1이 그것과 무관한 Collection B의 ext-1도 함께 접어 버린다.
+      const collapseKey = `${S.activeId}|${storage.id}`;
       head.addEventListener("dblclick", (e) => {
         e.preventDefault();
-        S.collapsedStorages[storage.id] = !S.collapsedStorages[storage.id];
+        S.collapsedStorages[collapseKey] = !S.collapsedStorages[collapseKey];
         renderNav();
       });
       if (!isCompare()) {
         head.addEventListener("contextmenu", (e) => { e.preventDefault(); openStorageMenu(storage, e); });
       }
-      const collapsed = !!S.collapsedStorages[storage.id];
+      const collapsed = !!S.collapsedStorages[collapseKey];
       head.insertBefore(icon(collapsed ? "chevronRight" : "chevronDown", 11), head.firstChild);
       group.appendChild(head);
       if (collapsed) group.classList.add("collapsed");
@@ -1102,6 +1132,11 @@
     S.matchCounts = {};
     S.total = 0;
     S.selected.clear();
+    // Shift 범위 선택의 기준점도 지운다. romUid는 Collection마다 새로 매겨지는 값이라
+    // (auto-increment) 두 Collection에서 같은 값이 흔히 겹친다 - 지우지 않으면 A에서
+    // 남긴 기준점이 다음에 연 B에서 우연히 같은 romUid를 만나 그 행을 기준점으로
+    // 오인할 수 있다.
+    S.selectAnchor = null;
     S.focused = null;
     S.detailState = null;
     S.queryToken += 1;
