@@ -156,6 +156,14 @@ MIGRATIONS = (
                updated_at REAL NOT NULL
            )""",
     )),
+    Migration(7, (
+        # ARCHIVE_REVISION_POLICY.md §6/§7/§39: "Media가 다르면 Revision을
+        # 분리한다." 그런데 content_hash가 fields+frontend_raw만 봐서 Media만
+        # 바뀐 Export가 새 Revision을 만들지 않았다(구현 버그,
+        # tests/test_archive_revision_policy.py TCA3). media_fingerprint를
+        # 따로 들고 다니며 content_hash 계산에 포함시킨다.
+        "ALTER TABLE archive_records ADD COLUMN media_fingerprint TEXT NOT NULL DEFAULT ''",
+    )),
 )
 
 
@@ -170,14 +178,33 @@ def rom_key_of(filename: str) -> str:
     return " ".join(stem.split()).strip().lower()
 
 
-def content_hash(fields, frontend_raw=None) -> str:
+def content_hash(fields, frontend_raw=None, media_fp="") -> str:
     """내용이 실제로 바뀌었는지 판정하는 해시(§39).
 
     같은 Metadata를 반복 Import해도 Revision이 늘어나지 않게 하는 것이 목적이므로,
     키 순서에 흔들리지 않도록 정렬해서 직렬화한다.
+
+    `media_fp`는 `media_fingerprint()`가 계산한 값이다(§6/§7) - Metadata가 같아도
+    Media가 바뀌면 다른 값이 되어야 새 Revision이 생긴다.
     """
-    payload = json.dumps({"fields": fields or {}, "raw": frontend_raw or {}},
+    payload = json.dumps({"fields": fields or {}, "raw": frontend_raw or {}, "media": media_fp or ""},
                          sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def media_fingerprint(media) -> str:
+    """Media 상태를 판정하는 fingerprint(§6/§7). `content_hash`와 함께 써서
+    Media만 바뀐 Export도 새 Revision을 만들게 한다.
+
+    `mtime_ns`까지 포함한다 - 같은 크기의 파일로 덮어써도(예: 픽셀만 다른 같은
+    바이트 수의 이미지) 실제 파일 교체는 mtime을 남긴다. 크기만 보면 이런
+    교체를 "같은 상태"로 오판한다.
+    """
+    items = sorted(
+        (str(m.get("media_type") or ""), str(m.get("rel_path") or ""),
+         int(m.get("size") or 0), int(m.get("mtime_ns") or 0))
+        for m in (media or []))
+    payload = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -241,8 +268,14 @@ class ArchiveStore:
     # Record / Revision
     # ------------------------------------------------------------------
     def put_record(self, rom_identity_id, source_collection_id, fields, frontend_raw=None,
-                   *, retention=DEFAULT_RETENTION, created_by="import") -> tuple[int, bool]:
+                   media=None, *, retention=DEFAULT_RETENTION, created_by="import") -> tuple[int, bool]:
         """Metadata를 보관한다. 내용이 바뀐 경우에만 새 Revision을 만든다(§39).
+
+        `media`는 이번 Export/Edit 시점의 media 목록
+        (`[{"media_type","rel_path","size","mtime_ns"}]`)이다. `None`이면 "이번
+        호출은 Media를 모른다"는 뜻으로, 직전 Revision의 media_fingerprint를 그대로
+        이어받는다 - Archive 직접 편집(`edit()`)처럼 media 목록을 안 주는 호출이
+        "Media가 전부 사라졌다"로 오판되어 새 Revision을 만들지 않도록 한다.
 
         `created_by`는 이 Revision이 생긴 원인이다(§17.1: "export"/"user_edit"/"import"
         등). 새 Revision의 `parent_record_id`는 같은 (identity, source) 계보에서 바로
@@ -251,23 +284,25 @@ class ArchiveStore:
 
         반환: (revision, created) - created=False면 같은 내용이라 아무것도 쓰지 않았다.
         """
-        digest = content_hash(fields, frontend_raw)
         with transaction(self._conn):
             latest = self._conn.execute(
-                "SELECT record_id, revision, content_hash FROM archive_records"
+                "SELECT record_id, revision, content_hash, media_fingerprint FROM archive_records"
                 " WHERE rom_identity_id=? AND source_collection_id=?"
                 " ORDER BY revision DESC LIMIT 1",
                 (rom_identity_id, source_collection_id)).fetchone()
+            media_fp = (media_fingerprint(media) if media is not None
+                       else (latest["media_fingerprint"] if latest else ""))
+            digest = content_hash(fields, frontend_raw, media_fp)
             if latest and latest["content_hash"] == digest:
                 return int(latest["revision"]), False
             revision = (int(latest["revision"]) + 1) if latest else 1
             self._conn.execute(
                 "INSERT INTO archive_records (rom_identity_id,source_collection_id,revision,content_hash,"
-                " fields_json,frontend_raw_json,updated_at,parent_record_id,created_by)"
-                " VALUES (?,?,?,?,?,?,?,?,?)",
+                " fields_json,frontend_raw_json,media_fingerprint,updated_at,parent_record_id,created_by)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (rom_identity_id, source_collection_id, revision, digest,
                  json.dumps(fields or {}, ensure_ascii=False),
-                 json.dumps(frontend_raw or {}, ensure_ascii=False), time.time(),
+                 json.dumps(frontend_raw or {}, ensure_ascii=False), media_fp, time.time(),
                  (latest["record_id"] if latest else None), created_by))
             self._apply_retention_locked(rom_identity_id, source_collection_id, retention)
             return revision, True

@@ -1220,3 +1220,134 @@ Archive 목록 조회가 `hasMedia`를 **하드코딩 false**로 내려서, `arc
 **다음**: 남은 후보는 Compare Row key 구조화(우선순위 낮음), Phase 8(MTP, 선택,
 `docs/PENDING_DECISIONS.md`에서 사용자 확인 대기), Archive Revision Phase D(같은 문서에서
 사용자 확인 대기).
+
+---
+
+## 2026-09-09 — GUI 재검토 1차: Storage/Navigation 정합화, Card 렌더링, Media 레이아웃 고정
+
+**이 항목은 뒤늦게 채운 기록이다.** 이 세션과 다음 두 세션(커밋 `8294525`, `51f793e`,
+`8bb0479`)이 실행될 때 memory.md 갱신 규칙을 지키지 않아 커밋만 있고 기록이 없었다 -
+아래는 그 세 커밋을 사후에 요약한 것이라 "다음 사람이 실수하기 쉬운 지점"이 당시만큼
+상세하지 않다. **Phase가 끝날 때마다 그 자리에서 기록할 것 - 나중에 몰아 쓰면 이렇게
+근거가 흐려진다.**
+
+### 커밋 `8294525` — Collection 추가 화면 재설계 + P0/P1
+
+- Collection 추가가 "+" 한 번에 Frontend + 대표 폴더 하나로 끝나도록 재설계(ROM/Metadata/
+  Media 세 칸을 각각 요구하지 않음). 드문 "ROM이 다른 위치" 경우는 "고급"에서 기존
+  Import 분리 경로를 그대로 쓴다.
+- **ES-DE 시스템 누락 버그**: `adapters/es_de.py::detect()`가 gamelists/downloaded_media
+  중 하나라도 있으면 그 안의 System만 인식하고, ROM만 있고 아직 안 긁은 System은 통째로
+  Collection에서 사라졌다(다이얼로그가 뜨는 게 아니라 System 자체가 안 보이는 더 조용한
+  실패). `_systems_with_roms()`를 항상 병합하도록 고쳤다.
+- Gamelist 툴바 정리: AutoPlan/Apply/Cancel/Archive 수집/Delete를 상단 하나로 모으고
+  하단 상태바 중복 세트를 없앴다. **Copy/Paste를 Gamelist에서 없앴다** - Collection 간
+  이동은 이제 Archive 수집 → Collection으로 보내기로 통일한다.
+- Media 확대(lightbox), Card 보기(List/Card 전환이 실제로 grid를 그리도록) 구현.
+
+### 커밋 `51f793e` — Storage/Navigation 정합화 + Card 렌더링 + Media 레이아웃 고정
+
+- **ROM 디렉토리를 별도 Storage로 만들지 않는다.** Navigation이 Storage 계층을 그대로
+  그려서 사용자가 요구한 적 없는 Internal/ROM 분류가 나타났었다 - ROM 위치는 System의
+  `rom_path` 속성으로 옮겼다(`app/workspace.py`). 기존 registry.db의 "roms" Storage를
+  걷어내는 마이그레이션 포함(데이터 유실 없이 `rom_path`로 이관).
+- **Archive 수집 범위를 명시적 scope 모델(all/system/selected)로 전환**(P0 버그 수정):
+  선택이 없으면 null → "전체"로 해석해, System만 보고 있어도 Collection 전체가
+  수집되던 문제. `app/archive/service.py::resolve_scope()`가 그 경계다.
+- GameList 렌더링을 clear-후-재생성에서 **patch 방식**으로 전환(`data-rom-uid` 키로
+  classList만 토글). 카드 표지에 IntersectionObserver 지연 로드 + 백엔드 썸네일
+  LRU 캐시(경로,크기,mtime 키) + WebP 인코딩.
+- Detail Media 탭을 고정 크기 레이아웃으로 재구성(Cover 좌 고정 높이 + 보조 3개 우,
+  Screenshot 전체폭 고정 높이, 나머지는 유무만 표시) - **이미지 크기가 상자 크기를
+  결정하지 않게 해서** 게임마다 패널 배치가 흔들리던 문제를 없앴다.
+- `build_web.bat`: 앱 실행 중이면 dist 삭제가 조용히 실패해 옛 exe가 남던 사고 방지 -
+  실행 중 프로세스 검사 추가. `dist/db`(사용자 자산)를 더 이상 삭제하지 않는다.
+
+### 커밋 `8bb0479` — 자리를 못 찾은 기능 세 가지는 보류 결정
+
+Delete 상시 버튼 / Auto Plan 노출 / ES-DE `es_systems.xml` 버튼 위치는 **실제 화면을
+정리한 뒤 판단하기로 미뤘다** - 아직 없는 화면을 기준으로 추측하지 않기 위해서다.
+세 항목 모두 `docs/PENDING_DECISIONS.md`에 "다음에 물어볼 것"으로 남아 있다.
+
+### 커밋 `e9db523` — Screenshot 상자 4:3 고정 (2026-09-10)
+
+레트로 게임 스크린샷 대부분은 4:3인데 상자가 훨씬 넓게 잡혀 있어 그림 양옆에 검은
+여백만 남았다. 상자를 4:3 `aspect-ratio`로 잡고, 그림이 실제로 세로가 더 긴 경우
+(포터블/아케이드 세로 화면)는 로드 후 그림 비율대로 상자를 아래로 늘린다(패널이
+스크롤된다). 주변 flex 항목에 `flex-shrink:0`을 추가하지 않으면 상자가 늘어날 때
+형제 요소가 짜부라진다.
+
+**검증(4개 커밋 합산)**: 이 절을 쓰는 시점(2026-09-10) 기준 파이썬 626개, Playwright
+169개, E2E(실제 파일) 22개 전부 통과. 커밋 `8294525`/`51f793e`/`8bb0479`/`e9db523`,
+`origin/main`에 push 완료.
+
+---
+
+## 2026-09-10 — Archive Revision 정책·Media overwrite 조합의 IMPLEMENTATION BUG 2건 수정
+
+`9ad3637`(2026-09-09)이 실제 filesystem/GUI로 Archive Revision 정책과 "ROM 유지 +
+Media만 overwrite" 조합을 검증하며 IMPLEMENTATION BUG 2건을 **실패하는 테스트로
+고정만 해두고 이번 세션에서는 고치지 않는다**고 남겼던 것을, 이 세션에서 고쳤다.
+스케줄 실행(자동, 사용자 확인 없이 최선의 방법을 바로 실행하라는 지시)으로 진행했다.
+
+### 버그 1 — Media만 바뀐 Export가 새 Revision을 만들지 않았다
+
+정책 §6/§7/§39: "Media가 다르면 Revision을 분리한다." 그런데 `content_hash()`
+(`app/store/archive.py`)가 `fields`+`frontend_raw`만 해싱해서, Metadata가 그대로면
+Media가 바뀌어도 `put_record()`가 같은 fingerprint로 보고 새 행을 만들지 않았다.
+
+**고침**: `media_fingerprint(media)`를 새로 추가했다 - `(media_type, rel_path, size,
+mtime_ns)`를 정렬해 해싱한다. `content_hash()`가 이 값을 세 번째 인자로 받고,
+`archive_records`에 `media_fingerprint` 컬럼을 추가했다(migration 7).
+
+**다음 사람이 알아야 할 것**: `put_record(..., media=None)`에서 **`media=None`은
+"모른다"는 뜻이지 "비었다"는 뜻이 아니다.** `media`를 안 주면 직전 Revision의
+`media_fingerprint`를 그대로 이어받는다 - 그러지 않으면 `archive/service.py::edit()`
+(Archive 직접 편집, media 목록을 안 줌)이 호출될 때마다 "Media가 전부 사라졌다"로
+오판해 불필요한 Revision을 만든다. `ingest_collection()`(Export 경로)만 실제
+`row["media"]`를 넘긴다. **media 관련 코드를 고칠 때 이 `None`의 의미를 다른 곳에서도
+지킬 것** - `None`과 `[]`(실제로 media가 없음)는 다른 신호다.
+
+이 fingerprint는 **`archive_media`가 자리 하나만 갖고 실제로 덮어쓰는 문제(옛 cover가
+사라지는 문제)는 고치지 않는다** - 그건 Media에 진짜 Revision 개념이 없다는 별도
+구조적 문제이고(§6 원칙과 다르게 여전히 유효), `docs/PENDING_DECISIONS.md`의 Phase D
+범위다. 이번에 고친 것은 "Revision 카운터가 media 변경을 인지하는가"뿐이다.
+
+### 버그 2 — "메타데이터만"이 ROM 충돌 때문에 고른 선택인데 같은 항목의 Cover 충돌까지 건너뛰었다
+
+`RESOLVE_SKIP`("메타데이터만")은 `entry.resolution` 하나로 **항목 전체**에 적용됐다.
+ROM도 Cover도 같은 `PlanEntry`에 속하므로, ROM이 충돌해 "메타데이터만"을 고르면 같은
+항목의 Cover 충돌도 함께 건너뛰어 Cover가 Source 것으로 안 바뀌었다.
+
+**고침**: `entry.conflicts`의 각 원소가 이미 `kind`("rom"/"media")를 갖고 있었으므로
+(`app/plan/builder.py::plan_add()`가 채운다), 항목 전체가 아니라 **conflict 단위**로
+승인 여부를 보도록 세 곳을 고쳤다:
+- `builder.py::approved_targets()` — `RESOLVE_SKIP`에서도 `kind != "rom"`(media)인
+  충돌은 승인된 것으로 본다.
+- `builder.py::unapproved_overwrites()` — `RESOLVE_SKIP`이어도 media 충돌은 계속
+  검증한다(예전엔 `RESOLVE_SKIP`이면 통째로 `return []`).
+- `applier.py::_plan_copies()` — `RESOLVE_SKIP`이 파일을 건너뛰는 것은 `kind=="rom"`일
+  때뿐이다.
+
+**"메타데이터만"의 실제 의미가 바뀐 것을 UI에도 반영했다.** `gui_web/app.js`의 충돌
+다이얼로그 문구가 "파일은 건드리지 않습니다"였는데, 실제로는 ROM만 보존하고
+media(커버 등)는 Source 것으로 채우는 것이 목적이었다 - 문구를 "ROM은 그대로 두고
+media는 새 것으로 채웁니다"로 고쳤다.
+
+**다음 사람이 알아야 할 것**: `entry.resolution`은 여전히 항목당 값 하나뿐이다 -
+이번 수정은 "그 값을 파일마다 다르게 해석하는" 방식이지 "파일마다 다른 값을 저장하는"
+방식이 아니다. `kind`가 "rom"/"media" 둘뿐이라 가능했다 - 앞으로 media 안에서도
+개별 선택(예: cover는 덮어쓰고 screenshot은 유지)이 필요해지면 이 kind 기반 분기로는
+안 되고 진짜 파일 단위 저장이 필요하다.
+
+### 문서 정합
+
+`tests/test_paste_media_overwrite_combo.py`와
+`tests/test_archive_revision_policy.py::TCA3_MediaOnlyChange`의 "IMPLEMENTATION BUG"
+docstring을 고침 완료 상태로 갱신했다(assertion은 그대로 두고 설명만 고쳤다 - 두
+테스트 다 원래도 정책이 요구하는 올바른 값을 기대하고 있었다). 버그였음을 보여주려고
+일부러 반대 assertion을 걸어 둔 `test_the_target_actually_still_has_its_own_cover`는
+지금 동작과 모순되므로 지웠다.
+
+**검증**: 파이썬 626개(변경 없이 전부 통과 - 새 실패 테스트를 추가한 게 아니라 있던
+실패 2개를 고쳤다), Playwright(목업) 169개, E2E(실제 파일) 22개 전부 통과.

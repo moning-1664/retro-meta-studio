@@ -255,12 +255,20 @@ def approved_targets(entry) -> dict:
     충돌은 파일마다 생긴다. 커버가 충돌해서 "덮어쓰기"를 누른 것을 항목 전체의
     허가로 읽으면, 사용자가 본 적도 없는 ROM까지 덮어쓰게 된다.
 
-    승인하지 않았으면 빈 dict다 - 그러면 어떤 파일도 덮어쓸 수 없다.
+    `RESOLVE_SKIP`("메타데이터만")은 ROM은 보존하되 media는 원본 것으로 채우는
+    것이 목적이다(Phase 7.22 QA, `tests/test_paste_media_overwrite_combo.py`) -
+    ROM 충돌 때문에 고른 선택이 같은 항목의 Cover 충돌까지 함께 건너뛰면 안 된다.
+    그래서 `RESOLVE_SKIP`에서도 `kind != "rom"`인 충돌(media)은 승인된 것으로 본다.
+
+    아무 것도 정해지지 않았으면 빈 dict다 - 그러면 어떤 파일도 덮어쓸 수 없다.
     """
-    if entry.resolution != RESOLVE_OVERWRITE:
-        return {}
-    return {str(c["dest"]): c.get("destSnapshot")
-            for c in (entry.conflicts or []) if c.get("dest")}
+    if entry.resolution == RESOLVE_OVERWRITE:
+        return {str(c["dest"]): c.get("destSnapshot")
+                for c in (entry.conflicts or []) if c.get("dest")}
+    if entry.resolution == RESOLVE_SKIP:
+        return {str(c["dest"]): c.get("destSnapshot")
+                for c in (entry.conflicts or []) if c.get("dest") and c.get("kind") != "rom"}
+    return {}
 
 
 def unapproved_overwrites(entry, layout, adapter, provider) -> list:
@@ -275,19 +283,22 @@ def unapproved_overwrites(entry, layout, adapter, provider) -> list:
     같은 크기·시각의 파일이 이미 있는 경우(ACTION_IDENTICAL)는 덮어쓰는 것이 아니라
     건드리지 않는 것이므로 여기 들어오지 않는다.
     """
-    # **건너뛰기로 정했으면 그 파일은 아예 쓰지 않는다.** 쓰지 않을 파일에 승인이
-    # 필요할 리 없다 - 승인이 필요한 것은 덮어쓰려는 파일이다.
+    approved = approved_targets(entry)
+    # ROM(kind="rom") 충돌은 `RESOLVE_SKIP`이면 아예 쓰지 않는다. 쓰지 않을 파일에
+    # 승인이 필요할 리 없다 - 승인이 필요한 것은 실제로 덮어쓰려는 파일뿐이다.
     #
     # 이걸 구별하지 않았더니, 대상에 같은 ROM이 이미 있는 상태에서 메타데이터만
     # 가져오려는 붙여넣기가 통째로 막혔다(사용자가 "한 번도 복사가 안 된다"고 한 것).
-    if entry.resolution == RESOLVE_SKIP:
-        return []
+    # media 충돌은 `RESOLVE_SKIP`에서도 실제로 쓰이므로(위 `approved_targets` 참고)
+    # 승인 여부를 그대로 확인해야 한다.
+    kind_by_dest = {str(c["dest"]): c.get("kind") for c in (entry.conflicts or []) if c.get("dest")}
 
-    approved = approved_targets(entry)
     blocked = []
     for src_path, dest, size in add_destinations(entry, layout, adapter):
         action, _ = classify_destination(provider, src_path, size, dest)
         if action != ACTION_CONFLICT:
+            continue
+        if entry.resolution == RESOLVE_SKIP and kind_by_dest.get(str(dest)) == "rom":
             continue
         if str(dest) in approved and snapshot_matches(provider, dest, approved[str(dest)]):
             continue

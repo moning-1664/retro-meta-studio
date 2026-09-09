@@ -148,7 +148,11 @@ def _plan_copies(entry, layout, adapter, provider):
     from app.plan.builder import add_destinations, approved_targets, snapshot_matches
 
     # 사용자가 덮어쓰기를 승인한 **파일별** 목록. 승인이 없으면 빈 dict다.
+    # `RESOLVE_SKIP`("메타데이터만")도 media(kind != "rom")는 승인된 것으로 온다 -
+    # ROM은 보존하고 media는 원본 것으로 채우는 것이 그 선택의 목적이다
+    # (Phase 7.22 QA, `approved_targets()` 참고).
     approved = approved_targets(entry)
+    kind_by_dest = {str(c["dest"]): c.get("kind") for c in (entry.conflicts or []) if c.get("dest")}
 
     pairs, created, replaced, blocked = [], [], [], []
     for src, dest, size in add_destinations(entry, layout, adapter):
@@ -156,9 +160,9 @@ def _plan_copies(entry, layout, adapter, provider):
         if action == ACTION_IDENTICAL:
             continue  # 이미 같은 파일이 있다. 건드릴 이유가 없다.
         if action == ACTION_CONFLICT:
-            # 사용자가 "이 파일은 그대로 두라"고 정했으면 건드리지 않는다. 메타데이터는
-            # 그대로 쓴다 - 그것이 이 붙여넣기의 목적이다.
-            if entry.resolution == RESOLVE_SKIP:
+            # ROM 충돌만 "그대로 두라"는 뜻이다 - `RESOLVE_SKIP`이라도 media는
+            # 아래에서 승인된 대상으로 취급되어 계속 진행된다.
+            if entry.resolution == RESOLVE_SKIP and kind_by_dest.get(str(dest)) == "rom":
                 continue
             # 여기가 마지막 방어선이다. 승인받은 그 파일일 때만 덮어쓴다.
             if str(dest) not in approved or not snapshot_matches(provider, dest,

@@ -350,6 +350,9 @@ Plan 생성 시점의 `(size, mtime_ns)`를 엔트리에 박아두고 Apply 직�
 | 8 | MTP Provider (선택) | 필요성 재평가 후 착수. `docs/PENDING_DECISIONS.md`에 확인 대기 |
 | 7.1〜7.13 | 안정성 하드닝: ES media 링크 Apply 연결, Adapter 간 Convert, Apply 항목별 호출 묶기, Match 링크 rename 생존, 실제 실행 검증(창 크기), 부분 스캔/덮어쓰기 승인/롤백 정합성, QA Audit(승인 범위·Provider 회귀), 실제 파일시스템 E2E 하네스(`tests_e2e/`), 네비게이션·목록 개수 일치 | 완료. `memory.md` Phase 7.1〜7.13 항목 참고 |
 | (번호 없음) | SQLite 커넥션 직렬화(스레드 간 재진입 락) + Archive 목록의 `hasMedia` 실제 반영 | 완료. 커밋 `01812d4`, `memory.md` 참고 |
+| (번호 없음) | Archive Revision 정책 실 filesystem/GUI 검증(TC-A1~A5) + "ROM 유지 + Media overwrite" 조합 검증 | 완료. 커밋 `9ad3637`. 검증 중 발견한 IMPLEMENTATION BUG 2건은 아래 항목에서 수정 |
+| (번호 없음) | GUI 재검토: Collection 추가 화면 재설계, Storage/Navigation 정합화, Card 렌더링, Media 레이아웃 고정, Screenshot 4:3 | 완료. 커밋 `8294525`/`51f793e`/`8bb0479`/`e9db523`, `memory.md` "GUI 재검토 1차" 참고 |
+| (번호 없음) | Archive Revision의 Media fingerprint 누락 + "메타데이터만"이 항목 단위로 Cover 충돌까지 건너뛰던 버그 수정 | 완료. `memory.md` "Archive Revision 정책·Media overwrite 조합의 IMPLEMENTATION BUG 2건 수정" 참고 |
 
 Phase 2까지가 "새 구조가 실제로 굴러가는지" 판가름하는 구간이다. 여기서 기존 UI 재사용이
 예상대로 되는지 먼저 확인하고 Phase 3(Plan)에 들어가는 것을 권한다.

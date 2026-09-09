@@ -97,7 +97,8 @@ def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=No
 
         kwargs = {"retention": retention} if retention else {}
         _revision, created = archive.put_record(
-            rom_identity_id, collection.id, row["fields"], row["frontend_raw"], **kwargs)
+            rom_identity_id, collection.id, row["fields"], row["frontend_raw"],
+            media=row["media"], **kwargs)
         ingested += 1
         revised += 1 if created else 0
 

@@ -1,4 +1,4 @@
-"""ROM 유지 + Media만 덮어쓰기 조합 (Phase 7.22, QA 재검토 항목 3).
+"""ROM 유지 + Media만 덮어쓰기 조합 (Phase 7.22 QA 재검토 항목 3, 다음 세션에서 수정).
 
 사용자가 요청한 정확한 조합이다.
 
@@ -12,28 +12,20 @@ Source의 Metadata + Cover를 Target에 적용하되 ROM은 기존 Target 것을
     Metadata → Source Metadata
     Cover    → Source Cover
 
-**실제로 돌려 보니 다르다.** ROM은 정확히 유지되고 Metadata도 정확히 반영되지만,
-**Cover는 Target 것이 그대로 남는다** - Source의 Cover로 바뀌지 않는다.
-
-## 원인 추적
+## 원인과 고친 방식
 
 Phase 7.19가 만든 "메타데이터만"(`RESOLVE_SKIP`)은 **항목(entry) 전체**에 적용되는
-단일 값이다(`app/plan/builder.py`의 `entry.resolution`). `_plan_copies()`는
-`add_destinations()`가 돌려주는 파일들을 순서대로 훑으면서, 충돌한 파일을 만날 때마다
-**그 항목의 resolution**을 그대로 적용한다.
+단일 값이었다(`app/plan/builder.py`의 `entry.resolution`). `_plan_copies()`가
+`add_destinations()`의 파일들을 훑으며 충돌마다 **그 항목의 resolution**을 그대로
+적용해서, ROM도 Cover도 같은 `entry`에 속하는 이상 ROM 충돌 때문에 "메타데이터만"을
+고르면 Cover 충돌도 함께 건너뛰었다.
 
-```python
-if action == ACTION_CONFLICT:
-    if entry.resolution == RESOLVE_SKIP:
-        continue   # 이 파일은 건드리지 않는다
-```
-
-ROM도 Cover도 같은 `entry`에 속하므로, ROM 충돌 때문에 "메타데이터만"을 고르면
-**Cover 충돌도 함께 건너뛴다.** 사용자는 "ROM은 두고 Cover는 새것으로"를 표현할
-방법이 없다 - 지금 UI/API의 해상도는 파일 단위가 아니라 항목 단위다.
-
-이건 IMPLEMENTATION BUG로 분류한다. Media snapshot·승인 범위(§Phase 7.10/7.11)는
-파일 단위로 이미 설계돼 있는데, 여기서만 항목 단위로 뭉뚱그려진다.
+`entry.conflicts`의 각 원소는 이미 `kind`("rom"/"media")를 갖고 있었으므로(Plan 단계에서
+`plan_add()`가 채운다), 항목 전체가 아니라 **conflict 단위**로 승인 여부를 판단하도록
+`approved_targets()`/`unapproved_overwrites()`(builder.py)와 `_plan_copies()`(applier.py)를
+고쳤다. `RESOLVE_SKIP`은 이제 `kind == "rom"`인 충돌만 건드리지 않고, `kind != "rom"`
+(media)인 충돌은 승인된 것으로 보아 계속 진행한다 - "메타데이터만"이 실제로 의미하는
+것은 "큰 파일(ROM)은 보존하되 메타데이터와 media는 새 것으로 채운다"이기 때문이다.
 """
 
 import unittest
@@ -96,22 +88,11 @@ class RomKeptMediaOverwrittenTests(unittest.TestCase):
         self.assertEqual(self._target_row()["title"], "Final Fantasy X")
 
     def test_cover_is_overwritten_with_the_source_cover(self):
-        """**IMPLEMENTATION BUG.** 사용자가 기대한 조합은 "ROM은 유지, Cover는 새것"
-        인데, 지금은 ROM 충돌 때문에 고른 "메타데이터만"이 같은 항목의 Cover 충돌까지
-        함께 건너뛴다. Cover가 Target 것(COVER-B)으로 그대로 남는다 - 실패를 그대로
-        남겨 둔다.
+        """ROM 충돌 때문에 고른 "메타데이터만"이 같은 항목의 Cover 충돌까지 함께
+        건너뛰지 않는다 - Cover는 conflict 단위로 승인되어 Source 것으로 바뀐다.
         """
         self._paste_and_resolve_skip()
-        self.assertEqual(self.dst_cover.read_bytes(), b"COVER-A" * 20,
-                         "IMPLEMENTATION BUG: ROM 충돌 때문에 고른 '메타데이터만'이 "
-                         "Cover 충돌까지 함께 건너뛰어, Source의 Cover로 바뀌지 않았다")
-
-    def test_the_target_actually_still_has_its_own_cover(self):
-        """위 실패의 반대편을 증명한다 - Target의 예전 Cover가 여전히 남아 있다는
-        사실 자체는 확실하다(버그가 "아무것도 안 바뀜"이 아니라 "선택적으로 못 바뀜"
-        임을 보인다)."""
-        self._paste_and_resolve_skip()
-        self.assertEqual(self.dst_cover.read_bytes(), b"COVER-B" * 20)
+        self.assertEqual(self.dst_cover.read_bytes(), b"COVER-A" * 20)
 
 
 if __name__ == "__main__":

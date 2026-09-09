@@ -180,11 +180,11 @@ class TCA3_MediaOnlyChange(ArchiveRevisionCase):
         self.assertEqual(covers["size"], len(b"cover-B" * 10))
 
     def test_a_media_only_change_does_not_create_a_new_metadata_revision(self):
-        """**IMPLEMENTATION BUG.** 정책 §6/§39 요약: "Media가 다르면 Revision을
-        분리한다." 그런데 `content_hash`는 fields+frontend_raw만 해싱하므로,
-        Metadata가 그대로면 Media가 바뀌어도 `put_record`는 같은 fingerprint로
-        보고 새 행을 만들지 않는다. 이 테스트는 **정책 위반을 실증하는 것이 목적**이라
-        실패를 "고쳐야 할 결과"로 남겨 둔다 - assertion을 완화해 통과시키지 않는다.
+        """정책 §6/§39: "Media가 다르면 Revision을 분리한다."
+
+        `content_hash`는 fields+frontend_raw뿐 아니라 `media_fingerprint()`(rel_path/
+        size/mtime_ns 기반)도 함께 본다(`app/store/archive.py`) - Metadata가 그대로여도
+        Media가 바뀌면 다른 fingerprint가 되어 새 Revision이 생긴다.
         """
         self._export()
         before = len(self._revisions())
@@ -192,11 +192,8 @@ class TCA3_MediaOnlyChange(ArchiveRevisionCase):
         self._replace_cover(b"cover-B" * 10)
         result = self._export()
 
-        # 정책대로라면 여기서 새 Revision이 생겨야 한다(revised == 1).
-        # 실제로는 Metadata가 그대로라 content_hash가 같아 revised == 0이다.
         self.assertEqual(result["revised"], 1,
-                         "POLICY VIOLATION: Media만 바뀌었는데 Revision이 생기지 않았다 "
-                         "(content_hash가 Metadata만 보기 때문)")
+                         "Media만 바뀌었는데 Revision이 생기지 않았다")
         self.assertEqual(len(self._revisions()), before + 1)
 
     def test_the_old_media_reference_is_not_recoverable_after_overwrite(self):
