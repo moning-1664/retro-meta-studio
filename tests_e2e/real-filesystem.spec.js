@@ -33,6 +33,7 @@ async function openTab(page, name) {
   const tab = page.locator(".ctab", { hasText: name }).first();
   if ((await tab.count()) === 0) {
     await page.locator(".ctab-add").click();
+    await page.locator(".add-collection-history summary").click();
     await page.locator(".picker-row", { hasText: name }).click();
   } else {
     await tab.click();
@@ -97,19 +98,33 @@ test.describe("편집하면 실제 파일이 바뀐다", () => {
   });
 });
 
+// Copy/Paste는 Gamelist에서 없앴다(QA 재검토 P1) - "Collection으로 보내기"
+// (Archive -> Collection)가 Collection 사이에 항목을 옮기는 유일한 경로다. Plan
+// Execute가 실제로 파일을 옮기는지는 그 경로로 확인한다.
 test.describe("Plan Execute가 실제로 파일을 옮긴다", () => {
-  test("복사 → 붙여넣기 → 실행하면 ROM과 커버가 실제로 생긴다", async ({ page }) => {
+  test("Archive에서 보내기 → 실행하면 ROM과 커버가 실제로 생긴다", async ({ page }) => {
     expect(fs.existsSync(targetRom("FFX.iso"))).toBe(false);
 
     await openReal(page);
     await openTab(page, "Source");
-    // 체크박스는 없앴다. 탐색기처럼 행을 눌러 고른다 - 행 가운데에는 버튼이 올 수
-    // 있어서 빈 셀(File)을 누른다.
-    await page.locator(".lrow", { hasText: "Final Fantasy X" }).locator(".lc-file").click();
-    await page.locator(".sb-actions .btn", { hasText: "Copy" }).click();
+    await page.locator("#filter-bar .btn", { hasText: "Archive에 수집" }).click();
+    await expect(page.locator("#toast")).toContainText("수집 완료");
+
+    // "보내기" 대상 선택 창은 이미 열려 있는 탭만 보여준다.
+    await openTab(page, "Target");
+    await page.locator(".ctab.archive").click();
+    await expect(page.locator(".ctab.active")).toContainText("Archive");
+
+    const ffxRow = page.locator(".lrow", { hasText: "Final Fantasy X" });
+    await expect(ffxRow).toBeVisible({ timeout: 20000 });
+    await ffxRow.locator(".lc-file").click();
+    await expect(page.locator(".sb-left")).toContainText("Selected 1");
+
+    await page.locator(".sb-actions .btn", { hasText: "Collection으로 보내기" }).click();
+    await page.locator(".picker-row", { hasText: "Target" }).click();
+    await expect(page.locator("#toast")).toBeVisible();
 
     await openTab(page, "Target");
-    await page.locator(".sb-actions .btn", { hasText: "Paste" }).click();
     await expect(page.locator("#filter-bar .btn", { hasText: /^Apply \(/ })).toBeVisible();
 
     await page.locator("#filter-bar .btn", { hasText: /^Apply \(/ }).click();
@@ -137,16 +152,29 @@ test.describe("Plan Execute가 실제로 파일을 옮긴다", () => {
 });
 
 test.describe("Cancel은 아무것도 바꾸지 않는다", () => {
-  test("붙여넣기 후 Plan을 취소하면 파일이 생기지 않는다", async ({ page }) => {
+  test("보내기 후 Plan을 취소하면 파일이 생기지 않는다", async ({ page }) => {
     const before = fs.readdirSync(path.join(ws.targetRoot, "ps2")).sort();
 
     await openReal(page);
     await openTab(page, "Source");
-    await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).locator(".lc-file").click();
-    await page.locator(".sb-actions .btn", { hasText: "Copy" }).click();
+    // 이전 테스트에서 이미 수집했을 수 있으니 한 번 더 눌러도 안전해야 한다(멱등).
+    await page.locator("#filter-bar .btn", { hasText: "Archive에 수집" }).click();
+    await expect(page.locator("#toast")).toContainText("수집 완료");
 
     await openTab(page, "Target");
-    await page.locator(".sb-actions .btn", { hasText: "Paste" }).click();
+    await page.locator(".ctab.archive").click();
+    await expect(page.locator(".ctab.active")).toContainText("Archive");
+
+    const mgs2Row = page.locator(".lrow", { hasText: "Metal Gear Solid 2" });
+    await expect(mgs2Row).toBeVisible({ timeout: 20000 });
+    await mgs2Row.locator(".lc-file").click();
+    await expect(page.locator(".sb-left")).toContainText("Selected 1");
+
+    await page.locator(".sb-actions .btn", { hasText: "Collection으로 보내기" }).click();
+    await page.locator(".picker-row", { hasText: "Target" }).click();
+    await expect(page.locator("#toast")).toBeVisible();
+
+    await openTab(page, "Target");
     await expect(page.locator("#filter-bar .btn", { hasText: /^Apply \(/ })).toBeVisible();
 
     // Plan 버리기는 목록 위 Cancel 버튼이다(예전에는 지우개 아이콘이었다).
@@ -157,6 +185,46 @@ test.describe("Cancel은 아무것도 바꾸지 않는다", () => {
 
     // **확인 창에서 취소했으면 디스크는 그대로여야 한다.**
     expect(fs.readdirSync(path.join(ws.targetRoot, "ps2")).sort()).toEqual(before);
+  });
+});
+
+test.describe("Card 보기 - 실제 자료", () => {
+  test("Card로 전환하면 실제 게임 수만큼 카드가 뜬다", async ({ page }) => {
+    await openReal(page);
+    await openTab(page, "Source");
+    await expect(page.locator(".lrow")).toHaveCount(2);
+
+    await page.locator("#filter-bar .seg-btn[title='카드 보기']").click();
+    await expect(page.locator(".preview-card")).toHaveCount(2);
+    await expect(page.locator(".preview-title")).toContainText(["Final Fantasy X"]);
+  });
+});
+
+test.describe("Detail Media 확대(lightbox) - 실제 파일", () => {
+  test("Cover를 누르면 실제 파일 데이터로 확대된 이미지가 뜬다", async ({ page }) => {
+    const coverBytes = fs.readFileSync(
+      path.join(ws.sourceRoot, "downloaded_media", "ps2", "covers", "FFX.png"));
+
+    await openReal(page);
+    await openTab(page, "Source");
+    await page.locator(".lrow", { hasText: "Final Fantasy X" }).locator(".lc-file").click();
+    await expect(page.locator("#detail-panel")).toHaveClass(/open/);
+    await page.locator(".detail-tab", { hasText: "Media" }).click();
+
+    const cover = page.locator(".media-tile[title='Cover']");
+    await expect(cover).toHaveClass(/clickable/);
+    await cover.click();
+
+    const lightboxImg = page.locator(".lightbox-img");
+    await expect(lightboxImg).toBeVisible();
+    const src = await lightboxImg.getAttribute("src");
+    expect(src).toMatch(/^data:image\//);
+    // 목업의 자리표시 그림이 아니라 **실제 커버 파일 바이트**여야 한다.
+    const decoded = Buffer.from(src.split(",")[1], "base64");
+    expect(decoded.equals(coverBytes)).toBe(true);
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".lightbox-img")).toHaveCount(0);
   });
 });
 

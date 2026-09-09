@@ -139,6 +139,51 @@ test.describe("Media 격자", () => {
   });
 });
 
+test.describe("Media 확대(lightbox)", () => {
+  const openMedia = async (page) => {
+    await openFirstGame(page);
+    await page.locator(".detail-tab", { hasText: "Media" }).click();
+  };
+
+  test("그림이 있는 타일을 누르면 확대된 이미지가 뜬다", async ({ page }) => {
+    await openMedia(page);
+    const cover = page.locator(".media-tile[title='Cover']");
+    await expect(cover).toHaveClass(/clickable/);
+    await cover.click();
+    await expect(page.locator(".lightbox-img")).toBeVisible();
+  });
+
+  test("ESC로 닫힌다", async ({ page }) => {
+    await openMedia(page);
+    await page.locator(".media-tile[title='Cover']").click();
+    await expect(page.locator(".lightbox-img")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".lightbox-img")).toHaveCount(0);
+  });
+
+  test("바깥 영역을 누르면 닫힌다", async ({ page }) => {
+    await openMedia(page);
+    await page.locator(".media-tile[title='Cover']").click();
+    await expect(page.locator(".lightbox-img")).toBeVisible();
+    await page.locator(".modal-overlay").click({ position: { x: 5, y: 5 } });
+    await expect(page.locator(".lightbox-img")).toHaveCount(0);
+  });
+
+  test("닫기 버튼으로 닫힌다", async ({ page }) => {
+    await openMedia(page);
+    await page.locator(".media-tile[title='Cover']").click();
+    await page.locator(".modal-actions .btn", { hasText: "닫기" }).click();
+    await expect(page.locator(".lightbox-img")).toHaveCount(0);
+  });
+
+  test("빈 타일은 눌러도 확대되지 않는다", async ({ page }) => {
+    await openMedia(page);
+    const empty = page.locator(".media-tile.empty").first();
+    await empty.click();
+    await expect(page.locator(".lightbox-img")).toHaveCount(0);
+  });
+});
+
 test.describe("Description", () => {
   test("기본 높이가 열 줄쯤이다", async ({ page }) => {
     // 남는 공간을 전부 흡수하면 설명이 긴 게임에서 아래 필드가 화면 밖으로 밀린다.

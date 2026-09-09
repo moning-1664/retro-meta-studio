@@ -235,6 +235,19 @@
     return card;
   }
 
+  /** Media 타일을 누르면 확대해 보여준다. showModal을 그대로 쓴다 - ESC와 바깥
+   * 클릭으로 닫히는 동작을 새로 만들 필요가 없다(모달 공통 처리에 이미 있다). */
+  function openMediaLightbox(img, label) {
+    if (!img || !img.src) return;
+    const body = h("div", { class: "modal-body lightbox-body" }, [
+      h("img", { src: img.src, alt: label, class: "lightbox-img" }),
+    ]);
+    const card = showModal(label, body, [
+      h("button", { class: "btn", onClick: closeModal }, ["닫기"]),
+    ]);
+    card.classList.add("lightbox-card");
+  }
+
   function showConfirm(title, message, danger, onConfirm) {
     const body = h("div", { class: "modal-body" }, [h("div", { class: "modal-text" }, [message])]);
     showModal(title, body, [
@@ -352,8 +365,8 @@
       tab.addEventListener("contextmenu", (e) => { e.preventDefault(); openTabMenu(collection, e); });
       bar.appendChild(tab);
     });
-    const add = h("button", { class: "ctab-add", title: "Collection 열기/추가" }, [icon("plus", 13)]);
-    add.addEventListener("click", openCollectionPicker);
+    const add = h("button", { class: "ctab-add", title: "Collection 추가" }, [icon("plus", 13)]);
+    add.addEventListener("click", openAddCollection);
     bar.appendChild(add);
 
     bar.appendChild(h("div", { class: "ctab-spacer" }));
@@ -490,48 +503,27 @@
   // ------------------------------------------------------------------
   // Collection 추가
   // ------------------------------------------------------------------
-  async function openCollectionPicker() {
-    await loadCollections();
-    const list = h("div", { class: "picker-list" });
-    S.collections.forEach((c) => {
-      const opened = S.tabs.includes(c.id);
-      const row = h("button", { class: "picker-row" + (opened ? " disabled" : "") });
-      row.appendChild(icon("gamepad", 14));
-      row.appendChild(h("div", { class: "picker-main" }, [
-        h("div", { class: "picker-name" }, [c.name]),
-        h("div", { class: "picker-sub" }, [`${c.frontendLabel} · ${c.rootPath}`]),
-      ]));
-      if (opened) row.appendChild(h("span", { class: "picker-badge" }, ["열림"]));
-      row.addEventListener("click", () => { if (!opened) { closeModal(); openTab(c.id); } });
-      list.appendChild(row);
-    });
-    if (!S.collections.length) {
-      list.appendChild(h("div", { class: "empty-msg" }, ["등록된 Collection이 없습니다."]));
-    }
-    const body = h("div", { class: "modal-body" }, [list]);
-    showModal("Collection 열기", body, [
-      h("button", { class: "btn", onClick: closeModal }, ["닫기"]),
-      h("button", { class: "btn primary", onClick: () => { closeModal(); openAddCollection(); } },
-        [icon("upload", 12), h("span", {}, ["Import"])]),
-    ]);
-  }
+  //: 어떤 Frontend가 ES-DE 스타일(메타데이터/미디어를 한 상위 폴더에 모아 두고
+  //  ROM만 다른 곳에 둘 수 있는 구조)인지. 기본 흐름에서는 이 폴더 하나만 받는다 -
+  //  ROM/Metadata/Media를 각각 물으면 그 셋이 서로 어떻게 다른지부터 설명해야 했다.
+  const ES_STYLE_FRONTEND_IDS = new Set(["es-de"]);
 
+  /** "+ Collection"의 유일한 진입점. 예전 목록을 먼저 보여주고 그 안에 다시 "Import"
+   * 버튼이 있는 2단 구조였다 - 그 Import가 뭘 하는 건지 이름만 봐서는 알 수 없었다.
+   * 지금은 누르면 바로 이 추가 화면이 뜨고, 이미 등록된 Collection은 아래 접힌
+   * "History"에서만 볼 수 있다. */
   async function openAddCollection() {
     const frontendsR = await api.frontends();
     const frontends = frontendsR.ok ? frontendsR.data : [{ id: "es-de", label: "ES-DE" }];
+    await loadCollections();
 
     const nameInput = h("input", { class: "field-input", placeholder: "예: Android ES-DE" });
-    // **경로를 셋으로 나눈다.** ES-DE는 메타데이터와 ROM을 떼어 놓는 것이 기본이라
-    // (안드로이드의 외장 SD가 그 경우다) 하나만 받으면 반쪽짜리 Collection만 만들 수
-    // 있었다 - ROM만 있거나 메타데이터만 있거나.
-    const pathInput = h("input", { class: "field-input",
-      placeholder: "gamelists / downloaded_media 가 있는 폴더" });
+    const pathInput = h("input", { class: "field-input", placeholder: "폴더를 선택하세요" });
+    // 대개는 이 하나로 충분하다. ROM이 메타데이터와 다른 물리 위치에 있는 흔치 않은
+    // 경우(§9, 안드로이드 외장 SD)만 "고급"을 펼쳐 따로 지정한다 - 매번 세 칸을
+    // 채우게 하면 그 드문 경우 때문에 흔한 경우가 불편해진다.
     const romInput = h("input", { class: "field-input",
-      placeholder: "비워두면 위 폴더에서 찾습니다" });
-    const mediaInput = h("input", { class: "field-input",
-      placeholder: "비워두면 Metadata 폴더 아래에서 찾습니다" });
-    const frontendSel = h("select", { class: "field-input" },
-      frontends.map((f) => h("option", { value: f.id }, [f.label])));
+      placeholder: "비워두면 위 폴더에서 함께 찾습니다" });
     const targetSel = h("select", { class: "field-input" }, [
       h("option", { value: "" }, ["Unknown"]),
       h("option", { value: "windows" }, ["Windows"]),
@@ -544,6 +536,10 @@
       h("option", { value: "arm64" }, ["ARM64"]),
       h("option", { value: "arm32" }, ["ARM32"]),
     ]);
+    const frontendSel = h("select", { class: "field-input" },
+      frontends.map((f) => h("option", { value: f.id }, [f.label])));
+
+    const pathLabel = h("div", { class: "field-label" }, ["ROM 디렉토리:"]);
 
     const browseInto = (input, title, alsoName) => h("button", { class: "btn", onClick: async () => {
       const r = await api.pickFolder(title);
@@ -554,46 +550,78 @@
       }
     } }, [icon("folderOpen", 12), h("span", {}, ["찾아보기"])]);
 
-    const body = h("div", { class: "modal-body" }, [
-      h("div", { class: "field-label" }, ["이름"]), nameInput,
-      h("div", { class: "field-label" }, ["Frontend"]), frontendSel,
+    // 긴 설명을 필드 아래 줄줄이 적지 않는다 - hover하면 뜨는 title 툴팁 하나로
+    // 충분하다. 항상 보이는 문장이 아니라 필요할 때만 보이는 문장으로 정책을 맞춘다.
+    function syncFrontend() {
+      const isEs = ES_STYLE_FRONTEND_IDS.has(frontendSel.value);
+      pathLabel.textContent = isEs ? "ES-DE 디렉토리:" : "ROM 디렉토리:";
+      pathLabel.title = isEs
+        ? "ES-DE의 gamelists와 downloaded_media가 포함된 상위 디렉토리입니다."
+        : "ROM(과 메타데이터)이 들어 있는 디렉토리입니다.";
+      pathInput.title = pathLabel.title;
+    }
+    frontendSel.addEventListener("change", syncFrontend);
+    syncFrontend();
 
-      h("div", { class: "field-label" }, ["Metadata 폴더"]),
-      h("div", { class: "field-row" },
-        [pathInput, browseInto(pathInput, "Metadata 폴더 선택", true)]),
-
-      h("div", { class: "field-label" }, ["ROM 폴더 (선택)"]),
+    const advancedBody = h("div", {}, [
+      h("div", { class: "field-label" }, ["ROM 폴더 (선택, ROM이 다른 위치에 있을 때만)"]),
       h("div", { class: "field-row" }, [romInput, browseInto(romInput, "ROM 폴더 선택")]),
-
-      h("div", { class: "field-label" }, ["Media 폴더 (선택)"]),
-      h("div", { class: "field-row" }, [mediaInput, browseInto(mediaInput, "Media 폴더 선택")]),
-
-      h("div", { class: "modal-hint" }, [
-        "ROM과 메타데이터가 다른 곳에 있어도 됩니다. 둘 중 하나만 있어도 열 수 있고, " +
-        "나중에 나머지를 붙일 수 있습니다.",
-      ]),
-
       h("div", { class: "field-grid two" }, [
         h("div", {}, [h("div", { class: "field-label" }, ["Target"]), targetSel]),
         h("div", {}, [h("div", { class: "field-label" }, ["Architecture"]), archSel]),
       ]),
-      h("div", { class: "modal-hint" },
-        ["Target/OS/Architecture는 서로 다른 값입니다. 모르면 Unknown으로 두세요."]),
+    ]);
+    const advanced = h("details", { class: "add-collection-advanced" }, [
+      h("summary", {}, ["고급"]),
+      advancedBody,
     ]);
 
-    showModal("Collection 가져오기", body, [
-      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+    // History는 기본적으로 접혀 있다 - 방금 연 화면이 다시 예전 목록으로 보이면
+    // "+"를 누른 의미가 없다. 필요할 때만 펼쳐서 예전 Collection을 고른다.
+    const historyList = h("div", { class: "picker-list" });
+    S.collections.forEach((c) => {
+      const opened = S.tabs.includes(c.id);
+      const row = h("button", { class: "picker-row" + (opened ? " disabled" : "") });
+      row.appendChild(icon("gamepad", 14));
+      row.appendChild(h("div", { class: "picker-main" }, [
+        h("div", { class: "picker-name" }, [c.name]),
+        h("div", { class: "picker-sub" }, [`${c.frontendLabel} · ${c.rootPath}`]),
+      ]));
+      if (opened) row.appendChild(h("span", { class: "picker-badge" }, ["열림"]));
+      row.addEventListener("click", () => { if (!opened) { closeModal(); openTab(c.id); } });
+      historyList.appendChild(row);
+    });
+    if (!S.collections.length) {
+      historyList.appendChild(h("div", { class: "empty-msg" }, ["등록된 Collection이 없습니다."]));
+    }
+    const history = h("details", { class: "add-collection-history" }, [
+      h("summary", {}, [`History (${formatCount(S.collections.length)})`]),
+      historyList,
+    ]);
+
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "field-label" }, ["Frontend"]), frontendSel,
+      pathLabel,
+      h("div", { class: "field-row" }, [pathInput, browseInto(pathInput, "폴더 선택", true)]),
+      h("div", { class: "field-label" }, ["이름"]), nameInput,
+      advanced,
+      history,
+    ]);
+
+    showModal("Collection 추가", body, [
+      h("button", { class: "btn", onClick: closeModal }, ["Cancel"]),
       h("button", { class: "btn primary", onClick: async () => {
-        const name = nameInput.value.trim();
         const romPath = romInput.value.trim();
-        // Metadata 폴더를 비우고 ROM만 준 경우도 정상이다 - 스크래핑을 한 번도 안 한
+        // ROM 폴더만 주고 대표 폴더를 비운 경우도 정상이다 - 스크래핑을 한 번도 안 한
         // 컬렉션이 그 모습이다. 그때는 ROM 폴더가 곧 Collection root가 된다.
         const path = pathInput.value.trim() || romPath;
-        if (!name || !path) { showToast("이름과 폴더를 입력하세요.", "warning"); return; }
+        if (!path) { showToast("폴더를 선택하세요.", "warning"); return; }
+        const name = nameInput.value.trim() ||
+          String(path).split(/[\\/]/).filter(Boolean).pop() || "Collection";
         closeModal();
         const r = await api.createCollection(name, frontendSel.value, path,
                                              targetSel.value || null, archSel.value || null,
-                                             romPath, mediaInput.value.trim());
+                                             romPath, "");
         if (!r.ok) { showToast(r.error, "error"); return; }
         await loadCollections();
         // **불러오기 전에** 묻는다 - 스캔이 끝난 뒤에 물으면 사용자는 이미 "메타데이터가
@@ -601,9 +629,9 @@
         await offerMetadataBootstrap(r.data.id);
         await openTab(r.data.id);
         runScan(r.data.id);
-      } }, ["추가"]),
+      } }, ["Add"]),
     ]);
-    setTimeout(() => nameInput.focus(), 30);
+    setTimeout(() => pathInput.focus(), 30);
   }
 
   // ------------------------------------------------------------------
@@ -1092,10 +1120,25 @@
       [`${formatCount(S.total)} items`]));
   }
 
-  /** AutoPlan / Apply / Cancel. 나머지(Copy/Paste/Delete)는 우클릭과 단축키로 쓴다. */
+  /** Archive에 수집 / Delete / AutoPlan / Apply / Cancel. Gamelist 위 툴바 한 곳에
+   * 모은다 - 예전에는 이 중 일부가 하단 상태바에도 똑같이 있어서 두 번 보였다.
+   * Copy/Paste는 없앴다(QA 재검토 P1) - Collection 사이 이동은 Archive를 거친다. */
   function renderPlanActions(bar) {
     if (isCompare() || isArchive()) return;
     const plan = S.plan;
+
+    const ingest = h("button", { class: "btn compact",
+      title: "이 Collection의 Metadata를 Archive에 수집합니다" },
+      [icon("database", 12), h("span", {}, ["Archive에 수집"])]);
+    ingest.addEventListener("click", ingestToArchive);
+    bar.appendChild(ingest);
+
+    const del = h("button", {
+      class: "btn compact", disabled: !S.selected.size,
+      title: S.selected.size ? "선택한 항목을 삭제합니다" : "삭제할 항목을 먼저 고르세요",
+    }, ["Delete"]);
+    if (S.selected.size) del.addEventListener("click", deleteSelection);
+    bar.appendChild(del);
 
     const auto = h("button", {
       class: "btn compact" + (S.autoPlan ? " primary" : ""),
@@ -1311,13 +1354,18 @@
     clear(win);
 
     if (!activeDetail()) {
-      win.appendChild(h("div", { class: "empty-msg" }, ["Collection을 열면 게임 목록이 표시됩니다."]));
+      win.appendChild(h("div", { class: "empty-msg" }, [
+        "등록된 Collection이 없습니다. 상단의 \"+\"를 눌러 추가하세요.",
+      ]));
       return;
     }
     if (S.total === 0) {
       win.appendChild(h("div", { class: "empty-msg" }, ["조건에 맞는 게임이 없습니다."]));
       return;
     }
+
+    if (S.viewMode === "card" && !isCompare()) { renderCardWindow(scroll, spacer, win); return; }
+    win.classList.remove("card-mode");
 
     const viewport = scroll.clientHeight || 600;
     const start = Math.max(0, Math.floor(scroll.scrollTop / ROW_HEIGHT) - OVERSCAN);
@@ -1329,6 +1377,64 @@
       win.appendChild(row ? rowElement(row, i) : placeholderRow(i));
     }
     ensurePages(start, end);
+  }
+
+  /** 카드(격자) 보기. 목록의 가상 스크롤과 달리 지금까지 불러온 페이지만큼만
+   * 그려 넣고, 바닥 근처까지 스크롤하면 다음 페이지를 더 불러온다 - 수천 개
+   * 규모의 가상 그리드는 이번 작업 범위 밖이다(§작업 원칙). */
+  function renderCardWindow(scroll, spacer, win) {
+    spacer.style.height = "0px";
+    win.style.transform = "";
+    win.classList.add("card-mode");
+    clear(win);
+
+    const loadedUpTo = S.loadedPages.size
+      ? (Math.max(...S.loadedPages) + 1) * PAGE_SIZE
+      : PAGE_SIZE;
+    const renderCount = Math.min(S.total, loadedUpTo);
+    for (let i = 0; i < renderCount; i += 1) {
+      const row = S.rowCache.get(i);
+      win.appendChild(row ? cardElement(row, i) : cardPlaceholder(i));
+    }
+
+    const nearBottom = scroll.scrollTop + scroll.clientHeight > scroll.scrollHeight - 300;
+    if (renderCount < S.total && (nearBottom || renderCount === 0)) {
+      ensurePages(renderCount, Math.min(S.total - 1, renderCount + PAGE_SIZE - 1));
+    }
+  }
+
+  function cardElement(row, index) {
+    const selected = S.selected.has(row.romUid);
+    const card = h("div", {
+      class: "preview-card" + (selected ? " selected" : "") + (S.focused === row.romUid ? " focused" : ""),
+    });
+    const cover = h("div", { class: "preview-cover" });
+    if (row.hasMedia !== false) {
+      const img = h("img", { alt: row.title || row.file });
+      cover.appendChild(img);
+      loadCardCover(img, row.romUid);
+    } else {
+      cover.appendChild(icon("imageOff", 20));
+    }
+    card.appendChild(cover);
+    card.appendChild(h("div", { class: "preview-title truncate", title: row.title || row.file },
+                       [row.title || row.file]));
+    card.addEventListener("click", (e) => handleRowClick(e, row, index));
+    return card;
+  }
+
+  function cardPlaceholder(index) {
+    return h("div", { class: "preview-card placeholder", key: index }, [
+      h("div", { class: "preview-cover" }),
+      h("div", { class: "preview-title" }, [h("span", { class: "skeleton" })]),
+    ]);
+  }
+
+  /** 카드의 표지 그림. loadMediaImage()는 상세 패널(S.detailState) 것만 신경 쓰므로
+   * 목록의 여러 행을 한꺼번에 그리는 카드 보기에는 쓸 수 없다 - romUid를 직접 받는다. */
+  async function loadCardCover(img, romUid) {
+    const r = await api.getMediaImage(S.activeId, romUid, "Covers", true);
+    if (r.ok && r.data) img.src = r.data;
   }
 
   function placeholderRow(index) {
@@ -2113,6 +2219,8 @@
         const img = h("img", { alt: slot.label });
         preview.appendChild(img);
         loadMediaImage(img, slot.key, false);
+        zone.classList.add("clickable");
+        zone.addEventListener("click", () => openMediaLightbox(img, slot.label));
       } else {
         // "Screenshot 없음"을 열두 번 적으면 그것만 눈에 들어온다. 아이콘 하나로 족하다.
         preview.appendChild(icon("imageOff", 16));
@@ -2243,37 +2351,10 @@
   const planCapacity = (storageId) =>
     ((S.plan && S.plan.capacity) || []).find((c) => c.storageId === storageId) || null;
 
-  async function copySelection() {
-    if (blockedInCompare("복사")) return;
-    if (!S.selected.size) { showToast("복사할 항목을 선택하세요.", "warning"); return; }
-    const r = await api.copySelection(S.activeId, [...S.selected]);
-    if (!r.ok) { showToast(r.error, "error"); return; }
-    await refreshPlan();
-    // 다른 창에서도 붙여넣을 수 있다(결정 D5).
-    showToast(`${formatCount(r.data.count)}개를 복사했습니다. 다른 창에서도 붙여넣을 수 있습니다.`);
-  }
-
-  async function pasteIntoActive() {
-    if (blockedInCompare("붙여넣기")) return;
-    const r = await api.paste(S.activeId);
-    if (!r.ok) { showToast(r.error, "error"); return; }
-    await refreshPlan();
-    const skipped = (r.data.skipped || []).length;
-    const suffix = skipped ? ` (원본이 없어 ${skipped}개 제외)` : "";
-    const conflicts = r.data.conflicts || 0;
-
-    // **결정이 필요하면 그 자리에서 말한다.** 예전에는 "N개를 Plan에 올렸습니다"만
-    // 보여줘서, Apply를 누른 뒤에야 "충돌로 건너뜀"을 만났다. 대상에 이미 같은 ROM이
-    // 있는 붙여넣기(메타데이터만 가져오려는 흔한 경우)가 늘 여기 걸린다.
-    if (conflicts) {
-      showToast(`${formatCount(r.data.added)}개를 Plan에 올렸습니다${suffix}. ` +
-                `${formatCount(conflicts)}개는 대상에 이미 있어 결정이 필요합니다.`, "warning");
-      openConflictDialog();
-      return;
-    }
-    if (S.autoPlan) showToast(`${formatCount(r.data.added)}개를 Plan에 올렸습니다${suffix}.`);
-    else await applyPlan();
-  }
+  // Copy/Paste는 Gamelist에서 없앴다(QA 재검토 P1) - Collection 사이에 항목을
+  // 옮기는 경로는 Archive에 수집 -> Collection으로 보내기 하나로 통일한다. 백엔드의
+  // api.copySelection/api.paste 자체는 남아 있다(다른 진입점이 나중에 필요할 수
+  // 있다) - 여기서 없앤 것은 화면의 버튼과 단축키뿐이다.
 
   async function deleteSelection() {
     if (blockedInCompare("삭제")) return;
@@ -2545,39 +2626,8 @@
       return;
     }
 
-    const ingest = h("button", { class: "btn compact",
-      title: "이 Collection의 Metadata를 Archive에 수집합니다" },
-      [icon("database", 12), h("span", {}, ["Archive에 수집"])]);
-    ingest.addEventListener("click", ingestToArchive);
-    actions.appendChild(ingest);
-
-    const autoBtn = h("button", { class: "btn compact" + (S.autoPlan ? " primary" : ""),
-      title: "Auto Plan: 변경을 바로 적용하지 않고 먼저 계산합니다" },
-      [S.autoPlan ? "✓ Auto Plan" : "Auto Plan OFF"]);
-    autoBtn.addEventListener("click", toggleAutoPlan);
-    actions.appendChild(autoBtn);
-
-    [["Copy", copySelection, !S.selected.size],
-     ["Paste", pasteIntoActive, !(plan && plan.clipboard)],
-     ["Delete", deleteSelection, !S.selected.size]].forEach(([label, fn, disabled]) => {
-      const btn = h("button", { class: "btn compact", disabled: disabled || !detail }, [label]);
-      if (!disabled && detail) btn.addEventListener("click", fn);
-      actions.appendChild(btn);
-    });
-
-    const applyBtn = h("button", {
-      class: "btn compact primary", disabled: !(plan && plan.total),
-      title: plan && plan.total ? "Plan을 실제 파일에 적용합니다" : "적용할 Plan이 없습니다",
-    }, [plan && plan.total ? `Apply (${formatCount(plan.total)})` : "Apply"]);
-    if (plan && plan.total) applyBtn.addEventListener("click", applyPlan);
-    actions.appendChild(applyBtn);
-
-    if (plan && plan.total) {
-      const discard = h("button", { class: "btn compact", title: "Plan 비우기" }, [icon("eraser", 12)]);
-      discard.addEventListener("click", () => showConfirm("Plan 비우기", "계산해둔 변경을 모두 버립니다.", true,
-        async () => { await api.planClear(S.activeId); await refreshPlan(); }));
-      actions.appendChild(discard);
-    }
+    // AutoPlan/Apply/Cancel/Archive에 수집/Delete는 전부 위쪽 Gamelist 툴바
+    // (renderPlanActions)로 옮겼다 - 여기 그대로 두면 똑같은 버튼이 두 번 보인다.
     bar.appendChild(actions);
   }
 
@@ -2682,9 +2732,7 @@
       if (!S.activeId) return;
       // 비교 중에도 단축키를 삼키지는 않는다 - 각 동작이 blockedInCompare()로 막으면서
       // "왜 안 되는지"를 말해준다. 조용히 무시하면 사용자는 키가 안 먹었다고 여긴다.
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") { e.preventDefault(); copySelection(); }
-      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") { e.preventDefault(); pasteIntoActive(); }
-      else if (e.key === "Delete") { e.preventDefault(); deleteSelection(); }
+      if (e.key === "Delete") { e.preventDefault(); deleteSelection(); }
     });
   }
 
@@ -2692,8 +2740,9 @@
     bindEvents();
     await loadCollections();
     renderAll();
+    // Collection이 하나도 없어도 선택을 강요하지 않는다 - 빈 메인 화면을 정상적으로
+    // 띄우고, "+ Collection"을 사용자가 직접 누르게 한다.
     if (S.collections.length) await openTab(S.collections[0].id);
-    else openCollectionPicker();
   }
 
   if (window.pywebview) init();

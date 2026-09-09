@@ -5,40 +5,42 @@ const { openApp, modalButton } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
-test("+ 버튼이 Collection 열기 목록을 띄우고 열린 것은 '열림'으로 표시한다", async ({ page }) => {
+test("+ 버튼을 누르면 바로 Collection 추가 화면이 뜨고, History에서 열린 것을 확인할 수 있다", async ({ page }) => {
   await page.locator(".ctab-add").click();
-  await expect(page.locator(".modal-title")).toHaveText("Collection 열기");
+  await expect(page.locator(".modal-title")).toHaveText("Collection 추가");
+  // History는 기본적으로 접혀 있다 - 펼쳐야 예전 목록이 보인다.
+  await expect(page.locator(".add-collection-history .picker-row").first()).toBeHidden();
+  await page.locator(".add-collection-history summary").click();
   const opened = page.locator(".picker-row", { hasText: "Master Library" });
   await expect(opened.locator(".picker-badge")).toHaveText("열림");
 });
 
-test("목록에서 다른 Collection을 고르면 탭이 하나 더 열린다", async ({ page }) => {
+test("History에서 다른 Collection을 고르면 탭이 하나 더 열린다", async ({ page }) => {
   await expect(page.locator(".ctab:not(.archive)")).toHaveCount(1);
   await page.locator(".ctab-add").click();
+  await page.locator(".add-collection-history summary").click();
   await page.locator(".picker-row", { hasText: "Android ES-DE" }).click();
   await expect(page.locator(".ctab:not(.archive)")).toHaveCount(2);
   await expect(page.locator(".ctab.active")).toContainText("Android ES-DE");
 });
 
-test("새 Collection 추가는 이름과 폴더가 둘 다 있어야 진행된다", async ({ page }) => {
+test("새 Collection 추가는 폴더만 있으면 되고, 이름은 폴더명으로 채워진다", async ({ page }) => {
   await page.locator(".ctab-add").click();
-  await modalButton(page, "Import").click();
-  await expect(page.locator(".modal-title")).toHaveText("Collection 가져오기");
+  await expect(page.locator(".modal-title")).toHaveText("Collection 추가");
 
   // 폴더를 비워둔 채 누르면 경고만 뜨고 모달이 닫히지 않아야 한다.
-  await page.locator(".modal-body .field-input").first().fill("이름만 있음");
-  await modalButton(page, "추가").click();
-  await expect(page.locator("#toast")).toContainText("이름과 폴더");
-  await expect(page.locator(".modal-title")).toHaveText("Collection 가져오기");
+  await modalButton(page, "Add").click();
+  await expect(page.locator("#toast")).toContainText("폴더를 선택하세요");
+  await expect(page.locator(".modal-title")).toHaveText("Collection 추가");
 
-  // 찾아보기(목업 pick_folder)로 경로를 채우면 추가된다.
+  // 찾아보기(목업 pick_folder)로 경로를 채우면 이름을 안 적어도 폴더명으로 채워져 추가된다.
   await page.locator(".modal-body .btn", { hasText: "찾아보기" }).first().click();
-  await modalButton(page, "추가").click();
+  await modalButton(page, "Add").click();
 
   // 메타데이터가 없는 Collection이면 만들지 먼저 묻는다(§Phase 7.8) - 그 안내를
   // 지나야 탭이 열린다.
   await modalButton(page, "나중에").click();
-  await expect(page.locator(".ctab.active")).toContainText("이름만 있음");
+  await expect(page.locator(".ctab.active")).toContainText("ES-DE");
 });
 
 test("탭 우클릭 -> 이름 변경이 탭 제목에 반영된다", async ({ page }) => {

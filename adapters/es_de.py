@@ -103,6 +103,12 @@ class EsDeAdapter(FrontendAdapter):
             for base in (gamelists, media):
                 systems.update(e.name for e in provider.scandir(base)
                                if e.is_dir and e.name.lower() not in ESDE_IGNORED_SYSTEMS)
+            # **이미 스크래핑된 System이 하나라도 있다고 해서 나머지가 전부 그런 건
+            # 아니다.** gamelists/도 downloaded_media/도 없는, ROM만 있는 System이
+            # 섞여 있으면(막 ROM을 추가했지만 아직 안 긁은 경우) 여기서 끝나면 그
+            # System 자체가 Collection에서 통째로 사라진다 - "메타데이터가 있는데
+            # 없다고 뜬다"가 아니라 그보다 더 조용한 실패, "아예 안 보인다"였다.
+            systems.update(self._systems_with_roms(provider, root))
             confidence = 1.0 if (has_gamelists and has_media) else 0.6
             return Detection(confidence, tuple(sorted(systems)),
                              f"{len(systems)}개 시스템을 찾았습니다.")

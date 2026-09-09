@@ -31,6 +31,7 @@ async function openTab(page, name) {
   const tab = page.locator(".ctab", { hasText: name }).first();
   if ((await tab.count()) === 0) {
     await page.locator(".ctab-add").click();
+    await page.locator(".add-collection-history summary").click();
     await page.locator(".picker-row", { hasText: name }).click();
   } else {
     await tab.click();
@@ -47,13 +48,16 @@ test.describe("ES-DE Import", () => {
     await openTab(page, "Source");   // Import 버튼이 있으려면 활성 Collection이 있어야 한다
 
     await page.locator(".icon-btn[title='Collection 가져오기 (Import)']").click();
-    await expect(page.locator(".modal-title")).toHaveText("Collection 가져오기");
+    await expect(page.locator(".modal-title")).toHaveText("Collection 추가");
 
-    await page.locator(".modal-body .field-input").first().fill("Fresh");
-    await page.locator(".modal-body input[placeholder*='gamelists']").fill(ws.freshMetaRoot);
-    await page.locator(".modal-body input[placeholder*='위 폴더에서 찾습니다']")
+    // 기본 화면은 대표 폴더 하나뿐이다 - ROM이 다른 위치에 있는 경우만 "고급"을
+    // 펼쳐 따로 지정한다.
+    await page.locator(".modal-body input[placeholder='폴더를 선택하세요']").fill(ws.freshMetaRoot);
+    await page.locator(".modal-body input[placeholder='예: Android ES-DE']").fill("Fresh");
+    await page.locator(".add-collection-advanced summary").click();
+    await page.locator(".modal-body input[placeholder*='위 폴더에서 함께 찾습니다']")
               .fill(ws.freshRomsRoot);
-    await page.locator(".modal-actions .btn.primary", { hasText: "추가" }).click();
+    await page.locator(".modal-actions .btn.primary", { hasText: "Add" }).click();
 
     // gba는 ROM만 있고 gamelist가 없다 - "메타데이터가 없습니다" 안내가 뜬다.
     // 지금은 그냥 지나간다(GUI-01의 핵심은 population이지 이 안내가 아니다).
@@ -85,7 +89,7 @@ test.describe("Collection -> Archive", () => {
     await openReal(page);
     await openTab(page, "Source");
 
-    await page.locator(".sb-actions .btn", { hasText: "Archive에 수집" }).click();
+    await page.locator("#filter-bar .btn", { hasText: "Archive에 수집" }).click();
     await expect(page.locator("#toast")).toContainText("수집 완료");
 
     await page.locator(".ctab.archive").click();
@@ -112,7 +116,7 @@ test.describe("Archive -> Collection", () => {
     await openReal(page);
     await openTab(page, "Source");
     // 이전 테스트에서 이미 수집했을 수 있으니 한 번 더 눌러도 안전해야 한다(멱등).
-    await page.locator(".sb-actions .btn", { hasText: "Archive에 수집" }).click();
+    await page.locator("#filter-bar .btn", { hasText: "Archive에 수집" }).click();
     await expect(page.locator("#toast")).toContainText("수집 완료");
 
     // "보내기" 대상 선택 창은 **이미 열려 있는 탭만** 보여준다 - Target을 미리
@@ -197,64 +201,11 @@ test.describe("Storage 이동", () => {
 });
 
 // ======================================================================
-// ROM 유지 + Media overwrite 조합 - 실제 GUI (QA 재검토 항목 3)
+// ROM 유지 + Media overwrite 조합 - **더 이상 GUI로 재현하지 않는다.**
 //
-// Source: ROM A, Metadata A(Final Fantasy X/RPG), Cover A
-// Target: ROM A와 같은 이름·다른 바이트, Metadata B(Old Title), Cover B
-//
-// 기대: ROM은 Target 것을 유지, Metadata/Cover는 Source 것으로 반영.
-// 실제(tests/test_paste_media_overwrite_combo.py에서 API 레벨로 이미 확인한 버그):
-// "메타데이터만"이 항목 단위로 적용되어 ROM 충돌 때문에 고른 선택이 같은 항목의
-// Cover 충돌까지 함께 건너뛴다 - Cover가 Source 것으로 바뀌지 않는다. 실제 GUI를
-// 통해서도 같은 결과가 나오는지 그대로 남긴다(약화 없이).
+// Gamelist의 Copy/Paste를 없앴다(QA 재검토 P1, 2026-09-09) - Ctrl+C/Ctrl+V로 두
+// Collection 사이에 항목을 옮기던 유일한 화면 경로가 사라졌다. 이 조합이 드러내던
+// "메타데이터만"의 항목 단위 해상도 버그(app/plan/builder.py)는 여전히 실재하고
+// tests/test_paste_media_overwrite_combo.py가 API 레벨로 계속 검증한다 - 다만 지금
+// 화면에는 이걸 재현할 진입점이 없다.
 // ======================================================================
-test.describe("ROM 유지 + Media overwrite (실제 GUI)", () => {
-  test("메타데이터만을 고르면 ROM은 유지되지만 Cover는 Source로 바뀌지 않는다", async ({ page }) => {
-    const dstRom = path.join(ws.comboDstRoot, "ps2", "FFX.iso");
-    const dstCover = path.join(ws.comboDstRoot, "downloaded_media", "ps2", "covers", "FFX.png");
-    const srcCover = path.join(ws.comboSrcRoot, "downloaded_media", "ps2", "covers", "FFX.png");
-    const targetRomBefore = fs.readFileSync(dstRom);
-    const targetCoverBefore = fs.readFileSync(dstCover);
-    const sourceCoverBytes = fs.readFileSync(srcCover);
-    expect(targetCoverBefore.equals(sourceCoverBytes)).toBe(false);
-
-    await openReal(page);
-    await openTab(page, "ComboSrc");
-
-    const ffxRow = page.locator(".lrow", { hasText: "Final Fantasy X" });
-    await expect(ffxRow).toBeVisible({ timeout: 20000 });
-    await ffxRow.locator(".lc-file").click();
-    await expect(page.locator(".sb-left")).toContainText("Selected 1");
-    await page.keyboard.press("Control+c");
-    // 복사는 서버로 요청을 보낸 뒤 끝난다 - 응답이 오기 전에 탭을 바꾸면 아직
-    // 클립보드가 안 채워진 채로 붙여넣기가 실행돼 충돌 없이 조용히 끝나버린다.
-    await expect(page.locator("#toast")).toContainText("복사했습니다");
-
-    await openTab(page, "ComboDst");
-    await page.keyboard.press("Control+v");
-
-    await expect(page.locator(".modal-title")).toHaveText("충돌 확인");
-    await page.locator(".modal-actions .btn", { hasText: "모두 메타데이터만" }).click();
-
-    await page.locator("#filter-bar .btn", { hasText: /^Apply \(/ }).click();
-    await page.locator(".modal-actions .btn.primary").click();
-    await expect(page.locator("#toast")).toBeVisible();
-    await expect.poll(() => fs.readFileSync(dstRom).equals(targetRomBefore), { timeout: 15000 })
-      .toBe(true);
-
-    // ROM은 그대로다 - 정책대로.
-    expect(fs.readFileSync(dstRom).equals(targetRomBefore)).toBe(true);
-
-    // Metadata는 Source 것이 반영된다 - 정책대로.
-    const xml = fs.readFileSync(
-      path.join(ws.comboDstRoot, "gamelists", "ps2", "gamelist.xml"), "utf8");
-    expect(xml).toContain("Final Fantasy X");
-
-    // **IMPLEMENTATION BUG를 실제 GUI에서도 그대로 남긴다.** 기대는 Cover가
-    // Source 것으로 바뀌는 것이지만, ROM 충돌 때문에 고른 "메타데이터만"이 같은
-    // 항목의 Cover 충돌까지 건너뛰어 Target 커버가 그대로 남는다
-    // (tests/test_paste_media_overwrite_combo.py의 API 레벨 확인과 동일한 원인).
-    expect(fs.readFileSync(dstCover).equals(targetCoverBefore)).toBe(true);
-    expect(fs.readFileSync(dstCover).equals(sourceCoverBytes)).toBe(false);
-  });
-});

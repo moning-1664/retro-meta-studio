@@ -63,8 +63,8 @@ test("미리보기 단계에서는 아직 아무것도 하지 않는다", async 
   await openConvertPreview(page);
   await modalButton(page, "취소").click();
   await expect(page.locator(".modal-title")).toHaveCount(0);
-  // Plan은 그대로다 - 상태바의 Apply가 여전히 비활성.
-  await expect(page.locator(".sb-actions .btn", { hasText: "Apply" })).toBeDisabled();
+  // Plan은 그대로다 - 툴바의 Apply가 여전히 비활성.
+  await expect(page.locator("#filter-bar .btn", { hasText: "Apply" })).toBeDisabled();
 });
 
 test("Plan에 올리면 대상 Collection으로 데려가고 Apply가 남았음을 알린다", async ({ page }) => {

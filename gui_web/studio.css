@@ -260,6 +260,13 @@ body { font-size: var(--fs-body); }
 #list-scroll { flex: 1; overflow: auto; position: relative; }
 #list-spacer { width: 1px; }
 #list-window { position: absolute; top: 0; left: 0; right: 0; will-change: transform; }
+/* 카드 보기 - 가상 스크롤 대신 실제 grid로 흐른다(§preview-card 크기는 style.css). */
+#list-window.card-mode {
+  position: static; display: grid;
+  grid-template-columns: repeat(auto-fill, 93px); grid-auto-rows: 128px;
+  justify-content: start; align-content: start; gap: 12px; padding: 12px;
+}
+.preview-card.placeholder .preview-cover { background: var(--list-border); }
 .lrow {
   display: grid; align-items: center; padding: 0 8px; cursor: pointer;
   border-bottom: 1px solid var(--list-row-border); color: var(--list-text);
@@ -372,6 +379,23 @@ body { font-size: var(--fs-body); }
   padding: 1px 7px; border-radius: var(--radius-pill);
   background: var(--card3); color: var(--muted); font-size: var(--fs-eyebrow);
 }
+
+/* Collection 추가: "고급"과 "History"는 기본적으로 접혀 있다 - 자주 안 쓰는 것을
+   펼쳐 놓으면 그 화면의 핵심(대표 폴더 하나 고르기)이 흐려진다. */
+.add-collection-advanced, .add-collection-history { margin-top: 12px; }
+.add-collection-advanced summary, .add-collection-history summary {
+  cursor: pointer; font-size: var(--fs-caption); color: var(--muted);
+  user-select: none; padding: 4px 0;
+}
+.add-collection-advanced[open] summary, .add-collection-history[open] summary { color: var(--text); }
+.add-collection-advanced > div { padding-top: 6px; }
+.add-collection-history .picker-list { margin-top: 6px; max-height: 180px; }
+
+/* Media 확대(lightbox) - showModal을 재사용해 ESC/바깥클릭 닫기를 공짜로 얻는다. */
+.modal-card.lightbox-card { width: min(90vw, 900px); max-height: 92vh; }
+.lightbox-body { align-items: center; justify-content: center; }
+.lightbox-img { max-width: 100%; max-height: 78vh; object-fit: contain; border-radius: var(--radius-md); }
+.media-tile.clickable { cursor: zoom-in; }
 
 #toast {
   position: fixed; left: 50%; bottom: 56px; transform: translateX(-50%) translateY(12px);

@@ -14,6 +14,7 @@ test.beforeEach(async ({ page }) => { await openApp(page); });
 /** openApp()이 이미 Master Library(c1)를 열어 둔다 - Android ES-DE(c2)만 마저 연다. */
 async function openBoth(page) {
   await page.locator(".ctab-add").click();
+  await page.locator(".add-collection-history summary").click();
   await page.locator(".picker-row", { hasText: "Android ES-DE" }).click();
   await expect(page.locator(".ctab", { hasText: "Android ES-DE" })).toBeVisible();
 }

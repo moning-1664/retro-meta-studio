@@ -91,7 +91,10 @@
                             developer: "Square", publisher: "Square Enix",
                             releasedate: "2001-07-19", region: "USA", players: "1", rating: "4.5" } });
     },
-    get_media_image: () => ok(null),
+    // 1x1 투명 PNG - Media 타일이 실제로 <img src>를 채우는지(lightbox 확대 포함)
+    // 목업에서도 확인할 수 있게 진짜 data URI를 준다.
+    get_media_image: () => ok(
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="),
     save_fields: (id, uid, fields) => ok({ title: fields.name || "" }),
     frontends: () => ok([
       { id: "es-de", label: "ES-DE" }, { id: "pegasus", label: "Pegasus" },

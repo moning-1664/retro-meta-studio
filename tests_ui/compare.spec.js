@@ -12,6 +12,7 @@ test.beforeEach(async ({ page }) => { await openApp(page); });
 async function startCompare(page) {
   // 비교하려면 탭이 둘 있어야 한다.
   await page.locator(".ctab-add").click();
+  await page.locator(".add-collection-history summary").click();
   await page.locator(".picker-row", { hasText: "Android ES-DE" }).click();
   await expect(page.locator(".ctab:not(.archive)")).toHaveCount(2);
 
@@ -99,20 +100,21 @@ test("Exit Compare로 원래 Gamelist가 돌아온다", async ({ page }) => {
   await expect(page.locator(".lrow")).toHaveCount(3);
 });
 
-test("Compare는 읽기 전용이다 - 변경 버튼이 상태바에서 사라진다", async ({ page }) => {
-  // Paste와 Apply는 선택이 없어도 눌리는 버튼이라, 남겨두면 비교 화면에서 그대로
-  // 변경이 일어난다.
-  await expect(page.locator(".sb-actions .btn", { hasText: "Paste" })).toBeVisible();
+test("Compare는 읽기 전용이다 - 변경 버튼이 툴바에서 사라진다", async ({ page }) => {
+  // Apply/Delete는 선택이 없어도 눌리거나 위험한 동작이라, 남겨두면 비교 화면에서
+  // 그대로 변경이 일어난다.
+  await expect(page.locator("#filter-bar .btn", { hasText: "Archive에 수집" })).toBeVisible();
   await startCompare(page);
+  await expect(page.locator("#filter-bar .btn", { hasText: "Archive에 수집" })).toHaveCount(0);
   await expect(page.locator(".sb-actions .btn")).toHaveCount(0);
   await expect(page.locator(".sb-actions")).toContainText("읽기 전용");
 });
 
-test("Compare 중 Ctrl+V는 붙여넣기 대신 거절 안내를 낸다", async ({ page }) => {
+test("Compare 중에는 Delete 단축키도 거절 안내를 낸다", async ({ page }) => {
   await startCompare(page);
   await page.locator(".lrow").first().click();      // 포커스를 목록에 둔다
   await page.keyboard.press("Escape");
-  await page.keyboard.press("Control+v");
+  await page.keyboard.press("Delete");
   await expect(page.locator("#toast")).toContainText("Compare 중에는");
 });
 
