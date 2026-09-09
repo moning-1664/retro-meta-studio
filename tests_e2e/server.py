@@ -104,9 +104,38 @@ def build_workspace(base: Path) -> dict:
     storage_external = base / "storage_external"
     storage_external.mkdir(parents=True)
 
+    # --- "ROM 유지 + Media만 덮어쓰기" 검증용: 양쪽에 같은 파일명, 다른 내용 ----
+    # 두 Collection 모두 FFX.iso를 갖되 바이트가 다르다(진짜 ROM 충돌) - 붙여넣기가
+    # "메타데이터만"을 골랐을 때 ROM은 그대로 두고 Cover는 Source 것으로 바뀌는지
+    # 실제 GUI로 확인하는 자리다.
+    combo_src = base / "combo_src"
+    (combo_src / "gamelists" / "ps2").mkdir(parents=True)
+    (combo_src / "gamelists" / "ps2" / "gamelist.xml").write_text(
+        '<?xml version="1.0"?>\n<gameList>\n'
+        '  <game><path>./FFX.iso</path><name>Final Fantasy X</name>'
+        '<genre>RPG</genre></game>\n</gameList>\n', encoding="utf-8")
+    (combo_src / "ps2").mkdir(parents=True)
+    (combo_src / "ps2" / "FFX.iso").write_bytes(b"SOURCE-ROM-BYTES" * 30)
+    combo_src_covers = combo_src / "downloaded_media" / "ps2" / "covers"
+    combo_src_covers.mkdir(parents=True)
+    (combo_src_covers / "FFX.png").write_bytes(b"COVER-FROM-SOURCE" * 20)
+
+    combo_dst = base / "combo_dst"
+    (combo_dst / "gamelists" / "ps2").mkdir(parents=True)
+    (combo_dst / "gamelists" / "ps2" / "gamelist.xml").write_text(
+        '<?xml version="1.0"?>\n<gameList>\n'
+        '  <game><path>./FFX.iso</path><name>Old Title</name></game>\n</gameList>\n',
+        encoding="utf-8")
+    (combo_dst / "ps2").mkdir(parents=True)
+    (combo_dst / "ps2" / "FFX.iso").write_bytes(b"TARGET-ROM-BYTES" * 30)
+    combo_dst_covers = combo_dst / "downloaded_media" / "ps2" / "covers"
+    combo_dst_covers.mkdir(parents=True)
+    (combo_dst_covers / "FFX.png").write_bytes(b"COVER-FROM-TARGET" * 20)
+
     return {"source": source, "target": target, "fresh_meta": fresh_meta,
             "fresh_roms": fresh_roms, "storage_root": storage_root,
-            "storage_external": storage_external}
+            "storage_external": storage_external,
+            "combo_src": combo_src, "combo_dst": combo_dst}
 
 
 class Harness:
@@ -132,6 +161,13 @@ class Harness:
             self.ids["storagetest"], "SD", str(self.roots["storage_external"]))
         self.external_storage_id = ext["data"]
 
+        # "ROM 유지 + Media만 덮어쓰기" 검증용 Collection 한 쌍.
+        for name in ("combo_src", "combo_dst"):
+            result = self.api.create_collection(
+                name.replace("_", " ").title().replace(" ", ""), "es-de", str(self.roots[name]))
+            self.ids[name] = result["data"]["id"]
+            self._wait(self.api.start_scan(self.ids[name], True)["data"]["jobId"])
+
     def _wait(self, job_id, timeout=30.0):
         import time
         deadline = time.time() + timeout
@@ -155,6 +191,10 @@ class Harness:
             "storageExternalRoot": str(self.roots["storage_external"]),
             "storagetestId": self.ids["storagetest"],
             "externalStorageId": self.external_storage_id,
+            "comboSrcRoot": str(self.roots["combo_src"]),
+            "comboDstRoot": str(self.roots["combo_dst"]),
+            "comboSrcId": self.ids["combo_src"],
+            "comboDstId": self.ids["combo_dst"],
         }
 
     def close(self):

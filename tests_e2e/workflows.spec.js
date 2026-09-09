@@ -195,3 +195,66 @@ test.describe("Storage 이동", () => {
       { timeout: 20000 });
   });
 });
+
+// ======================================================================
+// ROM 유지 + Media overwrite 조합 - 실제 GUI (QA 재검토 항목 3)
+//
+// Source: ROM A, Metadata A(Final Fantasy X/RPG), Cover A
+// Target: ROM A와 같은 이름·다른 바이트, Metadata B(Old Title), Cover B
+//
+// 기대: ROM은 Target 것을 유지, Metadata/Cover는 Source 것으로 반영.
+// 실제(tests/test_paste_media_overwrite_combo.py에서 API 레벨로 이미 확인한 버그):
+// "메타데이터만"이 항목 단위로 적용되어 ROM 충돌 때문에 고른 선택이 같은 항목의
+// Cover 충돌까지 함께 건너뛴다 - Cover가 Source 것으로 바뀌지 않는다. 실제 GUI를
+// 통해서도 같은 결과가 나오는지 그대로 남긴다(약화 없이).
+// ======================================================================
+test.describe("ROM 유지 + Media overwrite (실제 GUI)", () => {
+  test("메타데이터만을 고르면 ROM은 유지되지만 Cover는 Source로 바뀌지 않는다", async ({ page }) => {
+    const dstRom = path.join(ws.comboDstRoot, "ps2", "FFX.iso");
+    const dstCover = path.join(ws.comboDstRoot, "downloaded_media", "ps2", "covers", "FFX.png");
+    const srcCover = path.join(ws.comboSrcRoot, "downloaded_media", "ps2", "covers", "FFX.png");
+    const targetRomBefore = fs.readFileSync(dstRom);
+    const targetCoverBefore = fs.readFileSync(dstCover);
+    const sourceCoverBytes = fs.readFileSync(srcCover);
+    expect(targetCoverBefore.equals(sourceCoverBytes)).toBe(false);
+
+    await openReal(page);
+    await openTab(page, "ComboSrc");
+
+    const ffxRow = page.locator(".lrow", { hasText: "Final Fantasy X" });
+    await expect(ffxRow).toBeVisible({ timeout: 20000 });
+    await ffxRow.locator(".lc-file").click();
+    await expect(page.locator(".sb-left")).toContainText("Selected 1");
+    await page.keyboard.press("Control+c");
+    // 복사는 서버로 요청을 보낸 뒤 끝난다 - 응답이 오기 전에 탭을 바꾸면 아직
+    // 클립보드가 안 채워진 채로 붙여넣기가 실행돼 충돌 없이 조용히 끝나버린다.
+    await expect(page.locator("#toast")).toContainText("복사했습니다");
+
+    await openTab(page, "ComboDst");
+    await page.keyboard.press("Control+v");
+
+    await expect(page.locator(".modal-title")).toHaveText("충돌 확인");
+    await page.locator(".modal-actions .btn", { hasText: "모두 메타데이터만" }).click();
+
+    await page.locator("#filter-bar .btn", { hasText: /^Apply \(/ }).click();
+    await page.locator(".modal-actions .btn.primary").click();
+    await expect(page.locator("#toast")).toBeVisible();
+    await expect.poll(() => fs.readFileSync(dstRom).equals(targetRomBefore), { timeout: 15000 })
+      .toBe(true);
+
+    // ROM은 그대로다 - 정책대로.
+    expect(fs.readFileSync(dstRom).equals(targetRomBefore)).toBe(true);
+
+    // Metadata는 Source 것이 반영된다 - 정책대로.
+    const xml = fs.readFileSync(
+      path.join(ws.comboDstRoot, "gamelists", "ps2", "gamelist.xml"), "utf8");
+    expect(xml).toContain("Final Fantasy X");
+
+    // **IMPLEMENTATION BUG를 실제 GUI에서도 그대로 남긴다.** 기대는 Cover가
+    // Source 것으로 바뀌는 것이지만, ROM 충돌 때문에 고른 "메타데이터만"이 같은
+    // 항목의 Cover 충돌까지 건너뛰어 Target 커버가 그대로 남는다
+    // (tests/test_paste_media_overwrite_combo.py의 API 레벨 확인과 동일한 원인).
+    expect(fs.readFileSync(dstCover).equals(targetCoverBefore)).toBe(true);
+    expect(fs.readFileSync(dstCover).equals(sourceCoverBytes)).toBe(false);
+  });
+});
