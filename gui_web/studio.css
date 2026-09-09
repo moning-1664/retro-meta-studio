@@ -365,6 +365,11 @@ body { font-size: var(--fs-body); }
    구분선을 넣었다. */
 .plan-actions .seg-btn { padding: 3px 9px; font-size: var(--fs-caption); }
 .plan-actions .seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+
+/* Archive에 수집 버튼 - scopeLabel이 System 이름/선택 개수에 따라 들쭉날쭉하다.
+   옆의 Plan 버튼들이 밀리지 않도록 폭을 고정한다. 전체 문구는 title 툴팁으로 남는다. */
+#archive-ingest-btn { max-width: 200px; flex-shrink: 0; }
+#archive-ingest-btn .ingest-label { min-width: 0; }
 .icon-btn.on { color: var(--warning, #e0a030); }
 .sys-badge {
   padding: 1px 7px; border-radius: var(--radius-pill);

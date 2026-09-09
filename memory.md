@@ -1351,3 +1351,47 @@ docstring을 고침 완료 상태로 갱신했다(assertion은 그대로 두고 
 
 **검증**: 파이썬 626개(변경 없이 전부 통과 - 새 실패 테스트를 추가한 게 아니라 있던
 실패 2개를 고쳤다), Playwright(목업) 169개, E2E(실제 파일) 22개 전부 통과.
+
+## 2026-09-10 — GUI 레이아웃 재배치, Phase 1-2: Navigator 그룹핑 + Plan 툴바 정리
+
+`gui-layout-redesign` 브랜치. 사용자와의 레이아웃 재설계 논의에서 나온 결론을
+반영했다 - 자세한 배경은 대화 로그에 있고, 여기는 코드에 남는 결정만 적는다.
+
+**PENDING_DECISIONS.md의 "UI 레이아웃 개편" 세 항목이 전부 이번에 결정됐다** -
+그 절을 지웠다.
+
+- **Delete 상시 버튼 없앰.** DEL 키 + 게임 행 우클릭 메뉴(`openRowMenu`, 신규)만
+  남겼다. 우클릭한 행이 이미 다중 선택에 포함돼 있으면 선택 전체가 대상이다.
+- **Auto Plan 토글 UI 제거.** `S.autoPlan` 값은 기본 `true`로 고정, 화면에서
+  끄고 켜는 버튼(`toggleAutoPlan`/`renderAutoPlanState`)은 삭제했다 - 실사용
+  시나리오가 나오면 다시 만든다.
+- **Plan Apply/Cancel을 `.seg`(List/Card 토글과 같은 컴포넌트) 그룹으로 묶었다.**
+  버튼 사이에 구분선을 넣었다(`.plan-actions .seg-btn + .seg-btn`). 텍스트
+  라벨은 유지 - "Apply (3)" 같은 개수 표시가 정보로서 중요하다.
+- **Navigator를 조건부로 그룹핑한다.** External Storage가 하나도 없으면 예전
+  그대로 완전히 평평하다(`app/api.py`의 "Storage는 계층이 아니다" 결정 유지).
+  **External Storage를 하나라도 추가하면** Internal/External 그룹 헤더가
+  생기고, System 행을 그룹 사이로 드래그하면 우클릭 메뉴와 같은
+  `moveSystemToStorage`(Plan을 거쳐 실제 이동)를 호출한다. `.nav-group`/
+  `.nav-group-head` CSS는 이미 있었는데(예전에 쓰다가 만 흔적) 이번에 처음
+  실제로 연결했다.
+- **ES-DE `custom_systems/es_systems.xml` 생성 버튼을 Collection Header의
+  Expand 패널에서 Navigator의 External 그룹 헤더 옆으로 옮겼다.** 그 기능
+  자체가 External Storage의 System만 대상으로 하므로(root 안의 System은 ES-DE가
+  스스로 찾는다), 이제 External 그룹이 없으면 버튼도 안 보인다 - 예전엔 항상
+  보이고 대상이 없으면 조용히 `written:false`만 돌려줬다.
+- **gamelist 만들기(`openMetadataBootstrap`)에 scope 인자를 추가했다.** 백엔드
+  (`generate_metadata`)는 이미 System 목록을 받게 돼 있어서 프론트에서 필터만
+  하면 됐다 - System 우클릭 메뉴(그 System 하나), Storage 그룹 우클릭 메뉴(그
+  Storage 전체), Toolbar 아이콘(Collection 전체, id=`make-gamelist-btn`) 세
+  곳에서 부른다. Navigator 하단의 옛 버튼(`#nav-make-gamelist`)은 Toolbar
+  아이콘과 입구가 두 개가 되는 것을 막기 위해 없앴다.
+
+**다음 사람이 알아야 할 것**: `nav-storage.spec.js`/`storage.spec.js`가 예전엔
+"System 목록은 항상 평평하다"를 고정하는 회귀 테스트였다 - 이제는 mock 기본
+데이터(`ext-1` External SD 존재)를 기준으로 "그룹이 있다"를 고정한다. External이
+아예 없을 때 평평한지는 지금 mock으로는 별도 시나리오를 만들기 전까지 테스트로
+확인하지 못한다(코드 리뷰로만 확인).
+
+**검증**: Playwright(목업) 170개 전부 통과. 실제 pywebview 앱을 띄우고
+Playwright(chromium)로 Navigator 그룹핑/우클릭 메뉴 스크린샷 확인.

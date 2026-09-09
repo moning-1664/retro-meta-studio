@@ -1150,21 +1150,9 @@
     });
     bar.appendChild(modes);
 
-    // System 필터. 좌측 내비게이션과 같은 곳을 가리키므로 상태를 공유한다.
-    const scope = activeScope();
-    const systems = (detail ? detail.storages.flatMap((s) => s.systems) : [])
-      .map((s) => s.system).sort();
-    const sysSel = h("select", { class: "mini-select", title: "System 필터" }, [
-      h("option", { value: "" }, ["모든 System"]),
-      ...systems.map((s) => h("option", { value: s }, [s])),
-    ]);
-    sysSel.value = scope.kind === "system" ? scope.id : "";
-    sysSel.addEventListener("change", async (e) => {
-      // setScope가 목록 재조회까지 한다. 여기서 또 부르면 같은 질의를 두 번 보낸다.
-      await setScope(e.target.value ? { kind: "system", id: e.target.value } : { kind: "all" });
-      renderFilterBar();
-    });
-    bar.appendChild(sysSel);
+    // System 필터는 없앴다(레이아웃 재검토 결론) - Navigator가 항상 옆에 붙어
+    // 있고 지금 System은 Header에 크게 나오므로, 같은 것을 고르는 두 번째
+    // 컨트롤을 둘 이유가 없었다.
 
     const statusSel = h("select", { class: "mini-select", title: "상태 필터" }, [
       h("option", { value: "all" }, ["모든 상태"]),
@@ -1179,6 +1167,36 @@
       await reloadList();
     });
     bar.appendChild(statusSel);
+
+    // 정렬 기준. List에서는 머리글을 눌러도 되지만, Card 보기는 머리글 자체가
+    // 없어서 이 컨트롤이 유일한 정렬 수단이다(레이아웃 재검토 결론). 같은
+    // 상태(S.order/S.descending)를 가리키므로 머리글 클릭과 항상 값이 맞는다.
+    const sortableCols = COLUMNS.filter((c) => c.key);
+    const sortSel = h("select", { class: "mini-select", title: "정렬 기준" },
+      sortableCols.map((c) => h("option", { value: c.key }, [c.label])));
+    sortSel.value = S.order;
+    sortSel.addEventListener("change", async (e) => {
+      S.order = e.target.value;
+      saveUiState();
+      resetList();
+      renderListHead();
+      await reloadList();
+    });
+    bar.appendChild(sortSel);
+
+    const sortDir = h("button", {
+      class: "icon-btn",
+      title: S.descending ? "내림차순 - 눌러서 오름차순으로" : "오름차순 - 눌러서 내림차순으로",
+    }, [icon(S.descending ? "chevronDown" : "chevronUp", 12)]);
+    sortDir.addEventListener("click", async () => {
+      S.descending = !S.descending;
+      saveUiState();
+      resetList();
+      renderListHead();
+      renderFilterBar();
+      await reloadList();
+    });
+    bar.appendChild(sortDir);
 
     const fav = h("button", {
       class: "icon-btn" + (S.favoritesOnly ? " on" : ""),
@@ -1257,10 +1275,13 @@
     // 무엇이 들어갈지 버튼에 적어 둔다 - 누르고 나서 알게 되면 늦다.
     const scope = archiveScope();
     const scopeLabel = archiveScopeLabel(scope);
+    // scopeLabel은 System 이름이나 선택 개수에 따라 길이가 들쭉날쭉하다 -
+    // 옆 버튼(Apply/Cancel)이 밀리지 않도록 폭을 고정하고 넘치면 줄인다. 전체
+    // 문구는 title(툴팁)로 그대로 남는다.
     const ingest = h("button", { class: "btn compact", id: "archive-ingest-btn",
       "data-scope": scope.kind,
       title: `${scopeLabel}을 Archive에 수집합니다` },
-      [icon("database", 12), h("span", {}, [`Archive에 수집 — ${scopeLabel}`])]);
+      [icon("database", 12), h("span", { class: "ingest-label truncate" }, [`Archive에 수집 — ${scopeLabel}`])]);
     ingest.addEventListener("click", ingestToArchive);
     bar.appendChild(ingest);
 
@@ -1303,7 +1324,9 @@
       const label = archiveScopeLabel(scope);
       ingest.dataset.scope = scope.kind;
       ingest.title = `${label}을 Archive에 수집합니다`;
-      const text = ingest.querySelector("span");
+      // 버튼 안에는 span이 둘이다(아이콘 span이 먼저, 글자 span이 나중) - 그냥
+      // "span"으로 고르면 **아이콘 span을 잡아 아이콘을 글자로 덮어썼다.**
+      const text = ingest.querySelector(".ingest-label");
       if (text) text.textContent = `Archive에 수집 — ${label}`;
     }
   }
@@ -1350,14 +1373,16 @@
       const cell = h("div", { class: "lh lh-" + col.id + (sorted ? " sorted" : "") },
                      [col.label]);
       if (col.key) {
-        // 한 번 누르면 오름차순, 다시 누르면 내림차순. 이전 프로젝트와 같다 -
-        // 그래서 별도의 정렬 셀렉트와 방향 버튼이 필요 없다.
+        // 한 번 누르면 오름차순, 다시 누르면 내림차순. 이전 프로젝트와 같다.
+        // Toolbar의 정렬 셀렉트(Card 보기용 - 거긴 머리글이 없다)와 같은 상태를
+        // 가리키므로, 여기서 바꾸면 그쪽도 다시 그려서 값을 맞춘다.
         cell.addEventListener("click", async () => {
           if (S.order === col.key) S.descending = !S.descending;
           else { S.order = col.key; S.descending = false; }
           saveUiState();
           resetList();
           renderListHead();
+          renderFilterBar();
           await reloadList();
         });
         if (sorted) cell.appendChild(icon(S.descending ? "chevronDown" : "chevronUp", 10));

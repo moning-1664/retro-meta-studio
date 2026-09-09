@@ -76,6 +76,18 @@ test.describe("버튼이 대상을 미리 말해 준다", () => {
     await expect.poll(() => page.__scopes.length).toBe(1);
     expect(page.__scopes[0].system).toBe("ps2");
   });
+
+  test("대상이 바뀌어도 아이콘은 그대로다", async ({ page }) => {
+    // 버그: 안에 span이 둘이라(아이콘 span이 먼저) querySelector("span")으로
+    // 고르면 아이콘 span을 잡아 글자로 덮어썼다 - 아이콘이 사라지고 글자가
+    // 두 번 나왔다. 이제는 .ingest-label로 정확히 짚는다.
+    await page.locator(".lrow").first().click();
+    await expect(ingestButton(page)).toContainText("선택한 1개");
+    const icHtml = await ingestButton(page).locator(".ic").innerHTML();
+    expect(icHtml).toContain("<svg");
+    // 글자가 아이콘 span에도 새어 들어가지 않았다 - 라벨 span에만 있다.
+    await expect(ingestButton(page).locator(".ingest-label")).toHaveText(/선택한 1개/);
+  });
 });
 
 test("수집 중에는 진행 상황이 보인다", async ({ page }) => {

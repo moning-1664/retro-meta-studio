@@ -65,11 +65,19 @@ test.describe("Header 정렬", () => {
     await expect.poll(() => requests.at(-1)).toBe(true);
   });
 
-  test("정렬 셀렉트와 방향 버튼은 없앴다", async ({ page }) => {
-    // Header로 정렬하므로 따로 둘 이유가 없다.
-    const titles = await page.locator("#filter-bar select").evaluateAll(
-      (els) => els.map((e) => e.title));
-    expect(titles).not.toContain("정렬");
+  test("정렬 셀렉트와 방향 버튼이 있다(Card 보기에는 머리글이 없다)", async ({ page }) => {
+    const sortSel = page.locator("#filter-bar select[title='정렬 기준']");
+    await expect(sortSel).toBeVisible();
+    await expect(sortSel).toHaveValue("title");
+
+    await page.locator(".lh-file").click();
+    await expect(sortSel).toHaveValue("filename");
+  });
+
+  test("머리글 클릭과 정렬 셀렉트는 같은 상태를 가리킨다", async ({ page }) => {
+    const sortSel = page.locator("#filter-bar select[title='정렬 기준']");
+    await sortSel.selectOption("region");
+    await expect(page.locator(".lh-region")).toHaveClass(/sorted/);
   });
 
   test("No.와 ★는 정렬 대상이 아니다", async ({ page }) => {
