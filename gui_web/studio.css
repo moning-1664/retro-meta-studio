@@ -360,6 +360,11 @@ body { font-size: var(--fs-body); }
   color: var(--muted); display: flex; align-items: center;
 }
 .seg-btn.on { background: var(--accent); color: #fff; }
+/* Plan의 Apply/Cancel - 같은 Plan을 두고 하는 순간의 동작이라는 걸 구분선으로
+   묶어 보여준다(레이아웃 재검토). List/Card 토글과 달리 서로 다른 동작이라
+   구분선을 넣었다. */
+.plan-actions .seg-btn { padding: 3px 9px; font-size: var(--fs-caption); }
+.plan-actions .seg-btn + .seg-btn { border-left: 1px solid var(--border); }
 .icon-btn.on { color: var(--warning, #e0a030); }
 .sys-badge {
   padding: 1px 7px; border-radius: var(--radius-pill);

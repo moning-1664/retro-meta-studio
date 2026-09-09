@@ -141,14 +141,14 @@ test.describe("즐겨찾기", () => {
 
 test.describe("툴바", () => {
   test("Plan 조작이 목록 위에 있다", async ({ page }) => {
-    // 하단 상태바에 있으면 고른 항목과 멀어 보인다.
-    await expect(page.locator("#filter-bar .btn", { hasText: "Auto Plan" })).toBeVisible();
-    await expect(page.locator("#filter-bar .btn", { hasText: "Apply" })).toBeVisible();
-    await expect(page.locator("#filter-bar .btn", { hasText: "Cancel" })).toBeVisible();
+    // 하단 상태바에 있으면 고른 항목과 멀어 보인다. Apply/Cancel은 한 그룹이다
+    // (Auto Plan 토글은 실사용 시나리오가 확인되기 전까지 화면에서 뺐다).
+    await expect(page.locator("#filter-bar .plan-actions .seg-btn", { hasText: "Apply" })).toBeVisible();
+    await expect(page.locator("#filter-bar .plan-actions .seg-btn", { hasText: "Cancel" })).toBeVisible();
   });
 
   test("목록/카드 전환과 새로고침이 있다", async ({ page }) => {
-    await expect(page.locator("#filter-bar .seg-btn")).toHaveCount(2);
+    await expect(page.locator("#filter-bar .view-mode-seg .seg-btn")).toHaveCount(2);
     await expect(page.locator("#filter-bar .icon-btn[title='다시 스캔']")).toBeVisible();
   });
 });

@@ -6,8 +6,9 @@
 //   - Navigation에서 System을 골라도 상단 System 필터는 이전 값 그대로였다.
 //     `setScope()`가 `renderNav()`와 목록만 새로 그리고 `renderFilterBar()`를
 //     부르지 않았다.
-//   - Auto Plan을 끄겠다고 확인해도 버튼은 켜진 채였다. `toggleAutoPlan()`이
-//     `renderStatusBar()`만 불렀는데 버튼은 `renderPlanActions()`가 만든다.
+//
+// (Auto Plan 토글 UI는 레이아웃 재검토에서 화면 밖으로 뺐다 - PENDING_DECISIONS.md.
+// 이 파일이 잡던 그 버튼의 동기화 버그는 버튼 자체가 없어지며 같이 사라졌다.)
 const { test, expect } = require("@playwright/test");
 const { openApp, modalButton } = require("./_helpers");
 
@@ -45,56 +46,6 @@ test.describe("Navigation ↔ System 필터", () => {
     await page.locator(".nav-system", { hasText: "SNES" }).click();
     // 보이지도 않는 게임이 선택된 채로 남으면 Archive 수집이 그것을 대상으로 삼는다.
     await expect(page.locator("#status-bar")).toContainText("Selected 0");
-  });
-});
-
-test.describe("Auto Plan", () => {
-  const autoButton = (page) => page.locator("#filter-bar .btn", { hasText: "Auto Plan" });
-
-  test("기본은 켜져 있다", async ({ page }) => {
-    await expect(autoButton(page)).toContainText("✓ Auto Plan");
-  });
-
-  test("확인을 누르면 버튼 표시가 꺼진다", async ({ page }) => {
-    await autoButton(page).click();
-    await expect(page.locator(".modal-title")).toHaveText("Auto Plan 끄기");
-    await modalButton(page, "확인").click();
-    await expect(autoButton(page)).toContainText("Auto Plan OFF");
-  });
-
-  test("표시만이 아니라 동작이 바뀐다", async ({ page }) => {
-    // Auto Plan의 실제 의미는 "System 이동을 Plan에 올려두기만 하는가, 바로
-    // 적용하는가"다. 버튼 글자가 아니라 그 분기를 확인한다.
-    //
-    // 목업의 Plan은 언제나 비어 있으므로 실제 적용까지 가지는 않는다. 그래도 Auto
-    // Plan을 끄면 이동이 "Plan에 올렸습니다"에서 멈추지 않고 적용 경로로 넘어가고,
-    // 그 경로가 빈 Plan을 만나 다른 말을 한다 - 분기가 실제로 바뀌었다는 증거다.
-    const move = async () => {
-      await page.locator(".nav-system", { hasText: "PS2" }).click({ button: "right" });
-      await page.locator(".picker-row", { hasText: "Internal" }).click();
-    };
-
-    await move();
-    await expect(page.locator("#toast")).toContainText("Plan에 올렸습니다");
-
-    await autoButton(page).click();
-    await modalButton(page, "확인").click();
-    await move();
-    await expect(page.locator("#toast")).not.toContainText("Plan에 올렸습니다");
-  });
-
-  test("취소하면 켜진 상태가 그대로다", async ({ page }) => {
-    await autoButton(page).click();
-    await modalButton(page, "취소").click();
-    await expect(autoButton(page)).toContainText("✓ Auto Plan");
-  });
-
-  test("끈 뒤 다시 누르면 켜진다", async ({ page }) => {
-    await autoButton(page).click();
-    await modalButton(page, "확인").click();
-    await expect(autoButton(page)).toContainText("Auto Plan OFF");
-    await autoButton(page).click();
-    await expect(autoButton(page)).toContainText("✓ Auto Plan");
   });
 });
 

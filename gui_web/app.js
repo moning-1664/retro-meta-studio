@@ -1132,7 +1132,7 @@
     // 정렬 셀렉트와 방향 버튼은 없앴다 - Header를 눌러서 정렬하기 때문이다.
     const detail = activeDetail();
 
-    const modes = h("div", { class: "seg" });
+    const modes = h("div", { class: "seg view-mode-seg" });
     [["list", "목록"], ["card", "카드"]].forEach(([mode, label]) => {
       const btn = h("button", {
         class: "seg-btn" + (S.viewMode === mode ? " on" : ""), title: label + " 보기",
@@ -1264,43 +1264,37 @@
     ingest.addEventListener("click", ingestToArchive);
     bar.appendChild(ingest);
 
-    const del = h("button", {
-      class: "btn compact", id: "delete-selection-btn", disabled: !S.selected.size,
-      title: S.selected.size ? "선택한 항목을 삭제합니다" : "삭제할 항목을 먼저 고르세요",
-    }, ["Delete"]);
-    del.addEventListener("click", () => { if (S.selected.size) deleteSelection(); });
-    bar.appendChild(del);
+    // Delete는 상시 버튼을 두지 않는다(레이아웃 재검토 결론) - DEL 키와 목록 우클릭
+    // 메뉴로만 접근한다. 파괴적인 동작이라 눈에 항상 띄는 자리에 두면 오클릭
+    // 위험이 커진다(PENDING_DECISIONS.md).
 
-    const auto = h("button", {
-      class: "btn compact" + (S.autoPlan ? " primary" : ""),
-      title: "Auto Plan: 변경을 바로 적용하지 않고 먼저 계산합니다",
-    }, [S.autoPlan ? "✓ Auto Plan" : "Auto Plan OFF"]);
-    auto.addEventListener("click", toggleAutoPlan);
-    bar.appendChild(auto);
-
+    // Apply/Cancel은 한 그룹이다 - 같은 Plan을 두고 하는 순간의 동작이라는 걸
+    // 구분선으로 보여준다. Auto Plan 토글은 뺐다(실사용 시나리오가 확인될 때까지
+    // 화면에서 감춘다, PENDING_DECISIONS.md) - 내부 값은 기본 ON을 유지한다.
+    const planGroup = h("div", { class: "seg plan-actions" });
     const apply = h("button", {
-      class: "btn compact primary", disabled: !(plan && plan.total),
+      class: "seg-btn" + (plan && plan.total ? " on" : ""), disabled: !(plan && plan.total),
       title: plan && plan.total ? "Plan을 실제 파일에 적용합니다" : "적용할 Plan이 없습니다",
     }, [plan && plan.total ? `Apply (${formatCount(plan.total)})` : "Apply"]);
     if (plan && plan.total) apply.addEventListener("click", applyPlan);
-    bar.appendChild(apply);
+    planGroup.appendChild(apply);
 
-    // 지우개 아이콘 대신 Cancel. 무엇이 일어나는지 글자로 말하는 편이 낫다.
     const cancel = h("button", {
-      class: "btn compact", disabled: !(plan && plan.total), title: "계산해둔 변경을 버립니다",
+      class: "seg-btn", disabled: !(plan && plan.total), title: "계산해둔 변경을 버립니다",
     }, ["Cancel"]);
     if (plan && plan.total) {
       cancel.addEventListener("click", () => showConfirm(
         "Plan 취소", "계산해둔 변경을 모두 버립니다. 실제 파일은 바뀌지 않습니다.", true,
         async () => { await api.planClear(S.activeId); await refreshPlan(); }));
     }
-    bar.appendChild(cancel);
+    planGroup.appendChild(cancel);
+    bar.appendChild(planGroup);
   }
 
   /** 선택이 바뀌었을 때 툴바에서 **실제로 달라지는 것만** 고친다.
    *
    * 툴바를 통째로 다시 그리면 검색창이 새로 만들어져 입력 중이던 커서가 날아간다.
-   * 선택 때문에 달라지는 것은 두 개뿐이다 - 수집 대상 표시와 Delete 활성 여부.
+   * 선택 때문에 달라지는 것은 수집 대상 표시뿐이다(Delete는 상시 버튼이 없다).
    */
   function updateSelectionDependentActions() {
     const ingest = $("archive-ingest-btn");
@@ -1311,11 +1305,6 @@
       ingest.title = `${label}을 Archive에 수집합니다`;
       const text = ingest.querySelector("span");
       if (text) text.textContent = `Archive에 수집 — ${label}`;
-    }
-    const del = $("delete-selection-btn");
-    if (del) {
-      del.disabled = !S.selected.size;
-      del.title = S.selected.size ? "선택한 항목을 삭제합니다" : "삭제할 항목을 먼저 고르세요";
     }
   }
 
@@ -1765,7 +1754,33 @@
     el.appendChild(h("div", { class: "lc lc-status" }, [statusMark(row)]));
 
     el.addEventListener("click", (e) => handleRowClick(e, row, index));
+    el.addEventListener("contextmenu", (e) => { e.preventDefault(); openRowMenu(row); });
     return el;
+  }
+
+  /** 게임 행 우클릭 메뉴. **지금은 Delete뿐이다** - 상시 버튼을 없앤 대신
+   * DEL 키와 여기로만 접근한다(레이아웃 재검토 결론, PENDING_DECISIONS.md).
+   *
+   * 이미 여러 개가 선택된 상태에서 그중 하나를 우클릭하면 그 선택 전체가
+   * 대상이다(탐색기와 같은 규칙). 선택되지 않은 행을 우클릭하면 그 행 하나만
+   * 새로 선택한다.
+   */
+  function openRowMenu(row) {
+    if (!S.selected.has(row.romUid)) {
+      S.selected = new Set([row.romUid]);
+      S.selectAnchor = row.romUid;
+      updateSelectionVisual();
+      renderStatusBar();
+    }
+    const count = S.selected.size;
+    const title = count > 1 ? `${formatCount(count)}개 선택됨` : (row.title || row.file);
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "modal-text" }, [
+        count > 1 ? "선택한 항목을 전부 삭제합니다." : "이 게임을 삭제합니다.",
+      ]),
+    ]);
+    const del = h("button", { class: "btn danger", onClick: () => { closeModal(); deleteSelection(); } }, ["Delete"]);
+    showModal(title, body, [del, h("button", { class: "btn primary", onClick: closeModal }, ["닫기"])]);
   }
 
   /** rating은 0~5로 들어온다. 이전 프로젝트처럼 한 자리로만 보여준다. */
@@ -2849,24 +2864,10 @@
     showModal(report.blocked ? "용량 부족" : "Plan 적용", body, actions);
   }
 
-  function toggleAutoPlan() {
-    if (!S.autoPlan) { S.autoPlan = true; renderAutoPlanState(); return; }
-    // 끄기 전에 경고한다(스펙 §32).
-    showConfirm("Auto Plan 끄기",
-      "이후 복사 / 삭제 / 이동이 실제 파일에 즉시 적용됩니다. 계속하시겠습니까?", true,
-      () => { S.autoPlan = false; renderAutoPlanState(); });
-  }
-
-  /** Auto Plan 표시가 있는 곳을 **전부** 다시 그린다.
-   *
-   * 상태는 처음부터 제대로 바뀌고 있었다. 그런데 `renderStatusBar()`만 불렀고 실제
-   * 버튼은 `renderPlanActions()`(= `renderFilterBar()`)가 만든다. 그래서 확인을 눌러
-   * 꺼도 툴바의 버튼은 계속 켜진 것처럼 보였다.
-   */
-  function renderAutoPlanState() {
-    renderFilterBar();
-    renderStatusBar();
-  }
+  // Auto Plan을 껐다 켰다 하는 UI는 없앴다(레이아웃 재검토 결론) - 실사용
+  // 시나리오가 확인되기 전까지는 화면에서 감춘다. `S.autoPlan`은 기본 ON으로
+  // 고정이고, 이 값을 읽는 곳들(§ moveSystemToStorage, deleteSelection 등)은
+  // 그대로 둔다 - 언젠가 토글을 되살릴 때 그 로직까지 다시 짤 필요는 없다.
 
   // ------------------------------------------------------------------
   // Archive (스펙 §37-44)
