@@ -76,7 +76,37 @@ def build_workspace(base: Path) -> dict:
         '<?xml version="1.0"?>\n<gameList/>\n', encoding="utf-8")
     (target / "ps2").mkdir(parents=True)
     (target / "downloaded_media" / "ps2" / "covers").mkdir(parents=True)
-    return {"source": source, "target": target}
+
+    # --- Import 검증용: 메타데이터 폴더와 ROM 폴더를 **떨어뜨려** 둔다 -------
+    # 사용자의 실제 배치(ES-DE 백업과 C:\Games\ROMs가 서로 다른 곳)를 그대로 흉내낸다.
+    # 여기는 API로 미리 Collection을 만들지 않는다 - 실제 Import 다이얼로그가
+    # 이 두 경로를 따로 받아 하나의 Collection으로 합치는지가 검증 대상이다.
+    fresh_meta = base / "fresh_meta"
+    (fresh_meta / "gamelists" / "snes").mkdir(parents=True)
+    (fresh_meta / "gamelists" / "snes" / "gamelist.xml").write_text(
+        '<?xml version="1.0"?>\n<gameList>\n'
+        '  <game><path>./Zelda.sfc</path><name>Zelda</name><genre>Action</genre></game>\n'
+        '</gameList>\n', encoding="utf-8")
+    fresh_roms = base / "fresh_roms"
+    (fresh_roms / "snes").mkdir(parents=True)
+    (fresh_roms / "snes" / "Zelda.sfc").write_bytes(b"ZELDA-ROM" * 100)
+    # gba는 메타데이터가 없다 - ROM 폴더에만 있는 System도 딸려 오는지 함께 본다.
+    (fresh_roms / "gba").mkdir(parents=True)
+    (fresh_roms / "gba" / "Metroid.gba").write_bytes(b"METROID-ROM" * 80)
+
+    # --- Storage 이동 검증용: System 하나 + 빈 External 폴더 -----------------
+    storage_root = base / "storagetest"
+    (storage_root / "gamelists" / "snes").mkdir(parents=True)
+    (storage_root / "gamelists" / "snes" / "gamelist.xml").write_text(
+        '<?xml version="1.0"?>\n<gameList/>\n', encoding="utf-8")
+    (storage_root / "snes").mkdir(parents=True)
+    (storage_root / "snes" / "Zelda.sfc").write_bytes(b"ZELDA-ROM" * 100)
+    storage_external = base / "storage_external"
+    storage_external.mkdir(parents=True)
+
+    return {"source": source, "target": target, "fresh_meta": fresh_meta,
+            "fresh_roms": fresh_roms, "storage_root": storage_root,
+            "storage_external": storage_external}
 
 
 class Harness:
@@ -91,6 +121,16 @@ class Harness:
             self.ids[name] = result["data"]["id"]
             job = self.api.start_scan(self.ids[name], True)["data"]["jobId"]
             self._wait(job)
+
+        # Storage 이동 검증용 - Internal에 System 하나, External은 미리 붙여만 두고
+        # 비운다. 드래그 자체가 실제로 파일을 옮기는지가 검증 대상이다.
+        storage_result = self.api.create_collection(
+            "Storagetest", "es-de", str(self.roots["storage_root"]))
+        self.ids["storagetest"] = storage_result["data"]["id"]
+        self._wait(self.api.start_scan(self.ids["storagetest"], True)["data"]["jobId"])
+        ext = self.api.add_external_storage(
+            self.ids["storagetest"], "SD", str(self.roots["storage_external"]))
+        self.external_storage_id = ext["data"]
 
     def _wait(self, job_id, timeout=30.0):
         import time
@@ -109,6 +149,12 @@ class Harness:
             "targetRoot": str(self.roots["target"]),
             "sourceId": self.ids["source"],
             "targetId": self.ids["target"],
+            "freshMetaRoot": str(self.roots["fresh_meta"]),
+            "freshRomsRoot": str(self.roots["fresh_roms"]),
+            "storageRoot": str(self.roots["storage_root"]),
+            "storageExternalRoot": str(self.roots["storage_external"]),
+            "storagetestId": self.ids["storagetest"],
+            "externalStorageId": self.external_storage_id,
         }
 
     def close(self):
