@@ -22,7 +22,6 @@ test("고른 Frontend가 새 Collection에 그대로 반영된다", async ({ pag
   await page.locator(".modal-body input[placeholder='예: Android ES-DE']").fill("펠가수스");
   await page.locator(".modal-body .btn", { hasText: "찾아보기" }).first().click();
   await modalButton(page, "Add").click();
-  await modalButton(page, "나중에").click();   // 메타데이터 생성 안내를 지난다
   await expect(page.locator(".ctab.active")).toContainText("펠가수스");
 });
 

@@ -80,6 +80,33 @@ MIGRATIONS = (
            )""",
         "CREATE TABLE app_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)",
     )),
+    Migration(2, (
+        # 예전에 만든 "ROM Storage"를 걷어낸다.
+        #
+        # ROM 폴더를 따로 지정하면 `storage_id='roms'`인 Storage를 만들고 System을
+        # 그쪽으로 보냈다. 그런데 화면이 Storage를 System의 부모로 그렸기 때문에,
+        # 사용자가 요구한 적 없는 `Internal` / `ROM` 분류가 내비게이션에 나타났다.
+        #
+        # 새로 만드는 Collection은 더 이상 그러지 않지만, **이미 만들어 둔 Collection은
+        # 이 배치를 그대로 들고 있다.** 고쳐 놓고도 화면이 그대로인 것은 고친 것이
+        # 아니므로 여기서 함께 옮긴다.
+        #
+        # ROM 위치는 잃지 않는다 - 그 Storage의 root_path에 System 이름을 붙여
+        # 각 System의 `rom_path`로 남긴다(Adapter가 이 값을 우선해서 읽는다).
+        # 이미 `rom_path`가 있으면 그쪽이 더 구체적이므로 건드리지 않는다.
+        """UPDATE collection_systems
+              SET rom_path = COALESCE(rom_path, (
+                      SELECT s.root_path
+                             || CASE WHEN instr(s.root_path, char(92)) > 0
+                                     THEN char(92) ELSE '/' END
+                             || collection_systems.system
+                        FROM collection_storages s
+                       WHERE s.collection_id = collection_systems.collection_id
+                         AND s.storage_id = 'roms')),
+                  storage_id = 'internal'
+            WHERE storage_id = 'roms'""",
+        "DELETE FROM collection_storages WHERE storage_id = 'roms'",
+    )),
 )
 
 

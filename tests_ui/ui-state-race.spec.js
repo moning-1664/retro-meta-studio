@@ -95,19 +95,16 @@ test.describe("종료 직전 저장 flush", () => {
   });
 });
 
-test.describe("Storage 접기 상태의 Collection 경계", () => {
-  test("한 Collection에서 접은 Storage가 다른 Collection에는 영향을 주지 않는다", async ({ page }) => {
+test.describe("Collection 경계", () => {
+  test("Collection을 바꾸면 이전 선택이 넘어오지 않는다", async ({ page }) => {
     await openBoth(page);   // 지금 활성은 c2(Android ES-DE)
 
-    // c2에서 첫 Storage 그룹을 접는다.
-    await page.locator(".nav-group").first().locator(".nav-group-head").dblclick();
-    await expect(page.locator(".nav-group").first().locator(".nav-system")).toHaveCount(0);
+    // romUid는 Collection마다 새로 매겨지므로 두 Collection에서 값이 흔히 겹친다.
+    // 선택이 남아 있으면 화면에 보이지도 않는 게임이 Archive 수집 대상이 된다.
+    await page.locator(".lrow").first().click();
+    await expect(page.locator("#status-bar")).toContainText("Selected 1");
 
-    // c1으로 넘어가면 그 Collection의 첫 Storage 그룹은 접혀 있으면 안 된다 -
-    // Storage id("ext-1" 등)가 Collection마다 다시 매겨지므로 우연히 같은 id를
-    // 공유해도 접힘 상태는 독립적이어야 한다.
     await page.locator(".ctab", { hasText: "Master Library" }).click();
-    const firstGroupSystems = await page.locator(".nav-group").first().locator(".nav-system").count();
-    expect(firstGroupSystems).toBeGreaterThan(0);
+    await expect(page.locator("#status-bar")).toContainText("Selected 0");
   });
 });

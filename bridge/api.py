@@ -15,6 +15,8 @@ pywebview 브릿지. JS에서 부를 수 있는 유일한 표면이다.
 from __future__ import annotations
 
 import base64
+import logging
+from collections import OrderedDict
 import traceback
 import time
 from pathlib import Path
@@ -40,6 +42,8 @@ from bridge.jobs import JobManager
 import file_ops
 from utils import normalize_title
 
+log = logging.getLogger(__name__)
+
 #: JS가 쓰는 표시용 라벨 <-> 저장소의 소문자 키
 MEDIA_LABELS = {
     "covers": "Covers", "marquees": "Marquees", "miximages": "Miximages",
@@ -51,6 +55,30 @@ MEDIA_LABELS = {
 MEDIA_KEYS = {v: k for k, v in MEDIA_LABELS.items()}
 
 THUMBNAIL_MAX = 256
+
+#: 캐시해 둘 썸네일 개수. 카드 한 화면이 수십 개이므로 몇 화면 분량이면 충분하다.
+THUMBNAIL_CACHE_MAX = 256
+
+#: "캐시에 없음"과 "캐시된 값이 None(=그릴 수 없는 파일)"을 구분하는 표식.
+_MISS = object()
+
+
+def _sorted_systems(entries, games, *, with_storage=False):
+    """게임이 있는 System을 먼저, 없는 것을 뒤에. 같은 상태끼리는 이름순.
+
+    빈 System을 별도의 "Empty Systems" 묶음으로 만들지 않는다 - 사용자가 보는 것은
+    하나의 System 목록이고, 비어 있다는 사실은 개수(0)가 이미 말해 준다. 정렬
+    우선순위만 다르게 준다.
+    """
+    def item(entry):
+        # 목록에 뜨는 게임 수와 같은 값이어야 한다(`count_by_system`).
+        row = {"system": entry.system, "count": games.get(entry.system, 0)}
+        if with_storage:
+            row["storageId"] = entry.storage_id
+        return row
+
+    return sorted((item(e) for e in entries),
+                  key=lambda r: (r["count"] == 0, r["system"].lower()))
 
 
 def ok(data=None):
@@ -93,6 +121,8 @@ class Api:
         # Plan은 세션 한정이다(D2). DB에 저장하지 않고 여기서만 들고 있다가 앱이
         # 꺼지면 사라진다.
         self._plans: dict[str, Plan] = {}
+        # 썸네일 캐시(LRU). 파일이 그대로면 인코딩 결과도 그대로다.
+        self._thumb_cache: OrderedDict = OrderedDict()
         self._clipboard_dir = (Path(cache_dir).parent / "clipboard") if cache_dir else paths.CLIPBOARD_DIR
         archive_path = (Path(cache_dir).parent / "archive.db") if cache_dir else paths.ARCHIVE_DB
         self.archive = ArchiveStore(archive_path)
@@ -129,12 +159,14 @@ class Api:
         return ok([self._collection_summary(c) for c in self.registry.list_collections()])
 
     @guarded
-    def create_collection(self, name, frontend, root_path, target=None, arch=None,
+    def create_collection(self, name, frontend, root_path=None, target=None, arch=None,
                           rom_path=None, media_path=None):
         """`root_path`는 메타데이터가 있는 곳, `rom_path`는 ROM이 있는 곳이다.
 
         ES-DE는 이 둘을 떼어 놓는 것이 기본이라 하나만 받으면 반쪽짜리 Collection만
-        만들 수 있다(§9).
+        만들 수 있다(§9). **둘 다 선택 사항이다** - 스크래핑을 한 번도 안 한 사용자는
+        ROM만 가지고 있고, 그것도 정상적인 Collection이다. 유효하지 않은 것은 둘 다
+        비어 있을 때뿐이며, 그 판단은 Workspace가 한다.
         """
         collection = self.workspace.create_collection(
             name, frontend, root_path, target=target or None, arch=arch or None,
@@ -195,16 +227,20 @@ class Api:
                 # capacity/free가 None이면 Unknown이다 - UI는 용량 막대를 숨긴다.
                 "capacityBytes": volume.capacity_bytes,
                 "freeBytes": volume.free_bytes,
-                "systems": [
-                    # 목록에 뜨는 게임 수와 같은 값이어야 한다(`count_by_system`).
-                    {"system": s.system, "count": games.get(s.system, 0)}
-                    for s in collection.systems_in(storage.storage_id)
-                ],
+                "systems": _sorted_systems(collection.systems_in(storage.storage_id), games),
             })
 
         return ok({
             **self._collection_summary(collection),
             "storages": storages,
+            # **좌측 내비게이션이 그리는 것은 이 목록이다.**
+            #
+            # 예전에는 화면이 `storages[].systems`를 순회해서 Storage를 System의 부모
+            # 노드로 그렸고, 그래서 사용자가 요구한 적 없는 `Internal` / `ROM` 분류가
+            # 나타났다. Storage는 용량·볼륨·파일 작업을 위한 내부 개념이고, 사용자가
+            # 보는 단위는 System이다. 어느 Storage에 있는지는 각 항목이 들고만 있고
+            # (배지/툴팁용), 계층을 만들지 않는다.
+            "systems": _sorted_systems(collection.systems, games, with_storage=True),
             "totalGames": cache.count_rows(),
         })
 
@@ -378,8 +414,44 @@ class Api:
             return ok(None)
         return ok(self._encode_image(item["rel_path"], THUMBNAIL_MAX if thumbnail else None))
 
+    def _encode_image(self, path, max_size=None):
+        # 썸네일은 카드 하나마다 한 번씩 불린다. 목록을 오갈 때마다 같은 파일을 다시
+        # 열어 축소하고 base64로 만드는 것은 순전히 낭비다 - 파일이 그대로면 결과도
+        # 그대로이므로 (경로, 크기, 수정시각, 목표 크기)를 열쇠로 캐시한다.
+        if max_size:
+            cached = self._thumbnail_cache_get(path, max_size)
+            if cached is not _MISS:
+                return cached
+        payload = self._encode_image_uncached(path, max_size)
+        if max_size:
+            self._thumbnail_cache_put(path, max_size, payload)
+        return payload
+
+    def _thumbnail_key(self, path, max_size):
+        try:
+            stat = Path(path).stat()
+        except OSError:
+            return None
+        return (str(path), stat.st_size, stat.st_mtime_ns, max_size)
+
+    def _thumbnail_cache_get(self, path, max_size):
+        key = self._thumbnail_key(path, max_size)
+        if key is None or key not in self._thumb_cache:
+            return _MISS
+        self._thumb_cache.move_to_end(key)
+        return self._thumb_cache[key]
+
+    def _thumbnail_cache_put(self, path, max_size, payload):
+        key = self._thumbnail_key(path, max_size)
+        if key is None:
+            return
+        self._thumb_cache[key] = payload
+        self._thumb_cache.move_to_end(key)
+        while len(self._thumb_cache) > THUMBNAIL_CACHE_MAX:
+            self._thumb_cache.popitem(last=False)
+
     @staticmethod
-    def _encode_image(path, max_size=None):
+    def _encode_image_uncached(path, max_size=None):
         path = Path(path)
         if not path.exists():
             return None
@@ -393,8 +465,10 @@ class Api:
                 with Image.open(path) as image:
                     image.thumbnail((max_size, max_size))
                     buffer = io.BytesIO()
-                    image.convert("RGB").save(buffer, format="JPEG", quality=82)
-                    payload, mime = buffer.getvalue(), "image/jpeg"
+                    # WebP는 같은 화질에서 JPEG보다 작다. 브릿지로 넘어가는 base64
+                    # 문자열이 그만큼 짧아지므로 카드가 많을수록 차이가 커진다.
+                    image.convert("RGB").save(buffer, format="WEBP", quality=82, method=4)
+                    payload, mime = buffer.getvalue(), "image/webp"
             else:
                 payload = path.read_bytes()
                 mime = {"png": "image/png", "webp": "image/webp"}.get(suffix.lstrip("."), "image/jpeg")
@@ -596,10 +670,52 @@ class Api:
     # Archive (스펙 §37-44)
     # ------------------------------------------------------------------
     @guarded
-    def archive_ingest(self, collection_id, rom_uids=None):
-        """Collection의 항목을 Archive에 수집한다. 출처는 Collection ID로 남는다."""
+    def archive_ingest(self, collection_id, rom_uids=None, scope=None):
+        """동기 수집. 프로그램 호출과 테스트용이다.
+
+        **화면은 이 경로를 쓰지 않는다** - GUI는 `start_archive_ingest()`로 scope를
+        명시해서 부른다. 여기서 `rom_uids=None`을 전체로 보는 것은 호출부가 대상을
+        직접 나열하는 프로그램 경로에서만 통하는 편의다.
+        """
         collection, cache, _ = self._plan_context(collection_id)
+        if scope is not None:
+            _kind, rom_uids = archive_service.resolve_scope(cache, scope)
         return ok(archive_service.ingest_collection(self.archive, collection, cache, rom_uids))
+
+    @guarded
+    def archive_ingest_preview(self, collection_id, scope=None):
+        """이 scope로 수집하면 몇 개가 들어가는지. 버튼 라벨과 확인용이다."""
+        _collection, cache, _ = self._plan_context(collection_id)
+        kind, uids = archive_service.resolve_scope(cache, scope)
+        return ok({"kind": kind, "count": len(uids),
+                   "system": (scope or {}).get("system")})
+
+    @guarded
+    def start_archive_ingest(self, collection_id, scope=None):
+        """Collection의 항목을 Archive에 수집한다. 출처는 Collection ID로 남는다.
+
+        **대상은 화면이 준 scope로만 정한다**(§13). 예전에는 선택이 없으면 `None`을
+        보냈고 백엔드가 그것을 "Collection 전체"로 해석해서, MSX1만 보고 있던 사용자가
+        Collection 전체를 Archive에 넣게 되었다.
+
+        수집은 게임 수만큼 DB 쓰기가 일어나므로 job으로 돌린다 - 동기로 부르면 큰
+        Collection에서 창이 멈춘 것처럼 보이고 취소할 방법도 없다.
+        """
+        collection, cache, _ = self._plan_context(collection_id)
+        kind, uids = archive_service.resolve_scope(cache, scope)
+        log.info("archive ingest requested: collection=%s scope=%s system=%s targets=%d",
+                 collection_id, kind, (scope or {}).get("system"), len(uids))
+
+        def run(cb):
+            result = archive_service.ingest_collection(
+                self.archive, collection, cache, uids, progress_cb=cb)
+            log.info("archive ingest done: scope=%s requested=%d ingested=%d",
+                     kind, len(uids), len(result["ingestedRomUids"]))
+            return {**result, "scope": kind}
+
+        job_id = self.jobs.run_heavy(run, mutates_state=True, target_ids=(collection_id,),
+                                     kind="archive-ingest")
+        return ok({"jobId": job_id, "count": len(uids), "scope": kind})
 
     @guarded
     def archive_rows(self, search=None, systems=None, limit=200, offset=0):
@@ -628,6 +744,25 @@ class Api:
     def archive_detail(self, rom_identity_id):
         data = archive_service.detail(self.archive, rom_identity_id)
         return ok(data) if data else err("Archive 항목을 찾을 수 없습니다.")
+
+    @guarded
+    def get_archive_media_image(self, rom_identity_id, media_label, thumbnail=False):
+        """Archive 항목의 media 이미지.
+
+        Collection용 `get_media_image()`는 `collection_id` + `rom_uid`로 Cache를 뒤진다.
+        Archive에는 그 둘 다 없다(식별자가 rom_identity_id다). 그래서 화면이 Archive
+        탭에서도 Collection용 경로를 부르고 있었고, 조회가 조용히 실패해서 **Archive에
+        media가 저장되어 있는데도 영영 보이지 않았다.**
+
+        Archive는 파일을 복제하지 않고 원본 경로만 들고 있으므로(§37, D3), 그 경로가
+        사라졌으면 그 media만 건너뛴다.
+        """
+        media_type = MEDIA_KEYS.get(media_label, str(media_label).lower())
+        item = next((m for m in self.archive.media_refs(rom_identity_id)
+                     if m["media_type"] == media_type), None)
+        if item is None:
+            return ok(None)
+        return ok(self._encode_image(item["abs_path"], THUMBNAIL_MAX if thumbnail else None))
 
     @guarded
     def archive_edit(self, rom_identity_id, fields):

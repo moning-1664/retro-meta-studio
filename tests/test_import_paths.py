@@ -15,7 +15,6 @@ ES-DE는 원래 이 둘을 떼어 놓는 Frontend다(안드로이드의 외장 S
 import unittest
 
 from app.model.collection import STORAGE_INTERNAL
-from app.workspace import Workspace
 from bridge.api import Api
 from tests.fixtures import build_custom_esde_tree, scan, temp_root, write_file
 
@@ -94,20 +93,31 @@ class ImportBothTests(unittest.TestCase):
         ffx = next(r for r in rows if r["file"] == "FFX.iso")
         self.assertTrue(ffx["hasMedia"], "media가 붙지 않았다")
 
-    # --- Storage 배치 ------------------------------------------------------
-    def test_the_rom_folder_becomes_its_own_storage(self):
-        """다른 디스크에 쌓이는 바이트를 한 Storage로 뭉뚱그리면 용량 표시가 틀어진다."""
-        cid = self._create(rom_path=str(self.roms))
-        collection = self.api.workspace.registry.get_collection(cid)
-        roots = {s.storage_id: s.root_path for s in collection.storages}
-        self.assertEqual(roots.get(Workspace.ROM_STORAGE_ID), str(self.roms))
+    # --- ROM 위치는 System의 속성이지 Storage가 아니다 ----------------------
+    def test_the_rom_folder_does_not_become_a_storage(self):
+        """예전에는 여기서 `label="ROM"`인 Storage를 만들었다.
 
-    def test_systems_with_roms_live_on_the_rom_storage(self):
+        Navigation이 Storage → System 계층을 그대로 그리기 때문에, 사용자가 요구한 적
+        없는 `Internal` / `ROM` 분류가 화면에 나타났다. Storage는 용량·볼륨·파일 작업을
+        위한 내부 개념이고 사용자가 보는 단위는 System이다.
+        """
         cid = self._create(rom_path=str(self.roms))
         collection = self.api.workspace.registry.get_collection(cid)
-        placement = {s.system: s.storage_id for s in collection.systems}
+        self.assertEqual([s.storage_id for s in collection.storages], [STORAGE_INTERNAL])
+
+    def test_the_rom_location_is_recorded_on_the_system(self):
+        """ROM이 어디에 있는지는 그 System이 들고 있는다 - Adapter가 이것을 우선한다."""
+        cid = self._create(rom_path=str(self.roms))
+        collection = self.api.workspace.registry.get_collection(cid)
+        placement = {s.system: s.rom_path for s in collection.systems}
         for system in ("ps2", "snes", "gba"):
-            self.assertEqual(placement[system], Workspace.ROM_STORAGE_ID, system)
+            self.assertEqual(placement[system], str(self.roms / system), system)
+
+    def test_every_system_stays_on_one_storage(self):
+        """Storage가 하나뿐이므로 Navigation이 System을 평평하게 보여줄 수 있다."""
+        cid = self._create(rom_path=str(self.roms))
+        collection = self.api.workspace.registry.get_collection(cid)
+        self.assertEqual({s.storage_id for s in collection.systems}, {STORAGE_INTERNAL})
 
     def test_the_same_folder_twice_does_not_create_a_second_storage(self):
         """ROM 폴더와 Metadata 폴더가 같으면 Storage를 나눌 이유가 없다."""
@@ -127,6 +137,25 @@ class ImportBothTests(unittest.TestCase):
         empty = self.dir / "nothing"
         empty.mkdir()
         result = self.api.create_collection("X", "es-de", str(empty))
+        self.assertFalse(result["ok"])
+
+    # --- Metadata는 필수가 아니다 ------------------------------------------
+    def test_rom_only_without_any_metadata_directory(self):
+        """Metadata 칸을 비우고 ROM 폴더만 준다 - 사용자가 실제로 하는 일이다."""
+        result = self.api.create_collection("R", "es-de", None, rom_path=str(self.roms))
+        self.assertTrue(result["ok"], result.get("error"))
+        rows = self._rows(result["data"]["id"])
+        self.assertEqual(len(rows), 4)
+        self.assertTrue(all(r["present"] for r in rows))
+
+    def test_a_rom_only_collection_is_rooted_at_the_rom_folder(self):
+        cid = self.api.create_collection("R", "es-de", None,
+                                         rom_path=str(self.roms))["data"]["id"]
+        collection = self.api.workspace.registry.get_collection(cid)
+        self.assertEqual(collection.root_path, str(self.roms))
+
+    def test_both_paths_empty_is_refused(self):
+        result = self.api.create_collection("X", "es-de", None)
         self.assertFalse(result["ok"])
 
 

@@ -90,52 +90,144 @@ test.describe("Media 격자", () => {
     await page.locator(".detail-tab", { hasText: "Media" }).click();
   };
 
-  test("ES-DE가 쓰는 media 종류를 전부 보여준다", async ({ page }) => {
+  test("ES-DE가 쓰는 media 종류를 전부 다룬다", async ({ page }) => {
     await openMedia(page);
-    const labels = await page.locator(".media-tile-label").allTextContents();
-    // 예전에 빠져 있던 것들이다.
-    ["TitleScreen", "PhysicalMedia", "BackCover", "FanArt", "Manual"].forEach((name) => {
-      expect(labels).toContain(name);
+    // 그림으로 보여주는 것과 유무만 말하는 것을 합치면 하나도 빠지지 않아야 한다.
+    const tiles = await page.locator(".media-tile-label").allTextContents();
+    const flags = await page.locator(".media-flag-label").allTextContents();
+    const all = [...tiles, ...flags];
+    ["Cover", "Marquee", "MixImage", "TitleScreen", "Screenshot",
+     "3DBox", "BackCover", "PhysicalMedia", "Wheel",
+     "Video", "Manual", "FanArt"].forEach((name) => {
+      expect(all).toContain(name);
     });
   });
 
+  test("Cover 오른쪽은 셋이다", async ({ page }) => {
+    // 넷을 놓으니 난잡하고 각 칸이 너무 납작해졌다.
+    await openMedia(page);
+    await expect(page.locator(".media-hero-side .media-tile")).toHaveCount(3);
+  });
+
+  test("아래 한 줄은 넷이다", async ({ page }) => {
+    await openMedia(page);
+    await expect(page.locator(".media-rest .media-tile")).toHaveCount(4);
+    const labels = await page.locator(".media-rest .media-tile-label").allTextContents();
+    expect(labels).toEqual(["3DBox", "BackCover", "PhysicalMedia", "Wheel"]);
+  });
+
+  test("Cover 높이와 오른쪽 셋의 높이가 맞는다", async ({ page }) => {
+    // 이것이 어긋나면 패널이 삐뚤어 보인다. 크기를 CSS가 못박아야 항상 맞는다.
+    await openMedia(page);
+    const cover = await page.locator(".media-tile.cover").evaluate(
+      (e) => e.getBoundingClientRect().height);
+    const side = await page.locator(".media-hero-side").evaluate(
+      (e) => e.getBoundingClientRect().height);
+    expect(Math.abs(cover - side)).toBeLessThan(2);
+  });
+
+  test("그림 비율이 달라도 상자 크기는 그대로다", async ({ page }) => {
+    // 예전에는 이미지에 height:auto를 줘서 표지 비율이 곧 상자 높이였다. 그래서
+    // 게임을 넘길 때마다 Cover 높이가 달라지고 아래 배치가 통째로 밀렸다.
+    await openMedia(page);
+    const sizes = () => page.evaluate(() => {
+      const pick = (sel) => {
+        const r = document.querySelector(sel).getBoundingClientRect();
+        return [Math.round(r.width), Math.round(r.height)];
+      };
+      return { cover: pick(".media-tile.cover"), wide: pick(".media-tile.wide"),
+               rest: pick(".media-rest") };
+    });
+    const first = await sizes();
+    await page.locator(".lrow").nth(2).locator(".lc-file").click();
+    await page.locator(".detail-tab", { hasText: "Media" }).click();
+    expect(await sizes()).toEqual(first);
+  });
+
   test("없는 media도 자리를 지킨다", async ({ page }) => {
-    // Screenshot이 없으면 높이가 무너져 패널 배치가 흔들리던 문제.
+    // Screenshot이 없으면 높이가 무너져 패널 배치가 흔들리던 문제. 크기는 슬롯마다
+    // 다르지만(Cover는 크고 보조는 작다) **0이 되는 것은 없어야** 한다.
     await openMedia(page);
     const heights = await page.locator(".media-tile-preview").evaluateAll(
       (els) => els.map((e) => Math.round(e.getBoundingClientRect().height)));
     expect(Math.min(...heights)).toBeGreaterThan(0);
-    expect(new Set(heights).size).toBe(1);   // 있든 없든 같은 높이
   });
 
-  test("타일은 16:9를 지킨다", async ({ page }) => {
+  test("Cover와 Screenshot이 보조 media보다 크다", async ({ page }) => {
+    // 이 둘이 그 게임을 알아보게 하는 주된 그림이다. 예전에는 열두 칸이 전부 같은
+    // 16:9 타일이라 세로로 긴 표지가 타일 넓이의 절반도 못 썼다.
     await openMedia(page);
-    const ratio = await page.locator(".media-tile-preview").first().evaluate((e) => {
+    const area = (sel) => page.locator(sel).first().evaluate((e) => {
       const r = e.getBoundingClientRect();
-      return r.width / r.height;
+      return r.width * r.height;
     });
-    expect(ratio).toBeGreaterThan(1.6);
-    expect(ratio).toBeLessThan(1.9);
+    const cover = await area(".media-tile.cover");
+    const wide = await area(".media-tile.wide");
+    const small = await area(".media-tile.small");
+    expect(cover).toBeGreaterThan(small * 2);
+    expect(wide).toBeGreaterThan(small * 2);
+  });
+
+  test("Cover는 왼쪽, 보조는 그 오른쪽에 있다", async ({ page }) => {
+    await openMedia(page);
+    const box = (sel) => page.locator(sel).first().evaluate((e) => e.getBoundingClientRect().x);
+    expect(await box(".media-tile.cover")).toBeLessThan(await box(".media-hero-side .media-tile"));
+  });
+
+  test("Screenshot은 Cover 아래에 전체 폭으로 놓인다", async ({ page }) => {
+    await openMedia(page);
+    const rect = (sel) => page.locator(sel).first().evaluate((e) => {
+      const r = e.getBoundingClientRect();
+      return { top: r.top, width: r.width };
+    });
+    const hero = await rect(".media-hero");
+    const wide = await rect(".media-tile.wide");
+    expect(wide.top).toBeGreaterThan(hero.top);
+    expect(Math.abs(wide.width - hero.width)).toBeLessThan(3);
+  });
+
+  test("자리는 어떤 media가 있든 그대로다", async ({ page }) => {
+    // "있는 것부터 채운다"로 하면 게임을 넘길 때마다 Cover 자리에 Wheel이 오는 식으로
+    // 배치가 출렁인다. 슬롯은 고정이어야 한다.
+    await openMedia(page);
+    const labels = () => page.locator(".media-tile-label").allTextContents();
+    const first = await labels();
+    await page.locator(".lrow").nth(2).locator(".lc-file").click();
+    await page.locator(".detail-tab", { hasText: "Media" }).click();
+    expect(await labels()).toEqual(first);
+  });
+
+  test("Media 탭은 잘리지 않고 스크롤된다", async ({ page }) => {
+    // legacy style.css의 `.media-tab-body { overflow:hidden !important }` 때문에
+    // 아래쪽 타일이 잘린 채 스크롤도 되지 않았다.
+    await openMedia(page);
+    const overflow = await page.locator(".media-tab-body").evaluate(
+      (e) => getComputedStyle(e).overflowY);
+    expect(overflow).not.toBe("hidden");
   });
 
   test("없을 때 «없음» 글자를 반복하지 않는다", async ({ page }) => {
     await openMedia(page);
     // 열두 개 타일에 "…없음"을 반복해 적으면 그것만 눈에 들어온다. 아이콘 하나로 족하다.
-    await expect(page.locator(".media-grid")).not.toContainText("없음");
+    await expect(page.locator(".media-tab-body")).not.toContainText("없음");
   });
 
-  test("영상과 설명서는 [v]로만 표시한다", async ({ page }) => {
-    // 영상은 실어 오기엔 크고 설명서는 PDF라 애초에 그릴 수 없다.
+  test("영상·설명서·FanArt는 유무만 표시한다", async ({ page }) => {
+    // 영상은 실어 오기엔 크고 설명서는 PDF라 애초에 그릴 수 없다. FanArt는 자리를
+    // 차지할 만큼 자주 보는 것이 아니다(사용자 결정).
     await openMedia(page);
-    const video = page.locator(".media-tile.file-slot", { hasText: "Video" });
+    const video = page.locator(".media-flag-item", { hasText: "Video" });
     await expect(video.locator(".media-flag")).toHaveText("v");
+    await expect(video).toHaveClass(/on/);
   });
 
-  test("없는 파일 슬롯은 표시가 비어 있다", async ({ page }) => {
+  test("없으면 x로 말한다", async ({ page }) => {
     await openMedia(page);
     await page.locator(".lrow").nth(2).locator(".lc-file").click();
     await page.locator(".detail-tab", { hasText: "Media" }).click();
-    await expect(page.locator(".media-tile.file-slot .media-flag.on")).toHaveCount(0);
+    const marks = await page.locator(".media-flag").allTextContents();
+    expect(marks.every((m) => m === "x")).toBe(true);
+    await expect(page.locator(".media-flag-item.on")).toHaveCount(0);
   });
 });
 
@@ -169,11 +261,20 @@ test.describe("Media 확대(lightbox)", () => {
     await expect(page.locator(".lightbox-img")).toHaveCount(0);
   });
 
-  test("닫기 버튼으로 닫힌다", async ({ page }) => {
+  test("큰 이미지를 다시 누르면 닫힌다", async ({ page }) => {
+    // 확대해서 본 다음에 하는 일은 닫는 것뿐이고, 그때 손이 가 있는 곳은 그 이미지
+    // 위다. 버튼을 찾아 눈을 옮기게 할 이유가 없다.
     await openMedia(page);
     await page.locator(".media-tile[title='Cover']").click();
-    await page.locator(".modal-actions .btn", { hasText: "닫기" }).click();
+    await expect(page.locator(".lightbox-img")).toBeVisible();
+    await page.locator(".lightbox-img").click();
     await expect(page.locator(".lightbox-img")).toHaveCount(0);
+  });
+
+  test("별도의 닫기 버튼은 두지 않는다", async ({ page }) => {
+    await openMedia(page);
+    await page.locator(".media-tile[title='Cover']").click();
+    await expect(page.locator(".lightbox-card .modal-actions .btn")).toHaveCount(0);
   });
 
   test("빈 타일은 눌러도 확대되지 않는다", async ({ page }) => {

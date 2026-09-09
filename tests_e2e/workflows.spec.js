@@ -50,19 +50,15 @@ test.describe("ES-DE Import", () => {
     await page.locator(".icon-btn[title='Collection 가져오기 (Import)']").click();
     await expect(page.locator(".modal-title")).toHaveText("Collection 추가");
 
-    // 기본 화면은 대표 폴더 하나뿐이다 - ROM이 다른 위치에 있는 경우만 "고급"을
-    // 펼쳐 따로 지정한다.
-    await page.locator(".modal-body input[placeholder='폴더를 선택하세요']").fill(ws.freshMetaRoot);
+    // Metadata 디렉토리와 ROM 디렉토리는 각각 1급 필드다 - 어느 쪽을 넣어야 하는지
+    // 사용자가 고민하지 않아도 되고, 둘 중 하나만 채워도 된다.
+    await page.locator("#add-metadata-path").fill(ws.freshMetaRoot);
+    await page.locator("#add-rom-path").fill(ws.freshRomsRoot);
     await page.locator(".modal-body input[placeholder='예: Android ES-DE']").fill("Fresh");
-    await page.locator(".add-collection-advanced summary").click();
-    await page.locator(".modal-body input[placeholder*='위 폴더에서 함께 찾습니다']")
-              .fill(ws.freshRomsRoot);
     await page.locator(".modal-actions .btn.primary", { hasText: "Add" }).click();
 
-    // gba는 ROM만 있고 gamelist가 없다 - "메타데이터가 없습니다" 안내가 뜬다.
-    // 지금은 그냥 지나간다(GUI-01의 핵심은 population이지 이 안내가 아니다).
-    await expect(page.locator(".modal-title")).toHaveText("메타데이터가 없습니다");
-    await page.locator(".modal-actions .btn", { hasText: "나중에" }).click();
+    // gba는 ROM만 있고 gamelist가 없다. 그래도 **가로막지 않는다** - ROM만 있는
+    // System은 정상이고, gamelist를 미리 만드는 것은 나중에 고를 수 있는 선택지다.
 
     await expect(page.locator(".ctab.active")).toContainText("Fresh", { timeout: 20000 });
 
@@ -158,7 +154,7 @@ test.describe("Archive -> Collection", () => {
 // Storage 이동 - System을 Internal에서 External로 드래그
 // ======================================================================
 test.describe("Storage 이동", () => {
-  test("System을 드래그해 External로 옮기면 실제 파일이 이동한다", async ({ page }) => {
+  test("System 메뉴로 External로 옮기면 실제 파일이 이동한다", async ({ page }) => {
     const internalRom = path.join(ws.storageRoot, "snes", "Zelda.sfc");
     const externalRom = path.join(ws.storageExternalRoot, "snes", "Zelda.sfc");
     expect(fs.existsSync(internalRom)).toBe(true);
@@ -167,21 +163,10 @@ test.describe("Storage 이동", () => {
     await openReal(page);
     await openTab(page, "Storagetest");
 
-    // Internal 그룹의 snes 행을 External 그룹 전체 위로 끌어다 놓는다.
-    // 실제 마우스 드래그 시퀀스 대신 DragEvent를 직접 구성한다 - Playwright의
-    // dragTo는 HTML5 dataTransfer를 완전히 재현하지 못하는 경우가 있어, 앱이 실제로
-    // 읽는 `text/plain` payload를 그대로 전달하는 편이 더 안정적이다.
-    await page.evaluate(() => {
-      const groups = document.querySelectorAll(".nav-group");
-      const internalGroup = [...groups].find((g) => g.textContent.includes("INTERNAL"));
-      const externalGroup = [...groups].find((g) => g.textContent.includes("SD"));
-      const snesRow = internalGroup.querySelector(".nav-system");
-      const data = new DataTransfer();
-      data.setData("text/plain", JSON.stringify({ system: "snes", from: "internal" }));
-      const drop = new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true });
-      externalGroup.dispatchEvent(drop);
-      void snesRow;
-    });
+    // Navigation에는 Storage 그룹이 없다 - 사용자가 보는 것은 System 목록이다.
+    // Storage 이동은 그 System의 우클릭 메뉴에서 한다.
+    await page.locator(".nav-system", { hasText: "SNES" }).click({ button: "right" });
+    await page.locator(".picker-row", { hasText: "SD" }).click();
 
     // Auto Plan이 켜져 있으므로 Plan에 올라간다 - Apply까지 눌러 확정한다.
     await expect(page.locator("#toast")).toContainText("이동을 Plan에 올렸습니다");
@@ -195,8 +180,8 @@ test.describe("Storage 이동", () => {
 
     // 다시 읽어도(Reload) 같은 자리를 가리켜야 한다.
     await page.locator(".icon-btn[title='다시 스캔']").click();
-    await expect(page.locator(".nav-group", { hasText: "SD" })).toContainText("SNES",
-      { timeout: 20000 });
+    await page.locator(".nav-system", { hasText: "SNES" }).click({ button: "right" });
+    await expect(page.locator(".modal-body")).toContainText("SD", { timeout: 20000 });
   });
 });
 

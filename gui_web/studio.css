@@ -171,36 +171,84 @@ body { font-size: var(--fs-body); }
 .filter-spacer { flex: 1; }
 .filter-total { font-size: var(--fs-caption); color: var(--muted); font-variant-numeric: tabular-nums; }
 
-/* Detail - Media 격자.
-   **타일마다 16:9를 고정한다.** 예전에는 Screenshot이 없으면 그 타일 높이가 0이 되어
-   패널 배치가 통째로 무너졌다. 있든 없든 자리는 그대로여야 한다. */
-.media-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 10px;
+/* Detail - Media.
+   Cover는 세로로 긴 표지, Screenshot은 가로로 넓은 화면이다. 이 둘이 그 게임을
+   알아보게 하는 주된 그림이므로 크게 놓고 나머지는 작게 곁들인다. 예전에는 열두 칸을
+   전부 같은 16:9 타일로 늘어놓아서 표지가 타일 넓이의 절반도 못 썼다.
+
+   자리는 슬롯마다 고정이다(app.js의 MEDIA_HERO/MEDIA_REST). 있는 것부터 채우면
+   게임을 넘길 때마다 Cover 자리에 Wheel이 오는 식으로 배치가 출렁인다. */
+/* **배치가 고정이다.** 크기는 여기서 정하고 그림은 그 상자 안에 맞춰 들어간다.
+   예전에는 이미지에 `width:100%; height:auto`를 줘서 표지 비율이 곧 상자 높이였고,
+   게임을 넘길 때마다 Cover 높이가 달라지며 오른쪽 보조 media와 아래위가 어긋났다. */
+.media-tab-body {
+  --media-gap: 6px;
+  --media-hero-h: 228px;   /* Cover 높이 = 오른쪽 셋의 높이 합 */
+  --media-shot-h: 132px;
+  --media-small-h: 60px;
+  padding: 8px;
+  display: flex; flex-direction: column; gap: var(--media-gap);
+  background: #000;
 }
+
+/* Cover(왼쪽) + 보조 셋(오른쪽 세로). 높이를 여기서 못박아 양쪽이 반드시 맞는다. */
+.media-hero {
+  display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: var(--media-gap); height: var(--media-hero-h);
+}
+/* `1fr` 셋이므로 세 칸의 합이 정확히 Cover 높이가 된다. */
+.media-hero-side {
+  display: grid; grid-template-rows: repeat(3, 1fr);
+  gap: var(--media-gap); min-width: 0; min-height: 0;
+}
+.media-tile.wide { height: var(--media-shot-h); }
+/* 아래 한 줄 - 네 칸 고정. */
+.media-rest {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: var(--media-gap); height: var(--media-small-h);
+}
+
 .media-tile {
-  display: flex; flex-direction: column; gap: 4px; min-width: 0;
+  position: relative; min-width: 0; min-height: 0; height: 100%;
   border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: var(--card2); padding: 6px; cursor: default;
+  /* 그림이 없는 자리도, 그림 옆에 남는 자리도 검게 둔다. */
+  background: #000; overflow: hidden; cursor: default;
 }
+/* 라벨은 그림 위에 겹친다 - 레이아웃 공간을 먹지 않아야 그림이 그만큼 커진다. */
 .media-tile-label {
-  font-size: var(--fs-eyebrow); color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  position: absolute; left: 5px; top: 4px; z-index: 2;
+  padding: 1px 5px; border-radius: var(--radius-xs);
+  font-size: var(--fs-eyebrow); font-weight: 600; color: #fff;
+  background: rgba(0, 0, 0, .55); pointer-events: none;
+  max-width: calc(100% - 10px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* 상자를 꽉 채우되 크기는 상자가 정한다. */
 .media-tile-preview {
-  aspect-ratio: 16 / 9; width: 100%;
+  position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  background: var(--card3); border-radius: var(--radius-sm); overflow: hidden;
   color: var(--list-muted);
 }
-.media-tile-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
-.media-tile.empty .media-tile-preview { opacity: .45; }
-/* 영상·설명서는 그릴 수 없다. 있으면 [v] 하나로 말한다. */
-.media-flag {
-  font-weight: 600; font-size: 15px; color: var(--list-muted);
-  border: 1px solid var(--border); border-radius: 3px;
-  min-width: 22px; height: 20px; display: flex; align-items: center; justify-content: center;
+/* `max-*`만 준다. 그림이 상자보다 커지지도, 상자를 늘리지도 못한다. */
+.media-tile-preview img {
+  display: block; max-width: 100%; max-height: 100%;
+  width: auto; height: auto; object-fit: contain;
 }
-.media-flag.on { color: var(--success, #4caf50); border-color: currentColor; }
+.media-tile.empty .media-tile-preview { opacity: .4; }
+
+/* 그림 없이 있고 없고만 말하는 줄. */
+.media-flags {
+  display: flex; align-items: center; gap: 14px;
+  padding: 4px 2px; color: var(--list-muted); font-size: var(--fs-caption);
+}
+.media-flag-item { display: flex; align-items: center; gap: 5px; }
+.media-flag {
+  font-weight: 700; font-size: 12px; line-height: 1;
+  min-width: 17px; height: 17px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid currentColor; border-radius: 3px;
+}
+.media-flag-item.on { color: var(--success, #4caf50); }
+.media-flag-item.on .media-flag-label { color: var(--text); }
 
 /* 미리보기를 끄면 목록이 그 자리까지 넓어진다. */
 #detail-panel.hidden { display: none; }
@@ -231,11 +279,18 @@ body { font-size: var(--fs-body); }
 .nav-group-head { user-select: none; }
 
 /* Gamelist */
-#list-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--list-bg); }
+/* 헤더는 본문보다 넓을 수 있고(컬럼 합이 화면보다 넓을 때) 가로로 밀린다.
+   그 넘치는 부분을 여기서 잘라 준다 - 안 그러면 상세 패널 위로 삐져나온다. */
+#list-wrap {
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+  background: var(--list-bg); overflow-x: hidden;
+}
 /* 컬럼 폭은 화면에서 정한다(gridTemplateColumns) - 사용자가 끌어서 바꾸고 그 값이
    저장되기 때문에 CSS에 박아둘 수 없다. */
 #list-head {
   display: grid; align-items: center; height: 26px; padding: 0 8px;
+  /* 본문을 가로로 밀면 같이 밀린다(app.js의 syncHeadScroll). */
+  flex: 0 0 auto; will-change: transform;
   background: var(--list-head); border-bottom: 1px solid var(--list-border);
   /* 헤더가 본문보다 작으면 어느 컬럼인지 읽기 어렵다. 대문자 변환도 뺐다 - 한글
      컬럼명과 섞이면 정렬이 어긋나 보인다. */
@@ -258,8 +313,11 @@ body { font-size: var(--fs-body); }
 .col-resize:hover { background: var(--accent); opacity: .45; }
 
 #list-scroll { flex: 1; overflow: auto; position: relative; }
+/* 폭은 app.js가 컬럼 합으로 정한다 - 가로로 넘칠 것이 있어야 가로 스크롤이 생긴다. */
 #list-spacer { width: 1px; }
-#list-window { position: absolute; top: 0; left: 0; right: 0; will-change: transform; }
+/* `right: 0`을 주면 폭이 스크롤 컨테이너에 묶여, 컬럼 합이 화면보다 넓어도 넘칠
+   자리가 없어 가로 스크롤이 아예 생기지 않았다. 폭은 app.js가 min-width로 정한다. */
+#list-window { position: absolute; top: 0; left: 0; will-change: transform; }
 /* 카드 보기 - 가상 스크롤 대신 실제 grid로 흐른다(§preview-card 크기는 style.css). */
 #list-window.card-mode {
   position: static; display: grid;
@@ -339,6 +397,10 @@ body { font-size: var(--fs-body); }
 .sb-middle { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; overflow: hidden; }
 .sb-label { opacity: .7; }
 .sb-storage { white-space: nowrap; }
+.sb-storage.clickable { cursor: pointer; }
+.sb-storage.clickable:hover b { text-decoration: underline; }
+/* 게임이 없는 System. 목록에서 빼지 않고 뒤로 정렬하되, 한눈에 구분되게 흐리게 둔다. */
+.nav-system.empty .nav-label, .nav-system.empty .nav-count { opacity: .55; }
 .sb-storage b { color: var(--text); font-weight: 600; }
 .sb-actions { display: flex; gap: 6px; }
 .sb-actions .btn[disabled] { opacity: .45; cursor: not-allowed; }
@@ -394,7 +456,13 @@ body { font-size: var(--fs-body); }
 /* Media 확대(lightbox) - showModal을 재사용해 ESC/바깥클릭 닫기를 공짜로 얻는다. */
 .modal-card.lightbox-card { width: min(90vw, 900px); max-height: 92vh; }
 .lightbox-body { align-items: center; justify-content: center; }
-.lightbox-img { max-width: 100%; max-height: 78vh; object-fit: contain; border-radius: var(--radius-md); }
+/* 큰 이미지 자체가 닫기 버튼이다 - 커서로 그것을 알린다. */
+.lightbox-img {
+  max-width: 100%; max-height: 84vh; object-fit: contain;
+  border-radius: var(--radius-md); cursor: zoom-out;
+}
+/* 버튼이 없으므로 빈 줄이 남지 않게 한다. */
+.lightbox-card .modal-actions:empty { display: none; }
 .media-tile.clickable { cursor: zoom-in; }
 
 #toast {

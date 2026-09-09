@@ -24,22 +24,20 @@ test("History에서 다른 Collection을 고르면 탭이 하나 더 열린다",
   await expect(page.locator(".ctab.active")).toContainText("Android ES-DE");
 });
 
-test("새 Collection 추가는 폴더만 있으면 되고, 이름은 폴더명으로 채워진다", async ({ page }) => {
+test("Metadata 디렉토리 하나만 있어도 추가되고, 이름은 폴더명으로 채워진다", async ({ page }) => {
   await page.locator(".ctab-add").click();
   await expect(page.locator(".modal-title")).toHaveText("Collection 추가");
 
-  // 폴더를 비워둔 채 누르면 경고만 뜨고 모달이 닫히지 않아야 한다.
+  // 두 경로를 모두 비워둔 채 누르면 경고만 뜨고 모달이 닫히지 않아야 한다.
   await modalButton(page, "Add").click();
-  await expect(page.locator("#toast")).toContainText("폴더를 선택하세요");
+  await expect(page.locator("#toast")).toContainText("하나는 선택하세요");
   await expect(page.locator(".modal-title")).toHaveText("Collection 추가");
 
   // 찾아보기(목업 pick_folder)로 경로를 채우면 이름을 안 적어도 폴더명으로 채워져 추가된다.
   await page.locator(".modal-body .btn", { hasText: "찾아보기" }).first().click();
   await modalButton(page, "Add").click();
 
-  // 메타데이터가 없는 Collection이면 만들지 먼저 묻는다(§Phase 7.8) - 그 안내를
-  // 지나야 탭이 열린다.
-  await modalButton(page, "나중에").click();
+  // 메타데이터가 없다는 이유로 가로막지 않는다 - 바로 열린다.
   await expect(page.locator(".ctab.active")).toContainText("ES-DE");
 });
 

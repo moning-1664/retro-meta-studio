@@ -43,7 +43,34 @@
         actualBytes: 8700000000, capacityBytes: 512e9, freeBytes: 90e9,
         systems: [{ system: "ps2", count: 2 }] },
     ],
+    // 좌측 내비게이션이 그리는 평평한 System 목록. 게임이 있는 것이 먼저, 없는 것이
+    // 나중, 같으면 이름순 - Storage는 계층이 아니라 각 항목이 들고만 있다.
+    systems: [
+      { system: "ps2", count: 2, storageId: "ext-1" },
+      { system: "snes", count: 1, storageId: "internal" },
+      { system: "gba", count: 0, storageId: "internal" },
+    ],
   };
+
+  /** 목업에서 이 scope가 어떤 항목을 대상으로 삼는지. 실제 백엔드와 같은 규칙이다.
+   *
+   * UI 테스트가 "화면에서 고른 대상 == 실제 ingest 대상"을 확인할 수 있어야 하므로,
+   * 목업도 개수만이 아니라 어떤 romUid가 들어갔는지 돌려준다.
+   */
+  function mockIngestUids(scope) {
+    const kind = (scope && scope.kind) || "all";
+    if (kind === "selected") return [...((scope && scope.romUids) || [])];
+    if (kind === "system") {
+      return mockRows.filter((r) => r.system === scope.system).map((r) => r.romUid);
+    }
+    return mockRows.map((r) => r.romUid);
+  }
+
+  function mockIngestCount(scope) {
+    return mockIngestUids(scope).length;
+  }
+
+  let mockLastIngest = {};
 
   const mockMatchLinks = {};
   const mockFavorites = {};
@@ -112,7 +139,19 @@
                             capacityBytes: s.capacityBytes, freeBytes: s.freeBytes,
                             over: false, overBytes: 0 })),
                           conflictEntries: [], failedEntries: [], clipboard: null }),
-    archive_ingest: () => ok({ ingested: 0, revised: 0, unchanged: 0 }),
+    start_archive_ingest: (id, scope) => {
+      const count = mockIngestCount(scope);
+      mockLastIngest = { ingested: count, revised: count, unchanged: 0,
+                         scope: (scope && scope.kind) || "all",
+                         ingestedRomUids: mockIngestUids(scope) };
+      return ok({ jobId: "mock-archive-ingest", scope: mockLastIngest.scope, count });
+    },
+    archive_ingest_preview: (id, scope) => ok({
+      kind: (scope && scope.kind) || "all",
+      system: scope && scope.system,
+      count: mockIngestCount(scope),
+    }),
+    get_archive_media_image: () => ok(null),
     archive_rows: () => ok({ rows: [], total: 0, offset: 0 }),
     archive_systems: () => ok([]),
     archive_detail: () => ok(null),
@@ -130,7 +169,12 @@
     validate_plan: () => ok({ ok: true, entries: [], capacity: [], blocked: false }),
     start_apply: () => ok({ jobId: "mock-job" }),
     start_scan: () => ok({ jobId: "mock-job" }),
-    get_job_progress: () => ok({ current: 1, total: 1, label: "완료", done: true, result: {}, error: null }),
+    get_job_progress: (jobId) => ok({
+      current: 1, total: 1, label: "완료", done: true, error: null,
+      // Archive 수집은 결과의 개수를 화면이 그대로 읽는다. 빈 객체를 주면 목업에서만
+      // "undefined개 수집"이 뜬다.
+      result: jobId === "mock-archive-ingest" ? { ...mockLastIngest } : {},
+    }),
     cancel_job: () => ok(true),
     pick_folder: () => ok("D:\\ES-DE"),
     window_control: () => ok(true),
@@ -363,7 +407,13 @@
     validatePlan: (id) => call("validate_plan", id),
     startApply: (id) => call("start_apply", id),
 
-    archiveIngest: (id, romUids) => call("archive_ingest", id, romUids || null),
+    // 대상은 **scope로만** 정한다. 예전에는 선택이 없으면 null을 보냈고 백엔드가
+    // 그것을 "Collection 전체"로 해석해서, System 하나만 보고 있던 사용자가 전체를
+    // Archive에 넣게 되었다.
+    startArchiveIngest: (id, scope) => call("start_archive_ingest", id, scope),
+    archiveIngestPreview: (id, scope) => call("archive_ingest_preview", id, scope),
+    getArchiveMediaImage: (romIdentityId, label, thumbnail) =>
+      call("get_archive_media_image", romIdentityId, label, !!thumbnail),
     archiveRows: (q) => call("archive_rows", q.search || null, q.systems || null,
                              q.limit || 200, q.offset || 0),
     archiveSystems: () => call("archive_systems"),

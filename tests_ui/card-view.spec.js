@@ -36,3 +36,83 @@ test("다시 List를 누르면 원래대로 돌아온다", async ({ page }) => {
   await expect(page.locator(".lrow")).toHaveCount(3);
   await expect(page.locator(".preview-card")).toHaveCount(0);
 });
+
+// ======================================================================
+// 다시 만들지 않는다 (P0 - "깜박이며 전부 다시 읽는" 증상의 정체)
+// ======================================================================
+//
+// 예전에는 `renderListWindow()`가 카드 갈래로 넘기기 전에 `clear(win)`을 했고,
+// 스크롤 이벤트가 rAF마다 그것을 불렀다. 그래서 스크롤할 때마다 모든 카드가
+// 사라졌다 다시 생기고, 카드 수만큼 표지 이미지 요청이 다시 나갔다. 게임 하나를
+// 고르는 것도 같은 경로였다.
+//
+// 여기서는 **DOM 요소가 그대로인가**로 확인한다. 개수만 보면 다시 만들어도 같다.
+async function toCardMode(page) {
+  await page.locator("#filter-bar .seg-btn[title='카드 보기']").click();
+  await expect(page.locator(".preview-card")).toHaveCount(3);
+  // 각 카드에 표식을 남긴다. 다시 만들어지면 이 표식이 사라진다.
+  await page.evaluate(() => {
+    document.querySelectorAll(".preview-card").forEach((el, i) => { el.dataset.mark = "m" + i; });
+  });
+}
+
+const marks = (page) => page.evaluate(() =>
+  [...document.querySelectorAll(".preview-card")].map((el) => el.dataset.mark || "GONE"));
+
+test.describe("카드는 다시 만들어지지 않는다", () => {
+  test("선택해도 카드 DOM이 그대로다", async ({ page }) => {
+    await toCardMode(page);
+    await page.locator(".preview-card").first().click();
+    await expect(page.locator(".preview-card").first()).toHaveClass(/selected/);
+    expect(await marks(page)).toEqual(["m0", "m1", "m2"]);
+  });
+
+  test("선택을 옮겨도 카드 DOM이 그대로다", async ({ page }) => {
+    await toCardMode(page);
+    await page.locator(".preview-card").nth(0).click();
+    await page.locator(".preview-card").nth(1).click();
+    await expect(page.locator(".preview-card").nth(1)).toHaveClass(/selected/);
+    await expect(page.locator(".preview-card").nth(0)).not.toHaveClass(/selected/);
+    expect(await marks(page)).toEqual(["m0", "m1", "m2"]);
+  });
+
+  test("스크롤해도 카드 DOM이 그대로다", async ({ page }) => {
+    await toCardMode(page);
+    await page.evaluate(() => {
+      const el = document.getElementById("list-scroll");
+      el.scrollTop = 200; el.dispatchEvent(new Event("scroll"));
+      el.scrollTop = 0;   el.dispatchEvent(new Event("scroll"));
+    });
+    await page.waitForTimeout(120);   // rAF 두어 프레임
+    expect(await marks(page)).toEqual(["m0", "m1", "m2"]);
+  });
+
+  test("선택 때문에 표지 이미지를 다시 요청하지 않는다", async ({ page }) => {
+    let calls = 0;
+    await page.exposeFunction("__cover", () => { calls += 1; });
+    await page.evaluate(() => {
+      const original = window.api.getMediaImage;
+      window.api.getMediaImage = (...args) => { window.__cover(); return original(...args); };
+    });
+
+    await toCardMode(page);
+    await page.waitForTimeout(150);
+    const afterRender = calls;
+
+    await page.locator(".preview-card").nth(0).click();
+    await page.locator(".preview-card").nth(1).click();
+    await page.waitForTimeout(150);
+
+    // 상세 패널이 열리며 그 게임의 media를 받는 것은 정상이다. 확인하려는 것은
+    // "카드 전체가 다시 요청되지 않는가"이므로, 카드 수만큼 늘어나면 안 된다.
+    expect(calls - afterRender).toBeLessThan(3);
+  });
+
+  test("행 집합이 바뀌면 그때는 새로 짓는다", async ({ page }) => {
+    await toCardMode(page);
+    // System을 좁히면 보여줄 행 자체가 달라진다 - 이때는 다시 지어야 맞다.
+    await page.locator(".nav-system", { hasText: "SNES" }).click();
+    await expect(page.locator(".preview-card")).toHaveCount(1);
+    expect(await marks(page)).toEqual(["GONE"]);
+  });
+});

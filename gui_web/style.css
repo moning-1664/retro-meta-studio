@@ -848,21 +848,11 @@ svg.icon { display: block; flex-shrink: 0; }
 .grid-row.grid-data-row.selected { background:var(--accent) !important; color:#fff !important; box-shadow:inset 3px 0 0 var(--accent-hover), inset 0 0 0 1px var(--accent-hover); }
 .grid-row.grid-data.selected > * { color:#fff !important; }
 
-/* v0.4.0.18 media composition: cover left, marquee/miximage right, large screenshot below, wheel smaller. */
-.media-quad-grid { display:grid; grid-template-columns: 1.25fr 1fr; grid-template-rows: 180px 180px; gap:8px; margin-bottom:8px; }
-.media-tile { position:relative; min-width:0; min-height:0; border:1px solid var(--border); border-radius:var(--radius-md); overflow:hidden; background:var(--card3); cursor:pointer; }
-.media-tile.cover { grid-column:1; grid-row:1 / span 2; }
-.media-tile.marquee { grid-column:2; grid-row:1; }
-.media-tile.miximage { grid-column:2; grid-row:2; }
-.media-screenshot-wrap { margin-bottom:8px; }
-.media-screenshot-wrap .media-tile { height:360px; }
-.media-wheel-wrap { width:48%; min-width:280px; }
-.media-wheel-wrap .media-tile { height:190px; }
-.media-tile.video { height:74px; margin-bottom:8px; }
-.media-tile-label { position:absolute; left:7px; top:6px; z-index:2; padding:2px 6px; border-radius:var(--radius-xs); font-size:var(--fs-eyebrow); font-weight:600; color:#fff; background:rgba(0,0,0,.48); pointer-events:none; }
-.media-tile-preview { width:100%; height:100%; display:flex; align-items:center; justify-content:center; }
-.media-tile-preview img { width:100%; height:100%; object-fit:contain; display:block; min-width:0; min-height:0; }
-.media-tile .dropzone-empty { display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--muted); font-size:var(--fs-caption); }
+/* 이전 프로젝트에서 넘어온 Media 레이아웃 세 세대(v0.4.0.18/19/21)를 걷어냈다.
+   지금 Media 탭을 그리는 것은 studio.css의 .media-hero / .media-rest 이고, 여기
+   있던 규칙들은 같은 class 이름(.media-tile 등)을 잡고 있어서 서로 싸웠다.
+   특히 `.media-tab-body { overflow:hidden !important }` 때문에 아래쪽 타일이
+   잘린 채 스크롤도 되지 않았다. */
 
 /* v0.4.0.19 - list multi-selection uses the same visual language as card selection. */
 .grid-data-row.multi-selected {
@@ -879,94 +869,12 @@ svg.icon { display: block; flex-shrink: 0; }
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
-/* v0.4.0.19 media composition: a compact cover block, right-side marquee/miximage,
-   full-width screenshot, and a smaller wheel block. Geometry is fixed so the cover's
-   natural portrait ratio does not stretch the whole composition. */
-.media-quad-grid {
-  display: grid;
-  grid-template-columns: minmax(170px, 0.9fr) minmax(220px, 1.1fr);
-  grid-template-rows: 145px 145px;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.media-tile.cover { grid-column: 1; grid-row: 1 / span 2; }
-.media-tile.marquee { grid-column: 2; grid-row: 1; }
-.media-tile.miximage { grid-column: 2; grid-row: 2; }
-.media-tile.cover .media-tile-preview img { max-width: 100%; max-height: 100%; width: auto; height: 100%; object-fit: contain; }
-.media-screenshot-wrap { margin-bottom: 8px; }
-.media-lower-grid {
-  display: block;
-  margin-bottom: 8px;
-}
-.media-lower-grid .media-tile.screenshot {
-  width: 100%;
-  height: 360px;
-}
-.media-lower-grid .media-tile.wheel {
-  width: 48%;
-  min-width: 260px;
-  height: 170px;
-  margin-top: 8px;
-}
-.media-lower-grid .media-tile.screenshot + .media-tile.wheel { margin-top: 8px; }
 
-/* v0.4.0.21 media layout: natural-size image boxes, 68/32 hero split.
-   No internal horizontal/vertical scrolling. Labels overlay the image and consume no layout space. */
-.detail-body.media-tab-body { overflow: hidden; display:block; }
-.media-tab-body .media-quad-grid {
-  display:grid;
-  grid-template-columns:minmax(0, 68fr) minmax(0, 32fr);
-  grid-template-rows:repeat(3, auto);
-  gap:8px;
-  align-items:stretch;
-  margin:0 0 8px 0;
-}
-.media-tab-body .media-tile {
-  position:relative; min-width:0; min-height:0; width:100%; height:auto;
-  border:1px solid var(--border); border-radius:var(--radius-md); overflow:hidden;
-  background:var(--card3); cursor:pointer; box-sizing:border-box;
-}
-.media-tab-body .media-tile.cover { grid-column:1; grid-row:1 / span 3; }
-.media-tab-body .media-tile.marquee { grid-column:2; grid-row:1; }
-.media-tab-body .media-tile.miximage { grid-column:2; grid-row:2; }
-.media-tab-body .media-tile.wheel { grid-column:2; grid-row:3; }
-.media-tab-body .media-tile-preview {
-  width:100%; height:100%; min-height:0; display:flex; align-items:center; justify-content:center;
-}
-.media-tab-body .media-tile-preview img {
-  display:block; width:100%; height:auto; max-width:100%; max-height:none;
-  object-fit:contain;
-}
-.media-tab-body .media-tile.cover .media-tile-preview img { width:100%; height:auto; }
-.media-tab-body .media-tile.marquee .media-tile-preview img,
-.media-tab-body .media-tile.miximage .media-tile-preview img,
-.media-tab-body .media-tile.wheel .media-tile-preview img {
-  width:100%; height:auto; object-fit:contain;
-}
-.media-tab-body .media-tile-label {
-  position:absolute; left:7px; top:6px; z-index:2; padding:2px 6px; border-radius:var(--radius-xs);
-  font-size:var(--fs-eyebrow); font-weight:600; color:#fff;
-  background:rgba(0,0,0,.48); pointer-events:none;
-}
-.media-tab-body .media-tile .dropzone-empty {
-  min-height:72px; display:flex; flex-direction:column; align-items:center; justify-content:center;
-  gap:4px; color:var(--muted); font-size:var(--fs-caption); padding:10px;
-}
-.media-tab-body .media-lower-grid { display:block; width:100%; margin:0 0 8px 0; }
-.media-tab-body .media-lower-grid .media-tile.screenshot {
-  width:100%; height:auto; min-height:0;
-}
-.media-tab-body .media-lower-grid .media-tile.screenshot .media-tile-preview img {
-  width:100%; height:auto; object-fit:contain;
-}
-.media-tab-body .media-tile.video { display:none; }
-.media-tab-body { overflow:hidden !important; }
 
 
 /* v0.4.0.24 metadata/system and media drop UX */
 .system-icon { width:18px; min-width:18px; display:inline-flex; align-items:center; justify-content:center; font-size:13px; line-height:1; }
 .detail-system { margin-top:3px; display:flex; align-items:center; gap:5px; color:var(--muted); font-size:var(--fs-eyebrow); font-weight:700; letter-spacing:.08em; }
-.media-tile.drag-over { outline:2px dashed var(--accent); outline-offset:-3px; background:color-mix(in srgb, var(--accent) 10%, var(--card3)); }
 
 /* v0.4.0.28: selected list rows must be addressable by data-rom-key and visually match card focus. */
 .grid-data-row.selected { background: var(--list-selected) !important; color: var(--list-text) !important; box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--accent) !important; }

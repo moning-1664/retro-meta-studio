@@ -53,6 +53,22 @@ GAMELIST = """<?xml version="1.0"?>
 """
 
 
+def write_png(path: Path, size, color):
+    """진짜 PNG를 만든다.
+
+    예전에는 아무 바이트나 `.png` 이름으로 썼다. 그래도 "파일이 있다/복사됐다"는
+    확인할 수 있었지만, **화면에 그려지는지**는 확인할 수 없었다 - 축소(썸네일)도
+    실패하고 브라우저에서는 깨진 이미지로 뜬다. Media 배치는 그림이 실제로 들어간
+    상태에서만 볼 수 있으므로 진짜 이미지가 필요하다.
+
+    세로로 긴 표지와 가로로 넓은 화면을 서로 다른 비율로 만드는 것도 그래서다 -
+    비율이 달라도 상자 크기가 그대로인지가 검증 대상이다.
+    """
+    from PIL import Image
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", size, color).save(path, format="PNG")
+
+
 def build_workspace(base: Path) -> dict:
     """ROM/media/gamelist가 실제로 있는 Collection 두 개를 만든다.
 
@@ -67,7 +83,9 @@ def build_workspace(base: Path) -> dict:
     (source / "ps2" / "MGS2.iso").write_bytes(b"MGS2-ROM" * 150)
     covers = source / "downloaded_media" / "ps2" / "covers"
     covers.mkdir(parents=True)
-    (covers / "FFX.png").write_bytes(b"FFX-COVER" * 40)
+    write_png(covers / "FFX.png", (300, 420), (180, 40, 40))          # 세로로 긴 표지
+    write_png(source / "downloaded_media" / "ps2" / "screenshots" / "FFX.png",
+              (640, 360), (30, 90, 160))                                # 가로로 넓은 화면
     (source / "downloaded_media" / "ps2" / "videos").mkdir(parents=True)
 
     target = base / "target"
@@ -118,7 +136,7 @@ def build_workspace(base: Path) -> dict:
     (combo_src / "ps2" / "FFX.iso").write_bytes(b"SOURCE-ROM-BYTES" * 30)
     combo_src_covers = combo_src / "downloaded_media" / "ps2" / "covers"
     combo_src_covers.mkdir(parents=True)
-    (combo_src_covers / "FFX.png").write_bytes(b"COVER-FROM-SOURCE" * 20)
+    write_png(combo_src_covers / "FFX.png", (300, 420), (200, 60, 60))
 
     combo_dst = base / "combo_dst"
     (combo_dst / "gamelists" / "ps2").mkdir(parents=True)
@@ -130,11 +148,23 @@ def build_workspace(base: Path) -> dict:
     (combo_dst / "ps2" / "FFX.iso").write_bytes(b"TARGET-ROM-BYTES" * 30)
     combo_dst_covers = combo_dst / "downloaded_media" / "ps2" / "covers"
     combo_dst_covers.mkdir(parents=True)
-    (combo_dst_covers / "FFX.png").write_bytes(b"COVER-FROM-TARGET" * 20)
+    write_png(combo_dst_covers / "FFX.png", (300, 420), (60, 60, 200))
+
+    # --- ROM만 있는 폴더 -----------------------------------------------------
+    # 스크래핑을 한 번도 안 한 사용자의 실제 모습이다. gamelist도 media도 없다.
+    # System을 여럿 두는 이유는 "System 하나만 골라 Archive에 수집"이 정말 그 하나만
+    # 가져가는지 실제 파일로 확인하기 위해서다.
+    bare_roms = base / "bare_roms"
+    for system, names in (("msx1", ["Aleste.rom", "Nemesis.rom"]),
+                          ("nes", ["Mario.nes", "Zelda.nes", "Metroid.nes"]),
+                          ("famicom", ["Gradius.fc"])):
+        (bare_roms / system).mkdir(parents=True)
+        for name in names:
+            (bare_roms / system / name).write_bytes(name.encode() * 20)
 
     return {"source": source, "target": target, "fresh_meta": fresh_meta,
             "fresh_roms": fresh_roms, "storage_root": storage_root,
-            "storage_external": storage_external,
+            "storage_external": storage_external, "bare_roms": bare_roms,
             "combo_src": combo_src, "combo_dst": combo_dst}
 
 
@@ -187,6 +217,7 @@ class Harness:
             "targetId": self.ids["target"],
             "freshMetaRoot": str(self.roots["fresh_meta"]),
             "freshRomsRoot": str(self.roots["fresh_roms"]),
+            "bareRomsRoot": str(self.roots["bare_roms"]),
             "storageRoot": str(self.roots["storage_root"]),
             "storageExternalRoot": str(self.roots["storage_external"]),
             "storagetestId": self.ids["storagetest"],

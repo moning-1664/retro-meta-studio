@@ -35,18 +35,54 @@ def _identity_of(row) -> tuple[str, str]:
     return title, normalize_title(title)
 
 
-def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=None) -> dict:
+SCOPE_ALL = "all"
+SCOPE_SYSTEM = "system"
+SCOPE_SELECTED = "selected"
+
+
+def resolve_scope(cache, scope) -> tuple[str, list[int]]:
+    """수집 대상을 **명시적으로** 정한다. 반환: (scope_kind, rom_uids)
+
+    `scope`는 `{"kind": "all" | "system" | "selected", ...}` 형태다.
+
+    예전에는 `rom_uids=None`이 "Collection 전체"를 뜻했다. 그래서 사용자가
+    Navigation에서 MSX1을 고르고 아무 게임도 선택하지 않은 채 수집을 누르면, 화면에는
+    MSX1만 보이는데 Collection 전체가 Archive로 들어갔다. **화면에서 고른 대상과 실제
+    작업 대상이 달라지는 것**이 문제의 본질이므로, 여기서는 무엇을 대상으로 삼는지
+    추측하지 않고 호출부가 준 scope를 그대로 해석한다.
+    """
+    kind = (scope or {}).get("kind") or SCOPE_ALL
+    if kind == SCOPE_SELECTED:
+        uids = [int(u) for u in (scope.get("romUids") or [])]
+    elif kind == SCOPE_SYSTEM:
+        system = scope.get("system")
+        uids = [r["rom_uid"] for r in cache.query_rows(systems=[system])] if system else []
+    else:
+        kind = SCOPE_ALL
+        uids = [r["rom_uid"] for r in cache.query_rows()]
+    return kind, uids
+
+
+def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=None,
+                      progress_cb=None) -> dict:
     """Collection의 항목을 Archive에 수집한다(스펙 §42).
+
+    `rom_uids`는 **반드시 주어져야 한다** - 대상은 호출부가 `resolve_scope()`로 확정해
+    넘긴다. 여기서 `None`을 "전체"로 해석하지 않는다.
 
     출처는 Collection 이름이 아니라 ID로 기록한다 - 이름이 바뀌어도 관계가 유지되어야
     한다(§38). 같은 내용을 다시 넣으면 Revision을 만들지 않는다(§39).
     """
-    rows = ([cache.get_row(int(uid)) for uid in rom_uids] if rom_uids is not None
-            else [cache.get_row(r["rom_uid"]) for r in cache.query_rows()])
+    if rom_uids is None:
+        rom_uids = [r["rom_uid"] for r in cache.query_rows()]
+    rows = [cache.get_row(int(uid)) for uid in rom_uids]
     rows = [r for r in rows if r is not None]
 
+    total = len(rows)
     ingested = revised = 0
-    for row in rows:
+    for index, row in enumerate(rows, start=1):
+        if progress_cb:
+            progress_cb(index, total, row["filename"])
         title, title_norm = _identity_of(row)
         # 사용자가 확정해 둔 Match가 있으면 새 Identity를 만들지 않고 그쪽에 붙인다
         # (§49). 이름이 달라서 자동으로는 못 붙는 항목을 사람이 이어준 결과이므로,
@@ -76,7 +112,9 @@ def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=No
                                   media["rel_path"], media["size"] or 0)
 
     return {"ingested": ingested, "revised": revised,
-            "unchanged": ingested - revised, "sourceCollectionId": collection.id}
+            "unchanged": ingested - revised, "sourceCollectionId": collection.id,
+            # 화면에서 고른 대상과 실제로 들어간 대상이 같은지 확인할 수 있어야 한다.
+            "ingestedRomUids": [r["rom_uid"] for r in rows]}
 
 
 def detail(archive, rom_identity_id) -> dict | None:

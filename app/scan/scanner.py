@@ -106,7 +106,14 @@ def scan_collection(collection, cache, provider, adapter, *, media_types=None,
     반환: {"systems": [...], "scanned": n, "skipped": n, "roms": n}
     """
     partial = systems is not None
-    all_systems = adapter.list_systems(provider, collection)
+    # 디스크에서 새로 발견한 System과 **이미 등록된 System**을 합친다.
+    #
+    # Adapter의 `list_systems()`는 Storage root 밑의 폴더를 훑어 System을 찾는다.
+    # 그래서 ROM이 Storage root가 아니라 그 System의 `rom_path`에 있으면(ES-DE에서
+    # Metadata와 ROM을 다른 폴더에 둔 경우가 정확히 이것이다) 발견되지 않아, 사용자의
+    # ROM이 통째로 목록에서 사라졌다. 등록된 System은 스캔 대상에서 빠지면 안 된다.
+    all_systems = sorted(set(adapter.list_systems(provider, collection))
+                         | {s.system for s in collection.systems})
     systems = [s for s in all_systems if s in set(systems)] if partial else all_systems
     storage_by_system = {s.system: s.storage_id for s in collection.systems}
     previous_stats = {s["system"]: s for s in cache.system_stats()}

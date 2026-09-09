@@ -138,10 +138,14 @@ test.describe("Plan Execute가 실제로 파일을 옮긴다", () => {
       fs.readFileSync(path.join(ws.sourceRoot, "ps2", "FFX.iso")));
     expect(fs.existsSync(targetCover("FFX.png"))).toBe(true);
 
-    const xml = fs.readFileSync(path.join(ws.targetRoot, "gamelists", "ps2", "gamelist.xml"),
-                                "utf8");
-    expect(xml).toContain("FFX.iso");
-    expect(xml).toContain("Final Fantasy X");
+    // gamelist는 System 단위로 **마지막에 한 번** 쓴다. ROM이 생겼다고 해서 이미
+    // 쓰였다는 뜻이 아니므로 여기도 기다려야 한다 - 한 번만 읽으면 media가 몇 개냐에
+    // 따라 붙었다 떨어졌다 하는 테스트가 된다.
+    const gamelist = path.join(ws.targetRoot, "gamelists", "ps2", "gamelist.xml");
+    await expect
+      .poll(() => fs.readFileSync(gamelist, "utf8"), { timeout: 15000 })
+      .toContain("FFX.iso");
+    expect(fs.readFileSync(gamelist, "utf8")).toContain("Final Fantasy X");
   });
 
   test("실행 결과가 다시 읽어들인 목록에도 나타난다", async ({ page }) => {
