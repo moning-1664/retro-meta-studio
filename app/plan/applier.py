@@ -62,7 +62,6 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
     total = len(adds) + len(deletes) + len(moves) + 1
     done = 0
     errors = []
-    touched_systems = set()
 
     def step(label):
         nonlocal done
@@ -75,14 +74,11 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
     media_links: dict[str, dict[str, list]] = {}
 
     prepared_adds = _apply_adds(adds, collection, adapter, provider, errors, media_links, step)
-    touched_systems.update(entry.system for entry in adds)
     for entry in deletes:
         _apply_delete(entry, collection, adapter, cache, provider, errors)
-        touched_systems.add(entry.system)
         step(entry.filename)
     for entry in moves:
         _apply_storage_change(entry, collection, adapter, cache, registry, provider, errors)
-        touched_systems.add(entry.system)
         step(entry.system)
 
     _write_media_links(adds, collection, adapter, media_links, errors)
@@ -93,6 +89,15 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
     applied = [e for e in runnable if e.status == STATUS_APPLIED]
     failed = [e for e in runnable if e.status == STATUS_FAILED]
     partial = [e for e in runnable if e.status == STATUS_PARTIAL]
+
+    # **실제로 뭔가 바뀐 System만 rescan 대상으로 돌려준다.** 호출부(bridge/api.py)가
+    # 이 목록으로 부분 rescan을 하는데, rescan은 그 System의 Cache 행을 통째로
+    # 지우고 다시 넣으므로 rom_uid가 전부 새로 매겨진다. FAILED 항목은 아무것도
+    # 바꾸지 못했으므로(파일도 gamelist도 그대로) 그 System까지 rescan 대상에 넣으면
+    # 실패한 적도 없는데 rom_uid만 갈아치우는 셈이 되고, 그 순간 Plan의 항목이 가리키던
+    # rom_uid는 존재하지 않는 것이 되어 - 재시도하면 "항목이 이미 사라졌습니다"로
+    # 보인다. 실제로는 아무것도 사라지지 않았는데도.
+    touched_systems = {e.system for e in applied + partial}
 
     # 성공한 것만 Plan에서 뺀다. 실패/부분성공/충돌은 남겨서 사용자가 다시 볼 수 있게 한다.
     for entry in applied:

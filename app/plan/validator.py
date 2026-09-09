@@ -137,8 +137,17 @@ def _validate_delete(entry, collection, cache, provider, adapter):
         return
     row = cache.get_row(entry.rom_uid)
     if row is None:
-        entry.status, entry.error = "invalid", "항목이 이미 사라졌습니다."
-        return
+        # **rom_uid가 stale할 수 있다.** Apply가 부분적으로 성공한 System은 그 자리에서
+        # 다시 스캔되고, 스캔은 그 System의 행을 통째로 지우고 다시 넣으므로 uid가
+        # 전부 새로 매겨진다 - 파일이 실제로 없어진 게 아니라 **번호만 바뀐** 것이다.
+        # 그걸 "이미 사라졌다"로 오판하면, PARTIAL(파일은 지웠지만 gamelist 정리가
+        # 실패한 상태)을 재시도할 방법이 없어진다. 같은 System·같은 파일명을 찾아
+        # 지금의 uid로 다시 연결한다 - 정말 없으면 그때는 이 경로도 실패한다.
+        row = cache.get_row_by_filename(entry.system, entry.filename)
+        if row is None:
+            entry.status, entry.error = "invalid", "항목이 이미 사라졌습니다."
+            return
+        entry.rom_uid = row["rom_uid"]
     if not row["present"]:
         return  # metadata만 있는 항목. 지울 ROM 파일이 없다.
 

@@ -361,6 +361,19 @@ class CacheStore:
             "SELECT media_type,rel_path,size,mtime_ns FROM media WHERE rom_uid=? ORDER BY media_type", (rom_uid,))]
         return result
 
+    def get_row_by_filename(self, system, filename) -> dict | None:
+        """rom_uid가 아니라 System·파일명으로 찾는다.
+
+        Plan은 만들 때 본 rom_uid를 들고 있는데, 그 사이 그 System이 (부분적으로만
+        성공한 Apply 뒤처럼) 다시 스캔되면 uid가 전부 새로 매겨진다 - 파일은 그대로인데
+        번호만 바뀐다. `get_row(stale_uid)`가 None을 돌려줄 때, 정말 없어진 것인지
+        번호만 바뀐 것인지 구별하려면 이 경로가 필요하다.
+        """
+        row = self._conn.execute(
+            "SELECT rom_uid FROM roms WHERE system=? AND filename=?",
+            (system, filename)).fetchone()
+        return self.get_row(row["rom_uid"]) if row else None
+
     def set_favorite(self, rom_uid, favorite):
         """즐겨찾기 컬럼만 갱신한다. 파일 쓰기는 호출부(Adapter)가 한다."""
         with transaction(self._conn):
