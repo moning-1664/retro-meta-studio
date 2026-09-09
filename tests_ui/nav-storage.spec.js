@@ -1,7 +1,9 @@
-// 좌측 내비게이션은 **System 목록이지 Storage 계층이 아니다**.
+// 좌측 내비게이션은 **External Storage를 실제로 추가하기 전까지는 System 목록이지
+// Storage 계층이 아니다.**
 //
-// 예전에는 Storage를 System의 부모 노드로 그렸다(접기/펴기, 그룹 사이 Drag & Drop).
-// 그런데 ES-DE에서 ROM 폴더를 따로 지정하면 그 폴더가 별도 Storage가 되면서 화면에
+// 예전에는 Storage를 항상 System의 부모 노드로 그렸다(접기/펴기, 그룹 사이
+// Drag & Drop). 그런데 ES-DE에서 ROM 폴더를 따로 지정하면 그 폴더가 별도 Storage가
+// 되면서, External Storage를 한 번도 안 써 본 사용자에게까지
 //
 //     INTERNAL
 //      ├─ Famicom
@@ -10,19 +12,24 @@
 //      ├─ NES
 //      └─ MSX1
 //
-// 처럼 사용자가 요구한 적 없는 분류가 나타났다. Storage는 용량·볼륨·파일 작업을 위한
-// 내부 개념이고, 사용자가 관리하는 단위는 System이다.
+// 처럼 요구한 적 없는 분류가 나타났다. 그래서 한동안 완전히 평평하게 없앴었다.
 //
-// Storage 이동 기능 자체는 없애지 않았다 - 들어가는 문만 System 우클릭 메뉴로 옮겼다.
+// 그런데 External Storage를 실제로 추가한 뒤에는 이야기가 다르다 - 그때부터는
+// "이 System을 내부/외부 중 어디에 둘지"가 사용자가 직접 관리하는 결정이 되므로
+// (드래그로 옮기고, ES-DE의 custom systems XML은 External만 대상으로 한다)
+// Internal/External을 그룹으로 나눠 보여준다. 이 목업은 이미 External Storage
+// (ext-1 "External SD")를 하나 갖고 있으므로, 아래 테스트는 전부 "그룹이 있는"
+// 상태를 기준으로 한다.
 const { test, expect } = require("@playwright/test");
 const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
-test.describe("System은 평평하게 보인다", () => {
-  test("Storage 그룹 머리글이 아예 없다", async ({ page }) => {
-    await expect(page.locator(".nav-group")).toHaveCount(0);
-    await expect(page.locator(".nav-group-head")).toHaveCount(0);
+test.describe("External Storage가 있으면 Storage별로 묶인다", () => {
+  test("Storage 그룹 머리글이 Storage 수만큼 있다", async ({ page }) => {
+    // 목업: Internal + External SD.
+    await expect(page.locator(".nav-group")).toHaveCount(2);
+    await expect(page.locator(".nav-group-head")).toHaveCount(2);
   });
 
   test("System 행은 목업의 System 수와 같다", async ({ page }) => {
@@ -35,19 +42,20 @@ test.describe("System은 평평하게 보인다", () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  test("Storage가 달라도 한 목록 안에 함께 있다", async ({ page }) => {
+  test("Storage가 달라도 둘 다 화면에 있다", async ({ page }) => {
     const names = await page.locator(".nav-system .nav-label").allTextContents();
-    // ps2는 External SD, snes는 Internal에 있다. 그래도 같은 목록이다.
+    // ps2는 External SD, snes는 Internal에 있다. 그룹은 나뉘어도 둘 다 보인다.
     expect(names).toContain("PS2");
     expect(names).toContain("SNES");
   });
 });
 
-test.describe("빈 System은 뒤로 정렬될 뿐 따로 묶이지 않는다", () => {
-  test("게임이 있는 System이 먼저 나온다", async ({ page }) => {
-    const names = await page.locator(".nav-system .nav-label").allTextContents();
-    // gba는 0개다. 마지막이어야 한다.
-    expect(names[names.length - 1]).toBe("GBA");
+test.describe("빈 System은 자기 그룹 안에서 뒤로 정렬될 뿐 따로 묶이지 않는다", () => {
+  test("게임이 있는 System이 그룹 안에서 먼저 나온다", async ({ page }) => {
+    // snes(1개)와 gba(0개)는 둘 다 Internal 그룹이다. gba가 나중이어야 한다.
+    const internalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "INTERNAL" }) });
+    const names = await internalGroup.locator(".nav-system .nav-label").allTextContents();
+    expect(names).toEqual(["SNES", "GBA"]);
   });
 
   test("'Empty Systems' 같은 별도 묶음을 만들지 않는다", async ({ page }) => {
@@ -60,7 +68,7 @@ test.describe("빈 System은 뒤로 정렬될 뿐 따로 묶이지 않는다", (
   });
 });
 
-test.describe("Storage 이동은 System 메뉴로", () => {
+test.describe("Storage 이동은 System 우클릭 메뉴로", () => {
   test("System을 우클릭하면 그 System의 정보가 뜬다", async ({ page }) => {
     await page.locator(".nav-system", { hasText: "PS2" }).click({ button: "right" });
     await expect(page.locator(".modal-title")).toHaveText("PS2");
@@ -91,5 +99,23 @@ test.describe("Storage 이동은 System 메뉴로", () => {
     await page.locator(".nav-system", { hasText: "PS2" }).click({ button: "right" });
     const targets = await page.locator(".picker-row .picker-name").allTextContents();
     expect(targets).not.toContain("External SD");
+  });
+});
+
+test.describe("Storage 이동은 드래그로도 된다", () => {
+  test("System을 다른 Storage 그룹으로 끌어다 놓으면 이동을 요청한다", async ({ page }) => {
+    const moved = [];
+    await page.exposeFunction("__moved", (s, t) => moved.push([s, t]));
+    await page.evaluate(() => {
+      const original = window.api.planStorageChange;
+      window.api.planStorageChange = (id, system, storageId) => {
+        window.__moved(system, storageId); return original(id, system, storageId);
+      };
+    });
+
+    const internalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "INTERNAL" }) });
+    await page.locator(".nav-system", { hasText: "PS2" }).dragTo(internalGroup);
+    await expect.poll(() => moved.length).toBeGreaterThan(0);
+    expect(moved[0]).toEqual(["ps2", "internal"]);
   });
 });

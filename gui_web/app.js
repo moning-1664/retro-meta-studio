@@ -704,16 +704,22 @@
     allRow.insertBefore(icon("layoutList", 13), allRow.firstChild);
     nav.appendChild(allRow);
 
-    // **System 목록은 평평하다.**
+    // **System 목록은 기본적으로 평평하다.**
     //
     // 예전에는 `detail.storages`를 순회해서 Storage를 System의 부모 노드로 그렸다.
-    // 그래서 ROM 폴더를 따로 지정한 사용자에게 `INTERNAL` / `ROM` 이라는, 요구한 적
-    // 없는 분류가 나타났다. Storage는 용량·볼륨·파일 작업을 위한 내부 개념이고
-    // 사용자가 관리하는 단위는 System이다. 어느 Storage에 있는지는 툴팁으로만 알린다.
+    // 그래서 External Storage를 한 번도 안 써 본 사용자에게까지 `INTERNAL` / `ROM`
+    // 이라는, 요구한 적 없는 분류가 나타났다. Storage는 용량·볼륨·파일 작업을 위한
+    // 내부 개념이고 사용자가 관리하는 단위는 System이다.
+    //
+    // **단, External Storage를 실제로 추가한 뒤에는 이야기가 다르다.** 그때부터는
+    // "이 System을 내부/외부 중 어디에 둘지"가 사용자가 직접 관리하는 결정이 되므로
+    // (드래그로 옮기고, ES-DE XML은 External만 대상으로 한다) Internal/External을
+    // 그룹으로 나눠 보여준다. External이 없으면 이 분기 자체를 안 타므로 예전 그대로다.
     const storageById = {};
     (detail.storages || []).forEach((s) => { storageById[s.id] = s; });
+    const externalStorages = (detail.storages || []).filter((s) => s.kind === "external");
 
-    (detail.systems || []).forEach((sys) => {
+    function renderSystemRow(sys) {
       const row = navRow(sys.system.toUpperCase(), sys.count,
         scope.kind === "system" && scope.id === sys.system,
         () => setScope({ kind: "system", id: sys.system }));
@@ -724,29 +730,74 @@
       if (storage) {
         row.title = `${sys.system} · ${formatCount(sys.count)}개 · ${storage.label}\n${storage.rootPath}`;
       }
-      // Compare 중에는 System을 끌어 옮길 수 없다 - 그 드롭 하나가 Plan을 바꾸고,
+      // Compare 중에는 System을 끌어 옮길 수 없다 - 그 드롭/메뉴 하나가 Plan을 바꾸고,
       // Auto Plan이 꺼져 있으면 실제 파일까지 옮긴다.
       if (!isCompare()) {
         row.addEventListener("contextmenu", (e) => {
           e.preventDefault();
           openSystemMenu(sys, detail.storages || [], e);
         });
+        // 우클릭 메뉴와 같은 동작(moveSystemToStorage)을 드래그로도 하게 한다 -
+        // 메뉴는 남겨 둔다(키보드/터치에서는 드래그가 없다).
+        row.draggable = true;
+        row.addEventListener("dragstart", (e) => {
+          e.dataTransfer.setData("text/plain", sys.system);
+          e.dataTransfer.effectAllowed = "move";
+        });
       }
-      nav.appendChild(row);
-    });
+      return row;
+    }
+
+    if (!externalStorages.length) {
+      (detail.systems || []).forEach((sys) => nav.appendChild(renderSystemRow(sys)));
+    } else {
+      (detail.storages || []).forEach((storage) => {
+        const group = h("div", { class: "nav-group" });
+        const head = h("div", { class: "nav-group-head" },
+          [h("span", { class: "nav-group-name" }, [storage.label.toUpperCase()])]);
+
+        // ES-DE의 custom_systems XML은 External Storage에 있는 System만 대상으로
+        // 하므로(§ write_custom_systems), 그 그룹 옆에만 버튼을 둔다. Collection당
+        // 파일이 하나라 어느 External 그룹에서 눌러도 같은 파일을 다시 쓴다.
+        if (storage.kind === "external" && !isCompare() && S.adapterActions && S.adapterActions.length) {
+          S.adapterActions.forEach((action) => {
+            const xmlBtn = h("button", { class: "icon-btn", title: `${action.label} (External Storage 전체 기준)` },
+                             [icon("save", 11)]);
+            xmlBtn.addEventListener("click", (e) => { e.stopPropagation(); runAdapterAction(action); });
+            head.appendChild(xmlBtn);
+          });
+        }
+        group.appendChild(head);
+
+        if (!isCompare()) {
+          const systemNames = (detail.systems || [])
+            .filter((sys) => sys.storageId === storage.id).map((sys) => sys.system);
+          head.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+            if (systemNames.length) openMetadataBootstrap(S.activeId, systemNames);
+          });
+          group.addEventListener("dragover", (e) => { e.preventDefault(); group.classList.add("drop-target"); });
+          group.addEventListener("dragleave", () => group.classList.remove("drop-target"));
+          group.addEventListener("drop", (e) => {
+            e.preventDefault();
+            group.classList.remove("drop-target");
+            const system = e.dataTransfer.getData("text/plain");
+            if (system) moveSystemToStorage(system, storage.id);
+          });
+        }
+
+        (detail.systems || []).filter((sys) => sys.storageId === storage.id)
+          .forEach((sys) => group.appendChild(renderSystemRow(sys)));
+        nav.appendChild(group);
+      });
+    }
 
     if (!isCompare()) {
       const add = h("button", { class: "nav-action" }, [icon("plus", 12), h("span", {}, ["Add External Storage"])]);
       add.addEventListener("click", openAddStorage);
       nav.appendChild(add);
-
-      // gamelist를 미리 만드는 것은 **선택지**다. Collection을 여는 조건이 아니므로
-      // 길목에서 묻지 않고 여기에 문을 둔다.
-      const bootstrap = h("button", { class: "nav-action", id: "nav-make-gamelist" },
-        [icon("fileWarning", 12), h("span", {}, ["gamelist 만들기"])]);
-      bootstrap.title = "gamelist가 없는 System에 ROM 파일명만 담은 gamelist를 만듭니다.";
-      bootstrap.addEventListener("click", () => openMetadataBootstrap(S.activeId));
-      nav.appendChild(bootstrap);
+      // gamelist 만들기는 Toolbar 아이콘(Collection 전체) + System/Storage 우클릭
+      // 메뉴(부분)로 옮겼다 - 예전엔 이 버튼 하나뿐이었다.
     }
   }
 
@@ -862,8 +913,12 @@
       rows.push(list);
     }
 
+    const bootstrap = h("button", { class: "btn" }, ["gamelist 만들기"]);
+    bootstrap.title = "이 System에 gamelist가 없으면 ROM 파일명만 담아 만듭니다.";
+    bootstrap.addEventListener("click", () => { closeModal(); openMetadataBootstrap(S.activeId, [sys.system]); });
+
     showModal(sys.system.toUpperCase(), h("div", { class: "modal-body" }, rows),
-              [h("button", { class: "btn primary", onClick: closeModal }, ["닫기"])]);
+              [bootstrap, h("button", { class: "btn primary", onClick: closeModal }, ["닫기"])]);
   }
 
   function openStorageMenu(storage) {
@@ -973,19 +1028,9 @@
       panel.appendChild(box);
     });
 
-    // Frontend 고유 기능(§22). Storage 같은 일반 기능으로 올리지 않고 여기 둔다 -
-    // ES-DE의 custom systems XML은 ES-DE의 사정이고, 다른 Frontend에는 다른 기능이
-    // 붙는다. 지원 기능이 없는 Frontend에서는 줄 자체가 나타나지 않는다.
-    if (S.adapterActions && S.adapterActions.length) {
-      const extras = h("div", { class: "cheader-extras" });
-      extras.appendChild(h("span", { class: "cheader-info-label" }, ["Frontend 기능"]));
-      S.adapterActions.forEach((action) => {
-        const btn = h("button", { class: "btn compact" }, [`[${action.label}]`]);
-        btn.addEventListener("click", () => runAdapterAction(action));
-        extras.appendChild(btn);
-      });
-      panel.appendChild(extras);
-    }
+    // Frontend 고유 기능(ES-DE의 custom systems XML)은 여기 두지 않는다 - 그
+    // 기능은 External Storage에 있는 System만 대상으로 하므로, Navigator의
+    // External Storage 그룹 옆으로 옮겼다(renderNav 참고).
     host.appendChild(panel);
   }
 
@@ -1159,6 +1204,17 @@
     const refresh = h("button", { class: "icon-btn", title: "다시 스캔" }, [icon("refresh", 12)]);
     refresh.addEventListener("click", refreshActive);
     bar.appendChild(refresh);
+
+    // gamelist 만들기(Collection 전체). System 하나/Storage 하나로 좁힌 버전은
+    // Navigator의 System 우클릭 메뉴, Storage 그룹 우클릭 메뉴에 있다. Archive는
+    // Frontend 형식의 Collection이 아니라 gamelist.xml 개념이 없다.
+    if (!isArchive()) {
+      const bootstrap = h("button", { class: "icon-btn", id: "make-gamelist-btn",
+                            title: "gamelist가 없는 System에 ROM 파일명만 담은 gamelist를 만듭니다." },
+                          [icon("fileWarning", 12)]);
+      bootstrap.addEventListener("click", () => openMetadataBootstrap(S.activeId));
+      bar.appendChild(bootstrap);
+    }
 
     // Import는 눈에 보이는 자리에 있어야 한다. 예전에는 «+» 탭을 눌러 창을 하나 더
     // 거쳐야만 닿아서, 기능이 없는 것과 구별되지 않았다.
@@ -1802,15 +1858,19 @@
    * 사용자가 항목을 고쳐 저장하는 순간 gamelist.xml이 만들어진다. 미리 만드는 것은
    * 이후 작업(Export/Convert/Archive 수집)을 자연스럽게 하기 위한 선택지일 뿐이다.
    */
-  async function openMetadataBootstrap(collectionId) {
+  async function openMetadataBootstrap(collectionId, scopeSystems) {
     const status = await api.metadataStatus(collectionId);
     if (!status.ok) { showToast(status.error, "error"); return; }
-    if (!status.data.missing.length) {
-      showToast("모든 System에 gamelist가 있습니다.");
+    // scopeSystems가 있으면 System 하나 또는 한 Storage에 속한 System들로 좁힌다
+    // (§ Navigator의 System/Storage 우클릭 메뉴). 없으면 Collection 전체다.
+    const missing = scopeSystems
+      ? status.data.missing.filter((s) => scopeSystems.includes(s))
+      : status.data.missing;
+    if (!missing.length) {
+      showToast(scopeSystems ? "이미 gamelist가 있습니다." : "모든 System에 gamelist가 있습니다.");
       return;
     }
 
-    const missing = status.data.missing;
     const roms = status.data.systems
       .filter((s) => missing.includes(s.system))
       .reduce((sum, s) => sum + s.roms, 0);
