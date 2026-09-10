@@ -23,6 +23,9 @@ from app.store.sqlite import Migration, connect, transaction
 # 동시에 Open 가능한 Collection 수(스펙 §2.2). 저장 가능한 개수 제한이 아니다.
 MAX_OPEN_COLLECTIONS = 10
 
+#: `move_system(rom_path=...)`가 "안 건드림"과 "None으로 지움"을 구분하기 위한 sentinel.
+_UNSET = object()
+
 # change_log kind
 CHANGE_COLLECTION_CREATED = "collection.created"
 CHANGE_COLLECTION_UPDATED = "collection.updated"
@@ -252,17 +255,31 @@ class RegistryStore:
                 (collection_id, system, storage_id, rom_path, media_path, metadata_path))
             self._append_change_locked(CHANGE_LAYOUT_UPDATED, collection_id, {"system": system})
 
-    def move_system(self, collection_id, system, storage_id):
+    def move_system(self, collection_id, system, storage_id, rom_path=_UNSET):
         """System을 다른 Storage로 옮긴다(스펙 §10의 Drag & Drop이 확정될 때 호출).
 
         실제 파일 이동은 여기서 하지 않는다 - Plan Apply가 끝난 뒤 배치 정보만
         갱신하는 용도다.
+
+        `rom_path`는 기본적으로 건드리지 않는다(이 메서드의 다른 호출부는 파일을
+        옮기지 않고 배치만 고치는 용도라, 있던 rom_path를 지우면 ROM을 못 찾게
+        된다). Storage Apply만 명시적으로 새 rom_path(대개 `None` - Storage
+        root에서 다시 계산하라는 뜻)를 넘긴다(§ app/plan/applier.py
+        `_apply_storage_change` - rom_path가 옛 Storage 기준으로 굳어 있으면
+        새 Storage로 옮겨도 Adapter가 여전히 그 경로를 읽어 "이동" 이 제자리로
+        돌아가 버렸다).
         """
         with transaction(self._conn):
             self._require_storage(collection_id, storage_id)
-            cur = self._conn.execute(
-                "UPDATE collection_systems SET storage_id=? WHERE collection_id=? AND system=?",
-                (storage_id, collection_id, system))
+            if rom_path is _UNSET:
+                cur = self._conn.execute(
+                    "UPDATE collection_systems SET storage_id=? WHERE collection_id=? AND system=?",
+                    (storage_id, collection_id, system))
+            else:
+                cur = self._conn.execute(
+                    "UPDATE collection_systems SET storage_id=?, rom_path=? "
+                    "WHERE collection_id=? AND system=?",
+                    (storage_id, rom_path, collection_id, system))
             if cur.rowcount == 0:
                 raise RegistryError(f"System을 찾을 수 없습니다: {system}")
             self._append_change_locked(CHANGE_LAYOUT_UPDATED, collection_id,

@@ -24,24 +24,31 @@ test.describe("미리보기 토글 (Detail 패널 상단, 레이아웃 재검토
     await expect(previewToggle(page)).toBeVisible();
   });
 
-  test("끄면 상세 패널이 좁게 접힌다(완전히 숨지 않는다)", async ({ page }) => {
+  test("끄면 탭 내용(#detail-panel-inner)만 사라지고 패널 폭은 그대로다", async ({ page }) => {
+    // 코드 리뷰 피드백: 예전엔 패널 폭을 44px로 접어 GameList를 넓혔는데,
+    // 그러면 GameList Overview 줄(.cheader)까지 재배치됐다. 이제는 폭이 항상
+    // 297px로 고정이고, 탭 내용만 사라진다.
     await openFirstGame(page);
+    const widthBefore = (await page.locator("#detail-panel").boundingBox()).width;
     await previewToggle(page).click();
-    await expect(page.locator("#detail-panel")).toHaveClass(/collapsed/);
-    // 접힌 상태에도 토글은 남아 있다 - 이게 없으면 다시 켤 방법이 없다.
+    await expect(page.locator("#detail-panel-inner")).toHaveCount(0);
+    const widthAfter = (await page.locator("#detail-panel").boundingBox()).width;
+    expect(widthAfter).toBeCloseTo(widthBefore, 0);
+    // 꺼진 상태에도 토글은 남아 있다 - 이게 없으면 다시 켤 방법이 없다.
     await expect(previewToggle(page)).toBeVisible();
   });
 
   test("끈 상태에서 행을 눌러도 패널이 열리지 않는다", async ({ page }) => {
     await previewToggle(page).click();
     await page.locator(".lrow").nth(1).locator(".lc-file").click();
-    await expect(page.locator("#detail-panel")).toHaveClass(/collapsed/);
+    await expect(page.locator("#detail-panel")).not.toHaveClass(/open/);
+    await expect(page.locator("#detail-panel-inner")).toHaveCount(0);
   });
 
   test("다시 켜면 돌아온다", async ({ page }) => {
     await previewToggle(page).click();
     await previewToggle(page).click();
-    await expect(page.locator("#detail-panel")).not.toHaveClass(/collapsed/);
+    await expect(page.locator("#detail-panel-inner")).toHaveCount(1);
   });
 
   test("끄고 켠 상태를 저장한다", async ({ page }) => {

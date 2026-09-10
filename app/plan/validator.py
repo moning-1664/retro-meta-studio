@@ -35,7 +35,7 @@ def validate(plan, collection, cache, provider) -> dict:
         elif entry.op == OP_DELETE:
             _validate_delete(entry, collection, cache, provider, adapter)
         elif entry.op == OP_STORAGE_CHANGE:
-            _validate_storage_change(entry, collection)
+            _validate_storage_change(entry, collection, adapter)
         if entry.status == "invalid":
             problems.append({"key": entry.key, "filename": entry.filename or entry.system,
                              "error": entry.error})
@@ -180,15 +180,32 @@ def _validate_delete(entry, collection, cache, provider, adapter):
             return
 
 
-def _validate_storage_change(entry, collection):
+def _validate_storage_change(entry, collection, adapter):
     if collection.storage(entry.storage_to) is None:
         entry.status, entry.error = "invalid", "대상 Storage가 사라졌습니다."
         return
-    current = next((s.storage_id for s in collection.systems if s.system == entry.system), None)
-    if current is None:
+    system_entry = next((s for s in collection.systems if s.system == entry.system), None)
+    if system_entry is None:
         entry.status, entry.error = "invalid", "System이 사라졌습니다."
-    elif current == entry.storage_to:
+        return
+    if system_entry.storage_id == entry.storage_to:
         entry.status, entry.error = "invalid", "이미 대상 Storage에 있습니다."
+        return
+
+    # Storage가 둘 다 같은 실제 경로를 가리키는 것 같은 드문 설정 실수(예: 사용자가
+    # External Storage를 Internal과 똑같은 폴더로 추가함)는 Apply 단계까지 가지
+    # 않고 여기서 미리 잡는다 - `app/plan/applier.py`의 `_apply_storage_change`가
+    # rom_path를 무시하고 새 Storage 기준으로 new_layout을 계산하므로, 두
+    # Storage의 실제 경로가 같으면 old_layout과 new_layout도 같아져서 "대상에
+    # 이미 파일이 있다"는 혼란스러운 충돌로만 보인다.
+    original_storage, original_rom_path = system_entry.storage_id, system_entry.rom_path
+    old_layout = adapter.layout(collection, entry.system)
+    system_entry.storage_id, system_entry.rom_path = entry.storage_to, None
+    new_layout = adapter.layout(collection, entry.system)
+    system_entry.storage_id, system_entry.rom_path = original_storage, original_rom_path
+    if old_layout.rom_dir == new_layout.rom_dir:
+        entry.status, entry.error = "invalid", (
+            "대상 Storage의 ROM 경로가 현재 경로와 같습니다 - Storage 설정을 확인하세요.")
 
 
 def check_capacity(plan, collection, cache, provider) -> list[dict]:

@@ -2373,29 +2373,21 @@
 
   /** Detail 패널 최상단의 고정 공간. GameList의 Overview 줄과 같은 높이라서,
    * 이 아래 #detail-panel-inner의 제목이 GameList의 Toolbar와 같은 선에서
-   * 시작한다(레이아웃 재검토 §18). 게임을 선택했든 안 했든, Compare 중이든
-   * 늘 같은 자리에 같은 것을 보여준다 - Archive 이동(왼쪽)과 Preview
-   * 토글(오른쪽, 아이콘만 클릭 영역)이다.
+   * 시작한다(레이아웃 재검토 §18). 게임을 선택했든 안 했든, Compare 중이든,
+   * Preview가 켜져 있든 꺼져 있든 늘 같은 자리에 같은 것을 보여준다 - Archive
+   * 이동(왼쪽)과 Preview 토글(오른쪽)이다.
+   *
+   * **Preview를 꺼도 이 패널의 폭은 줄어들지 않는다.** 처음엔 폭을 44px로
+   * 접어 GameList가 그만큼 넓어지게 했었는데(탐색기 미리보기 창을 본떴다),
+   * 코드 리뷰로 그 방식 자체가 문제라는 게 확인됐다 - 폭이 바뀌면 그 위의
+   * GameList Overview 줄(.cheader)도 넓이가 따라 바뀌어 재배치되고, 폭 44px
+   * 안에 있던 Preview 아이콘의 세로 위치를 다시 계산하는 과정에서 아래로
+   * 밀려나는 등 부작용이 이어졌다. 대신 패널 폭은 항상 297px로 고정하고,
+   * `#detail-panel-inner`(Metadata/Media/ROM 탭 내용)만 켜고 끈다 - 이 함수는
+   * 그래서 이제 `compact` 없이 하나의 모습만 그린다.
    */
-  function renderDetailTopSpace(compact) {
-    const bar = h("div", { class: "detail-topspace" + (compact ? " compact" : "") });
-
-    // Preview를 끄면 패널이 이 좁은 형태로 접힌다 - 토글 하나만 남긴다.
-    // Archive 이동 버튼까지 여기 있으면 좁은 폭에 안 들어가고, 무엇보다
-    // **이 토글이 사라지면 다시 켤 방법이 없어진다**(실사용 피드백) - 그래서
-    // Preview가 꺼져 있어도 이 자리 자체는 항상 남는다.
-    if (compact) {
-      const previewBtn = h("button", {
-        class: "icon-btn", title: "미리보기 켜기",
-      }, [icon("previewPane", 15)]);
-      previewBtn.addEventListener("click", () => {
-        S.previewOn = true;
-        saveUiState();
-        renderDetailPanel();
-      });
-      bar.appendChild(previewBtn);
-      return bar;
-    }
+  function renderDetailTopSpace() {
+    const bar = h("div", { class: "detail-topspace" });
 
     if (isCompare()) {
       // 비교 중에는 Archive 이동을 안 내놓는다 - 눌리면 비교 화면에서 그대로
@@ -2447,16 +2439,15 @@
   function renderDetailPanel() {
     const panel = $("detail-panel");
     clear(panel);
-    // Preview를 끄면 패널을 완전히 숨기는 대신 좁게 접는다 - 그래야 접힌
-    // 상태에서도 다시 켤 토글이 화면에 남는다(실사용 피드백: 완전히 숨기면
-    // 다시 켤 방법이 없어서 "안 눌린다"처럼 보였다).
-    panel.classList.toggle("collapsed", !S.previewOn);
+    panel.appendChild(renderDetailTopSpace());
+    // Preview를 끄면 패널의 폭(297px)은 그대로 두고 #detail-panel-inner(탭
+    // 내용)만 안 그린다 - 위 renderDetailTopSpace()의 주석 참고. 폭을
+    // 줄이면 GameList Overview 줄까지 따라 넓어지며 재배치되는 게 더 이상하다는
+    // 코드 리뷰 피드백을 반영했다(예전엔 44px로 접어 GameList를 넓혔다).
     if (!S.previewOn) {
       panel.classList.remove("open");
-      panel.appendChild(renderDetailTopSpace(true));
       return;
     }
-    panel.appendChild(renderDetailTopSpace());
     const state = S.detailState;
     panel.classList.toggle("open", !!state);
     if (!state) {

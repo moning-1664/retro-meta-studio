@@ -16,7 +16,7 @@ import unittest
 
 from app.model.collection import STORAGE_INTERNAL
 from bridge.api import Api
-from tests.fixtures import build_custom_esde_tree, scan, temp_root, write_file
+from tests.fixtures import build_custom_esde_tree, scan, temp_root, wait_job, write_file
 
 
 def metadata_tree(root):
@@ -157,6 +157,77 @@ class ImportBothTests(unittest.TestCase):
     def test_both_paths_empty_is_refused(self):
         result = self.api.create_collection("X", "es-de", None)
         self.assertFalse(result["ok"])
+
+
+class StorageMoveWithSeparateRomPathTests(unittest.TestCase):
+    """Metadata root와 ROM root가 분리된 Collection에서 System을 External
+    Storage로 옮기기 (사용자 코드 리뷰로 발견된 회귀).
+
+    Adapter.layout()은 storage_id보다 System의 rom_path를 우선한다(위 클래스가
+    보이듯, ES-DE의 "ROM은 다른 폴더" 기본 사용 방식을 지원하려고 있는 값이다).
+    그런데 Storage 이동(`_apply_storage_change`)이 storage_id만 바꾸고 이
+    rom_path를 그대로 두면, "새 Storage로 옮긴 뒤의 위치"를 계산해도 Adapter가
+    여전히 예전 rom_path를 읽어 옛 경로를 돌려준다. 그러면 이동 전후 경로가
+    똑같아져서 "목적지에 이미 같은 파일이 있다"는 충돌로만 보이고 실제로는
+    한 발짝도 못 옮긴다 - 이게 실사용에서 "External Storage로 드래그해도 Apply가
+    항상 실패한다"로 나타난 버그다.
+    """
+
+    def setUp(self):
+        self.dir = temp_root("rms_storage_move_")
+        self.meta = metadata_tree(self.dir / "esde")
+        self.roms = rom_tree(self.dir / "roms")
+        self.external = self.dir / "external_sd"
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+
+        created = self.api.create_collection("C", "es-de", str(self.meta), rom_path=str(self.roms))
+        self.assertTrue(created["ok"], created.get("error"))
+        self.cid = created["data"]["id"]
+        scan(self.api, self.cid)
+
+        collection = self.api.workspace.registry.get_collection(self.cid)
+        # 픽스처가 실제로 "ROM이 다른 폴더"인 상태로 시작하는지 먼저 확인한다 -
+        # 아니면 이 테스트가 재현하려는 조건 자체가 성립하지 않는다.
+        ps2 = next(s for s in collection.systems if s.system == "ps2")
+        self.assertEqual(ps2.rom_path, str(self.roms / "ps2"))
+
+        added = self.api.add_external_storage(self.cid, "SD", str(self.external))
+        self.assertTrue(added["ok"], added.get("error"))
+        self.storage_id = added["data"]
+
+    def test_moving_to_external_storage_actually_moves_the_files(self):
+        r = self.api.plan_storage_change(self.cid, "ps2", self.storage_id)
+        self.assertTrue(r["ok"], r.get("error"))
+
+        job = self.api.start_apply(self.cid)
+        result = wait_job(self.api, job["data"]["jobId"])
+        self.assertEqual(result["result"]["applied"], 1, result["result"])
+        self.assertEqual(result["result"]["failed"], 0, result["result"])
+
+        self.assertFalse((self.roms / "ps2" / "FFX.iso").exists())
+        self.assertTrue((self.external / "ps2" / "FFX.iso").exists())
+
+    def test_the_registry_no_longer_points_at_the_old_rom_path(self):
+        """옮긴 뒤에도 옛 rom_path가 남아 있으면 다음 이동에서 같은 문제가 반복된다."""
+        self.api.plan_storage_change(self.cid, "ps2", self.storage_id)
+        job = self.api.start_apply(self.cid)
+        wait_job(self.api, job["data"]["jobId"])
+
+        collection = self.api.workspace.registry.get_collection(self.cid)
+        ps2 = next(s for s in collection.systems if s.system == "ps2")
+        self.assertEqual(ps2.storage_id, self.storage_id)
+        self.assertIsNone(ps2.rom_path)
+
+    def test_a_second_move_back_to_internal_also_works(self):
+        """옛 rom_path가 안 지워지는 버그였다면 이 왕복에서 다시 실패했을 것이다."""
+        self.api.plan_storage_change(self.cid, "ps2", self.storage_id)
+        wait_job(self.api, self.api.start_apply(self.cid)["data"]["jobId"])
+
+        self.api.plan_storage_change(self.cid, "ps2", STORAGE_INTERNAL)
+        result = wait_job(self.api, self.api.start_apply(self.cid)["data"]["jobId"])
+        self.assertEqual(result["result"]["applied"], 1, result["result"])
+        self.assertTrue((self.meta / "ps2" / "FFX.iso").exists())
 
 
 if __name__ == "__main__":

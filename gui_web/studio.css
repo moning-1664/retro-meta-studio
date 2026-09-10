@@ -485,21 +485,14 @@ body { font-size: var(--fs-body); }
   display: flex; flex-direction: column;
 }
 #detail-panel.open { width: 297px; border-color: var(--border); }
-/* 미리보기를 끄면 목록이 그만큼 넓어진다 - 다만 완전히 숨기지는 않는다.
-   .detail-topspace의 Preview 토글만 남긴 좁은 폭으로 접는다(실사용 피드백:
-   완전히 숨기면 그 토글도 같이 사라져서 다시 켤 방법이 없었다). */
-#detail-panel.collapsed {
-  width: 44px; flex: 0 0 44px; min-width: 44px; max-width: 44px;
-}
-/* 예전엔 이 자리가 height:100%로 늘어나 패널 전체를 차지했다. .detail-topspace의
-   기본 align-items:flex-end 때문에 아이콘 하나뿐인 이 자리가 늘어난 상자의
-   **맨 아래**로 밀려나 "미리보기를 끄면 아이콘이 화면 하단까지 내려간다"는
-   실사용 피드백을 낳았다(사용자 요청). GameList 상단 Chromium과 같은 높이(62px)로
-   고정하고, 그 아래 남는 공간은 #detail-panel의 배경색만 채운 빈 자리로 둔다 -
-   아이콘 자리는 그대로, 그 아래만 "확장"되어 보이게. */
-#detail-panel.collapsed .detail-topspace.compact {
-  align-items: center; justify-content: center; border-bottom: 0; padding: 0;
-}
+/* 미리보기를 꺼도 패널 폭은 297px로 그대로 둔다.
+   예전엔 폭을 44px로 접어 GameList를 넓혔다(탐색기 미리보기 창을 본떴다) -
+   그런데 그러면 위쪽 GameList Overview 줄(.cheader)까지 폭이 바뀌며 다시
+   배치되고, 그 좁은 폭 안에서 Preview 아이콘의 세로 위치를 다시 계산하다가
+   아이콘이 아래로 밀려나는 문제까지 이어졌다(코드 리뷰 피드백). 이제
+   `.detail-topspace`(62px, Preview 토글 포함)는 항상 그대로 두고
+   `#detail-panel-inner`만 껐다 켰다 한다(app.js renderDetailPanel()) - 그래서
+   폭을 줄이는 `.collapsed` 규칙은 더 이상 없다. */
 #detail-panel-inner { width: 297px; min-width: 297px; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .rom-info { padding: 4px 2px; }
 

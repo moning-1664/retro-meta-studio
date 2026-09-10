@@ -497,10 +497,23 @@ def _apply_storage_change(entry, collection, adapter, cache, registry, provider,
 
     # 옮긴 뒤의 배치를 가정한 layout이 필요하다. Registry를 먼저 바꾸면 실패 시
     # 되돌리기가 번거로우므로 메모리 상의 Collection만 잠시 바꿔서 계산한다.
+    #
+    # **rom_path도 함께 비워야 한다.** Adapter.layout()은 storage_id보다
+    # rom_path를 우선한다(ROM 폴더가 Collection root와 다른 Collection을 위해
+    # 필요한 값 - § app/workspace.py의 `rom_elsewhere`). 그런데 storage_id만
+    # 바꾸고 예전 rom_path를 그대로 두면, 새 Storage로 옮겼다고 계산한 new_layout이
+    # 여전히 **예전 경로**를 가리켜 old_layout과 같아져 버린다 - 그러면 "목적지에
+    # 이미 파일이 있다"는 충돌로만 보이고 실제로는 아무 데도 못 간다(실사용
+    # 피드백: External Storage로 드래그해도 Apply가 항상 실패했다). Storage
+    # 이동은 "이 System은 이제 이 Storage를 따른다"는 뜻이므로, rom_path가
+    # 있었더라도 이동 후에는 새 Storage의 기본 경로로 재계산되어야 한다.
     original_storage = system_entry.storage_id
+    original_rom_path = system_entry.rom_path
     system_entry.storage_id = entry.storage_to
+    system_entry.rom_path = None
     new_layout = adapter.layout(collection, entry.system)
     system_entry.storage_id = original_storage
+    system_entry.rom_path = original_rom_path
 
     rows = cache.query_rows(systems=[entry.system])
     pairs = [(Path(old_layout.rom_dir) / r["filename"], Path(new_layout.rom_dir) / r["filename"])
@@ -542,7 +555,11 @@ def _apply_storage_change(entry, collection, adapter, cache, registry, provider,
             return
 
     try:
-        registry.move_system(collection.id, entry.system, entry.storage_to)
+        # rom_path를 None으로 같이 지운다 - 파일이 실제로 new_layout.rom_dir로
+        # 옮겨졌으니, 다음에 다시 읽을 때도 Adapter가 새 Storage 기준으로 같은
+        # 경로를 계산하게 한다. 지우지 않으면 옛 rom_path가 그대로 남아 있다가
+        # 다음 Storage 이동에서 또 같은 문제가 반복된다.
+        registry.move_system(collection.id, entry.system, entry.storage_to, rom_path=None)
     except Exception as e:  # noqa: BLE001
         # 파일은 옮겨졌는데 Registry가 못 따라온 경우다. 그대로 두면 앱이 ROM을
         # 찾지 못하므로 파일을 원래 자리로 되돌린다.
@@ -556,6 +573,7 @@ def _apply_storage_change(entry, collection, adapter, cache, registry, provider,
 
     # 메모리 상의 Collection도 갱신해야 뒤이은 항목들이 새 배치를 본다.
     system_entry.storage_id = entry.storage_to
+    system_entry.rom_path = None
     entry.status = STATUS_APPLIED
 
 
