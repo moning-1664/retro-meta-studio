@@ -194,6 +194,32 @@ class PlanRecoveryTests(unittest.TestCase):
         self.assertEqual(placement["internal"], ["ps2"])
         self.assertEqual(placement[storage_id], [])
 
+    def test_move_timeout_scales_with_total_bytes(self):
+        """기본 300초는 같은 볼륨 rename 기준이다 - 외장 저장장치로 실제 GB 단위
+        ROM을 복사하면 그 안에 안 끝나 robocopy가 강제 종료되고 "이동 실패"만
+        반복 누적됐다(실사용 피드백). 옮길 총 용량에 비례해 timeout을 늘려야 한다.
+        """
+        sd, _ = self._prepare_move()
+        origin_dir = self.target_root / "ps2"
+        total_bytes = sum(p.stat().st_size for p in origin_dir.glob("*.iso"))
+
+        real_move = file_ops.move_files
+        seen = {}
+
+        def spy_move(pairs, **kwargs):
+            seen["timeout_sec"] = kwargs.get("timeout_sec")
+            return real_move(pairs, **kwargs)
+
+        file_ops.move_files = spy_move
+        try:
+            self.api.start_apply(self.dst)
+            wait_idle(self.api)
+        finally:
+            file_ops.move_files = real_move
+
+        expected = max(300.0, total_bytes / (20 * 1024 * 1024) + 60.0)
+        self.assertEqual(seen.get("timeout_sec"), expected)
+
     def test_partial_move_failure_restores_everything(self):
         """일부만 옮겨진 상태로 끝내면 안 된다. 전부 되돌려 원래 상태로 만든다."""
         sd, _ = self._prepare_move()

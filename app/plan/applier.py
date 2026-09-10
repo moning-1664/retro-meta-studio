@@ -471,6 +471,13 @@ def _apply_delete(entry, collection, adapter, cache, provider, errors):
 # ----------------------------------------------------------------------
 # STORAGE CHANGE
 # ----------------------------------------------------------------------
+def _stat_size(path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
 def _apply_storage_change(entry, collection, adapter, cache, registry, provider, errors):
     """System의 ROM 파일을 새 Storage로 옮기고 배치 정보를 갱신한다.
 
@@ -512,7 +519,15 @@ def _apply_storage_change(entry, collection, adapter, cache, registry, provider,
 
     moved = []
     if pairs:
-        results = file_ops.move_files(pairs)
+        # 기본 timeout(300초)은 같은 볼륨 안의 rename을 가정한 값이다. Storage
+        # 이동은 흔히 **다른 볼륨**(외장 SD/USB)으로 실제 바이트를 복사하므로,
+        # ROM 몇 개만 커도(PS2/PS3 이미지는 GB 단위) 5분을 넘기기 쉽다 - 그러면
+        # robocopy가 강제 종료되어 파일이 다 안 옮겨진 채 "이동 실패"만 반복해서
+        # 쌓였다(실사용 피드백). 옮길 총 용량에 비례해 넉넉히 늘린다 - 못해도
+        # 20MB/s(느린 USB/SD 기준)는 나온다고 보고, 거기에 여유를 더한다.
+        total_bytes = sum(_stat_size(src) for src, _ in pairs)
+        timeout_sec = max(300.0, total_bytes / (20 * 1024 * 1024) + 60.0)
+        results = file_ops.move_files(pairs, timeout_sec=timeout_sec)
         moved = [(src, dest) for src, dest in pairs if results.get(str(dest))]
         if len(moved) != len(pairs):
             # 일부만 옮겨진 상태를 그대로 두면 Registry와도, 사용자의 기대와도 어긋난다.
