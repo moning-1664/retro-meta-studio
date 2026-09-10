@@ -84,19 +84,36 @@ test.describe("Favorite / Play", () => {
   });
 });
 
-test.describe("Detail Header - Preview 토글, 닫기 버튼 없음 (레이아웃 재검토 §19-20)", () => {
+test.describe("Detail Header - 닫기 버튼 없음 (레이아웃 재검토 §19-20)", () => {
   test("Detail 자체를 닫는 X 버튼은 없다", async ({ page }) => {
     // Detail은 선택된 게임을 보여주는 고정 영역이다 - 숨기려면 미리보기를
     // 꺼야 한다(Preview 토글), 개별 게임의 X로 닫는 길은 없앴다.
     await openFirstGame(page);
     await expect(page.locator("#detail-panel .icon-btn[title*='닫기']")).toHaveCount(0);
   });
+});
 
-  test("Header 우측에 미리보기 토글이 있고 Toolbar 것과 상태를 공유한다", async ({ page }) => {
+test.describe("Detail 상단 빈 공간 (레이아웃 재검토 §18-19)", () => {
+  // GameList의 Overview 줄과 같은 높이를 차지해서, 그 아래 제목/탭이 Toolbar와
+  // 같은 선에서 시작한다. 왼쪽엔 Archive 이동, 오른쪽엔 Preview 토글이 있다 -
+  // 게임을 고르기 전에도(빈 상태) 보인다.
+  test("Detail Header가 GameList Toolbar와 같은 선에서 시작한다", async ({ page }) => {
     await openFirstGame(page);
-    const headerToggle = page.locator("#detail-panel .icon-btn[title='미리보기 끄기']");
-    await expect(headerToggle).toBeVisible();
+    const filterBarTop = await page.locator("#filter-bar").evaluate((el) => el.getBoundingClientRect().top);
+    const detailHeaderTop = await page.locator("#detail-panel .detail-header").evaluate(
+      (el) => el.getBoundingClientRect().top);
+    expect(Math.abs(filterBarTop - detailHeaderTop)).toBeLessThan(2);
+  });
+
+  test("게임을 고르기 전에도 Archive 이동 버튼과 Preview 토글이 보인다", async ({ page }) => {
+    await expect(page.locator("#detail-panel #archive-ingest-btn")).toBeVisible();
     await expect(page.locator("#detail-panel .detail-preview-label")).toHaveText("미리보기");
+  });
+
+  test("미리보기를 끄면 패널이 숨고, Toolbar 쪽으로 다시 켤 수 있다", async ({ page }) => {
+    await openFirstGame(page);
+    const headerToggle = page.locator("#detail-panel .detail-topspace .icon-btn[title='미리보기 끄기']");
+    await expect(headerToggle).toBeVisible();
 
     await headerToggle.click();
     await expect(page.locator("#detail-panel")).toHaveClass(/hidden/);

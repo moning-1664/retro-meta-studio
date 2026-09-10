@@ -1220,36 +1220,8 @@
     });
     bar.appendChild(statusSel);
 
-    // 정렬 기준. List에서는 머리글을 눌러도 되지만, Card 보기는 머리글 자체가
-    // 없어서 이 컨트롤이 유일한 정렬 수단이다(레이아웃 재검토 결론). 같은
-    // 상태(S.order/S.descending)를 가리키므로 머리글 클릭과 항상 값이 맞는다.
-    const sortableCols = COLUMNS.filter((c) => c.key);
-    const sortSel = h("select", { class: "mini-select", title: "정렬 기준" },
-      sortableCols.map((c) => h("option", { value: c.key }, [c.label])));
-    sortSel.value = S.order;
-    sortSel.addEventListener("change", async (e) => {
-      S.order = e.target.value;
-      saveUiState();
-      resetList();
-      renderListHead();
-      await reloadList();
-    });
-    bar.appendChild(sortSel);
-
-    const sortDir = h("button", {
-      class: "icon-btn",
-      title: S.descending ? "내림차순 - 눌러서 오름차순으로" : "오름차순 - 눌러서 내림차순으로",
-    }, [icon(S.descending ? "chevronDown" : "chevronUp", 12)]);
-    sortDir.addEventListener("click", async () => {
-      S.descending = !S.descending;
-      saveUiState();
-      resetList();
-      renderListHead();
-      renderFilterBar();
-      await reloadList();
-    });
-    bar.appendChild(sortDir);
-
+    // 정렬 셀렉트는 두지 않는다 - 목록 머리글(#list-head)이 Card 보기에서도
+    // 그대로 보이고 클릭도 되므로(실사용 확인) 따로 둘 이유가 없다.
     const fav = h("button", {
       class: "icon-btn" + (S.favoritesOnly ? " on" : ""),
       title: S.favoritesOnly ? "전체 보기" : "즐겨찾기만 보기",
@@ -1324,22 +1296,12 @@
     if (isCompare() || isArchive()) return;
     const plan = S.plan;
 
-    // 무엇이 들어갈지 버튼에 적어 둔다 - 누르고 나서 알게 되면 늦다.
-    const scope = archiveScope();
-    const scopeLabel = archiveScopeLabel(scope);
-    // scopeLabel은 System 이름이나 선택 개수에 따라 길이가 들쭉날쭉하다 -
-    // 옆 버튼(Apply/Cancel)이 밀리지 않도록 폭을 고정하고 넘치면 줄인다. 전체
-    // 문구는 title(툴팁)로 그대로 남는다.
-    const ingest = h("button", { class: "btn compact", id: "archive-ingest-btn",
-      "data-scope": scope.kind,
-      title: `${scopeLabel}을 Archive에 수집합니다` },
-      [icon("database", 12), h("span", { class: "ingest-label truncate" }, [`Archive에 수집 — ${scopeLabel}`])]);
-    ingest.addEventListener("click", ingestToArchive);
-    bar.appendChild(ingest);
-
-    // Delete는 상시 버튼을 두지 않는다(레이아웃 재검토 결론) - DEL 키와 목록 우클릭
-    // 메뉴로만 접근한다. 파괴적인 동작이라 눈에 항상 띄는 자리에 두면 오클릭
-    // 위험이 커진다(PENDING_DECISIONS.md).
+    // Archive에 수집은 여기 없다 - Detail 패널 상단(.detail-topspace)으로
+    // 옮겼다(레이아웃 재검토).
+    //
+    // Delete는 상시 버튼을 두지 않는다(레이아웃 재검토 결론) - DEL 키와 목록
+    // 우클릭 메뉴로만 접근한다. 파괴적인 동작이라 눈에 항상 띄는 자리에 두면
+    // 오클릭 위험이 커진다(PENDING_DECISIONS.md).
 
     // Apply/Cancel은 한 그룹이다 - 같은 Plan을 두고 하는 순간의 동작이라는 걸
     // 구분선으로 보여준다. Auto Plan 토글은 뺐다(실사용 시나리오가 확인될 때까지
@@ -1380,6 +1342,18 @@
       // "span"으로 고르면 **아이콘 span을 잡아 아이콘을 글자로 덮어썼다.**
       const text = ingest.querySelector(".ingest-label");
       if (text) text.textContent = `Archive에 수집 — ${label}`;
+    }
+    // Archive 탭의 "Collection으로 보내기"도 Detail 패널 상단에 있다 - 선택이
+    // 바뀔 때마다 renderDetailPanel()을 통째로 다시 그리진 않으므로(Metadata
+    // 입력 중 커서가 날아간다) 여기서 같이 패치한다.
+    const send = $("archive-send-btn");
+    if (send) {
+      const targets = S.tabs.filter((t) => t !== ARCHIVE_ID);
+      send.disabled = !S.selected.size || !targets.length;
+      send.title = !targets.length ? "보낼 Collection을 먼저 열어주세요"
+                 : !S.selected.size ? "보낼 항목을 먼저 고르세요"
+                 : "선택 항목을 Collection으로 보냅니다";
+      send.onclick = (S.selected.size && targets.length) ? openSendToCollection : null;
     }
   }
 
@@ -1426,15 +1400,14 @@
                      [col.label]);
       if (col.key) {
         // 한 번 누르면 오름차순, 다시 누르면 내림차순. 이전 프로젝트와 같다.
-        // Toolbar의 정렬 셀렉트(Card 보기용 - 거긴 머리글이 없다)와 같은 상태를
-        // 가리키므로, 여기서 바꾸면 그쪽도 다시 그려서 값을 맞춘다.
+        // Card 보기에서도 이 머리글이 그대로 보이고 클릭도 되므로(실사용 확인),
+        // Card 전용 정렬 컨트롤은 따로 두지 않는다.
         cell.addEventListener("click", async () => {
           if (S.order === col.key) S.descending = !S.descending;
           else { S.order = col.key; S.descending = false; }
           saveUiState();
           resetList();
           renderListHead();
-          renderFilterBar();
           await reloadList();
         });
         if (sorted) cell.appendChild(icon(S.descending ? "chevronDown" : "chevronUp", 10));
@@ -2386,9 +2359,67 @@
     renderListWindow();
   }
 
+  /** Detail 패널 최상단의 고정 공간. GameList의 Overview 줄과 같은 높이라서,
+   * 이 아래 #detail-panel-inner의 제목이 GameList의 Toolbar와 같은 선에서
+   * 시작한다(레이아웃 재검토 §18). 게임을 선택했든 안 했든, Compare 중이든
+   * 늘 같은 자리에 같은 것을 보여준다 - Archive 이동(왼쪽)과 Preview
+   * 토글(오른쪽, 아이콘만 클릭 영역)이다.
+   */
+  function renderDetailTopSpace() {
+    const bar = h("div", { class: "detail-topspace" });
+
+    if (isCompare()) {
+      // 비교 중에는 Archive 이동을 안 내놓는다 - 눌리면 비교 화면에서 그대로
+      // 변경이 일어난다(renderStatusBar의 예전 sb-actions와 같은 이유).
+      bar.appendChild(h("span", { class: "sb-badge" }, ["읽기 전용"]));
+    } else if (isArchive()) {
+      const targets = S.tabs.filter((t) => t !== ARCHIVE_ID);
+      // 못 쓰는 버튼은 **왜 못 쓰는지 말해야 한다.**
+      const why = !targets.length ? "보낼 Collection을 먼저 열어주세요"
+                : !S.selected.size ? "보낼 항목을 먼저 고르세요"
+                : "선택 항목을 Collection으로 보냅니다";
+      const send = h("button", {
+        class: "btn compact primary", id: "archive-send-btn",
+        disabled: !S.selected.size || !targets.length, title: why,
+      }, ["Collection으로 보내기"]);
+      // updateSelectionDependentActions()도 이 버튼을 onclick으로 다시
+      // 잡는다 - addEventListener를 섞으면 두 번 실행될 수 있어 여기도
+      // onclick으로 통일한다.
+      if (S.selected.size && targets.length) send.onclick = openSendToCollection;
+      bar.appendChild(send);
+    } else {
+      const scope = archiveScope();
+      const scopeLabel = archiveScopeLabel(scope);
+      const ingest = h("button", { class: "btn compact", id: "archive-ingest-btn",
+        "data-scope": scope.kind,
+        title: `${scopeLabel}을 Archive에 수집합니다` },
+        [icon("database", 12), h("span", { class: "ingest-label truncate" }, [`Archive에 수집 — ${scopeLabel}`])]);
+      ingest.addEventListener("click", ingestToArchive);
+      bar.appendChild(ingest);
+    }
+
+    const previewToggle = h("div", { class: "detail-preview-toggle" });
+    const previewBtn = h("button", {
+      class: "icon-btn" + (S.previewOn ? " on" : ""),
+      title: S.previewOn ? "미리보기 끄기" : "미리보기 켜기",
+    }, [icon("previewPane", 15)]);
+    previewBtn.addEventListener("click", () => {
+      S.previewOn = !S.previewOn;
+      saveUiState();
+      renderFilterBar();
+      applyPreviewMode();
+    });
+    previewToggle.appendChild(previewBtn);
+    previewToggle.appendChild(h("span", { class: "detail-preview-label" }, ["미리보기"]));
+    bar.appendChild(previewToggle);
+
+    return bar;
+  }
+
   function renderDetailPanel() {
     const panel = $("detail-panel");
     clear(panel);
+    panel.appendChild(renderDetailTopSpace());
     const state = S.detailState;
     panel.classList.toggle("open", !!state);
     if (!state) {
@@ -2417,7 +2448,8 @@
 
     if (!state.archive) {
       // Play/Favorite는 게임을 보고 있을 때 바로 손이 가는 자리에 있어야
-      // 한다(레이아웃 재검토 §20 순서: Play, Favorite, Preview).
+      // 한다(레이아웃 재검토 §20). Preview는 더 이상 여기 없다 -
+      // .detail-topspace로 옮겼다.
       //
       // 실행은 아직 연결되지 않았다. **버튼을 없애는 대신 못 한다고 말한다** -
       // 사라진 기능은 언제 돌아오는지 알 수 없지만, 눌러서 안내를 받으면 안다.
@@ -2438,24 +2470,6 @@
       star.addEventListener("click", () => toggleFavoriteFromDetail(star));
       header.appendChild(star);
     }
-
-    // Preview - Toolbar에도 같은 토글이 있다(그쪽은 패널이 숨겨진 동안에도
-    // 눌러서 다시 켤 수 있는 유일한 자리라 없앨 수 없다). 여기 있는 건 보는
-    // 김에 끄는 용도다(§19) - 아이콘만 클릭 영역이고 글자는 라벨일 뿐이다.
-    const previewToggle = h("div", { class: "detail-preview-toggle" });
-    const previewBtn = h("button", {
-      class: "icon-btn" + (S.previewOn ? " on" : ""),
-      title: S.previewOn ? "미리보기 끄기" : "미리보기 켜기",
-    }, [icon("previewPane", 15)]);
-    previewBtn.addEventListener("click", () => {
-      S.previewOn = !S.previewOn;
-      saveUiState();
-      renderFilterBar();
-      applyPreviewMode();
-    });
-    previewToggle.appendChild(previewBtn);
-    previewToggle.appendChild(h("span", { class: "detail-preview-label" }, ["미리보기"]));
-    header.appendChild(previewToggle);
     inner.appendChild(header);
 
     const tabs = h("div", { class: "detail-tabs" });
@@ -3115,25 +3129,9 @@
       bar.appendChild(actions);
       return;
     }
-    if (isArchive()) {
-      const targets = S.tabs.filter((t) => t !== ARCHIVE_ID);
-      // 못 쓰는 버튼은 **왜 못 쓰는지 말해야 한다.** 예전에는 선택이 없어서 꺼져
-      // 있을 때도 "선택 항목을 보냅니다"라고 적혀 있어서, 기능이 고장 난 것처럼 보였다.
-      const why = !targets.length ? "보낼 Collection을 먼저 열어주세요"
-                : !S.selected.size ? "보낼 항목을 먼저 고르세요"
-                : "선택 항목을 Collection으로 보냅니다";
-      const send = h("button", {
-        class: "btn compact primary", disabled: !S.selected.size || !targets.length,
-        title: why,
-      }, ["Collection으로 보내기"]);
-      if (S.selected.size && targets.length) send.addEventListener("click", openSendToCollection);
-      actions.appendChild(send);
-      bar.appendChild(actions);
-      return;
-    }
-
-    // AutoPlan/Apply/Cancel/Archive에 수집/Delete는 전부 위쪽 Gamelist 툴바
-    // (renderPlanActions)로 옮겼다 - 여기 그대로 두면 똑같은 버튼이 두 번 보인다.
+    // Archive의 "Collection으로 보내기"도 Detail 패널 상단으로 옮겼다(레이아웃
+    // 재검토) - AutoPlan/Apply/Cancel/Archive에 수집/Delete와 같은 이유로,
+    // 여기 그대로 두면 똑같은 버튼이 두 번 보인다.
     bar.appendChild(actions);
   }
 

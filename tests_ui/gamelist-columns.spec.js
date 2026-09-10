@@ -65,18 +65,12 @@ test.describe("Header 정렬", () => {
     await expect.poll(() => requests.at(-1)).toBe(true);
   });
 
-  test("정렬 셀렉트와 방향 버튼이 있다(Card 보기에는 머리글이 없다)", async ({ page }) => {
-    const sortSel = page.locator("#filter-bar select[title='정렬 기준']");
-    await expect(sortSel).toBeVisible();
-    await expect(sortSel).toHaveValue("title");
-
-    await page.locator(".lh-file").click();
-    await expect(sortSel).toHaveValue("filename");
-  });
-
-  test("머리글 클릭과 정렬 셀렉트는 같은 상태를 가리킨다", async ({ page }) => {
-    const sortSel = page.locator("#filter-bar select[title='정렬 기준']");
-    await sortSel.selectOption("region");
+  test("Card 보기에서도 목록 머리글이 남아 있고 클릭하면 정렬된다", async ({ page }) => {
+    // 실사용 확인: Card 보기에서도 #list-head가 그대로 보이고 정렬 클릭이
+    // 된다 - 그래서 Card 전용 정렬 컨트롤을 따로 두지 않는다.
+    await page.locator(".view-mode-seg .seg-btn").nth(1).click();
+    await expect(page.locator("#list-head")).toBeVisible();
+    await page.locator(".lh-region").click();
     await expect(page.locator(".lh-region")).toHaveClass(/sorted/);
   });
 

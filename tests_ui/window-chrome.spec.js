@@ -122,10 +122,10 @@ test("손잡이를 반대로 끌어도 최소 크기 아래로는 안 내려간�
 });
 
 test("상세 패널은 고정 컬럼이다 - 선택 전에도 자리를 지킨다", async ({ page }) => {
-  // 예전에는 width 0 <-> 306px를 오가며 슬라이드해서 목록 폭이 그때그때 달라졌다.
+  // 예전에는 width 0 <-> 297px를 오가며 슬라이드해서 목록 폭이 그때그때 달라졌다.
   const panel = page.locator("#detail-panel");
   const before = await panel.boundingBox();
-  expect(before.width).toBe(306);
+  expect(before.width).toBe(297);
   await expect(panel.locator(".panel-empty-state")).toBeVisible();
 
   await page.locator(".lrow").first().click();

@@ -100,14 +100,15 @@ test("Exit Compare로 원래 Gamelist가 돌아온다", async ({ page }) => {
   await expect(page.locator(".lrow")).toHaveCount(3);
 });
 
-test("Compare는 읽기 전용이다 - 변경 버튼이 툴바에서 사라진다", async ({ page }) => {
-  // Apply/Delete는 선택이 없어도 눌리거나 위험한 동작이라, 남겨두면 비교 화면에서
-  // 그대로 변경이 일어난다.
-  await expect(page.locator("#filter-bar .btn", { hasText: "Archive에 수집" })).toBeVisible();
+test("Compare는 읽기 전용이다 - 변경 버튼이 사라진다", async ({ page }) => {
+  // Apply/Delete/Archive에 수집은 선택이 없어도 눌리거나 위험한 동작이라,
+  // 남겨두면 비교 화면에서 그대로 변경이 일어난다. Archive에 수집은 Detail
+  // 패널 상단(.detail-topspace)에 있다.
+  await expect(page.locator("#detail-panel #archive-ingest-btn")).toBeVisible();
   await startCompare(page);
-  await expect(page.locator("#filter-bar .btn", { hasText: "Archive에 수집" })).toHaveCount(0);
+  await expect(page.locator("#detail-panel #archive-ingest-btn")).toHaveCount(0);
+  await expect(page.locator("#detail-panel .detail-topspace")).toContainText("읽기 전용");
   await expect(page.locator(".sb-actions .btn")).toHaveCount(0);
-  await expect(page.locator(".sb-actions")).toContainText("읽기 전용");
 });
 
 test("Compare 중에는 Delete 단축키도 거절 안내를 낸다", async ({ page }) => {
