@@ -2846,10 +2846,42 @@
   const planCapacity = (storageId) =>
     ((S.plan && S.plan.capacity) || []).find((c) => c.storageId === storageId) || null;
 
-  // Copy/Paste는 Gamelist에서 없앴다(QA 재검토 P1) - Collection 사이에 항목을
-  // 옮기는 경로는 Archive에 수집 -> Collection으로 보내기 하나로 통일한다. 백엔드의
-  // api.copySelection/api.paste 자체는 남아 있다(다른 진입점이 나중에 필요할 수
-  // 있다) - 여기서 없앤 것은 화면의 버튼과 단축키뿐이다.
+  // Copy/Paste - QA 재검토 P1에서 한 번 없앴다("Collection 사이 이동은 Archive를
+  // 거친다"). Ctrl+C/Ctrl+V로 되살렸다(사용자 요청) - 새 병합 함수를 만들 뻔했지만
+  // tests/test_metadata_only_paste.py를 보니 이미 있는 메커니즘(`plan_add()` +
+  // 충돌 해결)이 정확히 이 요구사항을 구현하고 있었다: 대상에 ROM이 이미 있으면
+  // 충돌로 뜨고, 사용자가 "메타데이터만"을 고르면 ROM은 그대로 두고 메타데이터/
+  // media만 채워진다(파일이 없는 조각만 옮겨진다는 뜻과 같다). 그래서 여기서는
+  // 새 로직을 만들지 않고 Apply 흐름과 같은 충돌 다이얼로그를 그대로 쓴다.
+  // Archive 탭에는 이 방식이 안 맞는다 - Archive는 rom_uid가 아니라
+  // romIdentityId로 식별하고, 자기 전용 경로(Archive에 수집 / Collection으로
+  // 보내기)가 이미 있다.
+  async function copySelectedRows() {
+    if (blockedInCompare("복사")) return;
+    if (isArchive()) { showToast("Archive는 복사할 수 없습니다 - \"Collection으로 보내기\"를 쓰세요.", "warning"); return; }
+    if (!S.selected.size) { showToast("복사할 항목을 선택하세요.", "warning"); return; }
+    const r = await api.copySelection(S.activeId, [...S.selected]);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    showToast(`${formatCount(r.data.count)}개 복사했습니다. 대상 System/Collection에서 Ctrl+V로 붙여넣으세요.`);
+  }
+
+  async function pasteClipboard() {
+    if (blockedInCompare("붙여넣기")) return;
+    if (isArchive()) { showToast("Archive에는 붙여넣을 수 없습니다 - \"Archive에 수집\"을 쓰세요.", "warning"); return; }
+    const r = await api.paste(S.activeId);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    const d = r.data;
+    await refreshPlan();
+    resetList();
+    await reloadList();
+    if (d.conflicts) {
+      showToast(`추가 ${formatCount(d.added)}개 · 충돌 ${formatCount(d.conflicts)}개 - 대상에 이미 있는 항목입니다.`, "warning");
+      openConflictDialog();
+      return;
+    }
+    if (d.added) showToast(`Plan에 ${formatCount(d.added)}개를 추가했습니다.`);
+    else showToast("붙여넣을 새 내용이 없습니다(전부 이미 있음).", "info");
+  }
 
   async function deleteSelection() {
     if (blockedInCompare("삭제")) return;
@@ -3272,6 +3304,8 @@
       // 비교 중에도 단축키를 삼키지는 않는다 - 각 동작이 blockedInCompare()로 막으면서
       // "왜 안 되는지"를 말해준다. 조용히 무시하면 사용자는 키가 안 먹었다고 여긴다.
       if (e.key === "Delete") { e.preventDefault(); deleteSelection(); }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") { e.preventDefault(); copySelectedRows(); }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") { e.preventDefault(); pasteClipboard(); }
     });
   }
 

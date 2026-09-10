@@ -388,7 +388,11 @@ body { font-size: var(--fs-body); }
 .preview-card.placeholder .preview-cover { background: var(--list-border); }
 .lrow {
   display: grid; align-items: center; padding: 0 8px; cursor: pointer;
-  border-bottom: 1px solid var(--list-row-border); color: var(--list-text);
+  /* --list-row-border는 --list-bg와 명암 차이가 작아서(둘 다 짙은 남색)
+     구분선이라기보다 픽셀 하나 정도로만 보였다(실사용 피드백: "텍스트가
+     끊기지 않고 연결된 것처럼 보인다"). 목록 테두리에 이미 쓰던 더 밝은
+     --list-border로 바꾸고 두께도 2px로 올렸다. */
+  border-bottom: 2px solid var(--list-border); color: var(--list-text);
 }
 .lrow:hover { background: var(--card2); }
 .lrow.selected { background: var(--list-selected); }
