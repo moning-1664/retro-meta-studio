@@ -668,36 +668,78 @@
   // ------------------------------------------------------------------
   // 좌측 내비게이션
   // ------------------------------------------------------------------
+  /** Navigator 최상단 고정 항목. 실제 기능은 아직 없다(레이아웃 재검토, TODO -
+   * PENDING_DECISIONS.md) - 이전 프로젝트 기능을 가져올 진입점 자리만 잡아둔다. */
+  function navDashboardRow() {
+    const row = h("button", { class: "nav-dashboard", title: "Dashboard (준비 중)" }, [
+      icon("dashboard", 14), h("span", {}, ["Dashboard"]),
+    ]);
+    row.addEventListener("click", () => showToast("Dashboard는 아직 없습니다 - 나중에 쓸 자리입니다."));
+    return row;
+  }
+
+  /** Navigator 최하단 고정 영역 - App Title + Settings. 예전엔 최상단 타이틀바에
+   * 있던 App Title을 여기로 옮겼다(레이아웃 재검토). Settings는 신규 구현이라
+   * 눌러도 자리표시자만 뜬다(TODO - PENDING_DECISIONS.md). */
+  function navBottom() {
+    const bottom = h("div", { class: "nav-bottom" });
+    bottom.appendChild(h("div", { class: "nav-app-title" }, [
+      icon("database", 16),
+      h("div", { class: "nav-app-title-text" }, [
+        h("div", { class: "nav-app-title-name" }, ["RetroMeta Studio"]),
+        h("div", { class: "nav-app-title-sub" }, ["Frontend Metadata Editor"]),
+      ]),
+    ]));
+    const settings = h("button", { class: "icon-btn", title: "Settings (준비 중)" }, [icon("settings", 14)]);
+    settings.addEventListener("click", () => {
+      showModal("Settings", h("div", { class: "modal-body" }, [
+        h("div", { class: "modal-text" },
+          ["아직 준비 중입니다. 어떤 설정이 필요한지 정해지면 채워질 예정입니다."]),
+      ]), [h("button", { class: "btn primary", onClick: closeModal }, ["닫기"])]);
+    });
+    bottom.appendChild(settings);
+    return bottom;
+  }
+
   function renderNav() {
     const nav = $("nav");
     clear(nav);
+    nav.appendChild(navDashboardRow());
+
+    // System 제목과 목록만 스크롤 영역에 넣는다 - Dashboard/Add External/App
+    // Title/Settings는 System이 아무리 늘어나도 화면에서 밀려나면 안 된다.
+    const scroll = h("div", { class: "nav-scroll" });
+    nav.appendChild(scroll);
+
     const detail = activeDetail();
     if (!detail) {
-      nav.appendChild(h("div", { class: "nav-empty" }, ["Collection을 열어주세요"]));
+      scroll.appendChild(h("div", { class: "nav-empty" }, ["Collection을 열어주세요"]));
+      nav.appendChild(navBottom());
       return;
     }
-    nav.appendChild(h("div", { class: "nav-eyebrow" }, ["SYSTEMS"]));
+    scroll.appendChild(h("div", { class: "nav-eyebrow" }, ["SYSTEMS"]));
 
     const scope = activeScope();
     if (isArchive()) {
       const all = navRow("All", detail.totalGames, scope.kind === "all", () => setScope({ kind: "all" }));
       all.classList.add("nav-all");
       all.insertBefore(icon("database", 13), all.firstChild);
-      nav.appendChild(all);
+      scroll.appendChild(all);
       (detail.archiveSystems || []).forEach((sys) => {
         const row = navRow(sys.system.toUpperCase(), sys.count,
           scope.kind === "system" && scope.id === sys.system,
           () => setScope({ kind: "system", id: sys.system }));
         row.classList.add("nav-system");
         row.insertBefore(systemIcon(sys.system, 14), row.firstChild);
-        nav.appendChild(row);
+        scroll.appendChild(row);
       });
+      nav.appendChild(navBottom());
       return;
     }
     const allRow = navRow("All", detail.totalGames, scope.kind === "all", () => setScope({ kind: "all" }));
     allRow.classList.add("nav-all");
     allRow.insertBefore(icon("layoutList", 13), allRow.firstChild);
-    nav.appendChild(allRow);
+    scroll.appendChild(allRow);
 
     // **System 목록은 기본적으로 평평하다.**
     //
@@ -744,7 +786,7 @@
     }
 
     if (!externalStorages.length) {
-      (detail.systems || []).forEach((sys) => nav.appendChild(renderSystemRow(sys)));
+      (detail.systems || []).forEach((sys) => scroll.appendChild(renderSystemRow(sys)));
     } else {
       (detail.storages || []).forEach((storage) => {
         const group = h("div", { class: "nav-group" });
@@ -783,10 +825,12 @@
 
         (detail.systems || []).filter((sys) => sys.storageId === storage.id)
           .forEach((sys) => group.appendChild(renderSystemRow(sys)));
-        nav.appendChild(group);
+        scroll.appendChild(group);
       });
     }
 
+    // Add External Storage는 System이 아무리 늘어나도 밀려나면 안 되므로 스크롤
+    // 밖(고정 영역)에 둔다.
     if (!isCompare()) {
       const add = h("button", { class: "nav-action" }, [icon("plus", 12), h("span", {}, ["Add External Storage"])]);
       add.addEventListener("click", openAddStorage);
@@ -794,6 +838,7 @@
       // gamelist 만들기는 Toolbar 아이콘(Collection 전체) + System/Storage 우클릭
       // 메뉴(부분)로 옮겼다 - 예전엔 이 버튼 하나뿐이었다.
     }
+    nav.appendChild(navBottom());
   }
 
   function navRow(label, count, active, onClick) {

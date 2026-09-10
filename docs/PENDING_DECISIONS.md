@@ -42,6 +42,9 @@ Python 쪽에도 없다.
 **신규 구현**으로 남겨두고, 화면/기능이 확정되기 전까지는 톱니바퀴를 눌러도
 빈 화면(또는 자리표시자)만 나온다.
 
+Navigator 하단 고정 영역(App Title + 톱니바퀴)은 만들었다 - 누르면 "아직
+준비 중" 안내만 뜬다.
+
 **다음에 물어볼 것**: General/Appearance/Frontend 등 카테고리에 실제로 무엇을
 넣을지 - 예를 들어 확인창(destructive operation confirm) on/off, 기본
 List/Card 모드, Preview 기본 상태 같은 것부터 시작할지, 아니면 다른 우선순위가
