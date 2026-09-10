@@ -52,7 +52,7 @@ test.describe("Archive 탭 새로고침", () => {
 
     await page.locator(".ctab.archive").click();
     await expect(page.locator(".ctab.archive")).toHaveClass(/active/);
-    await page.locator("#filter-bar .icon-btn[title='다시 스캔']").click();
+    await page.locator("#collection-header .icon-btn[title='다시 스캔']").click();
 
     await expect(page.locator("#toast")).not.toContainText("찾을 수 없습니다");
     expect(scans).toBe(0);
@@ -66,7 +66,7 @@ test.describe("Archive 탭 새로고침", () => {
       window.api.startScan = (id, force) => { window.__scan(); return original(id, force); };
     });
 
-    await page.locator("#filter-bar .icon-btn[title='다시 스캔']").click();
+    await page.locator("#collection-header .icon-btn[title='다시 스캔']").click();
     await expect.poll(() => scans).toBe(1);
   });
 });

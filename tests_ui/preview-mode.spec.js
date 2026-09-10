@@ -1,27 +1,29 @@
 // 미리보기(상세 패널) 켜고 끄기 (P1).
 //
-// 끄면 목록이 그 자리까지 넓어져야 한다 - 탐색기의 미리보기 창과 같다. 상세를 안
-// 보는 동안 화면 3분의 1을 빈 채로 둘 이유가 없다.
+// 끄면 목록이 넓어져야 한다 - 탐색기의 미리보기 창과 같다. 상세를 안 보는 동안
+// 화면 3분의 1을 빈 채로 둘 이유가 없다. 다만 **완전히 숨기지는 않는다** -
+// Detail 패널 상단의 Preview 토글만 남긴 좁은 폭(.collapsed)으로 접는다.
+// 완전히 숨기면(display:none) 그 토글도 같이 사라져서 다시 켤 방법이 없어진다
+// (실사용 피드백).
 //
-// 레이아웃(grid의 3번째 트랙 `auto` + `display:none`)은 처음부터 맞았다. 버그는
-// `applyPreviewMode()`가 툴바 버튼의 클릭 처리기에서**만** 불렸다는 것이다. 그래서
-// 꺼 둔 상태로 앱을 다시 열면 상태는 OFF인데 화면에는 패널이 그대로 보였고,
-// 게임을 눌러도 아무 일이 없는 것처럼 보였다.
+// renderDetailPanel()이 매번 S.previewOn을 직접 보고 접힌/펼친 모습을 정하므로,
+// 어디서 다시 그려도(탭 전환, 앱 재시작 복원 등) 상태가 어긋나지 않는다.
 const { test, expect } = require("@playwright/test");
 const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
-const previewButton = (page) => page.locator("#filter-bar .icon-btn[title*='미리보기']");
+const previewButton = (page) => page.locator("#detail-panel .detail-topspace .icon-btn[title*='미리보기']");
 const listWidth = (page) => page.evaluate(() =>
   document.getElementById("list-wrap").getBoundingClientRect().width);
 
-test("끄면 목록이 그 자리까지 넓어진다", async ({ page }) => {
+test("끄면 목록이 넓어지고, 패널은 완전히 숨지 않고 좁게 접힌다", async ({ page }) => {
   const before = await listWidth(page);
   await previewButton(page).click();
-  await expect(page.locator("#detail-panel")).toHaveClass(/hidden/);
+  await expect(page.locator("#detail-panel")).toHaveClass(/collapsed/);
+  // 접힌 상태에도 다시 켤 토글은 남아 있다.
+  await expect(previewButton(page)).toBeVisible();
   const after = await listWidth(page);
-  // 패널 폭(306px)만큼 넓어져야 한다. 숨기기만 하고 자리가 남으면 안 된다.
   expect(after).toBeGreaterThan(before + 200);
 });
 
@@ -29,17 +31,16 @@ test("다시 켜면 원래 폭으로 돌아온다", async ({ page }) => {
   const before = await listWidth(page);
   await previewButton(page).click();
   await previewButton(page).click();
-  await expect(page.locator("#detail-panel")).not.toHaveClass(/hidden/);
+  await expect(page.locator("#detail-panel")).not.toHaveClass(/collapsed/);
   expect(Math.abs((await listWidth(page)) - before)).toBeLessThan(2);
 });
 
 test("꺼 둔 상태는 다시 그려도 유지된다", async ({ page }) => {
   await previewButton(page).click();
-  await expect(page.locator("#detail-panel")).toHaveClass(/hidden/);
+  await expect(page.locator("#detail-panel")).toHaveClass(/collapsed/);
 
-  // 전체를 다시 그리는 동작(탭 전환)을 거쳐도 꺼진 상태여야 한다. 예전에는
-  // renderAll()이 applyPreviewMode()를 부르지 않아 패널이 되살아났다.
+  // 전체를 다시 그리는 동작(탭 전환)을 거쳐도 꺼진 상태여야 한다.
   await page.locator(".ctab.archive").click();
   await expect(page.locator(".ctab.archive")).toHaveClass(/active/);
-  await expect(page.locator("#detail-panel")).toHaveClass(/hidden/);
+  await expect(page.locator("#detail-panel")).toHaveClass(/collapsed/);
 });

@@ -149,8 +149,12 @@ test.describe("툴바", () => {
     await expect(page.locator("#filter-bar .plan-actions .seg-btn", { hasText: "Cancel" })).toBeVisible();
   });
 
-  test("목록/카드 전환과 새로고침이 있다", async ({ page }) => {
+  test("목록/카드 전환이 있다", async ({ page }) => {
     await expect(page.locator("#filter-bar .view-mode-seg .seg-btn")).toHaveCount(2);
-    await expect(page.locator("#filter-bar .icon-btn[title='다시 스캔']")).toBeVisible();
+  });
+
+  test("새로고침은 GameList 상단(Overview)에 있다 - Toolbar와 중복하지 않는다", async ({ page }) => {
+    await expect(page.locator("#filter-bar .icon-btn[title='다시 스캔']")).toHaveCount(0);
+    await expect(page.locator("#collection-header .icon-btn[title='다시 스캔']")).toBeVisible();
   });
 });

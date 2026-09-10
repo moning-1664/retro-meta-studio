@@ -374,7 +374,7 @@
       const tab = h("div", { class: "ctab" + (id === S.activeId ? " active" : "") });
       tab.appendChild(icon("gamepad", 13));
       tab.appendChild(h("span", { class: "ctab-name" }, [collection.name]));
-      const close = h("button", { class: "ctab-close", title: "닫기" }, [icon("x", 10)]);
+      const close = h("button", { class: "ctab-close", title: "닫기" }, [icon("x", 9)]);
       close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(id); });
       tab.appendChild(close);
       tab.addEventListener("click", () => selectTab(id));
@@ -1034,11 +1034,34 @@
 
     const right = h("div", { class: "cheader-right" });
     if (isArchive()) {
+      // Archive에는 gamelist 만들기/Collection 가져오기/Expand가 의미 없다 -
+      // 다시 스캔만 있으면 된다(Toolbar에 있던 것과 중복이라 그쪽은 없앴다).
+      const refresh = h("button", { class: "icon-btn", title: "다시 스캔" }, [icon("refresh", 13)]);
+      refresh.addEventListener("click", refreshActive);
+      right.appendChild(refresh);
+      compact.appendChild(right);
       host.appendChild(compact);
       return;
     }
-    const rescan = h("button", { class: "btn compact", title: "다시 스캔" },
-      [icon("refresh", 12), h("span", {}, ["Rescan"])]);
+
+    // gamelist 만들기 / Collection 가져오기는 Toolbar에 있었는데 여기로
+    // 옮겼다(레이아웃 재검토 - GameList 상단 chrome에 모으는 게 자연스럽다는
+    // 실사용 피드백). 순서: gamelist 생성, Collection 가져오기, 새로고침, 확장.
+    if (!isCompare()) {
+      const bootstrap = h("button", { class: "icon-btn", id: "make-gamelist-btn",
+        title: "gamelist가 없는 System에 ROM 파일명만 담은 gamelist를 만듭니다." },
+        [icon("fileWarning", 13)]);
+      bootstrap.addEventListener("click", () => openMetadataBootstrap(S.activeId));
+      right.appendChild(bootstrap);
+
+      const importBtn = h("button", { class: "icon-btn", title: "Collection 가져오기 (Import)" },
+        [icon("upload", 13)]);
+      importBtn.addEventListener("click", openAddCollection);
+      right.appendChild(importBtn);
+    }
+
+    // 아이콘만 - 글자("Rescan")는 없앴다. 확장(v) 버튼과 같은 크기로 맞춘다.
+    const rescan = h("button", { class: "icon-btn", title: "다시 스캔" }, [icon("refresh", 13)]);
     rescan.addEventListener("click", refreshActive);
     right.appendChild(rescan);
     const toggle = h("button", { class: "icon-btn", title: S.headerExpanded ? "접기" : "펼치기" },
@@ -1243,41 +1266,13 @@
     });
     bar.appendChild(h("div", { class: "search-box" }, [icon("search", 13), search]));
 
-    const refresh = h("button", { class: "icon-btn", title: "다시 스캔" }, [icon("refresh", 12)]);
-    refresh.addEventListener("click", refreshActive);
-    bar.appendChild(refresh);
-
-    // gamelist 만들기(Collection 전체). System 하나/Storage 하나로 좁힌 버전은
-    // Navigator의 System 우클릭 메뉴, Storage 그룹 우클릭 메뉴에 있다. Archive는
-    // Frontend 형식의 Collection이 아니라 gamelist.xml 개념이 없다.
-    if (!isArchive()) {
-      const bootstrap = h("button", { class: "icon-btn", id: "make-gamelist-btn",
-                            title: "gamelist가 없는 System에 ROM 파일명만 담은 gamelist를 만듭니다." },
-                          [icon("fileWarning", 12)]);
-      bootstrap.addEventListener("click", () => openMetadataBootstrap(S.activeId));
-      bar.appendChild(bootstrap);
-    }
-
-    // Import는 눈에 보이는 자리에 있어야 한다. 예전에는 «+» 탭을 눌러 창을 하나 더
-    // 거쳐야만 닿아서, 기능이 없는 것과 구별되지 않았다.
-    const importBtn = h("button", { class: "icon-btn", title: "Collection 가져오기 (Import)" },
-                        [icon("upload", 12)]);
-    importBtn.addEventListener("click", openAddCollection);
-    bar.appendChild(importBtn);
-
-    // 탐색기의 미리보기 창과 같다. **끄면 목록이 그 자리까지 넓어진다** - 상세를
-    // 안 보는 동안 화면 3분의 1을 비워둘 이유가 없다.
-    const preview = h("button", {
-      class: "icon-btn" + (S.previewOn ? " on" : ""),
-      title: S.previewOn ? "미리보기 끄기" : "미리보기 켜기",
-    }, [icon("previewPane", 13)]);
-    preview.addEventListener("click", () => {
-      S.previewOn = !S.previewOn;
-      saveUiState();
-      renderFilterBar();
-      applyPreviewMode();
-    });
-    bar.appendChild(preview);
+    // 다시 스캔 / gamelist 만들기 / Collection 가져오기는 GameList 상단
+    // chrome(Overview, renderHeader의 cheader-right)으로 옮겼다 - 여기 그대로
+    // 두면 똑같은 기능이 두 곳에 보인다(레이아웃 재검토, 실사용 피드백).
+    //
+    // Preview 토글도 여기 없다 - Detail 패널 상단(.detail-topspace)의 토글이
+    // 이제 항상 보이므로(Preview를 꺼도 그 자리는 남는다) 여기 하나만 있으면
+    // 된다.
 
     bar.appendChild(h("div", { class: "filter-spacer" }));
 
@@ -2327,14 +2322,6 @@
     Object.keys(fieldRefs).forEach((k) => { if (fieldRefs[k]) S.detailState.draft[k] = fieldRefs[k].value; });
   }
 
-  /** 미리보기를 끄면 상세 패널을 접고 목록이 그 자리까지 넓어진다. */
-  function applyPreviewMode() {
-    const panel = $("detail-panel");
-    if (!panel) return;
-    panel.classList.toggle("hidden", !S.previewOn);
-    if (S.previewOn) renderDetailPanel();
-  }
-
   /** 상세 패널의 별표. 목록의 별표와 같은 곳을 가리켜야 한다. */
   async function toggleFavoriteFromDetail(button) {
     const state = S.detailState;
@@ -2365,8 +2352,25 @@
    * 늘 같은 자리에 같은 것을 보여준다 - Archive 이동(왼쪽)과 Preview
    * 토글(오른쪽, 아이콘만 클릭 영역)이다.
    */
-  function renderDetailTopSpace() {
-    const bar = h("div", { class: "detail-topspace" });
+  function renderDetailTopSpace(compact) {
+    const bar = h("div", { class: "detail-topspace" + (compact ? " compact" : "") });
+
+    // Preview를 끄면 패널이 이 좁은 형태로 접힌다 - 토글 하나만 남긴다.
+    // Archive 이동 버튼까지 여기 있으면 좁은 폭에 안 들어가고, 무엇보다
+    // **이 토글이 사라지면 다시 켤 방법이 없어진다**(실사용 피드백) - 그래서
+    // Preview가 꺼져 있어도 이 자리 자체는 항상 남는다.
+    if (compact) {
+      const previewBtn = h("button", {
+        class: "icon-btn", title: "미리보기 켜기",
+      }, [icon("previewPane", 15)]);
+      previewBtn.addEventListener("click", () => {
+        S.previewOn = true;
+        saveUiState();
+        renderDetailPanel();
+      });
+      bar.appendChild(previewBtn);
+      return bar;
+    }
 
     if (isCompare()) {
       // 비교 중에는 Archive 이동을 안 내놓는다 - 눌리면 비교 화면에서 그대로
@@ -2406,8 +2410,7 @@
     previewBtn.addEventListener("click", () => {
       S.previewOn = !S.previewOn;
       saveUiState();
-      renderFilterBar();
-      applyPreviewMode();
+      renderDetailPanel();
     });
     previewToggle.appendChild(previewBtn);
     previewToggle.appendChild(h("span", { class: "detail-preview-label" }, ["미리보기"]));
@@ -2419,6 +2422,15 @@
   function renderDetailPanel() {
     const panel = $("detail-panel");
     clear(panel);
+    // Preview를 끄면 패널을 완전히 숨기는 대신 좁게 접는다 - 그래야 접힌
+    // 상태에서도 다시 켤 토글이 화면에 남는다(실사용 피드백: 완전히 숨기면
+    // 다시 켤 방법이 없어서 "안 눌린다"처럼 보였다).
+    panel.classList.toggle("collapsed", !S.previewOn);
+    if (!S.previewOn) {
+      panel.classList.remove("open");
+      panel.appendChild(renderDetailTopSpace(true));
+      return;
+    }
     panel.appendChild(renderDetailTopSpace());
     const state = S.detailState;
     panel.classList.toggle("open", !!state);
@@ -3184,11 +3196,9 @@
     renderFilterBar();
     renderListHead();
     renderListWindow();
+    // renderDetailPanel()이 S.previewOn을 직접 보고 접힌/펼친 모습을 정하므로,
+    // 복원된 상태를 반영하기 위한 별도 호출이 필요 없다.
     renderDetailPanel();
-    // 미리보기를 꺼 둔 채로 앱을 다시 열면 상세 패널이 그대로 보였다. `S.previewOn`은
-    // 복원되는데 그것을 화면에 적용하는 것은 툴바 버튼의 클릭 처리기뿐이었기
-    // 때문이다. 상태를 복원했으면 화면도 그 상태여야 한다.
-    applyPreviewMode();
     renderStatusBar();
   }
 

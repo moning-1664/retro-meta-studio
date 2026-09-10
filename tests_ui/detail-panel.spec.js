@@ -17,27 +17,31 @@ const openFirstGame = async (page) => {
   await expect(page.locator("#detail-panel")).toHaveClass(/open/);
 };
 
-test.describe("미리보기 토글", () => {
-  test("토글 버튼이 툴바에 있다", async ({ page }) => {
-    await expect(page.locator("#filter-bar .icon-btn[title*='미리보기']")).toBeVisible();
+test.describe("미리보기 토글 (Detail 패널 상단, 레이아웃 재검토)", () => {
+  const previewToggle = (page) => page.locator("#detail-panel .detail-topspace .icon-btn[title*='미리보기']");
+
+  test("토글 버튼이 Detail 패널 상단에 있다", async ({ page }) => {
+    await expect(previewToggle(page)).toBeVisible();
   });
 
-  test("끄면 상세 패널이 자리를 비운다", async ({ page }) => {
+  test("끄면 상세 패널이 좁게 접힌다(완전히 숨지 않는다)", async ({ page }) => {
     await openFirstGame(page);
-    await page.locator("#filter-bar .icon-btn[title='미리보기 끄기']").click();
-    await expect(page.locator("#detail-panel")).toHaveClass(/hidden/);
+    await previewToggle(page).click();
+    await expect(page.locator("#detail-panel")).toHaveClass(/collapsed/);
+    // 접힌 상태에도 토글은 남아 있다 - 이게 없으면 다시 켤 방법이 없다.
+    await expect(previewToggle(page)).toBeVisible();
   });
 
   test("끈 상태에서 행을 눌러도 패널이 열리지 않는다", async ({ page }) => {
-    await page.locator("#filter-bar .icon-btn[title='미리보기 끄기']").click();
+    await previewToggle(page).click();
     await page.locator(".lrow").nth(1).locator(".lc-file").click();
-    await expect(page.locator("#detail-panel")).toHaveClass(/hidden/);
+    await expect(page.locator("#detail-panel")).toHaveClass(/collapsed/);
   });
 
   test("다시 켜면 돌아온다", async ({ page }) => {
-    await page.locator("#filter-bar .icon-btn[title='미리보기 끄기']").click();
-    await page.locator("#filter-bar .icon-btn[title='미리보기 켜기']").click();
-    await expect(page.locator("#detail-panel")).not.toHaveClass(/hidden/);
+    await previewToggle(page).click();
+    await previewToggle(page).click();
+    await expect(page.locator("#detail-panel")).not.toHaveClass(/collapsed/);
   });
 
   test("끄고 켠 상태를 저장한다", async ({ page }) => {
@@ -47,7 +51,7 @@ test.describe("미리보기 토글", () => {
       const original = window.api.saveUiState;
       window.api.saveUiState = (id, s) => { window.__saved(s); return original(id, s); };
     });
-    await page.locator("#filter-bar .icon-btn[title='미리보기 끄기']").click();
+    await previewToggle(page).click();
     await expect.poll(() => saved.length, { timeout: 3000 }).toBeGreaterThan(0);
     expect(saved.at(-1).previewOn).toBe(false);
   });
@@ -110,17 +114,6 @@ test.describe("Detail 상단 빈 공간 (레이아웃 재검토 §18-19)", () =>
     await expect(page.locator("#detail-panel .detail-preview-label")).toHaveText("미리보기");
   });
 
-  test("미리보기를 끄면 패널이 숨고, Toolbar 쪽으로 다시 켤 수 있다", async ({ page }) => {
-    await openFirstGame(page);
-    const headerToggle = page.locator("#detail-panel .detail-topspace .icon-btn[title='미리보기 끄기']");
-    await expect(headerToggle).toBeVisible();
-
-    await headerToggle.click();
-    await expect(page.locator("#detail-panel")).toHaveClass(/hidden/);
-    // 패널이 숨었으니 이제는 Toolbar 쪽만 다시 켤 수 있다.
-    await page.locator("#filter-bar .icon-btn[title='미리보기 켜기']").click();
-    await expect(page.locator("#detail-panel")).not.toHaveClass(/hidden/);
-  });
 });
 
 test.describe("Media 격자", () => {
