@@ -960,8 +960,11 @@
     ]));
 
     const main = h("div", { class: "cheader-main" });
+    // "Collection 제목 (System)" - Collection 소속을 잃지 않으면서 지금 어느
+    // System을 보는지 알린다(사용자 요청). System 이름만 있으면 여러 Collection을
+    // 오갈 때 지금 어느 Collection의 System인지 다시 헷갈린다.
     main.appendChild(h("div", { class: "cheader-name" },
-      [systemEntry ? systemEntry.system.toUpperCase() : detail.name]));
+      [systemEntry ? `${detail.name} (${systemEntry.system.toUpperCase()})` : detail.name]));
     main.appendChild(h("div", { class: "cheader-sub" }, [
       detail.frontendLabel,
       h("span", { class: "dot" }, ["·"]),
@@ -1639,7 +1642,10 @@
         // 카드당 한 번뿐이어야 한다.
         cardObserver.unobserve(entry.target);
         const img = entry.target.querySelector("img");
-        const romUid = Number(entry.target.dataset.coverFor);
+        // Archive의 식별자(romIdentityId)는 숫자가 아니다 - Number()로 바꾸면
+        // NaN이 되어 이 조건이 항상 거짓이 되고, Archive Card 보기는 표지를
+        // 아예 요청하지도 않았다. 문자열 그대로 쓴다.
+        const romUid = entry.target.dataset.coverFor;
         if (img && romUid) loadCardCover(img, romUid, token);
       });
     }, {
@@ -1678,12 +1684,19 @@
   const COVER_CACHE_MAX = 800;
 
   /** 카드의 표지 그림. loadMediaImage()는 상세 패널(S.detailState) 것만 신경 쓰므로
-   * 목록의 여러 행을 한꺼번에 그리는 카드 보기에는 쓸 수 없다 - romUid를 직접 받는다. */
+   * 목록의 여러 행을 한꺼번에 그리는 카드 보기에는 쓸 수 없다 - romUid를 직접 받는다.
+   *
+   * Archive 항목은 조회 경로가 다르다(§ loadMediaImage와 같은 이유) - Collection용
+   * 조회는 collection_id + rom_uid로 Cache를 뒤지는데 Archive 항목에는 그 둘 다
+   * 없다(식별자가 romIdentityId다). 여기서도 구분 없이 Collection 경로를 불러서,
+   * Archive Card 보기의 표지가 조용히 실패해 영영 안 보였다. */
   async function loadCardCover(img, romUid, token) {
     const key = `${S.activeId}|${romUid}`;
     if (S.coverCache.has(key)) { img.src = S.coverCache.get(key); return; }
 
-    const r = await api.getMediaImage(S.activeId, romUid, "Covers", true);
+    const r = isArchive()
+      ? await api.getArchiveMediaImage(romUid, "Covers", true)
+      : await api.getMediaImage(S.activeId, romUid, "Covers", true);
     if (!r.ok || !r.data) return;
 
     S.coverCache.set(key, r.data);

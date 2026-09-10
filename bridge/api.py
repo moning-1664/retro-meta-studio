@@ -719,11 +719,20 @@ class Api:
 
     @guarded
     def archive_rows(self, search=None, systems=None, limit=200, offset=0):
-        """Archive Gamelist. Collection 목록과 같은 모양으로 돌려준다(§43)."""
+        """Archive Gamelist. Collection 목록과 같은 모양으로 돌려준다(§43).
+
+        Description/Genre/Rating은 `rom_identities`가 아니라 Revision의
+        `fields_json`에 있다 - 여기서 안 채우면 화면은 Metadata 탭에는 값이
+        보이는데 목록의 Description 칸만 늘 비어 있게 된다. Detail이 보여주는
+        값과 같아야 하므로 `resolve_fields()`로 같은 우선순위(Preferred →
+        Archive 편집 → Latest)를 쓴다.
+        """
         query = {"search": search or None, "systems": systems or None}
         rows = self.archive.list_rows(**query, limit=int(limit), offset=int(offset))
-        return ok({
-            "rows": [{
+        out_rows = []
+        for r in rows:
+            fields, _ = self.archive.resolve_fields(r["rom_identity_id"])
+            out_rows.append({
                 "romUid": r["rom_identity_id"], "romIdentityId": r["rom_identity_id"],
                 "system": r["system"], "file": r["filename"], "title": r["title"],
                 "sources": r["source_count"], "updatedAt": r["updated_at"],
@@ -732,7 +741,13 @@ class Api:
                 "hasMetadata": True, "hasMedia": bool(r["media_count"]),
                 "present": True, "size": 0,
                 "storageId": "archive",
-            } for r in rows],
+                "desc": fields.get("desc") or "",
+                "region": r["region"] or fields.get("region") or "",
+                "genre": fields.get("genre") or "",
+                "rating": fields.get("rating") or "",
+            })
+        return ok({
+            "rows": out_rows,
             "total": self.archive.count_rows(**query), "offset": int(offset),
         })
 

@@ -63,8 +63,14 @@ body { font-size: var(--fs-body); }
   height: 30px; padding: 0 8px 0 10px; cursor: pointer;
   background: var(--card); border: 1px solid var(--border); border-bottom: none;
   border-radius: var(--radius-xs) var(--radius-xs) 0 0;
-  color: var(--muted); font-size: var(--fs-body); white-space: nowrap; max-width: 220px;
+  color: var(--muted); font-size: var(--fs-body); white-space: nowrap;
+  min-width: 130px; max-width: 220px;
 }
+/* Archive는 고정 탭이다 - Collection 탭의 기본 폭과 같게 두고, 탭이 늘어나
+   #tabs-bar가 좁아져도(스크롤이 생겨도) 이 폭만은 줄지 않는다. Collection
+   탭보다 글자가 짧고 닫기 버튼도 없어서, 폭을 맞춰 두지 않으면 Archive만
+   유독 작아 보였다. */
+.ctab.archive { width: 130px; flex-shrink: 0; justify-content: center; }
 .ctab:hover { background: var(--card2); color: var(--text); }
 .ctab.active { background: var(--card2); color: var(--text); border-color: var(--accent); }
 .ctab.active .ctab-name { font-weight: 600; }

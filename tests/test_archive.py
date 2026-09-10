@@ -53,6 +53,16 @@ class ArchiveTests(unittest.TestCase):
     # ------------------------------------------------------------------
     # Collection -> Archive (§42)
     # ------------------------------------------------------------------
+    def test_list_rows_carries_description_and_genre(self):
+        # 목록(archive_rows)이 상세(archive_detail)와 다른 값을 보여주면 안 된다 -
+        # 실사용에서 List 보기의 Description 칸이 늘 비어 있던 버그.
+        self.api.archive_ingest(self.src)
+        row = next(r for r in self.api.archive_rows()["data"]["rows"] if r["file"] == "FFX.iso")
+        detail = self.api.archive_detail(row["romIdentityId"])["data"]
+        self.assertEqual(row["desc"], detail["fields"].get("desc"))
+        self.assertEqual(row["desc"], "A role-playing game.")
+        self.assertEqual(row["genre"], "RPG")
+
     def test_ingest_records_source_collection_id(self):
         result = self.api.archive_ingest(self.src)["data"]
         self.assertEqual(result["ingested"], 3)

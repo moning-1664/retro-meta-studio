@@ -32,6 +32,11 @@ RETENTION_LATEST_5 = "latest-5"
 RETENTION_UNLIMITED = "unlimited"
 DEFAULT_RETENTION = RETENTION_UNLIMITED
 
+# Archive에서 직접 고친 값을 저장할 때 쓰는 가짜 source_collection_id(§40).
+# 실제 Collection이 아니므로 출처 비교 목록에는 안 섞이지만, resolve_fields()의
+# 우선순위(Preferred → 이 값 → 가장 최근 출처)에서는 실제 출처처럼 조회한다.
+ARCHIVE_EDIT_SOURCE = "__archive__"
+
 MIGRATIONS = (
     Migration(1, (
         """CREATE TABLE games (
@@ -383,6 +388,24 @@ class ArchiveStore:
             "SELECT record_id FROM preferred_revisions WHERE rom_identity_id=?",
             (rom_identity_id,)).fetchone()
         return self.record_by_id(row["record_id"]) if row else None
+
+    def resolve_fields(self, rom_identity_id) -> tuple[dict, dict]:
+        """이 항목에 적용할 Metadata(desc/genre/rating 등).
+
+        우선순위(ARCHIVE_REVISION_POLICY.md §9, §14): Preferred → (Archive에서
+        직접 고친 값) → Latest. `app/archive/service.py`의 Detail 조회와
+        `list_rows()`가 같은 규칙을 쓴다 - 여기서만 다른 값을 보여주면 목록과
+        상세가 어긋난다.
+        """
+        preferred = self.get_preferred(rom_identity_id)
+        if preferred:
+            return preferred["fields"], preferred["frontend_raw"]
+        edited = self.latest_record(rom_identity_id, ARCHIVE_EDIT_SOURCE)
+        if edited:
+            return edited["fields"], edited["frontend_raw"]
+        sources = self.sources_of(rom_identity_id)
+        latest = max(sources, key=lambda s: s["updated_at"], default=None)
+        return (latest or {}).get("fields") or {}, (latest or {}).get("frontend_raw") or {}
 
     def clear_preferred(self, rom_identity_id) -> bool:
         with transaction(self._conn):

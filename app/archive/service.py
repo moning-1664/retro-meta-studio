@@ -25,6 +25,7 @@ from pathlib import Path
 
 from adapters import get_adapter
 from app.match import service as match_service
+from app.store.archive import ARCHIVE_EDIT_SOURCE
 from adapters.base import GameEntry
 from utils import normalize_title
 
@@ -121,7 +122,7 @@ def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=No
 def detail(archive, rom_identity_id) -> dict | None:
     """Archive 항목 하나의 상세. 출처별 Metadata를 함께 준다(§44).
 
-    표시용 `fields`는 `_resolve_fields()`와 **같은 규칙**을 쓴다 - 사용자가 Archive에서
+    표시용 `fields`는 `archive.resolve_fields()`와 **같은 규칙**을 쓴다 - 사용자가 Archive에서
     직접 고친 값이 있으면 그것이 이긴다(§40). 여기서만 "가장 최근 출처"를 쓰면,
     편집한 값이 화면에는 안 보이는데 Archive->Collection으로는 그 값이 나가는
     불일치가 생긴다.
@@ -134,7 +135,7 @@ def detail(archive, rom_identity_id) -> dict | None:
         return None
     sources = [s for s in archive.sources_of(rom_identity_id)
                if s["source_collection_id"] != ARCHIVE_EDIT_SOURCE]
-    fields, frontend_raw = _resolve_fields(archive, rom_identity_id)
+    fields, frontend_raw = archive.resolve_fields(rom_identity_id)
     preferred = archive.get_preferred(rom_identity_id)
     return {
         "romIdentityId": rom_identity_id,
@@ -159,9 +160,6 @@ def detail(archive, rom_identity_id) -> dict | None:
         "media": archive.media_refs(rom_identity_id),
         "romSources": archive.rom_sources(rom_identity_id),
     }
-
-
-ARCHIVE_EDIT_SOURCE = "__archive__"
 
 
 def set_preferred(archive, rom_identity_id, record_id) -> dict:
@@ -193,25 +191,6 @@ def edit(archive, rom_identity_id, fields) -> dict:
     return {"revision": revision, "changed": created}
 
 
-def _resolve_fields(archive, rom_identity_id):
-    """이 항목에 적용할 Metadata.
-
-    우선순위(ARCHIVE_REVISION_POLICY.md §9, §14): Preferred → (Archive에서 직접
-    고친 값) → Latest. 사용자가 명시적으로 Preferred를 고르지 않았으면, 여태
-    해오던 대로 Archive 편집이 있으면 그것이 이기고, 없으면 가장 최근 출처를 쓴다
-    - 이 두 단계는 기존 동작 그대로다.
-    """
-    preferred = archive.get_preferred(rom_identity_id)
-    if preferred:
-        return preferred["fields"], preferred["frontend_raw"]
-    edited = archive.latest_record(rom_identity_id, ARCHIVE_EDIT_SOURCE)
-    if edited:
-        return edited["fields"], edited["frontend_raw"]
-    sources = archive.sources_of(rom_identity_id)
-    latest = max(sources, key=lambda s: s["updated_at"], default=None)
-    return (latest or {}).get("fields") or {}, (latest or {}).get("frontend_raw") or {}
-
-
 def to_collection(archive, collection, cache, provider, rom_identity_ids) -> dict:
     """Archive 항목을 대상 Collection으로 보낸다(§41, Scenario 8).
 
@@ -230,7 +209,7 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids) -> dic
             continue
         system = identity["system"]
         filename = identity["filename"] or identity["filename_norm"]
-        fields, frontend_raw = _resolve_fields(archive, rom_identity_id)
+        fields, frontend_raw = archive.resolve_fields(rom_identity_id)
 
         rom_uid = index.get((system, filename))
         row = cache.get_row(rom_uid) if rom_uid is not None else None

@@ -23,15 +23,15 @@ test("System을 바꾸면 이전 선택이 남지 않는다", async ({ page }) =
 test.describe("Navigation ↔ Overview 헤더", () => {
   // Overview 헤더가 항상 Collection 이름만 보여주면, 지금 어떤 System을 보고
   // 있는지 알려면 다시 Navigator를 봐야 했다(레이아웃 재검토).
-  test("System을 고르면 Overview가 그 System 이름과 개수를 보여준다", async ({ page }) => {
+  test("System을 고르면 Overview가 'Collection (System)'과 개수를 보여준다", async ({ page }) => {
     await page.locator(".nav-system", { hasText: "PS2" }).click();
-    await expect(page.locator(".cheader-name")).toHaveText("PS2");
+    await expect(page.locator(".cheader-name")).toHaveText("Master Library (PS2)");
     await expect(page.locator(".cheader-stats")).toContainText("2 Games");
   });
 
   test("All로 돌아오면 Collection 이름으로 돌아온다", async ({ page }) => {
     await page.locator(".nav-system", { hasText: "PS2" }).click();
-    await expect(page.locator(".cheader-name")).toHaveText("PS2");
+    await expect(page.locator(".cheader-name")).toHaveText("Master Library (PS2)");
     await page.locator(".nav-all").click();
     await expect(page.locator(".cheader-name")).toHaveText("Master Library");
     await expect(page.locator(".cheader-stats")).toContainText("3 Games");
