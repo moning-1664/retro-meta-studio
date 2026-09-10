@@ -4,10 +4,11 @@ const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
-test("타이틀바 / Collection 탭 / Archive 탭이 그려진다", async ({ page }) => {
-  await expect(page.locator(".brand-title")).toHaveText("RetroMeta Studio");
-  await expect(page.locator(".ctab").first()).toContainText("Master Library");
+test("TopBar에 Archive 탭과 Collection 탭이 그려진다", async ({ page }) => {
+  // Archive가 맨 앞이다(레이아웃 재검토) - App Title은 없앴다.
+  await expect(page.locator(".ctab").first()).toHaveClass(/archive/);
   await expect(page.locator(".ctab.archive")).toContainText("Archive");
+  await expect(page.locator(".ctab").nth(1)).toContainText("Master Library");
 });
 
 test("좌측 내비가 SYSTEMS와 All 행을 보여준다", async ({ page }) => {

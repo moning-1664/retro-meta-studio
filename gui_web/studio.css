@@ -13,24 +13,25 @@ body { font-size: var(--fs-body); }
 
 #app {
   display: grid;
-  grid-template-rows: 40px 38px 1fr 34px;
+  /* 열을 명시하지 않으면 기본 auto 트랙이 자식의 max-content로 커진다 - 탭이
+     많아지면 #topbar가 뷰포트보다 넓어지길 "원하고", 그만큼 grid(=화면) 전체가
+     넓어져서 Window Controls가 오른쪽으로 밀려 화면 밖으로 나갔다(실제로 겪은
+     버그, TopBar 통합 검증 중 발견). 1fr로 못박아 각 행이 뷰포트 폭을 넘지
+     못하게 한다 - 그래야 #tabs-bar의 overflow-x:auto가 실제로 동작한다. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 38px 1fr 34px;
   height: 100vh;
 }
 
-/* ---------------------------------------------------------------- 타이틀바 */
-#titlebar {
-  /* 높이를 정한다. 예전에는 내용 높이가 곧 막대 높이여서 아이콘과 글자가 위아래로
-     붙어 잘려 보였다. 창 전체 크기는 그대로 두고 이 막대 안에서만 여유를 준다. */
-  display: flex; align-items: center; height: 34px; flex: 0 0 34px;
-  padding: 0 4px 0 10px; background: var(--card); border-bottom: 1px solid var(--border);
+/* ------------------------------------------------------------------ TopBar
+   예전엔 App Title 막대(#titlebar)와 Collection 탭 막대(#tabs-bar)가 따로
+   있었다. App Title을 없애면서 그 둘을 한 줄로 합쳤다(레이아웃 재검토) -
+   Archive/Collection 탭, 창을 끌 수 있는 빈 공간, Window Controls가 이제
+   한 막대 안에 나란히 있다. */
+#topbar {
+  display: flex; align-items: flex-end; height: 38px; flex: 0 0 38px;
+  background: var(--bg); border-bottom: 1px solid var(--border);
 }
-/* 좌우에 같은 폭을 둬야 가운데 제목이 버튼 쪽으로 밀리지 않는다. */
-.titlebar-side { flex: 1 1 0; display: flex; align-items: center; min-width: 0; }
-.window-controls { justify-content: flex-end; gap: 0; }
-.brand { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-.brand-icon { color: var(--accent); display: flex; align-items: center; }
-/* 이전보다 30%쯤 크게. 창 제목은 화면에서 가장 먼저 읽히는 글자다. */
-.brand-title { font-size: calc(var(--fs-body-lg) * 1.3); font-weight: 700; letter-spacing: .2px; }
 
 /* Windows의 창 버튼과 같은 비율(폭이 높이보다 넓다). */
 .win-btn {
@@ -40,12 +41,21 @@ body { font-size: var(--fs-body); }
 }
 .win-btn:hover { background: var(--card2); color: var(--text); }
 .win-btn.close:hover { background: #c42b1c; color: #fff; }
+/* TopBar가 align-items:flex-end(탭을 아래로 붙이려고)라서, 탭과 상관없는
+   이 둘은 따로 stretch를 줘야 막대 전체 높이를 채운다. */
+#window-controls { display: flex; align-self: stretch; flex: 0 0 auto; }
+
+/* 탭 오른쪽의 빈 공간 - **여기를 잡아야 창이 움직인다.** 탭이 늘어도 이
+   자리는 사라지지 않는다(min-width는 짧은 탭 하나 폭 정도). 탭 쪽
+   (#tabs-bar)은 넘치면 스크롤되고, 이 자리와 Window Controls는 그 때문에
+   찌그러지거나 밀려나지 않는다 - 탐색기(Windows Explorer)가 탭 옆 빈
+   공간으로 창을 끄는 것과 같은 방식이다. */
+#topbar-drag { flex: 1 1 0; min-width: 110px; align-self: stretch; }
 
 /* ------------------------------------------------------------ Collection 탭 */
 #tabs-bar {
-  display: flex; align-items: flex-end; gap: 4px;
-  padding: 0 8px; background: var(--bg); border-bottom: 1px solid var(--border);
-  overflow-x: auto; overflow-y: hidden;
+  display: flex; align-items: flex-end; gap: 4px; flex: 0 1 auto; min-width: 0;
+  padding: 0 8px; overflow-x: auto; overflow-y: hidden;
 }
 #tabs-bar::-webkit-scrollbar { height: 0; }
 .ctab {
@@ -522,8 +532,7 @@ button.sb-badge { cursor: pointer; }
 }
 .conflict-main { flex: 1; min-width: 0; }
 
-/* Archive 탭은 오른쪽 끝에 고정해 Collection 탭과 구분한다. */
-.ctab-spacer { flex: 1; min-width: 12px; }
+/* Archive 탭은 맨 앞에 고정해 Collection 탭과 구분한다(TopBar 통합 이후). */
 .ctab.archive { color: var(--info); border-style: dashed; }
 .ctab.archive.active { border-style: solid; border-color: var(--info); background: var(--card2); }
 

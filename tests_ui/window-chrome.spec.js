@@ -4,36 +4,68 @@
 // 손잡이**를 앱이 직접 그린다. 네이티브 테두리가 사라진 자리를 이것들이 대신하므로,
 // 없어지면 사용자는 창을 옮기거나 크기를 바꿀 수 없게 된다.
 const { test, expect } = require("@playwright/test");
-const { openApp } = require("./_helpers");
+const { openApp, modalButton } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
-test("제목 표시줄 전체가 끌 수 있는 영역이다", async ({ page }) => {
-  // pywebview는 이 클래스가 붙은 곳을 끌 때만 창을 옮긴다. 예전에는 제목과 가운데
-  // 여백에만 붙어 있어서 그 사이 빈틈을 잡으면 창이 안 움직였다.
-  await expect(page.locator("#titlebar.pywebview-drag-region")).toHaveCount(1);
+// TopBar(레이아웃 재검토로 App Title 막대 + Collection 탭 막대를 하나로
+// 합쳤다) - Archive/Collection 탭은 클릭 영역, 그 오른쪽 빈 공간
+// (#topbar-drag)만 창을 끄는 자리다. 탭과 드래그가 한 줄에 있으므로 이 둘이
+// 겹치지 않는지가 예전보다 더 중요해졌다.
+
+test("탭 오른쪽 빈 공간이 끌 수 있는 영역이다", async ({ page }) => {
+  // pywebview는 이 클래스가 붙은 곳을 끌 때만 창을 옮긴다.
+  await expect(page.locator("#topbar-drag.pywebview-drag-region")).toHaveCount(1);
 });
 
-test("창 버튼은 끌기 영역에서 빠져 있다", async ({ page }) => {
-  // 버튼에까지 끌기 영역이 붙으면 누를 때 창이 딸려 움직인다.
-  await expect(page.locator("#titlebar .window-controls.pywebview-drag-region")).toHaveCount(0);
-  await expect(page.locator("#titlebar .window-controls .win-btn")).toHaveCount(3);
+test("Archive/Collection 탭과 창 버튼은 끌기 영역이 아니다", async ({ page }) => {
+  // 탭이나 버튼에까지 끌기 영역이 붙으면 누를 때 창이 딸려 움직인다.
+  await expect(page.locator(".ctab.pywebview-drag-region")).toHaveCount(0);
+  await expect(page.locator("#window-controls.pywebview-drag-region")).toHaveCount(0);
+  await expect(page.locator("#window-controls .win-btn")).toHaveCount(3);
+});
+
+test("Archive 탭이 맨 앞이다", async ({ page }) => {
+  const first = page.locator("#tabs-bar .ctab").first();
+  await expect(first).toHaveClass(/archive/);
 });
 
 test("창 버튼은 윈도우와 같은 기호를 쓴다", async ({ page }) => {
-  const labels = await page.locator("#titlebar .win-btn").allTextContents();
+  const labels = await page.locator("#window-controls .win-btn").allTextContents();
   expect(labels).toEqual(["–", "□", "×"]);
 });
 
-test("제목은 가운데에 있고 잘리지 않는다", async ({ page }) => {
-  const bar = await page.locator("#titlebar").boundingBox();
-  const brand = await page.locator("#titlebar .brand").boundingBox();
-  // 가운데 - 양옆 여백 차이가 크지 않아야 한다.
-  const left = brand.x - bar.x;
-  const right = (bar.x + bar.width) - (brand.x + brand.width);
-  expect(Math.abs(left - right)).toBeLessThan(bar.width * 0.12);
-  // 잘리지 않는다 - 막대가 내용보다 높아야 한다.
-  expect(bar.height).toBeGreaterThan(brand.height);
+test("App Title은 없앴다", async ({ page }) => {
+  await expect(page.locator("#topbar")).not.toContainText("RetroMeta Studio");
+});
+
+test("Window Controls는 TopBar 오른쪽 끝에 고정된다", async ({ page }) => {
+  const bar = await page.locator("#topbar").boundingBox();
+  const controls = await page.locator("#window-controls").boundingBox();
+  expect(controls.x + controls.width).toBeCloseTo(bar.x + bar.width, 0);
+});
+
+test("탭 오른쪽 빈 공간은 최소 폭 아래로 사라지지 않는다", async ({ page }) => {
+  const dragBox = await page.locator("#topbar-drag").boundingBox();
+  expect(dragBox.width).toBeGreaterThan(0);
+});
+
+test("Collection이 많아져도 Window Controls와 최소 Drag 공간은 유지된다", async ({ page }) => {
+  // 탭이 넘치면 #tabs-bar 안에서 스크롤될 뿐, 옆의 Drag 공간과 Window
+  // Controls를 밀어내지 않아야 한다.
+  for (let i = 0; i < 8; i++) {
+    await page.locator(".ctab-add").click();
+    await page.locator(".modal-body input[placeholder='예: Android ES-DE']").fill(`탭 스트레스 ${i}`);
+    await page.locator(".modal-body .btn", { hasText: "찾아보기" }).first().click();
+    await modalButton(page, "Add").click();
+  }
+  await expect(page.locator("#tabs-bar .ctab")).toHaveCount(10); // Archive + 원래 2개 + 새 8개
+
+  const bar = await page.locator("#topbar").boundingBox();
+  const controls = await page.locator("#window-controls").boundingBox();
+  const dragBox = await page.locator("#topbar-drag").boundingBox();
+  expect(controls.x + controls.width).toBeCloseTo(bar.x + bar.width, 0);
+  expect(dragBox.width).toBeGreaterThan(0);
 });
 
 test("크기 조절 손잡이가 오른쪽 아래에 있다", async ({ page }) => {

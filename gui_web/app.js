@@ -327,29 +327,22 @@
   }
 
   // ------------------------------------------------------------------
-  // 타이틀바 / 탭
+  // TopBar (Archive/Collection 탭 + Window Controls, 레이아웃 재검토로 통합)
   // ------------------------------------------------------------------
-  function renderTitlebar() {
-    const bar = $("titlebar");
+  /** Window Controls만 그린다. App Title은 없앴다(레이아웃 재검토) -
+   * Navigator 하단으로 옮기는 건 별도 작업이라 이번엔 그냥 없앤다. **창을
+   * 끌 수 있는 자리는 여기가 아니라 `#topbar-drag`다**(정적 HTML,
+   * index.html) - Archive/Collection 탭과 이 버튼들은 클릭 영역이라
+   * 드래그 영역이 아니다.
+   */
+  function renderWindowControls() {
+    const bar = $("window-controls");
     clear(bar);
-    // **막대 전체가 끌기 영역이다.** `pywebview-drag-region`이 붙은 곳만 창을 옮기는데,
-    // 예전에는 제목과 가운데 여백에만 붙어 있어서 그 사이 빈틈을 잡으면 창이 안 움직였다.
-    // 창 버튼에는 붙이지 않는다 - 버튼을 누를 때 창이 딸려 움직이면 안 된다.
-    bar.classList.add("pywebview-drag-region");
-
-    // 제목은 가운데 놓는다. 양옆에 같은 폭을 두어 버튼이 있어도 가운데가 밀리지 않게 한다.
-    bar.appendChild(h("div", { class: "titlebar-side" }));
-    bar.appendChild(h("div", { class: "brand" }, [
-      h("span", { class: "brand-icon" }, [icon("database", 20)]),
-      h("span", { class: "brand-title" }, ["RetroMeta Studio"]),
-    ]));
-
-    const controls = h("div", { class: "titlebar-side window-controls" });
     // Windows의 창 버튼과 같은 모양으로 - 대시, 네모, 곱하기.
     [["\u2013", "minimize", "최소화"],
      ["\u25a1", "maximize", "최대화"],
      ["\u00d7", "close", "닫기"]].forEach(([glyph, action, label]) => {
-      controls.appendChild(h("button", {
+      bar.appendChild(h("button", {
         class: "win-btn" + (action === "close" ? " close" : ""), title: label,
         // 닫기 전에 아직 안 나간 UI 상태 저장(컬럼 폭 등)을 먼저 내보낸다 -
         // debounce 타이머가 돌기 전에 창이 닫히면 방금 바꾼 값이 사라진다.
@@ -359,12 +352,22 @@
         },
       }, [glyph]));
     });
-    bar.appendChild(controls);
   }
 
+  /** Archive 고정 탭 + Collection 탭 + "+". **Archive가 맨 앞이다**(레이아웃
+   * 재검토) - 예전엔 spacer로 오른쪽 끝으로 밀어 뒀지만, 이제 탭 오른쪽 빈
+   * 공간은 창을 끌 수 있는 자리(`#topbar-drag`)라 탭을 거기로 밀어 넣을
+   * spacer가 없다. click/contextmenu/close 동작은 그대로다. */
   function renderTabs() {
     const bar = $("tabs-bar");
     clear(bar);
+    const archiveTab = h("div", { class: "ctab archive" + (isArchive() ? " active" : ""),
+      title: "여러 Collection에서 수집한 Metadata 보관소" }, [
+      icon("database", 13), h("span", { class: "ctab-name" }, ["Archive"]),
+    ]);
+    archiveTab.addEventListener("click", () => selectTab(ARCHIVE_ID));
+    bar.appendChild(archiveTab);
+
     S.tabs.forEach((id) => {
       const collection = S.collections.find((c) => c.id === id);
       if (!collection) return;
@@ -381,14 +384,6 @@
     const add = h("button", { class: "ctab-add", title: "Collection 추가" }, [icon("plus", 13)]);
     add.addEventListener("click", openAddCollection);
     bar.appendChild(add);
-
-    bar.appendChild(h("div", { class: "ctab-spacer" }));
-    const archiveTab = h("div", { class: "ctab archive" + (isArchive() ? " active" : ""),
-      title: "여러 Collection에서 수집한 Metadata 보관소" }, [
-      icon("database", 13), h("span", { class: "ctab-name" }, ["Archive"]),
-    ]);
-    archiveTab.addEventListener("click", () => selectTab(ARCHIVE_ID));
-    bar.appendChild(archiveTab);
   }
 
   function openTabMenu(collection, event) {
@@ -3101,7 +3096,7 @@
   // 렌더 / 초기화
   // ------------------------------------------------------------------
   function renderAll() {
-    renderTitlebar();
+    renderWindowControls();
     renderTabs();
     renderNav();
     renderHeader();

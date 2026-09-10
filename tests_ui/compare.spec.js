@@ -26,7 +26,7 @@ async function startCompare(page) {
 }
 
 test("기준을 정하기 전에는 '비교' 항목이 나오지 않는다", async ({ page }) => {
-  await page.locator(".ctab").first().click({ button: "right" });
+  await page.locator(".ctab:not(.archive)").first().click({ button: "right" });
   await expect(page.locator(".modal-actions .btn", { hasText: "Compare 기준으로 지정" })).toBeVisible();
   await expect(page.locator(".modal-actions .btn", { hasText: "와 비교" })).toHaveCount(0);
 });
