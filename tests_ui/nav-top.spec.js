@@ -1,4 +1,7 @@
-// Navigator 상하단 고정 영역 - Dashboard(위) / Add External·App Title·Settings(아래).
+// Navigator 상하단 고정 영역 - App Title·Settings(위) / Add External·Dashboard(아래).
+//
+// 사용자 요청으로 위치를 바꿨다: App Title은 GameList 상단 Chromium(.cheader)과
+// 세로로 나란히 보이도록 최상단으로, Dashboard는 그 자리(최하단)로 옮겼다.
 //
 // System 목록만 스크롤한다(레이아웃 재검토 §5) - 그래서 이 넷은 #nav-scroll
 // 바깥(형제)에 있어야 한다. 안에 있으면 System이 늘어날 때 같이 밀려난다.
@@ -16,7 +19,7 @@ test("Dashboard/Add External/App Title/Settings는 스크롤 영역 밖에 있�
 
   expect(await outside(".nav-dashboard")).toBe(true);
   expect(await outside(".nav-action")).toBe(true);
-  expect(await outside(".nav-bottom")).toBe(true);
+  expect(await outside(".nav-top")).toBe(true);
 });
 
 test("Dashboard는 눌러도 아직 아무 기능이 없다는 것을 알린다", async ({ page }) => {
@@ -24,12 +27,22 @@ test("Dashboard는 눌러도 아직 아무 기능이 없다는 것을 알린다"
   await expect(page.locator("#toast")).toContainText("아직 없습니다");
 });
 
-test("App Title이 Navigator 하단에 있다", async ({ page }) => {
+test("App Title이 Navigator 상단에 있고 GameList 상단 Chromium과 나란하다", async ({ page }) => {
   await expect(page.locator(".nav-app-title-name")).toHaveText("RetroMeta Studio");
+  const navTop = await page.locator(".nav-top").boundingBox();
+  const cheader = await page.locator(".cheader").first().boundingBox();
+  // 정확히 같은 픽셀일 필요는 없다 - 위쪽 시작 지점이 비슷한 높이에 있으면 된다.
+  expect(Math.abs(navTop.y - cheader.y)).toBeLessThan(12);
+});
+
+test("Dashboard가 Navigator 최하단에 있다", async ({ page }) => {
+  const dashboardBox = await page.locator(".nav-dashboard").boundingBox();
+  const navBox = await page.locator("#nav").boundingBox();
+  expect(dashboardBox.y + dashboardBox.height).toBeGreaterThan(navBox.y + navBox.height - 60);
 });
 
 test("Settings를 누르면 준비 중이라는 안내가 뜬다", async ({ page }) => {
-  await page.locator(".nav-bottom .icon-btn").click();
+  await page.locator(".nav-top .icon-btn").click();
   await expect(page.locator(".modal-title")).toHaveText("Settings");
   await expect(page.locator(".modal-text")).toContainText("준비 중");
 });

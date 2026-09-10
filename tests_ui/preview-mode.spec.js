@@ -44,3 +44,15 @@ test("꺼 둔 상태는 다시 그려도 유지된다", async ({ page }) => {
   await expect(page.locator(".ctab.archive")).toHaveClass(/active/);
   await expect(page.locator("#detail-panel")).toHaveClass(/collapsed/);
 });
+
+test("꺼도 미리보기 아이콘은 GameList 상단 Chromium과 같은 높이에 그대로 있다", async ({ page }) => {
+  // 실사용 피드백: 예전엔 .detail-topspace.compact가 height:100%로 늘어나면서
+  // align-items:flex-end 때문에 아이콘이 접힌 패널의 맨 아래로 밀려났다.
+  // GameList 위쪽(cheader)과 같은 자리에 고정되어야 한다 - 그 아래가 늘어나는
+  // 것처럼 보여야지, 아이콘이 내려가면 안 된다.
+  const cheaderBox = await page.locator(".cheader").first().boundingBox();
+  await previewButton(page).click();
+  await expect(page.locator("#detail-panel")).toHaveClass(/collapsed/);
+  const btnBox = await previewButton(page).boundingBox();
+  expect(Math.abs(btnBox.y - cheaderBox.y)).toBeLessThan(40);
+});

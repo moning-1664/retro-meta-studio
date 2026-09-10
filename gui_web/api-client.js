@@ -71,6 +71,12 @@
   }
 
   let mockLastIngest = {};
+  // Storage 이동을 Plan에 올렸을 때 Navigator가 미리 보여줄 수 있는지 테스트하기
+  // 위한 상태(실사용 피드백: 드래그해도 화면이 그대로면 "안 먹었다"처럼 보였다).
+  const mockPendingMoves = {};
+  // "실패 N" 배지를 눌렀을 때 이유를 보여주는 다이얼로그를 테스트하기 위한 상태.
+  // 테스트가 window.__setMockFailedEntries()로 채운다.
+  let mockFailedEntries = [];
 
   const mockMatchLinks = {};
   const mockFavorites = {};
@@ -131,14 +137,19 @@
     adapter_actions: () => ok([{ id: "esde-custom-systems", label: "ES-DE XML 생성" }]),
     run_adapter_action: () => ok({ path: "D:\ES-DE\custom_systems\es_systems.xml",
                                   systems: ["ps2"], written: true }),
-    plan_state: () => ok({ total: 0, added: 0, deleted: 0, moved: 0, addedBytes: 0, deletedBytes: 0,
-                          delta: {}, marks: { rows: {}, systems: [] },
+    plan_state: () => ok({
+                          total: Object.keys(mockPendingMoves).length + mockFailedEntries.length,
+                          added: 0, deleted: 0, moved: Object.keys(mockPendingMoves).length,
+                          addedBytes: 0, deletedBytes: 0,
+                          delta: {}, marks: { rows: {}, systems: Object.keys(mockPendingMoves) },
                           capacity: mockDetail.storages.map((s) => ({
                             storageId: s.id, label: s.label, actualBytes: s.actualBytes,
                             planBytes: s.actualBytes, deltaBytes: 0,
                             capacityBytes: s.capacityBytes, freeBytes: s.freeBytes,
                             over: false, overBytes: 0 })),
-                          conflictEntries: [], failedEntries: [], clipboard: null }),
+                          conflictEntries: [], failedEntries: mockFailedEntries,
+                          failed: mockFailedEntries.length, clipboard: null,
+                          pendingMoves: { ...mockPendingMoves } }),
     start_archive_ingest: (id, scope) => {
       const count = mockIngestCount(scope);
       mockLastIngest = { ingested: count, revised: count, unchanged: 0,
@@ -162,7 +173,10 @@
     plan_delete: () => ok({ deleted: 1 }),
     plan_resolve_conflict: () => ok({ resolution: "skip" }),
     plan_resolve_all_conflicts: () => ok({ resolved: 0 }),
-    plan_storage_change: () => ok({ system: "ps2", bytes: 0 }),
+    plan_storage_change: (id, system, storageTo) => {
+      mockPendingMoves[system] = storageTo;
+      return ok({ system, bytes: 0 });
+    },
     plan_clear: () => ok(true),
     copy_selection: () => ok({ count: 1, bytes: 0 }),
     paste: () => ok({ added: 1, skipped: [] }),
@@ -243,7 +257,10 @@
       mockRows.forEach((r) => { if (r.system === system) r.storageId = storageId; });
       return ok(true);
     },
-    plan_remove_entry: () => ok({ removed: 1 }),
+    plan_remove_entry: (id, key) => {
+      mockFailedEntries = mockFailedEntries.filter((e) => e.key !== key);
+      return ok({ removed: 1 });
+    },
 
     // Convert(§53). 미리보기는 "무엇을 잃는지"까지 말해야 의미가 있다.
     metadata_status: () => ok({
@@ -369,6 +386,8 @@
 
   window.api = {
     isMock: () => !hasBridge() && !httpBridge(),
+    // 테스트 전용 - "실패 N" 배지/다이얼로그를 목업으로 확인하기 위한 훅.
+    __setMockFailedEntries: (entries) => { mockFailedEntries = entries || []; },
 
     listCollections: () => call("list_collections"),
     createCollection: (name, frontend, rootPath, target, arch, romPath, mediaPath) =>

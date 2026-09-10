@@ -101,18 +101,22 @@ body { font-size: var(--fs-body); }
    스크롤하지 않고, System 제목+목록만 담는 .nav-scroll 하나만 스크롤한다. */
 #nav {
   display: flex; flex-direction: column; gap: 2px;
-  padding: 10px 8px; overflow: hidden;
+  /* 위쪽 padding을 GameList 상단 Chromium(.cheader)의 9px와 맞춘다 - 아래
+     .nav-top이 그 행과 세로로 나란히 보이게(사용자 요청). */
+  padding: 9px 8px 10px; overflow: hidden;
   background: var(--card); border-right: 1px solid var(--border);
 }
 .nav-scroll {
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: 2px;
 }
-/* Dashboard - 실제 기능은 없다(TODO). 이전 프로젝트 기능을 가져올 진입점 자리. */
+/* Dashboard - 실제 기능은 없다(TODO). 이전 프로젝트 기능을 가져올 진입점 자리.
+   App Title이 상단으로 옮겨가면서 이 자리(최하단)에 대신 놓였다(사용자 요청). */
 .nav-dashboard {
   display: flex; align-items: center; gap: 7px;
-  padding: 6px 8px; margin-bottom: 4px; border-radius: var(--radius-xs);
-  background: transparent; border: 0; color: var(--muted);
+  padding: 6px 8px; margin-top: 6px; padding-top: 8px;
+  border-top: 1px solid var(--border); border-radius: var(--radius-xs);
+  background: transparent; border-left: 0; border-right: 0; border-bottom: 0; color: var(--muted);
   font-size: var(--fs-body); font-weight: 600; cursor: pointer; text-align: left;
 }
 .nav-dashboard:hover { background: var(--card2); color: var(--text); }
@@ -136,6 +140,10 @@ body { font-size: var(--fs-body); }
 .nav-count { font-size: var(--fs-caption); color: var(--muted); font-variant-numeric: tabular-nums; }
 .nav-group { margin-top: 8px; }
 .nav-system { padding-left: 14px; }
+/* Storage 이동이 Plan에 올라간 System - Apply 전까지는 미리보기다(실사용
+   피드백: 드래그해도 화면이 그대로면 "안 먹었다"고 보인다). */
+.nav-system.pending-move { color: var(--accent); outline: 1px dashed var(--accent); outline-offset: -1px; }
+.nav-system.pending-move .nav-label { color: var(--accent); }
 .nav-group-head.drop-target { outline: 1px dashed var(--accent); background: var(--card3); }
 .nav-action {
   display: flex; align-items: center; gap: 6px; flex-shrink: 0;
@@ -145,11 +153,13 @@ body { font-size: var(--fs-body); }
 }
 .nav-action:hover { color: var(--accent); border-color: var(--accent); }
 
-/* Navigator 하단 고정 - App Title(예전 최상단 타이틀바에 있던 것) + Settings.
-   자리는 2~3줄로 압축한다 - System scroll 공간을 너무 뺏으면 안 된다. */
-.nav-bottom {
+/* Navigator 상단 고정 - App Title + Settings(사용자 요청: GameList 상단
+   Chromium의 .cheader와 세로로 나란히 보이도록 최상단으로 옮겼다. 예전엔
+   최하단에 있었다). 자리는 2~3줄로 압축한다 - System scroll 공간을 너무
+   뺏으면 안 된다. */
+.nav-top {
   display: flex; align-items: center; gap: 8px; flex-shrink: 0;
-  margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border);
+  margin-bottom: 6px; padding-bottom: 9px; border-bottom: 1px solid var(--border);
 }
 .nav-app-title { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; color: var(--accent); }
 .nav-app-title-text { min-width: 0; }
@@ -402,10 +412,17 @@ body { font-size: var(--fs-body); }
   min-width: 0; display: flex; align-items: center; gap: 6px;
   font-size: var(--fs-body); padding-right: 6px;
 }
+/* `.lc`는 display:flex라 text-overflow가 그 div 자신에는 적용되지 않는다 -
+   안쪽의 이 span에 줘야 실제로 "..."이 붙는다(app.js의 truncSpan()). */
+.lc-text, .lrow-title {
+  min-width: 0; flex: 1 1 auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* 제목만 굵게 하면 목록 전체가 제목 나열처럼 보인다. 본문 굵기를 유지하고
    설명·부가 정보만 흐리게 해서 위계를 만든다. */
 .lc-title { color: var(--list-text); }
 .lc-no { color: var(--list-muted); font-variant-numeric: tabular-nums; justify-content: flex-end; }
+.lc-no .lc-text { flex: 0 1 auto; text-align: right; }
 .lc-file, .lc-desc, .lc-region, .lc-genre { color: var(--list-muted); }
 .lc-rating { color: var(--list-muted); font-variant-numeric: tabular-nums; justify-content: center; }
 .lc-fav, .lc-status { justify-content: center; }
@@ -474,8 +491,14 @@ body { font-size: var(--fs-body); }
 #detail-panel.collapsed {
   width: 44px; flex: 0 0 44px; min-width: 44px; max-width: 44px;
 }
+/* 예전엔 이 자리가 height:100%로 늘어나 패널 전체를 차지했다. .detail-topspace의
+   기본 align-items:flex-end 때문에 아이콘 하나뿐인 이 자리가 늘어난 상자의
+   **맨 아래**로 밀려나 "미리보기를 끄면 아이콘이 화면 하단까지 내려간다"는
+   실사용 피드백을 낳았다(사용자 요청). GameList 상단 Chromium과 같은 높이(62px)로
+   고정하고, 그 아래 남는 공간은 #detail-panel의 배경색만 채운 빈 자리로 둔다 -
+   아이콘 자리는 그대로, 그 아래만 "확장"되어 보이게. */
 #detail-panel.collapsed .detail-topspace.compact {
-  height: 100%; justify-content: center; border-bottom: 0; padding: 0;
+  align-items: center; justify-content: center; border-bottom: 0; padding: 0;
 }
 #detail-panel-inner { width: 297px; min-width: 297px; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .rom-info { padding: 4px 2px; }

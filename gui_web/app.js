@@ -22,7 +22,7 @@
   //
   // `key`가 없는 컬럼(No., ★)은 정렬도 폭 조절도 하지 않는다.
   const COLUMNS = [
-    { id: "no", label: "No.", width: 46, fixed: true },
+    { id: "no", label: "No.", width: 23, fixed: true },
     { id: "file", label: "File", key: "filename", width: 190 },
     { id: "title", label: "Title", key: "title", width: 220 },
     { id: "desc", label: "Description", key: "desc", width: 390 },
@@ -42,6 +42,18 @@
 
   function gridTemplate() {
     return COLUMNS.map((c) => `${S.colWidths[c.id] || c.width}px`).join(" ");
+  }
+
+  /** 행 텍스트를 말줄임(...)으로 자르는 안쪽 span.
+   *
+   * `.lc`가 `display:flex`라서 `overflow`/`text-overflow`를 그 div에 바로 주면
+   * 안 먹는다(flex 컨테이너 자신에는 text-overflow가 적용되지 않는다) - 그래서
+   * 글자가 잘리지도, "..."도 안 붙은 채 옆 컬럼 위로 그대로 흘러넘쳤다(실사용
+   * 피드백: "File/Title/Description 사이에 아무 제약이 없어서 글씨가 이어진
+   * 것처럼 보인다"). 텍스트만 감싸는 안쪽 span에 그 속성을 주고, flex item
+   * 기본값(min-width:auto)이 줄어드는 것을 막지 않도록 min-width:0도 준다. */
+  function truncSpan(text) {
+    return h("span", { class: "lc-text" }, [text]);
   }
   const PAGE_SIZE = 200;
   const OVERSCAN = 8;
@@ -668,22 +680,12 @@
   // ------------------------------------------------------------------
   // 좌측 내비게이션
   // ------------------------------------------------------------------
-  /** Navigator 최상단 고정 항목. 실제 기능은 아직 없다(레이아웃 재검토, TODO -
-   * PENDING_DECISIONS.md) - 이전 프로젝트 기능을 가져올 진입점 자리만 잡아둔다. */
-  function navDashboardRow() {
-    const row = h("button", { class: "nav-dashboard", title: "Dashboard (준비 중)" }, [
-      icon("dashboard", 14), h("span", {}, ["Dashboard"]),
-    ]);
-    row.addEventListener("click", () => showToast("Dashboard는 아직 없습니다 - 나중에 쓸 자리입니다."));
-    return row;
-  }
-
-  /** Navigator 최하단 고정 영역 - App Title + Settings. 예전엔 최상단 타이틀바에
-   * 있던 App Title을 여기로 옮겼다(레이아웃 재검토). Settings는 신규 구현이라
-   * 눌러도 자리표시자만 뜬다(TODO - PENDING_DECISIONS.md). */
-  function navBottom() {
-    const bottom = h("div", { class: "nav-bottom" });
-    bottom.appendChild(h("div", { class: "nav-app-title" }, [
+  /** Navigator 최상단 고정 영역 - App Title + Settings. GameList 상단
+   * Chromium(#collection-header)의 .cheader와 세로 위치가 맞도록 상단에
+   * 둔다(사용자 요청) - 예전엔 최하단에 있었다. */
+  function navTop() {
+    const top = h("div", { class: "nav-top" });
+    top.appendChild(h("div", { class: "nav-app-title" }, [
       icon("database", 16),
       h("div", { class: "nav-app-title-text" }, [
         h("div", { class: "nav-app-title-name" }, ["RetroMeta Studio"]),
@@ -697,14 +699,25 @@
           ["아직 준비 중입니다. 어떤 설정이 필요한지 정해지면 채워질 예정입니다."]),
       ]), [h("button", { class: "btn primary", onClick: closeModal }, ["닫기"])]);
     });
-    bottom.appendChild(settings);
-    return bottom;
+    top.appendChild(settings);
+    return top;
+  }
+
+  /** Navigator 최하단 고정 항목. 실제 기능은 아직 없다(레이아웃 재검토, TODO -
+   * PENDING_DECISIONS.md) - 이전 프로젝트 기능을 가져올 진입점 자리만 잡아둔다.
+   * App Title이 상단으로 옮겨간 자리에 대신 놓는다(사용자 요청). */
+  function navDashboardRow() {
+    const row = h("button", { class: "nav-dashboard", title: "Dashboard (준비 중)" }, [
+      icon("dashboard", 14), h("span", {}, ["Dashboard"]),
+    ]);
+    row.addEventListener("click", () => showToast("Dashboard는 아직 없습니다 - 나중에 쓸 자리입니다."));
+    return row;
   }
 
   function renderNav() {
     const nav = $("nav");
     clear(nav);
-    nav.appendChild(navDashboardRow());
+    nav.appendChild(navTop());
 
     // System 제목과 목록만 스크롤 영역에 넣는다 - Dashboard/Add External/App
     // Title/Settings는 System이 아무리 늘어나도 화면에서 밀려나면 안 된다.
@@ -714,7 +727,7 @@
     const detail = activeDetail();
     if (!detail) {
       scroll.appendChild(h("div", { class: "nav-empty" }, ["Collection을 열어주세요"]));
-      nav.appendChild(navBottom());
+      nav.appendChild(navDashboardRow());
       return;
     }
     scroll.appendChild(h("div", { class: "nav-eyebrow" }, ["SYSTEMS"]));
@@ -733,7 +746,7 @@
         row.insertBefore(systemIcon(sys.system, 14), row.firstChild);
         scroll.appendChild(row);
       });
-      nav.appendChild(navBottom());
+      nav.appendChild(navDashboardRow());
       return;
     }
     const allRow = navRow("All", detail.totalGames, scope.kind === "all", () => setScope({ kind: "all" }));
@@ -756,6 +769,13 @@
     (detail.storages || []).forEach((s) => { storageById[s.id] = s; });
     const externalStorages = (detail.storages || []).filter((s) => s.kind === "external");
 
+    // Plan에 Storage 이동이 올라간 System은 Apply 전에도 목표 Storage 그룹
+    // 밑에 미리 보여준다(실사용 피드백: "드래그해도 그 자리에 그대로 있어서
+    // 옮겨진 게 안 보인다"). 실제 파일은 아직 그대로지만, 어느 그룹에
+    // 나타나는지는 사용자의 마지막 결정(Plan)을 따른다.
+    const pendingMoves = (S.plan && S.plan.pendingMoves) || {};
+    const displayStorageId = (sys) => pendingMoves[sys.system] || sys.storageId;
+
     function renderSystemRow(sys) {
       const row = navRow(sys.system.toUpperCase(), sys.count,
         scope.kind === "system" && scope.id === sys.system,
@@ -764,7 +784,12 @@
       row.insertBefore(systemIcon(sys.system, 14), row.firstChild);
       if (!sys.count) row.classList.add("empty");
       const storage = storageById[sys.storageId];
-      if (storage) {
+      const pendingTo = pendingMoves[sys.system];
+      if (pendingTo) {
+        row.classList.add("pending-move");
+        const target = storageById[pendingTo];
+        row.title = `${sys.system} · ${formatCount(sys.count)}개\n이동 예정: ${storage ? storage.label : sys.storageId} → ${target ? target.label : pendingTo}(Apply로 확정)`;
+      } else if (storage) {
         row.title = `${sys.system} · ${formatCount(sys.count)}개 · ${storage.label}\n${storage.rootPath}`;
       }
       // Compare 중에는 System을 끌어 옮길 수 없다 - 그 드롭/메뉴 하나가 Plan을 바꾸고,
@@ -823,7 +848,7 @@
           });
         }
 
-        (detail.systems || []).filter((sys) => sys.storageId === storage.id)
+        (detail.systems || []).filter((sys) => displayStorageId(sys) === storage.id)
           .forEach((sys) => group.appendChild(renderSystemRow(sys)));
         scroll.appendChild(group);
       });
@@ -838,7 +863,7 @@
       // gamelist 만들기는 Toolbar 아이콘(Collection 전체) + System/Storage 우클릭
       // 메뉴(부분)로 옮겼다 - 예전엔 이 버튼 하나뿐이었다.
     }
-    nav.appendChild(navBottom());
+    nav.appendChild(navDashboardRow());
   }
 
   function navRow(label, count, active, onClick) {
@@ -1758,7 +1783,7 @@
     el.appendChild(h("div", { class: "lc lc-system" }, [
       h("span", { class: "sys-badge" }, [String(row.system).toUpperCase()])]));
     el.appendChild(h("div", { class: "lc lc-status" }, [compareMark(row)]));
-    el.appendChild(h("div", { class: "lc lc-desc truncate" }, [row.file]));
+    el.appendChild(h("div", { class: "lc lc-desc" }, [truncSpan(row.file)]));
     el.addEventListener("click", () => openCompareDetail(row));
     return el;
   }
@@ -1774,10 +1799,10 @@
     });
 
     // No. - 화면에 보이는 순번이 아니라 목록 전체에서의 순번이다.
-    el.appendChild(h("div", { class: "lc lc-no" }, [String(index + 1)]));
-    el.appendChild(h("div", { class: "lc lc-file truncate", title: row.file }, [row.file]));
+    el.appendChild(h("div", { class: "lc lc-no" }, [truncSpan(String(index + 1))]));
+    el.appendChild(h("div", { class: "lc lc-file", title: row.file }, [truncSpan(row.file)]));
 
-    const titleCell = h("div", { class: "lc lc-title truncate" }, [row.title || row.file]);
+    const titleCell = h("div", { class: "lc lc-title" }, [truncSpan(row.title || row.file)]);
     titleCell.title = row.title || row.file;
     // Exact로 확정되지 않은 후보가 있으면 개수만 조용히 알린다. 누르기 전까지는
     // 아무것도 일어나지 않는다(§49 - 자동 병합 금지).
@@ -1792,8 +1817,8 @@
 
     // Description이 가장 넓다. 목록만 훑어도 어떤 게임인지 알 수 있어야 한다.
     const desc = (row.desc || "").replace(/\s+/g, " ").trim();
-    el.appendChild(h("div", { class: "lc lc-desc truncate", title: desc }, [desc]));
-    el.appendChild(h("div", { class: "lc lc-region truncate" }, [row.region || ""]));
+    el.appendChild(h("div", { class: "lc lc-desc", title: desc }, [truncSpan(desc)]));
+    el.appendChild(h("div", { class: "lc lc-region" }, [truncSpan(row.region || "")]));
     el.appendChild(h("div", { class: "lc lc-rating" }, [formatRating(row.rating)]));
 
     // 별표는 눌러서 바로 켜고 끈다. 상세 패널을 열지 않아도 되게.
@@ -1804,8 +1829,8 @@
     star.addEventListener("click", (e) => { e.stopPropagation(); toggleFavorite(row, star); });
     el.appendChild(h("div", { class: "lc lc-fav" }, [star]));
 
-    el.appendChild(h("div", { class: "lc lc-genre truncate", title: row.genre || "" },
-                     [row.genre || ""]));
+    el.appendChild(h("div", { class: "lc lc-genre", title: row.genre || "" },
+                     [truncSpan(row.genre || "")]));
     el.appendChild(h("div", { class: "lc lc-status" }, [statusMark(row)]));
 
     el.addEventListener("click", (e) => handleRowClick(e, row, index));
@@ -2841,6 +2866,9 @@
     renderFilterBar();
     renderStatusBar();
     renderListWindow();
+    // Storage 이동을 Plan에 올리면 Navigator도 목표 Storage 밑에 미리 보여줘야
+    // 한다(§ moveSystemToStorage) - 안 그러면 드래그가 반영 안 된 것처럼 보인다.
+    renderNav();
   }
 
   const planCapacity = (storageId) =>
@@ -2961,6 +2989,54 @@
             await refreshPlan();
           });
       } }, ["모두 덮어쓰기"]),
+    ]);
+  }
+
+  /** 지난 Apply에서 실패해 Plan에 남은 항목을 보여준다.
+   *
+   * 예전엔 하단 바에 "실패 N"이라는 숫자만 있고 눌러도 아무 일도 없었다 -
+   * 왜 실패했는지(예: External Storage에 같은 이름의 파일이 이미 있음) 알
+   * 방법이 없어서 Apply를 눌러도 계속 실패만 반복됐다(실사용 피드백). 이유를
+   * 보여주고, 재시도(다음 Apply가 자동으로 다시 시도한다)나 포기(Plan에서
+   * 제거)를 고르게 한다. */
+  async function openFailedDialog() {
+    const entries = (S.plan && S.plan.failedEntries) || [];
+    if (!entries.length) return;
+
+    const list = h("div", { class: "picker-list" });
+    entries.slice(0, 50).forEach((entry) => {
+      const row = h("div", { class: "conflict-row" }, [
+        h("div", { class: "conflict-main" }, [
+          h("div", { class: "picker-name truncate" }, [entry.filename]),
+          h("div", { class: "picker-sub truncate" }, [entry.error || "원인을 알 수 없는 실패"]),
+        ]),
+      ]);
+      const remove = h("button", { class: "btn compact", title: "이 항목을 Plan에서 지웁니다 - 다시 시도하지 않습니다" },
+        ["Plan에서 제거"]);
+      remove.addEventListener("click", async () => {
+        await api.planRemoveEntry(S.activeId, entry.key);
+        await refreshPlan();
+        closeModal();
+        openFailedDialog();
+      });
+      row.appendChild(remove);
+      list.appendChild(row);
+    });
+    if (entries.length > 50) {
+      list.appendChild(h("div", { class: "modal-hint" }, [`외 ${formatCount(entries.length - 50)}개 더 있습니다.`]));
+    }
+
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "modal-text" }, [
+        `지난 Apply에서 실패해 Plan에 남은 항목 ${formatCount(entries.length)}개입니다.`]),
+      h("div", { class: "modal-hint" }, [
+        "다음 Apply 때 다시 시도합니다. 원인이 해결되지 않았다면 같은 이유로 " +
+        "또 실패합니다 - 예를 들어 대상 Storage에 같은 이름의 파일이 이미 있으면 " +
+        "그 파일을 먼저 지우거나 옮겨야 합니다."]),
+      list,
+    ]);
+    showModal("실패한 항목", body, [
+      h("button", { class: "btn", onClick: closeModal }, ["닫기"]),
     ]);
   }
 
@@ -3137,8 +3213,11 @@
         left.appendChild(btn);
       }
       if (plan.failed) {
-        left.appendChild(h("span", { class: "sb-badge danger", title: "지난 적용에서 실패해 Plan에 남아 있는 항목" },
-          [`실패 ${formatCount(plan.failed)}`]));
+        const btn = h("button", { class: "sb-badge danger",
+          title: "지난 적용에서 실패해 Plan에 남아 있는 항목 - 눌러서 이유를 보세요" },
+          [`실패 ${formatCount(plan.failed)}`]);
+        btn.addEventListener("click", openFailedDialog);
+        left.appendChild(btn);
       }
     }
     bar.appendChild(left);

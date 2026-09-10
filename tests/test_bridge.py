@@ -125,6 +125,38 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("ps2", result["error"])
 
+    def test_plan_storage_change_is_visible_as_a_pending_move_before_apply(self):
+        """Navigator가 Apply 전에도 목표 Storage 밑에 미리 보여줄 수 있어야 한다
+        (실사용 피드백: 드래그해도 화면이 그대로면 "안 먹었다"처럼 보였다)."""
+        storage_id = self.api.add_external_storage(self.cid, "SD", str(self.dir / "sd"))["data"]
+        self.api.plan_storage_change(self.cid, "ps2", storage_id)
+        state = self.api.plan_state(self.cid)["data"]
+        self.assertEqual(state["pendingMoves"], {"ps2": storage_id})
+
+    def test_a_failed_storage_change_reports_why_and_can_be_removed(self):
+        """대상에 이미 같은 이름의 파일이 있으면 이동이 실패한다 - 그 이유가
+        failedEntries에 남아야 사용자가 "왜 계속 실패하는지" 알 수 있다."""
+        storage_id = self.api.add_external_storage(self.cid, "SD", str(self.dir / "sd"))["data"]
+        # 대상에 이미 같은 이름의 파일을 심어 충돌을 강제로 만든다.
+        (self.dir / "sd").mkdir(parents=True, exist_ok=True)
+        (self.dir / "sd" / "ps2").mkdir(parents=True, exist_ok=True)
+        (self.dir / "sd" / "ps2" / "FFX.iso").write_bytes(b"already here")
+
+        self.api.plan_storage_change(self.cid, "ps2", storage_id)
+        job = self.api.start_apply(self.cid)
+        result = wait_job(self.api, job["data"]["jobId"])
+        self.assertEqual(result["result"]["failed"], 1)
+
+        state = self.api.plan_state(self.cid)["data"]
+        self.assertEqual(state["failed"], 1)
+        self.assertEqual(len(state["failedEntries"]), 1)
+        self.assertIn("파일이", state["failedEntries"][0]["error"])
+
+        # Plan에서 제거하면 더 이상 실패로 남지 않는다(openFailedDialog의 "Plan에서 제거").
+        key = state["failedEntries"][0]["key"]
+        self.assertTrue(self.api.plan_remove_entry(self.cid, key)["ok"])
+        self.assertEqual(self.api.plan_state(self.cid)["data"]["failed"], 0)
+
     def test_unknown_capacity_is_reported_as_none(self):
         """용량을 못 읽는 저장소는 오류가 아니라 Unknown이다(스펙 §5)."""
         self.api.add_external_storage(self.cid, "Missing", r"Z:\\does-not-exist")

@@ -25,7 +25,7 @@ from adapters import get_adapter
 from app import paths
 from app.model.collection import STORAGE_INTERNAL
 from app.model.constants import MEDIA_TYPES
-from app.model.plan import Plan
+from app.model.plan import OP_STORAGE_CHANGE, Plan
 from app.plan import builder, clipboard
 from app.plan.applier import apply_plan
 from app.plan.validator import check_capacity, validate
@@ -545,6 +545,10 @@ class Api:
             # 이게 안 보이면 "Apply 했으니 끝났다"고 오해한다.
             "conflictEntries": [self._entry_summary(e) for e in plan.conflict_entries()],
             "failedEntries": [self._entry_summary(e) for e in plan.failed_entries()],
+            # Navigator가 드래그로 옮긴 System을 Apply 전에도 목표 Storage 밑에
+            # 미리 보여주려면 어디로 갈 예정인지 알아야 한다(실사용 피드백 - 예전엔
+            # Apply할 때까지 원래 자리에 그대로 있어서 "드래그가 안 먹혔다"처럼 보였다).
+            "pendingMoves": {e.system: e.storage_to for e in plan.entries if e.op == OP_STORAGE_CHANGE},
         })
 
     @staticmethod
