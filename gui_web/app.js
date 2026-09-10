@@ -2416,30 +2416,46 @@
     ]);
 
     if (!state.archive) {
-      // 즐겨찾기와 실행은 게임을 보고 있을 때 바로 손이 가는 자리에 있어야 한다.
+      // Play/Favorite는 게임을 보고 있을 때 바로 손이 가는 자리에 있어야
+      // 한다(레이아웃 재검토 §20 순서: Play, Favorite, Preview).
+      //
+      // 실행은 아직 연결되지 않았다. **버튼을 없애는 대신 못 한다고 말한다** -
+      // 사라진 기능은 언제 돌아오는지 알 수 없지만, 눌러서 안내를 받으면 안다.
+      const play = h("button", {
+        class: "icon-btn", title: state.present ? "실행 (RetroArch 연동 예정)" : "ROM 파일이 없습니다",
+        disabled: !state.present,
+      }, [icon("play", 14)]);
+      if (state.present) {
+        play.addEventListener("click", () => showToast(
+          "RetroArch 연동은 다음 버전에서 들어옵니다.", "warning"));
+      }
+      header.appendChild(play);
+
       const star = h("button", {
         class: "icon-btn fav-btn" + (state.favorite ? " on" : ""),
         title: state.favorite ? "즐겨찾기 해제" : "즐겨찾기",
       }, [state.favorite ? "★" : "☆"]);
       star.addEventListener("click", () => toggleFavoriteFromDetail(star));
       header.appendChild(star);
-
-      // 실행은 아직 연결되지 않았다. **버튼을 없애는 대신 못 한다고 말한다** -
-      // 사라진 기능은 언제 돌아오는지 알 수 없지만, 눌러서 안내를 받으면 안다.
-      const play = h("button", {
-        class: "icon-btn", title: state.present ? "실행 (RetroArch 연동 예정)" : "ROM 파일이 없습니다",
-        disabled: !state.present,
-      }, [icon("gamepad", 14)]);
-      if (state.present) {
-        play.addEventListener("click", () => showToast(
-          "RetroArch 연동은 다음 버전에서 들어옵니다.", "warning"));
-      }
-      header.appendChild(play);
     }
 
-    const close = h("button", { class: "icon-btn", title: "닫기 (Esc)" }, [icon("x", 13)]);
-    close.addEventListener("click", closeDetail);
-    header.appendChild(close);
+    // Preview - Toolbar에도 같은 토글이 있다(그쪽은 패널이 숨겨진 동안에도
+    // 눌러서 다시 켤 수 있는 유일한 자리라 없앨 수 없다). 여기 있는 건 보는
+    // 김에 끄는 용도다(§19) - 아이콘만 클릭 영역이고 글자는 라벨일 뿐이다.
+    const previewToggle = h("div", { class: "detail-preview-toggle" });
+    const previewBtn = h("button", {
+      class: "icon-btn" + (S.previewOn ? " on" : ""),
+      title: S.previewOn ? "미리보기 끄기" : "미리보기 켜기",
+    }, [icon("previewPane", 15)]);
+    previewBtn.addEventListener("click", () => {
+      S.previewOn = !S.previewOn;
+      saveUiState();
+      renderFilterBar();
+      applyPreviewMode();
+    });
+    previewToggle.appendChild(previewBtn);
+    previewToggle.appendChild(h("span", { class: "detail-preview-label" }, ["미리보기"]));
+    header.appendChild(previewToggle);
     inner.appendChild(header);
 
     const tabs = h("div", { class: "detail-tabs" });

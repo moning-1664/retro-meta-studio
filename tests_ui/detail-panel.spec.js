@@ -84,6 +84,28 @@ test.describe("Favorite / Play", () => {
   });
 });
 
+test.describe("Detail Header - Preview 토글, 닫기 버튼 없음 (레이아웃 재검토 §19-20)", () => {
+  test("Detail 자체를 닫는 X 버튼은 없다", async ({ page }) => {
+    // Detail은 선택된 게임을 보여주는 고정 영역이다 - 숨기려면 미리보기를
+    // 꺼야 한다(Preview 토글), 개별 게임의 X로 닫는 길은 없앴다.
+    await openFirstGame(page);
+    await expect(page.locator("#detail-panel .icon-btn[title*='닫기']")).toHaveCount(0);
+  });
+
+  test("Header 우측에 미리보기 토글이 있고 Toolbar 것과 상태를 공유한다", async ({ page }) => {
+    await openFirstGame(page);
+    const headerToggle = page.locator("#detail-panel .icon-btn[title='미리보기 끄기']");
+    await expect(headerToggle).toBeVisible();
+    await expect(page.locator("#detail-panel .detail-preview-label")).toHaveText("미리보기");
+
+    await headerToggle.click();
+    await expect(page.locator("#detail-panel")).toHaveClass(/hidden/);
+    // 패널이 숨었으니 이제는 Toolbar 쪽만 다시 켤 수 있다.
+    await page.locator("#filter-bar .icon-btn[title='미리보기 켜기']").click();
+    await expect(page.locator("#detail-panel")).not.toHaveClass(/hidden/);
+  });
+});
+
 test.describe("Media 격자", () => {
   const openMedia = async (page) => {
     await openFirstGame(page);
