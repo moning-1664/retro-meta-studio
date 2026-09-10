@@ -235,7 +235,11 @@ body { font-size: var(--fs-body); }
   --media-small-h: 60px;
   padding: 8px; flex-shrink: 0;
   display: flex; flex-direction: column; gap: var(--media-gap);
-  background: #000;
+  /* Detail의 다른 탭과 같은 배경(레이아웃 재검토 §25) - 검은색은 그림 비율이
+     상자와 안 맞을 때 그 안에서만 보여야 한다(.media-tile 자체가 검다).
+     여기까지 검게 칠하면 타일 사이 여백까지 배경째로 검게 물들어 Metadata/
+     ROM 탭과 다른 화면처럼 보였다. */
+  background: var(--card2);
 }
 
 /* Cover(왼쪽) + 보조 셋(오른쪽 세로). 높이를 여기서 못박아 양쪽이 반드시 맞는다. */
