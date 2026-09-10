@@ -21,7 +21,7 @@ test("끄면 목록이 그 자리까지 넓어진다", async ({ page }) => {
   await previewButton(page).click();
   await expect(page.locator("#detail-panel")).toHaveClass(/hidden/);
   const after = await listWidth(page);
-  // 패널 폭(340px)만큼 넓어져야 한다. 숨기기만 하고 자리가 남으면 안 된다.
+  // 패널 폭(306px)만큼 넓어져야 한다. 숨기기만 하고 자리가 남으면 안 된다.
   expect(after).toBeGreaterThan(before + 200);
 });
 

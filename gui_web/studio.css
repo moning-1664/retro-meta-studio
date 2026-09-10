@@ -400,15 +400,18 @@ body { font-size: var(--fs-body); }
    예전에는 width:0 <-> 340px를 transition으로 오가서 선택할 때마다 패널이 밀려 나오고
    목록 폭이 그때그때 달라졌다(style.css의 옛 규칙에 아직 transition이 남아 있으므로
    여기서 폭과 전환을 모두 덮어쓴다). 자리를 늘 차지하게 두면 목록 폭이 흔들리지 않고,
-   아무것도 안 골랐을 때는 빈 칸 대신 안내를 보여준다. */
+   아무것도 안 골랐을 때는 빈 칸 대신 안내를 보여준다.
+
+   306px는 340px에서 ~10% 줄인 값이다(레이아웃 재검토 - GameList에 공간을 더
+   주려고, 실제 화면에서 Media/Metadata가 버티는지 눈으로 보며 줄였다). */
 #detail-panel {
-  width: 340px; flex: 0 0 340px; min-width: 340px; max-width: 340px;
+  width: 306px; flex: 0 0 306px; min-width: 306px; max-width: 306px;
   overflow: hidden; background: var(--card);
   border-left: 1px solid var(--border); border-radius: 0;
   transition: none;
 }
-#detail-panel.open { width: 340px; border-color: var(--border); }
-#detail-panel-inner { width: 340px; min-width: 340px; height: 100%; display: flex; flex-direction: column; }
+#detail-panel.open { width: 306px; border-color: var(--border); }
+#detail-panel-inner { width: 306px; min-width: 306px; height: 100%; display: flex; flex-direction: column; }
 .rom-info { padding: 4px 2px; }
 
 /* 하단 상태 바 */

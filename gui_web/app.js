@@ -812,11 +812,9 @@
     // 않는 게임이 선택된 채로 남아, Archive 수집 같은 동작이 그 UID를 대상으로 삼는다.
     clearSelection();
     renderNav();
-    // **상단 System 필터도 같은 곳을 가리켜야 한다.**
-    //
-    // 상태(`S.scope`)는 처음부터 하나였는데, 그것을 읽어 `<select>`의 값을 맞추는
-    // 것은 `renderFilterBar()`뿐이었다. 여기서 그것을 부르지 않아서, Navigation에서
-    // NES를 골라도 상단 필터는 이전 값을 그대로 보여줬다.
+    // Overview 헤더가 System을 고르면 그 System 이름/아이콘으로 바뀐다
+    // (레이아웃 재검토) - scope가 바뀌었으니 다시 그려야 한다.
+    renderHeader();
     renderFilterBar();
     // 선택 개수와 수집 대상 표시도 함께 맞춘다 - 선택을 비웠으니 화면도 그래야 한다.
     renderStatusBar();
@@ -948,11 +946,22 @@
     const detail = activeDetail();
     if (!detail) return;
 
+    // Navigator에서 System을 골랐으면 그 System의 정체를 보여준다 - 항상
+    // Collection 이름만 보이면 지금 뭘 보고 있는지 다시 Navigator를 봐야
+    // 했다(레이아웃 재검토). Frontend/OS/Arch 줄은 System 고유 정보가 아니라
+    // Collection 정보라 그대로 둔다.
+    const scope = activeScope();
+    const systemEntry = scope.kind === "system"
+      ? (detail.systems || []).find((s) => s.system === scope.id) : null;
+
     const compact = h("div", { class: "cheader" });
-    compact.appendChild(h("div", { class: "cheader-icon" }, [icon("gamepad", 20)]));
+    compact.appendChild(h("div", { class: "cheader-icon" }, [
+      systemEntry ? systemIcon(systemEntry.system, 20) : icon("gamepad", 20),
+    ]));
 
     const main = h("div", { class: "cheader-main" });
-    main.appendChild(h("div", { class: "cheader-name" }, [detail.name]));
+    main.appendChild(h("div", { class: "cheader-name" },
+      [systemEntry ? systemEntry.system.toUpperCase() : detail.name]));
     main.appendChild(h("div", { class: "cheader-sub" }, [
       detail.frontendLabel,
       h("span", { class: "dot" }, ["·"]),
@@ -961,7 +970,7 @@
       detail.arch ? detail.arch.toUpperCase() : "Unknown",
     ]));
     const summary = h("div", { class: "cheader-stats" }, [
-      h("span", {}, [`${formatCount(detail.totalGames)} Games`]),
+      h("span", {}, [`${formatCount(systemEntry ? systemEntry.count : detail.totalGames)} Games`]),
     ]);
     detail.storages.forEach((storage) => {
       // Plan이 있으면 "Actual -> Plan"으로 보여준다(스펙 §19, §30).
