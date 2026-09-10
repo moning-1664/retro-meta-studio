@@ -50,19 +50,10 @@ Navigator 하단 고정 영역(App Title + 톱니바퀴)은 만들었다 - 누�
 List/Card 모드, Preview 기본 상태 같은 것부터 시작할지, 아니면 다른 우선순위가
 있는지.
 
-## 2026-09-10 — Archive ↔ Collection 버튼을 GameList 상단으로 옮기는 문제
+## 해결됨 — Archive ↔ Collection 버튼 위치 (2026-09-10)
 
-레이아웃 재검토 §7/§14: "Collection으로 보내기"(Archive → Collection)를
-GameList Overview 줄(Refresh/Expand 옆)로 옮기자는 안이 있었다.
-
-**막힌 지점**: 이 버튼은 **선택된 항목이 있어야 활성화**된다(`app.js`
-`renderStatusBar()`의 `isArchive()` 분기, 지금은 하단 상태바에 있다). Overview
-줄은 이번 재검토에서 줄곧 "상태를 보여주는 자리"로 다뤄왔고(예: Plan: ON/OFF
-표시는 넣지 않기로 한 것도 같은 이유), 선택 여부에 따라 켜졌다 꺼졌다 하는
-액션 버튼을 그 자리에 두면 그 원칙과 부딪힌다. 그래서 이번 재검토에서는
-옮기지 않고 그대로 뒀다.
-
-**다음에 물어볼 것**: Overview를 "상태 표시 전용"으로 계속 지킬지, 아니면
-이 버튼만은 예외로 두고 Overview에 옮길지. 옮긴다면 비활성 상태를 Overview에서
-어떻게 보여줄지(다른 아이콘들처럼 늘 보이되 disabled로 둘지, 선택이 있을 때만
-나타나게 할지)도 같이 정해야 한다.
+GameList Overview로 옮기는 안은 "Overview=상태 표시 전용" 원칙과 부딪혀서
+보류했었는데, 대신 **Detail 패널 상단의 새 빈 공간(.detail-topspace)**으로
+옮기는 것으로 해결됐다(사용자 지시) - 그 자리는 애초에 액션 버튼을 위한
+자리라 원칙과 부딪히지 않는다. Collection 탭에선 "Archive에 수집", Archive
+탭에선 "Collection으로 보내기"가 나온다. `renderDetailTopSpace()` 참고.
