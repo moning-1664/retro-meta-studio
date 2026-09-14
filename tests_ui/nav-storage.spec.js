@@ -69,14 +69,14 @@ test.describe("빈 System은 자기 그룹 안에서 뒤로 정렬될 뿐 따로
 });
 
 test.describe("Storage 이동은 System 우클릭 메뉴로", () => {
-  test("System을 우클릭하면 그 System의 정보가 뜬다", async ({ page }) => {
+  test("System을 우클릭하면 그 System의 메뉴가 뜬다", async ({ page }) => {
     await page.locator(".nav-system", { hasText: "PS2" }).click({ button: "right" });
-    await expect(page.locator(".modal-title")).toHaveText("PS2");
+    await expect(page.locator(".ctx-title")).toHaveText("PS2");
   });
 
   test("지금 어느 Storage에 있는지 알려준다", async ({ page }) => {
     await page.locator(".nav-system", { hasText: "PS2" }).click({ button: "right" });
-    await expect(page.locator(".modal-body")).toContainText("External SD");
+    await expect(page.locator(".ctx-sub")).toContainText("External SD");
   });
 
   test("다른 Storage를 고르면 이동을 요청한다", async ({ page }) => {
@@ -90,14 +90,15 @@ test.describe("Storage 이동은 System 우클릭 메뉴로", () => {
     });
 
     await page.locator(".nav-system", { hasText: "PS2" }).click({ button: "right" });
-    await page.locator(".picker-row", { hasText: "Internal" }).click();
+    await page.locator(".ctx-menu .ctx-item", { hasText: "Internal" }).click();
     await expect.poll(() => moved.length).toBeGreaterThan(0);
     expect(moved[0]).toEqual(["ps2", "internal"]);
   });
 
   test("자기가 이미 있는 Storage는 이동 후보로 내놓지 않는다", async ({ page }) => {
     await page.locator(".nav-system", { hasText: "PS2" }).click({ button: "right" });
-    const targets = await page.locator(".picker-row .picker-name").allTextContents();
+    await expect(page.locator(".ctx-menu .ctx-item", { hasText: "Internal" })).toBeVisible();
+    const targets = await page.locator(".ctx-menu .ctx-item .ctx-label").allTextContents();
     expect(targets).not.toContain("External SD");
   });
 });

@@ -112,6 +112,17 @@
       const rows = systems && systems.length ? mockRows.filter((r) => systems.includes(r.system)) : mockRows;
       return ok({ rows, total: rows.length, offset: 0 });
     },
+    list_uids: (id, systems) => ok((systems && systems.length
+      ? mockRows.filter((r) => systems.includes(r.system)) : mockRows).map((r) => r.romUid)),
+    find_row_index: (id, prefix, after, systems) => {
+      const rows = systems && systems.length ? mockRows.filter((r) => systems.includes(r.system)) : mockRows;
+      const needle = String(prefix || "").toLowerCase();
+      for (let k = 1; k <= rows.length; k += 1) {
+        const i = (Math.max(-1, after) + k) % rows.length;
+        if (rows[i].file.toLowerCase().startsWith(needle)) return ok(i);
+      }
+      return ok(-1);
+    },
     get_row: (id, romUid) => {
       const r = mockRows.find((x) => x.romUid === romUid) || mockRows[0];
       return ok({ romUid: r.romUid, system: r.system, file: r.file, size: r.size, present: true,
@@ -438,6 +449,12 @@
     listRows: (id, q) => call("list_rows", id, q.systems || null, q.storageIds || null,
                               q.search || null, q.order || "title", !!q.descending,
                               q.limit || 200, q.offset || 0, !!q.favoritesOnly),
+    // 목록 전체 기준 동작(Ctrl+A, 영문키 점프). 인자 순서는 listRows와 같다.
+    listUids: (id, q) => call("list_uids", id, q.systems || null, q.storageIds || null,
+                              q.search || null, q.order || "title", !!q.descending, !!q.favoritesOnly),
+    findRowIndex: (id, q, prefix, after) => call("find_row_index", id, prefix, after,
+                              q.systems || null, q.storageIds || null, q.search || null,
+                              q.order || "title", !!q.descending, !!q.favoritesOnly),
     setFavorite: (id, romUid, on) => call("set_favorite", id, romUid, !!on),
     dashboardStats: (id) => call("dashboard_stats", id),
     validateCollection: (id) => call("validate_collection", id),

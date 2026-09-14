@@ -965,3 +965,28 @@ button.sb-badge { cursor: pointer; }
 .dsb-table tbody tr { cursor: pointer; }
 .dsb-table tbody tr:hover, .dsb-table tbody tr:focus { background: var(--card2); outline: none; }
 .dsb-sys { font-weight: 650; }
+
+/* ------------------------------------------------------------ 컨텍스트 메뉴
+   게임 행과 System이 같은 메뉴를 쓴다(app.js showContextMenu). */
+.ctx-menu {
+  position: fixed; z-index: 95; min-width: 210px; max-width: 320px; padding: 5px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 12px 32px var(--shadow);
+}
+.ctx-head { padding: 6px 9px 7px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.ctx-title { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctx-sub { margin-top: 1px; font-size: var(--fs-caption); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctx-section { padding: 6px 9px 3px; font-size: var(--fs-eyebrow); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.ctx-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 9px;
+  border-radius: 5px; text-align: left; color: var(--text); font-size: var(--fs-body);
+}
+.ctx-item .ic { color: var(--muted); }
+.ctx-item:hover:not(:disabled), .ctx-item:focus { background: color-mix(in srgb, var(--accent) 14%, transparent); outline: none; }
+.ctx-item:disabled { opacity: .4; cursor: default; }
+.ctx-item.danger, .ctx-item.danger .ic { color: var(--danger); }
+.ctx-item.danger:hover:not(:disabled), .ctx-item.danger:focus { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.ctx-icon-gap { width: 12px; flex: none; }
+.ctx-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-hint { font-size: var(--fs-caption); color: var(--muted); }
+.ctx-sep { height: 1px; margin: 4px 2px; background: var(--border); }

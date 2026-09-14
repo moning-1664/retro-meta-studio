@@ -33,5 +33,7 @@ test("External Storage를 추가하면 그룹이 하나 늘어난다", async ({ 
 
 test("Storage 정보는 System 메뉴에서 볼 수 있다", async ({ page }) => {
   await page.locator(".nav-system", { hasText: "PS2" }).click({ button: "right" });
-  await expect(page.locator(".modal-body")).toContainText("E:\\ROMs");
+  // 메뉴 머리에 Storage 이름이 보이고, 실제 경로는 그 머리의 툴팁에 있다.
+  await expect(page.locator(".ctx-sub")).toContainText("External SD");
+  await expect(page.locator(".ctx-head")).toHaveAttribute("title", "E:\\ROMs");
 });

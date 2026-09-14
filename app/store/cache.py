@@ -300,7 +300,6 @@ class CacheStore:
         함께 꺼낸다 - 행마다 따로 물어보면 1,500개 목록에서 1,500번을 더 묻게 된다.
         """
         where, params = self._build_where(systems, storage_ids, search, favorites_only, "r.")
-        order_col = self.ORDERS.get(order, "r.title_norm")
         # sha256을 함께 싣는다 - Match 뱃지가 목록 경로에서 계산되는데, 해시가 빠지면
         # 뱃지와 Match 다이얼로그가 서로 다른 근거로 판정하게 된다.
         sql = (f"SELECT r.rom_uid,r.system,r.filename,r.rel_path,r.storage_id,r.size,"
@@ -310,11 +309,53 @@ class CacheStore:
                f" json_extract(m.fields_json,'$.genre') AS genre,"
                f" json_extract(m.fields_json,'$.rating') AS rating"
                f" FROM roms r LEFT JOIN metadata m ON m.rom_uid = r.rom_uid{where}"
-               f" ORDER BY {order_col} {'DESC' if descending else 'ASC'}, r.filename")
+               f" ORDER BY {self._order_sql(order, descending)}")
         if limit is not None:
             sql += " LIMIT ? OFFSET ?"
             params = [*params, int(limit), int(offset)]
         return [dict(r) for r in self._conn.execute(sql, params)]
+
+    def _order_sql(self, order, descending) -> str:
+        """목록 정렬. **query_rows / query_uids / index_of_prefix가 반드시 같이 쓴다** -
+        하나라도 다르면 Ctrl+A나 영문키 점프가 화면과 다른 줄을 고른다."""
+        column = self.ORDERS.get(order, "r.title_norm")
+        return f"{column} {'DESC' if descending else 'ASC'}, r.filename"
+
+    def query_uids(self, *, systems=None, storage_ids=None, search=None, order="title",
+                   descending=False, favorites_only=False) -> list[int]:
+        """지금 목록(필터·정렬 그대로)의 모든 rom_uid - Ctrl+A용.
+
+        목록은 가상 스크롤이라 화면에 그려진 행은 수십 개뿐이다. 그 행들만 고르면
+        "전체 선택"이 아니다.
+        """
+        where, params = self._build_where(systems, storage_ids, search, favorites_only, "r.")
+        sql = (f"SELECT r.rom_uid FROM roms r LEFT JOIN metadata m ON m.rom_uid = r.rom_uid{where}"
+               f" ORDER BY {self._order_sql(order, descending)}")
+        return [int(row[0]) for row in self._conn.execute(sql, params)]
+
+    def index_of_prefix(self, prefix, after=-1, *, systems=None, storage_ids=None, search=None,
+                        order="title", descending=False, favorites_only=False) -> int:
+        """목록에서 `after` 다음 줄부터 파일명이 `prefix`로 시작하는 첫 줄의 위치.
+
+        끝까지 없으면 처음부터 다시 찾는다(탐색기의 영문키 이동과 같다). 없으면 -1.
+        위치는 query_rows와 같은 정렬로 매긴다 - 그래서 화면의 줄 번호와 일치한다.
+        """
+        text = str(prefix or "").lower()
+        if not text:
+            return -1
+        where, params = self._build_where(systems, storage_ids, search, favorites_only, "r.")
+        numbered = (f"SELECT LOWER(r.filename) AS name,"
+                    f" ROW_NUMBER() OVER (ORDER BY {self._order_sql(order, descending)}) - 1 AS idx"
+                    f" FROM roms r LEFT JOIN metadata m ON m.rom_uid = r.rom_uid{where}")
+        # 파일명에 흔한 `_`와 `%`가 LIKE 와일드카드로 해석되지 않게 막는다.
+        needle = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        for comparison in (">", "<="):
+            row = self._conn.execute(
+                f"SELECT idx FROM ({numbered}) WHERE name LIKE ? ESCAPE '\\' AND idx {comparison} ?"
+                " ORDER BY idx LIMIT 1", [*params, needle, int(after)]).fetchone()
+            if row is not None:
+                return int(row[0])
+        return -1
 
     def count_by_system(self) -> dict[str, int]:
         """System별 **게임 수**. 좌측 네비게이션과 목록이 같은 것을 세게 하기 위한 것.

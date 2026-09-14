@@ -1032,44 +1032,26 @@
    * Navigation에서 Storage 계층을 없앴으므로(사용자가 보는 단위는 System이다) 드롭할
    * 그룹 자체가 없다. 기능은 그대로 두고 들어가는 문만 옮긴다.
    */
-  function openSystemMenu(sys, storages) {
+  /** System 우클릭 메뉴 - 게임 행 메뉴와 같은 컨텍스트 메뉴를 쓴다. */
+  function openSystemMenu(sys, storages, event) {
     const current = storages.find((s) => s.id === sys.storageId);
-    const rows = [
-      h("div", { class: "health-row" }, [h("span", {}, ["게임"]), h("span", {}, [formatCount(sys.count)])]),
-      h("div", { class: "health-row" }, [h("span", {}, ["Storage"]),
-        h("span", {}, [current ? current.label : sys.storageId])]),
-    ];
-    if (current) {
-      rows.push(h("div", { class: "health-row" }, [h("span", {}, ["경로"]), h("span", {}, [current.rootPath])]));
-    }
-
+    const items = [];
     const others = storages.filter((s) => s.id !== sys.storageId);
     if (others.length) {
-      rows.push(h("div", { class: "field-label" }, ["Storage 옮기기"]));
-      const list = h("div", { class: "picker-list" });
-      others.forEach((target) => {
-        const row = h("button", { class: "picker-row" }, [
-          icon(target.kind === "internal" ? "hardDrive" : "hardDriveDownload", 14),
-          h("div", { class: "picker-main" }, [
-            h("div", { class: "picker-name" }, [target.label]),
-            h("div", { class: "picker-sub truncate" }, [target.rootPath]),
-          ]),
-        ]);
-        row.addEventListener("click", () => {
-          closeModal();
-          moveSystemToStorage(sys.system, target.id);
-        });
-        list.appendChild(row);
-      });
-      rows.push(list);
+      items.push({ section: "Storage 옮기기" });
+      others.forEach((target) => items.push({
+        label: target.label, title: target.rootPath,
+        icon: target.kind === "internal" ? "hardDrive" : "hardDriveDownload",
+        onSelect: () => moveSystemToStorage(sys.system, target.id),
+      }));
+      items.push("separator");
     }
-
-    const bootstrap = h("button", { class: "btn" }, ["gamelist 만들기"]);
-    bootstrap.title = "이 System에 gamelist가 없으면 ROM 파일명만 담아 만듭니다.";
-    bootstrap.addEventListener("click", () => { closeModal(); openMetadataBootstrap(S.activeId, [sys.system]); });
-
-    showModal(sys.system.toUpperCase(), h("div", { class: "modal-body" }, rows),
-              [bootstrap, h("button", { class: "btn primary", onClick: closeModal }, ["닫기"])]);
+    items.push({ label: "gamelist 만들기", icon: "fileWarning",
+      title: "이 System에 gamelist가 없으면 ROM 파일명만 담아 만듭니다.",
+      onSelect: () => openMetadataBootstrap(S.activeId, [sys.system]) });
+    showContextMenu(menuPoint(event), sys.system.toUpperCase(),
+      `게임 ${formatCount(sys.count)} · ${current ? current.label : sys.storageId}`, items,
+      current ? current.rootPath : null);
   }
 
   function openStorageMenu(storage) {
@@ -1922,18 +1904,111 @@
     el.appendChild(h("div", { class: "lc lc-status" }, [statusMark(row)]));
 
     el.addEventListener("click", (e) => handleRowClick(e, row, index));
-    el.addEventListener("contextmenu", (e) => { e.preventDefault(); openRowMenu(row); });
+    el.addEventListener("contextmenu", (e) => { e.preventDefault(); openRowMenu(row, e); });
     return el;
   }
 
-  /** 게임 행 우클릭 메뉴. **지금은 Delete뿐이다** - 상시 버튼을 없앤 대신
-   * DEL 키와 여기로만 접근한다(레이아웃 재검토 결론, PENDING_DECISIONS.md).
+  // ------------------------------------------------------------------
+  // 컨텍스트 메뉴 (게임 행 / System 공용)
+  // ------------------------------------------------------------------
+  let contextMenuCleanup = null;
+  function closeContextMenu() { if (contextMenuCleanup) contextMenuCleanup(); }
+
+  /** 마우스 위치에 메뉴를 띄운다.
    *
-   * 이미 여러 개가 선택된 상태에서 그중 하나를 우클릭하면 그 선택 전체가
-   * 대상이다(탐색기와 같은 규칙). 선택되지 않은 행을 우클릭하면 그 행 하나만
-   * 새로 선택한다.
-   */
-  function openRowMenu(row) {
+   * items: `{label, icon?, hint?, title?, danger?, disabled?, onSelect}`,
+   * `{section: "제목"}`, 또는 `"separator"`. Esc·바깥 클릭·창 크기 변경으로 닫히고
+   * ↑↓로 항목을 옮겨 Enter로 고른다. */
+  function showContextMenu(point, title, subtitle, items, headTip) {
+    closeContextMenu();
+    const menu = h("div", { class: "ctx-menu", role: "menu" });
+    if (title) {
+      menu.appendChild(h("div", { class: "ctx-head", title: headTip || null }, [
+        h("div", { class: "ctx-title" }, [title]),
+        subtitle ? h("div", { class: "ctx-sub" }, [subtitle]) : null,
+      ]));
+    }
+    const buttons = [];
+    items.forEach((item) => {
+      if (item === "separator") { menu.appendChild(h("div", { class: "ctx-sep", role: "separator" })); return; }
+      if (item.section) { menu.appendChild(h("div", { class: "ctx-section" }, [item.section])); return; }
+      const btn = h("button", {
+        class: "ctx-item" + (item.danger ? " danger" : ""), role: "menuitem",
+        disabled: !!item.disabled, title: item.title || null,
+      }, [
+        item.icon ? icon(item.icon, 12) : h("span", { class: "ctx-icon-gap" }),
+        h("span", { class: "ctx-label" }, [item.label]),
+        item.hint ? h("span", { class: "ctx-hint" }, [item.hint]) : null,
+      ]);
+      btn.addEventListener("click", () => { closeContextMenu(); item.onSelect(); });
+      menu.appendChild(btn);
+      if (!item.disabled) buttons.push(btn);
+    });
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(4, Math.min(point.x, window.innerWidth - rect.width - 4))}px`;
+    menu.style.top = `${Math.max(4, Math.min(point.y, window.innerHeight - rect.height - 4))}px`;
+
+    const onDown = (e) => { if (!menu.contains(e.target)) closeContextMenu(); };
+    // 목록 단축키(↑↓, Esc)보다 먼저 받는다 - 메뉴가 떠 있는 동안에는 메뉴의 키다.
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeContextMenu(); return; }
+      if ((e.key === "ArrowDown" || e.key === "ArrowUp") && buttons.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        const i = buttons.indexOf(document.activeElement);
+        const next = e.key === "ArrowDown" ? (i + 1) % buttons.length : (i - 1 + buttons.length) % buttons.length;
+        buttons[next].focus();
+      }
+    };
+    const onLeave = () => closeContextMenu();
+    setTimeout(() => document.addEventListener("mousedown", onDown, true), 0);
+    document.addEventListener("keydown", onKey, true);
+    window.addEventListener("blur", onLeave);
+    window.addEventListener("resize", onLeave);
+    contextMenuCleanup = () => {
+      menu.remove();
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("blur", onLeave);
+      window.removeEventListener("resize", onLeave);
+      contextMenuCleanup = null;
+    };
+    if (buttons[0]) buttons[0].focus();
+  }
+
+  const menuPoint = (event) => (event
+    ? { x: event.clientX, y: event.clientY }
+    : { x: window.innerWidth / 2, y: window.innerHeight / 3 });
+
+  function rowByUid(romUid) {
+    for (const row of S.rowCache.values()) if (row && row.romUid === romUid) return row;
+    return null;
+  }
+
+  async function copyTextToClipboard(text, message) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (_) {
+      // WebView에 따라 Clipboard API가 막혀 있다 - 예전 방식으로 한 번 더 시도한다.
+      const area = h("textarea", { style: { position: "fixed", opacity: "0" } });
+      area.value = text;
+      document.body.appendChild(area);
+      area.select();
+      const copied = document.execCommand("copy");
+      area.remove();
+      if (!copied) { showToast("클립보드에 복사하지 못했습니다.", "error"); return; }
+    }
+    showToast(message || "복사했습니다.");
+  }
+
+  /** 게임 행 우클릭 메뉴.
+   *
+   * 예전엔 우클릭하자마자 삭제 확인이 떴다 - 삭제는 여러 동작 중 하나일 뿐인데
+   * 오클릭 한 번이 곧바로 삭제 확인으로 이어졌다(사용자 요청). 이제는 메뉴를 먼저
+   * 띄우고 삭제는 그 안의 한 항목이다. 선택한 여러 개 중 하나를 우클릭하면 선택
+   * 전체가 대상이다(탐색기와 같다). */
+  function openRowMenu(row, event) {
     if (!S.selected.has(row.romUid)) {
       S.selected = new Set([row.romUid]);
       S.selectAnchor = row.romUid;
@@ -1941,14 +2016,125 @@
       renderStatusBar();
     }
     const count = S.selected.size;
-    const title = count > 1 ? `${formatCount(count)}개 선택됨` : (row.title || row.file);
-    const body = h("div", { class: "modal-body" }, [
-      h("div", { class: "modal-text" }, [
-        count > 1 ? "선택한 항목을 전부 삭제합니다." : "이 게임을 삭제합니다.",
-      ]),
-    ]);
-    const del = h("button", { class: "btn danger", onClick: () => { closeModal(); deleteSelection(); } }, ["Delete"]);
-    showModal(title, body, [del, h("button", { class: "btn primary", onClick: closeModal }, ["닫기"])]);
+    const single = count === 1;
+    const locked = isCompare();
+    const files = [...S.selected].map((uid) => (rowByUid(uid) || {}).file).filter(Boolean);
+    const star = document.querySelector(`.lrow[data-rom-uid="${row.romUid}"] .fav-btn, `
+      + `.preview-card[data-rom-uid="${row.romUid}"] .fav-btn`);
+
+    showContextMenu(menuPoint(event), single ? (row.title || row.file) : `${formatCount(count)}개 선택됨`,
+      single ? row.file : null, [
+        { label: "상세 보기", icon: "info", disabled: !single, onSelect: () => {
+          openDetail(row);
+          if (!S.previewOn) showToast("미리보기가 꺼져 있습니다 - Detail 윗줄의 미리보기를 켜세요.", "warning");
+        } },
+        { label: row.favorite ? "즐겨찾기 해제" : "즐겨찾기", icon: "star",
+          disabled: !single || !star || isArchive() || locked, onSelect: () => toggleFavorite(row, star) },
+        "separator",
+        { label: "복사", icon: "copy", hint: "Ctrl+C", disabled: isArchive() || locked, onSelect: copySelectedRows },
+        { label: "붙여넣기", icon: "upload", hint: "Ctrl+V", disabled: isArchive() || locked, onSelect: pasteClipboard },
+        { label: single ? "파일명 복사" : `파일명 ${formatCount(files.length)}개 복사`, icon: "copy",
+          disabled: !files.length,
+          onSelect: () => copyTextToClipboard(files.join("\n"),
+            files.length > 1 ? `파일명 ${formatCount(files.length)}개를 복사했습니다.` : "파일명을 복사했습니다.") },
+        "separator",
+        { label: "삭제", icon: "trash", hint: "Del", danger: true, disabled: locked, onSelect: deleteSelection },
+      ]);
+  }
+
+  // ------------------------------------------------------------------
+  // 목록 키보드 동작 - **화면에 그려진 행이 아니라 목록 전체가 대상이다.**
+  // ------------------------------------------------------------------
+  // 목록은 가상 스크롤이라 그려진 행은 수십 개뿐이다. ui/stitch-v2-redesign은 그 행들만
+  // 보고 움직여서 큰 목록에서는 끝까지 가지 못했다. 위치는 가상 스크롤의 줄 번호로
+  // 다루고, 아직 받지 않은 줄은 그 페이지를 받아 온다.
+
+  async function rowAtIndex(index) {
+    if (!S.rowCache.has(index)) await ensurePages(index, index);
+    return S.rowCache.get(index) || null;
+  }
+
+  function scrollToIndex(index, romUid) {
+    if (S.viewMode === "card") {
+      const card = document.querySelector(`.preview-card[data-rom-uid="${romUid}"]`);
+      if (card) card.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    const scroll = $("list-scroll");
+    const top = index * ROW_HEIGHT;
+    if (top < scroll.scrollTop) scroll.scrollTop = top;
+    else if (top + ROW_HEIGHT > scroll.scrollTop + scroll.clientHeight) {
+      scroll.scrollTop = top + ROW_HEIGHT - scroll.clientHeight;
+    }
+  }
+
+  /** 한 줄을 골라 보여준다 - 그냥 클릭한 것과 같다. */
+  function focusRowAt(index, row) {
+    scrollToIndex(index, row.romUid);
+    S.selected = new Set([row.romUid]);
+    S.selectAnchor = row.romUid;
+    renderStatusBar();
+    openDetail(row);
+  }
+
+  /** ↑/↓ = 다음/이전 게임 선택(스크롤이 아니다). Shift를 누르면 기준점부터 범위로 넓힌다. */
+  async function moveFocus(delta, extend) {
+    if (isCompare() || !S.total) return;
+    const current = S.focused == null ? -1 : indexOfRow(S.focused);
+    const next = current < 0 ? (delta > 0 ? 0 : S.total - 1)
+      : Math.max(0, Math.min(S.total - 1, current + delta));
+    if (next === current) return;
+    const row = await rowAtIndex(next);
+    if (!row) return;
+    if (!extend) { focusRowAt(next, row); return; }
+
+    const anchorIndex = S.selectAnchor == null ? current : indexOfRow(S.selectAnchor);
+    const [lo, hi] = anchorIndex < next ? [anchorIndex, next] : [next, anchorIndex];
+    S.selected.clear();
+    for (let i = Math.max(0, lo); i <= hi; i++) {
+      const r = S.rowCache.get(i);
+      if (r) S.selected.add(r.romUid);
+    }
+    S.focused = row.romUid;
+    scrollToIndex(next, row.romUid);
+    updateSelectionVisual();
+    renderStatusBar();
+  }
+
+  /** 영문/숫자 키 = 그 글자로 시작하는 다음 파일로. 같은 키를 다시 누르면 그다음으로,
+   * 끝까지 가면 처음부터 다시 찾는다(탐색기와 같다). */
+  async function jumpToLetter(key) {
+    if (isCompare() || !S.total) return;
+    const after = S.focused == null ? -1 : indexOfRow(S.focused);
+    let index = -1;
+    if (isArchive()) {
+      // Archive 목록은 백엔드 검색이 없다 - 받아 둔 줄에서 찾는다.
+      const needle = key.toLowerCase();
+      for (let k = 1; k <= S.total; k++) {
+        const i = (after + k) % S.total;
+        const r = S.rowCache.get(i);
+        if (r && String(r.file || "").toLowerCase().startsWith(needle)) { index = i; break; }
+      }
+    } else {
+      const r = await api.findRowIndex(S.activeId, currentQuery(), key, after);
+      if (!r.ok) { showToast(r.error, "error"); return; }
+      index = r.data;
+    }
+    if (index < 0) { showToast(`'${key.toUpperCase()}'(으)로 시작하는 파일이 없습니다.`); return; }
+    const row = await rowAtIndex(index);
+    if (row) focusRowAt(index, row);
+  }
+
+  /** Ctrl+A = 지금 목록(필터·정렬 그대로) 전체 선택. */
+  async function selectAllRows() {
+    if (isCompare() || !S.total) return;
+    if (isArchive()) { showToast("Archive에서는 전체 선택을 아직 지원하지 않습니다.", "warning"); return; }
+    const r = await api.listUids(S.activeId, currentQuery());
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    S.selected = new Set(r.data);
+    updateSelectionVisual();
+    renderStatusBar();
+    showToast(`${formatCount(S.selected.size)}개를 선택했습니다.`);
   }
 
   /** rating은 0~5로 들어온다. 이전 프로젝트처럼 한 자리로만 보여준다. */
@@ -3509,6 +3695,9 @@
     }, { passive: false });
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") { if ($("modal-root").firstChild) closeModal(); else closeDetail(); }
+      // F5 = 지금 탭 다시 스캔. WebView의 페이지 새로고침은 막는다 - 그러면 열어 둔 탭과
+      // 선택이 전부 사라진다.
+      if (e.key === "F5") { e.preventDefault(); if (S.activeId) refreshActive(); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         // Compare 상세도 tab이 "metadata"라서, 이 조건만으로는 비교 화면에서 저장
@@ -3522,6 +3711,18 @@
       if (!S.activeId) return;
       // 비교 중에도 단축키를 삼키지는 않는다 - 각 동작이 blockedInCompare()로 막으면서
       // "왜 안 되는지"를 말해준다. 조용히 무시하면 사용자는 키가 안 먹었다고 여긴다.
+      if (!$("modal-root").firstChild && S.view !== "dashboard") {
+        const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+        if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "a") {
+          e.preventDefault(); selectAllRows(); return;
+        }
+        if (plain && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+          e.preventDefault(); moveFocus(e.key === "ArrowDown" ? 1 : -1, e.shiftKey); return;
+        }
+        if (plain && !e.shiftKey && e.key.length === 1 && /[\p{L}\p{N}]/u.test(e.key)) {
+          e.preventDefault(); jumpToLetter(e.key); return;
+        }
+      }
       if (e.key === "Delete") { e.preventDefault(); deleteSelection(); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") { e.preventDefault(); copySelectedRows(); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") { e.preventDefault(); pasteClipboard(); }
