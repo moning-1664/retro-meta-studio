@@ -242,6 +242,13 @@ body { font-size: var(--fs-body); }
   background: var(--icon-bg); border: 1px solid var(--border); color: var(--cheader-icon-fg);
 }
 .cheader-main { flex: 1; min-width: 0; }
+/* System 아이콘 팩(PNG) - 자리 크기는 app.js의 systemIcon(size)이 정하고 그림은 그 안에 맞춘다.
+   PNG가 없으면 같은 자리에 기존 SVG가 들어간다. */
+.sys-ic { display: inline-flex; align-items: center; justify-content: center; flex: none; overflow: hidden; }
+.sys-ic .sys-raster { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; pointer-events: none; }
+.sys-ic .system-icon-svg { width: 100%; height: 100%; }
+/* Navigator 행 높이(--nav-row-h)는 그대로 둔다 - 18px 아이콘이 행을 1px 밀어내지 않게 세로 여백을 먹인다. */
+.nav-row > .sys-ic { margin-block: -2px; }
 .cheader-name { font-size: calc(12px * var(--font-scale)); font-weight: 700; letter-spacing: -.1px; }
 .cheader-sub { font-size: calc(9px * var(--font-scale)); color: var(--muted); display: flex; gap: 6px; }
 .cheader-sub .dot { opacity: .5; }
@@ -954,6 +961,24 @@ button.sb-badge { cursor: pointer; }
   background: color-mix(in srgb, var(--accent) 6%, var(--card2));
   color: var(--muted); font-size: var(--fs-caption); line-height: 1.5;
 }
+/* Settings > Emulator - 경로 두 줄 + System별 Core 표 */
+.stg-path { display: flex; gap: 6px; align-items: center; flex: none; width: 380px; }
+.stg-path .stg-text { flex: 1; width: auto; min-width: 0; }
+.stg-path .btn { flex: none; white-space: nowrap; }
+.stg-core-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.stg-cores { display: flex; flex-direction: column; gap: 2px; }
+.stg-core-row {
+  display: grid; grid-template-columns: minmax(120px, 1fr) auto 220px; align-items: center; gap: 10px;
+  min-height: 30px; padding: 2px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel);
+}
+.stg-core-row .stg-control { min-width: 0; width: 100%; height: 26px; }
+.stg-core-system { display: flex; align-items: center; gap: 7px; font-weight: 600; }
+.stg-core-row.unverified .stg-core-system { color: var(--muted); }
+/* RetroArch Core 선택 창 */
+.core-dialog .core-now { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 10px; color: var(--muted); }
+.core-dialog .core-now b { color: var(--text); font-weight: 600; }
+.core-dialog .core-reason { color: var(--warning); margin-bottom: 8px; }
+.core-scope { display: flex; align-items: center; gap: 8px; margin-top: 8px; cursor: pointer; }
 .stg-danger {
   padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--danger) 60%, var(--border));
   border-radius: 6px; color: var(--danger); background: transparent; font-size: var(--fs-body);

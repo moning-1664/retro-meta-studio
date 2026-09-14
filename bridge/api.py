@@ -24,10 +24,11 @@ from pathlib import Path
 from adapters import get_adapter
 from app import paths
 from app.model.collection import STORAGE_INTERNAL
-from app.model.constants import MEDIA_TYPES, VIDEO_MEDIA_TYPE
+from app.model.constants import MEDIA_TYPES, VIDEO_MEDIA_TYPE, normalize_system
 from app import dashboard
 from app import media_cleanup
 from app import system_ops
+from app.launch import retroarch
 from app.model.plan import OP_STORAGE_CHANGE, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan
 from app.plan import builder, clipboard
 from app.plan.applier import apply_plan
@@ -1374,6 +1375,152 @@ class Api:
         if action_id == getattr(adapter, "CUSTOM_SYSTEMS_ACTION", None):
             return ok(adapter.write_custom_systems(collection))
         return err("아직 구현되지 않은 기능입니다.")
+
+    # ------------------------------------------------------------------
+    # RetroArch 실행 (app/launch/retroarch.py)
+    # ------------------------------------------------------------------
+    #: 설정은 앱 전역 Settings의 `emulator` 섹션에 둔다.
+    #:   retroarchPath, coresDir - Settings 화면이 바로 고친다.
+    #:   systemCores {system: core파일명}, gameCores {"system/파일명": core파일명} - 아래 메서드로만
+    #:   고친다. save_app_settings는 한 단계 깊이까지만 병합하므로, 화면이 dict 일부만 보내면
+    #:   나머지가 지워진다 - 그래서 여기서 읽고 고쳐서 통째로 쓴다.
+    def _emulator(self):
+        stored = (self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {}).get("emulator") or {}
+        return {
+            "retroarchPath": str(stored.get("retroarchPath") or ""),
+            "coresDir": str(stored.get("coresDir") or ""),
+            "systemCores": dict(stored.get("systemCores") or {}),
+            "gameCores": dict(stored.get("gameCores") or {}),
+        }
+
+    @staticmethod
+    def _game_core_key(system, filename):
+        #: 게임 단위 Core는 System+파일명으로 기억한다. rom_uid는 다시 스캔하면 바뀌고, 같은 ROM을
+        #: 다른 Collection에서 열어도 같은 Core로 실행되는 편이 자연스럽다.
+        return f"{str(system or '').lower()}/{filename}"
+
+    def _system_core(self, emulator, frontend, system):
+        cores = emulator["systemCores"]
+        key = str(system or "").lower()
+        return cores.get(key) or cores.get(str(normalize_system(frontend, key)).lower())
+
+    @guarded
+    def retroarch_settings(self):
+        emulator = self._emulator()
+        return ok({**emulator, "cores": retroarch.list_cores(emulator["coresDir"]),
+                   "unverified": sorted(retroarch.UNVERIFIED_SYSTEMS)})
+
+    @guarded
+    def set_retroarch_paths(self, retroarch_path, cores_dir):
+        self.save_app_settings({"emulator": {"retroarchPath": str(retroarch_path or "").strip(),
+                                             "coresDir": str(cores_dir or "").strip()}})
+        return self.retroarch_settings()
+
+    @guarded
+    def set_system_core(self, system, core):
+        """System 기본 Core. core가 비면 지정을 지운다. cores 폴더에 없는 파일은 거절한다."""
+        key = str(system or "").strip().lower()
+        if not key:
+            return err("System이 필요합니다.")
+        emulator = self._emulator()
+        if core:
+            if core not in retroarch.list_cores(emulator["coresDir"]):
+                return err(f"Core 폴더에 없는 파일입니다: {core}")
+            emulator["systemCores"][key] = core
+        else:
+            emulator["systemCores"].pop(key, None)
+        self.save_app_settings({"emulator": {"systemCores": emulator["systemCores"]}})
+        return ok(emulator["systemCores"])
+
+    @guarded
+    def set_game_core(self, system, filename, core):
+        """이 게임에만 쓸 Core(System 기본값보다 우선). core가 비면 지정을 지운다."""
+        if not system or not filename:
+            return err("System과 파일명이 필요합니다.")
+        emulator = self._emulator()
+        key = self._game_core_key(system, filename)
+        if core:
+            if core not in retroarch.list_cores(emulator["coresDir"]):
+                return err(f"Core 폴더에 없는 파일입니다: {core}")
+            emulator["gameCores"][key] = core
+        else:
+            emulator["gameCores"].pop(key, None)
+        self.save_app_settings({"emulator": {"gameCores": emulator["gameCores"]}})
+        return ok(emulator["gameCores"])
+
+    @guarded
+    def apply_default_cores(self, systems):
+        """아직 Core가 없는 System에 알려진 기본 Core를 채운다. 이미 정한 것은 덮어쓰지 않는다."""
+        emulator = self._emulator()
+        available = retroarch.list_cores(emulator["coresDir"])
+        if not available:
+            return err("Core 폴더가 없거나 비어 있습니다. Settings > Emulator에서 Core 폴더를 지정하세요.")
+        applied = retroarch.default_cores_for(systems or [], available, emulator["systemCores"])
+        if applied:
+            self.save_app_settings({"emulator": {"systemCores": {**emulator["systemCores"], **applied}}})
+        return ok({"applied": applied, "count": len(applied)})
+
+    def _launch_target(self, collection_id, rom_uid):
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            raise WorkspaceError("Collection을 찾을 수 없습니다.")
+        row = self.workspace.open(collection_id).get_row(int(rom_uid))
+        if row is None:
+            raise WorkspaceError("항목을 찾을 수 없습니다.")
+        return collection, row
+
+    @guarded
+    def retroarch_game_info(self, collection_id, rom_uid):
+        """Core 선택 창에 필요한 것 - 이 게임의 System 기본값/게임 지정/설치된 Core 목록."""
+        collection, row = self._launch_target(collection_id, rom_uid)
+        emulator = self._emulator()
+        system_core = self._system_core(emulator, collection.frontend, row["system"])
+        game_core = emulator["gameCores"].get(self._game_core_key(row["system"], row["filename"]))
+        return ok({
+            "system": row["system"], "file": row["filename"], "present": bool(row["present"]),
+            "verified": retroarch.is_verified(row["system"]),
+            "systemCore": system_core, "gameCore": game_core, "effectiveCore": game_core or system_core,
+            "cores": retroarch.list_cores(emulator["coresDir"]), "coresDir": emulator["coresDir"],
+        })
+
+    @guarded
+    def launch_game(self, collection_id, rom_uid):
+        """게임을 RetroArch로 실행한다. 실패하면 화면이 다음 동작을 고를 수 있게 errorKind를 준다
+        (core_unset/core_missing이면 Core 선택 창, retroarch_missing이면 Settings)."""
+        collection, row = self._launch_target(collection_id, rom_uid)
+        emulator = self._emulator()
+        if not row["present"]:
+            return {"ok": False, "error": "ROM 파일이 없는 항목입니다.", "errorKind": "rom_missing",
+                    "system": row["system"]}
+        layout = get_adapter(collection.frontend).layout(collection, row["system"])
+        rom_path = Path(layout.rom_dir) / row["filename"]
+        core = (emulator["gameCores"].get(self._game_core_key(row["system"], row["filename"]))
+                or self._system_core(emulator, collection.frontend, row["system"]))
+        result = retroarch.launch(emulator["retroarchPath"], emulator["coresDir"], core, rom_path, row["system"])
+        log.info("RETROARCH_LAUNCH system=%s rom=%s core=%s ok=%s %s", row["system"], rom_path, core,
+                 result.ok, result.error or "")
+        if result.ok:
+            return ok({"launched": True, "core": core})
+        return {"ok": False, "error": result.error, "errorKind": result.error_kind, "system": row["system"]}
+
+    @guarded
+    def pick_file(self, title="", file_types=None, directory=""):
+        """파일 하나를 고르는 대화상자(RetroArch 실행 파일 등). pywebview 버전별 인자 차이를 흡수한다."""
+        import webview
+        window = self._window or (webview.windows[0] if webview.windows else None)
+        if window is None:
+            return err("창을 찾을 수 없습니다.")
+        base = {"file_types": tuple(file_types)} if file_types else {}
+        result = None
+        for kwargs in ({**base, "directory": directory or ""}, base, {}):
+            try:
+                result = window.create_file_dialog(webview.OPEN_DIALOG, **kwargs)
+                break
+            except TypeError:
+                continue
+        if not result:
+            return ok(None)
+        return ok(result[0] if isinstance(result, (list, tuple)) else result)
 
     @guarded
     def pick_folder(self, title=""):

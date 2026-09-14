@@ -79,15 +79,15 @@ test.describe("Favorite / Play", () => {
   });
 
   test("재생 버튼이 남아 있다", async ({ page }) => {
-    // 아직 RetroArch에 연결되지 않았지만 자리는 지킨다.
+    // RetroArch 실행 버튼. 실행 흐름 자체는 retroarch.spec.js가 본다.
     await openFirstGame(page);
-    await expect(page.locator("#detail-panel .icon-btn[title*='실행']")).toBeVisible();
+    await expect(page.locator("#detail-panel .detail-launch")).toBeVisible();
   });
 
-  test("재생을 누르면 아직이라고 말한다", async ({ page }) => {
+  test("실행 검증 안 된 System(PS2)은 재생 버튼이 꺼져 있고 이유를 알려준다", async ({ page }) => {
     await openFirstGame(page);
-    await page.locator("#detail-panel .icon-btn[title*='실행']").click();
-    await expect(page.locator("#toast")).toContainText("RetroArch");
+    await expect(page.locator("#detail-panel .detail-launch")).toBeDisabled();
+    await expect(page.locator("#detail-panel .detail-launch")).toHaveAttribute("title", /RetroArch/);
   });
 });
 

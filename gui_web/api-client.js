@@ -32,6 +32,14 @@
       storageId: "internal", hasMetadata: false, hasMedia: false, present: true,
       desc: "", region: "", rating: "", genre: "", favorite: false },
   ];
+  //: RetroArch 설정(목업). 실제 값은 registry의 Settings > emulator에 있다.
+  const mockRetroarch = { retroarchPath: "", coresDir: "", systemCores: {}, gameCores: {} };
+  const MOCK_CORES = ["fbneo_libretro.dll", "mgba_libretro.dll", "pcsx2_libretro.dll", "snes9x_libretro.dll"];
+  const MOCK_UNVERIFIED = ["3ds", "gc", "n3ds", "nds", "ps2", "wii"];
+  const mockRetroarchView = () => ({
+    ...mockRetroarch, systemCores: { ...mockRetroarch.systemCores }, gameCores: { ...mockRetroarch.gameCores },
+    cores: mockRetroarch.coresDir ? MOCK_CORES.slice() : [], unverified: MOCK_UNVERIFIED.slice(),
+  });
   const mockDetail = {
     id: "c1", name: "Master Library", frontend: "es-de", frontendLabel: "ES-DE",
     target: "windows", arch: "x64", rootPath: "D:\\ES-DE", systemCount: 2, totalGames: 3,
@@ -204,6 +212,47 @@
     }),
     cancel_job: () => ok(true),
     pick_folder: () => ok("D:\\ES-DE"),
+    pick_file: () => ok("C:\\RetroArch\\retroarch.exe"),
+    retroarch_settings: () => ok(mockRetroarchView()),
+    set_retroarch_paths: (path, cores) => {
+      mockRetroarch.retroarchPath = path || ""; mockRetroarch.coresDir = cores || "";
+      return ok(mockRetroarchView());
+    },
+    set_system_core: (system, core) => {
+      if (core) mockRetroarch.systemCores[system] = core; else delete mockRetroarch.systemCores[system];
+      return ok({ ...mockRetroarch.systemCores });
+    },
+    set_game_core: (system, file, core) => {
+      const key = `${system}/${file}`;
+      if (core) mockRetroarch.gameCores[key] = core; else delete mockRetroarch.gameCores[key];
+      return ok({ ...mockRetroarch.gameCores });
+    },
+    apply_default_cores: (systems) => {
+      const known = { snes: "snes9x_libretro.dll", gba: "mgba_libretro.dll", ps2: "pcsx2_libretro.dll" };
+      const applied = {};
+      (systems || []).forEach((s) => {
+        if (known[s] && !mockRetroarch.systemCores[s]) { mockRetroarch.systemCores[s] = known[s]; applied[s] = known[s]; }
+      });
+      return ok({ applied, count: Object.keys(applied).length });
+    },
+    retroarch_game_info: (id, uid) => {
+      const row = mockRows.find((r) => r.romUid === uid) || mockRows[0];
+      const systemCore = mockRetroarch.systemCores[row.system] || null;
+      const gameCore = mockRetroarch.gameCores[`${row.system}/${row.file}`] || null;
+      return ok({ system: row.system, file: row.file, present: row.present,
+        verified: !MOCK_UNVERIFIED.includes(row.system), systemCore, gameCore,
+        effectiveCore: gameCore || systemCore, cores: mockRetroarchView().cores, coresDir: mockRetroarch.coresDir });
+    },
+    launch_game: (id, uid) => {
+      const row = mockRows.find((r) => r.romUid === uid) || mockRows[0];
+      const fail = (error, errorKind) => Promise.resolve({ ok: false, error, errorKind, system: row.system });
+      if (!row.present) return fail("ROM 파일이 없는 항목입니다.", "rom_missing");
+      if (MOCK_UNVERIFIED.includes(row.system)) return fail(`'${row.system}' 시스템은 RetroArch 실행이 아직 검증되지 않았습니다.`, "system_unverified");
+      if (!mockRetroarch.retroarchPath) return fail("RetroArch 실행 파일을 찾을 수 없습니다: (미설정)", "retroarch_missing");
+      const core = mockRetroarch.gameCores[`${row.system}/${row.file}`] || mockRetroarch.systemCores[row.system];
+      if (!core) return fail(`'${row.system}' 시스템에 RetroArch Core가 정해지지 않았습니다.`, "core_unset");
+      return ok({ launched: true, core });
+    },
     window_control: () => ok(true),
     window_resize: () => ok(true),
 
@@ -573,6 +622,14 @@
     adapterActions: (id) => call("adapter_actions", id),
     runAdapterAction: (id, actionId) => call("run_adapter_action", id, actionId),
     pickFolder: (title) => call("pick_folder", title || ""),
+    pickFile: (title, fileTypes, directory) => call("pick_file", title || "", fileTypes || null, directory || ""),
+    retroarchSettings: () => call("retroarch_settings"),
+    setRetroarchPaths: (path, cores) => call("set_retroarch_paths", path, cores),
+    setSystemCore: (system, core) => call("set_system_core", system, core || null),
+    setGameCore: (system, file, core) => call("set_game_core", system, file, core || null),
+    applyDefaultCores: (systems) => call("apply_default_cores", systems),
+    retroarchGameInfo: (id, romUid) => call("retroarch_game_info", id, romUid),
+    launchGame: (id, romUid) => call("launch_game", id, romUid),
     windowControl: (action) => call("window_control", action),
     windowSetBounds: (x, y, width, height) => call("window_set_bounds", x, y, width, height),
     windowResize: (width, height) => call("window_resize", width, height),

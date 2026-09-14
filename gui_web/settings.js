@@ -211,8 +211,8 @@
         add(row("transfer.backup", "Backup before overwrite", soonToggle(false), null, true));
       } else if (key === "emulator") {
         add(...section("Emulator", "외부 에뮬레이터 실행에 필요한 설정입니다."));
-        add(row("emulator.retroarchPath", "RetroArch executable", textInput("예: C:\\RetroArch\\retroarch.exe"), null, true));
-        add(row("emulator.corePolicy", "Core selection", soonSelect([["system", "System별 Core"], ["manual", "실행 시 선택"]]), null, true));
+        add(ctx.renderEmulator ? ctx.renderEmulator()
+          : h("div", { class: "stg-info" }, ["RetroArch 설정은 준비 중입니다."]));
       } else if (key === "appearance") {
         const a = s.appearance;
         add(...section("Appearance", "Stitch 기본 디자인과 콘솔 세대별 색상 테마를 선택합니다."));

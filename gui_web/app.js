@@ -148,12 +148,43 @@
   const $ = (id) => document.getElementById(id);
   const icon = (name, size) => h("span", { class: "ic", html: window.RMIcons.svg(name, size || 13) });
 
+  /** System 아이콘. **아이콘 팩 PNG(파일명 기반) → 기존 SVG → 범용 아이콘** 순서다.
+   *
+   * PNG는 `system-icons-50/<system>.png`를 이름 후보 순서대로 시도한다
+   * (system-icons-pack.js). 없는 파일은 한 번만 확인하고 결과를 기억해 둔다 -
+   * Navigator는 자주 다시 그려지므로 매번 없는 파일을 요청하면 깜빡이고 낭비다. */
+  const systemIconFile = new Map();   // "base|key" -> 찾은 파일명 | null(없음)
   function systemIcon(name, size) {
+    const px = size || 14;
     const key = String(name || "").toLowerCase();
-    if (window.RMSystemIcons && window.RMSystemIcons.has(key)) {
-      return h("span", { class: "sys-ic", html: window.RMSystemIcons.svg(key, size || 14) });
-    }
-    return icon("cartridge", size || 13);
+    const holder = h("span", { class: "sys-ic", style: { width: `${px}px`, height: `${px}px` } });
+    const fallback = () => {
+      clear(holder);
+      if (window.RMSystemIcons && window.RMSystemIcons.has(key)) {
+        holder.innerHTML = window.RMSystemIcons.svg(key, px);
+      } else {
+        holder.appendChild(icon("cartridge", Math.max(10, px - 1)));
+      }
+    };
+    const pack = window.RMSystemIconPack;
+    const candidates = pack ? pack.candidates(key) : [];
+    const memoKey = `${pack ? pack.base : ""}|${key}`;
+    const known = systemIconFile.get(memoKey);
+    if (!candidates.length || known === null) { fallback(); return holder; }
+
+    const img = h("img", { class: "sys-raster", alt: "", draggable: "false" });
+    let index = known ? candidates.indexOf(known) : 0;
+    if (index < 0) index = 0;
+    img.addEventListener("load", () => systemIconFile.set(memoKey, candidates[index]));
+    img.addEventListener("error", () => {
+      index += 1;
+      if (index < candidates.length) { img.src = pack.src(candidates[index]); return; }
+      systemIconFile.set(memoKey, null);
+      fallback();
+    });
+    img.src = pack.src(candidates[index]);
+    holder.appendChild(img);
+    return holder;
   }
 
   function formatBytes(n) {
@@ -385,6 +416,7 @@
       update: updateSettings,
       reset: () => updateSettings("appearance", { ...DEFAULT_SETTINGS.appearance }),
       renderColumns: columnSettingsEditor,
+      renderEmulator: emulatorSettingsEditor,
     });
   }
 
@@ -1002,7 +1034,7 @@
           scope.kind === "system" && scope.id === sys.system,
           () => setScope({ kind: "system", id: sys.system }));
         row.classList.add("nav-system");
-        row.insertBefore(systemIcon(sys.system, 14), row.firstChild);
+        row.insertBefore(systemIcon(sys.system, 18), row.firstChild);
         scroll.appendChild(row);
       });
       nav.appendChild(navDashboardRow());
@@ -1054,7 +1086,7 @@
         scope.kind === "system" && scope.id === sys.system,
         () => setScope({ kind: "system", id: sys.system }));
       row.classList.add("nav-system");
-      row.insertBefore(systemIcon(sys.system, 14), row.firstChild);
+      row.insertBefore(systemIcon(sys.system, 18), row.firstChild);
       if (!sys.count) row.classList.add("empty");
       const storage = storageById[sys.storageId];
       const pendingTo = pendingMoves[sys.system];
@@ -1444,6 +1476,193 @@
     ]);
   }
 
+
+  // ------------------------------------------------------------------
+  // RetroArch 실행 (bridge: launch_game / retroarch_game_info / set_system_core / set_game_core)
+  // ------------------------------------------------------------------
+  //: 실행이 검증되지 않은 System(백엔드 app/launch/retroarch.py의 목록). 버튼을 미리 비활성으로
+  //: 보여주는 용도일 뿐이다 - 실행 시점에 백엔드가 다시 막는다.
+  let retroarchUnverified = new Set();
+  async function loadRetroarchState() {
+    const r = await api.retroarchSettings();
+    if (r.ok) retroarchUnverified = new Set((r.data.unverified || []).map((s) => String(s).toLowerCase()));
+  }
+  const retroarchVerified = (system) => !retroarchUnverified.has(String(system || "").toLowerCase());
+
+  /** 이 행을 RetroArch로 실행할 수 있는 상태인지. 안 되면 사유 문자열, 되면 null. */
+  function launchBlockReason(target) {
+    if (isArchive()) return "Archive 항목은 실행할 수 없습니다.";
+    if (isCompare()) return "Compare 중에는 실행할 수 없습니다.";
+    if (!target || !target.present) return "ROM 파일이 없습니다.";
+    if (!retroarchVerified(target.system)) return `'${target.system}' 시스템은 RetroArch 실행이 아직 검증되지 않았습니다.`;
+    return null;
+  }
+
+  /** 실행. Core가 없거나 파일이 사라졌으면 그 자리에서 Core 선택 창을 띄우고 이어서 실행한다. */
+  async function launchGame(target) {
+    const blocked = launchBlockReason(target);
+    if (blocked) { showToast(blocked, "warning"); return; }
+    const r = await api.launchGame(S.activeId, target.romUid);
+    // ok는 "바로 죽지 않았다"는 뜻일 뿐이다 - 게임 화면까지 떴다고 단정하지 않는다.
+    if (r.ok) { showToast("RetroArch 실행을 요청했습니다."); return; }
+    if (r.errorKind === "core_unset" || r.errorKind === "core_missing") {
+      openCoreDialog(target, { reason: r.error, relaunch: true });
+      return;
+    }
+    if (r.errorKind === "retroarch_missing") {
+      showToast(`${r.error} - Settings > Emulator에서 RetroArch 경로를 지정하세요.`, "error");
+      openSettings("emulator");
+      return;
+    }
+    showToast(r.error, "error");
+  }
+
+  /** Core 선택 - System 기본값으로 저장하거나 이 게임에만 지정한다. */
+  async function openCoreDialog(target, opts = {}) {
+    const collectionId = S.activeId;
+    const info = await api.retroarchGameInfo(collectionId, target.romUid);
+    if (!info.ok) { showToast(info.error, "error"); return; }
+    const d = info.data;
+    if (!d.cores.length) {
+      showToast("Core 폴더가 없거나 비어 있습니다 - Settings > Emulator에서 Core 폴더를 지정하세요.", "warning");
+      openSettings("emulator");
+      return;
+    }
+    const system = String(d.system).toUpperCase();
+    const select = h("select", { class: "field-input core-select" }, [
+      h("option", { value: "" }, ["Core를 고르세요"]),
+      ...d.cores.map((core) => h("option", { value: core }, [`${coreLabel(core)}  (${core})`])),
+    ]);
+    select.value = d.gameCore || d.systemCore || "";
+    const scopeName = `core-scope-${Date.now()}`;
+    const sysRadio = h("input", { type: "radio", name: scopeName, class: "core-scope-system" });
+    const gameRadio = h("input", { type: "radio", name: scopeName, class: "core-scope-game" });
+    // 게임에 이미 따로 지정돼 있으면 그 지정을 고치는 것이 자연스럽다.
+    if (d.gameCore) gameRadio.checked = true; else sysRadio.checked = true;
+
+    const body = h("div", { class: "modal-body core-dialog" }, [
+      opts.reason ? h("div", { class: "modal-text core-reason" }, [opts.reason]) : null,
+      h("div", { class: "core-now" }, [
+        h("div", {}, [`${system} 기본값: `, h("b", {}, [d.systemCore ? coreLabel(d.systemCore) : "없음"])]),
+        h("div", {}, ["이 게임 지정: ", h("b", {}, [d.gameCore ? coreLabel(d.gameCore) : "없음 (System 기본값 사용)"])]),
+      ]),
+      h("div", { class: "field-label" }, ["Core"]), select,
+      h("label", { class: "core-scope" }, [sysRadio, h("span", {}, [`${system} 전체의 기본값으로 저장`])]),
+      h("label", { class: "core-scope" }, [gameRadio, h("span", {}, [`이 게임에만 지정 (${d.file})`])]),
+    ]);
+    const save = h("button", { class: "btn primary core-save" }, [opts.relaunch ? "저장 후 실행" : "저장"]);
+    save.addEventListener("click", async () => {
+      if (!select.value) { showToast("Core를 고르세요.", "warning"); return; }
+      const r = gameRadio.checked
+        ? await api.setGameCore(d.system, d.file, select.value)
+        : await api.setSystemCore(d.system, select.value);
+      if (!r.ok) { showToast(r.error, "error"); return; }
+      closeModal();
+      if (opts.relaunch && collectionId === S.activeId) launchGame(target);
+      else showToast(gameRadio.checked ? "이 게임의 Core를 지정했습니다." : `${system} 기본 Core를 저장했습니다.`);
+    });
+    const actions = [h("button", { class: "btn", onClick: closeModal }, ["취소"])];
+    if (d.gameCore) {
+      actions.push(h("button", { class: "btn core-clear", onClick: async () => {
+        const r = await api.setGameCore(d.system, d.file, null);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        closeModal();
+        showToast("이 게임의 Core 지정을 지웠습니다 - System 기본값으로 실행됩니다.");
+      } }, ["게임 지정 해제"]));
+    }
+    actions.push(save);
+    showModal(`RetroArch Core - ${d.file}`, body, actions);
+  }
+
+  const coreLabel = (file) => String(file || "").replace(/\.(dll|so|dylib)$/i, "").replace(/_libretro$/, "");
+
+  /** Settings > Emulator. 경로 두 개와 System별 기본 Core. */
+  function emulatorSettingsEditor() {
+    const wrap = h("div", { class: "stg-emulator" });
+    const systemsInUse = () => {
+      const set = new Set();
+      Object.values(S.detail || {}).forEach((d) => (d && d.systems || []).forEach((s) => set.add(String(s.system).toLowerCase())));
+      return set;
+    };
+    const draw = async () => {
+      const r = await api.retroarchSettings();
+      clear(wrap);
+      if (!r.ok) { wrap.appendChild(h("div", { class: "stg-info" }, [r.error])); return; }
+      const s = r.data;
+      retroarchUnverified = new Set((s.unverified || []).map((x) => String(x).toLowerCase()));
+
+      const exeInput = h("input", { class: "stg-control stg-text", value: s.retroarchPath, placeholder: "예: C:\\RetroArch\\retroarch.exe" });
+      const coresInput = h("input", { class: "stg-control stg-text", value: s.coresDir, placeholder: "예: C:\\RetroArch\\cores" });
+      const saveBoth = async () => {
+        const saved = await api.setRetroarchPaths(exeInput.value.trim(), coresInput.value.trim());
+        if (!saved.ok) { showToast(saved.error, "error"); return; }
+        draw();
+      };
+      exeInput.addEventListener("change", saveBoth);
+      coresInput.addEventListener("change", saveBoth);
+      const browseExe = h("button", { class: "btn compact", onClick: async () => {
+        const p = await api.pickFile("RetroArch 실행 파일", ["실행 파일 (*.exe)", "모든 파일 (*.*)"], "");
+        if (p.ok && p.data) {
+          exeInput.value = p.data;
+          // 포터블 설치는 실행 파일 옆에 cores 폴더가 있다 - 비어 있으면 그걸로 채운다.
+          if (!coresInput.value.trim()) coresInput.value = p.data.replace(/[\\/][^\\/]+$/, "") + "\\cores";
+          saveBoth();
+        }
+      } }, ["찾아보기"]);
+      const browseCores = h("button", { class: "btn compact", onClick: async () => {
+        const p = await api.pickFolder("RetroArch Core 폴더");
+        if (p.ok && p.data) { coresInput.value = p.data; saveBoth(); }
+      } }, ["찾아보기"]);
+      const pathRow = (key, label, input, button, help) => h("div", { class: "stg-row", "data-key": key }, [
+        h("div", { class: "stg-label" }, [h("div", { class: "stg-name" }, [label]), h("div", { class: "stg-help" }, [help])]),
+        h("div", { class: "stg-path" }, [input, button]),
+      ]);
+      wrap.appendChild(pathRow("emulator.retroarchPath", "RetroArch 실행 파일", exeInput, browseExe,
+        "게임 행을 더블클릭하거나 Detail의 ▶ 버튼으로 실행합니다."));
+      wrap.appendChild(pathRow("emulator.coresDir", "Core 폴더", coresInput, browseCores,
+        "Core는 이 폴더 기준 파일명으로 기억합니다 - RetroArch를 옮겨도 폴더만 다시 지정하면 됩니다."));
+
+      const systems = [...new Set([...systemsInUse(), ...Object.keys(s.systemCores)])].sort();
+      const fill = h("button", { class: "btn compact stg-core-fill", disabled: !s.cores.length, onClick: async () => {
+        const applied = await api.applyDefaultCores(systems);
+        if (!applied.ok) { showToast(applied.error, "error"); return; }
+        showToast(applied.data.count ? `기본 Core ${formatCount(applied.data.count)}개를 채웠습니다.` : "새로 채울 System이 없습니다.");
+        draw();
+      } }, ["기본 Core 자동 채우기"]);
+      wrap.appendChild(h("div", { class: "stg-subsection-title stg-core-head" }, [h("span", {}, ["System별 기본 Core"]), fill]));
+      if (!s.cores.length) {
+        wrap.appendChild(h("div", { class: "stg-info" }, ["Core 폴더를 지정하면 설치된 Core 목록에서 고를 수 있습니다."]));
+      }
+      if (!systems.length) {
+        wrap.appendChild(h("div", { class: "stg-info" }, ["열린 Collection이 없습니다."]));
+        return;
+      }
+      const table = h("div", { class: "stg-cores" });
+      systems.forEach((system) => {
+        const current = s.systemCores[system] || "";
+        const select = h("select", { class: "stg-control", disabled: !s.cores.length });
+        select.appendChild(h("option", { value: "" }, ["지정 안 함"]));
+        if (current && !s.cores.includes(current)) select.appendChild(h("option", { value: current }, [`${coreLabel(current)} (폴더에 없음)`]));
+        s.cores.forEach((core) => select.appendChild(h("option", { value: core }, [coreLabel(core)])));
+        select.value = current;
+        select.addEventListener("change", async () => {
+          const saved = await api.setSystemCore(system, select.value || null);
+          if (!saved.ok) { showToast(saved.error, "error"); select.value = current; }
+        });
+        const unverified = retroarchUnverified.has(system);
+        table.appendChild(h("div", { class: "stg-core-row" + (unverified ? " unverified" : ""), "data-system": system }, [
+          h("span", { class: "stg-core-system" }, [systemIcon(system, 14), system.toUpperCase()]),
+          unverified ? h("span", { class: "stg-soon", title: "BIOS/Core 궁합 때문에 실행 버튼을 막아 둔 System입니다." }, ["실행 검증 안 됨"]) : h("span"),
+          select,
+        ]));
+      });
+      wrap.appendChild(table);
+    };
+    wrap.appendChild(h("div", { class: "stg-info" }, ["불러오는 중…"]));
+    draw();
+    return wrap;
+  }
+
   function openStorageMenu(storage) {
     const stats = h("div", { class: "modal-body" }, [
       h("div", { class: "health-row" }, [h("span", {}, ["경로"]), h("span", {}, [storage.rootPath])]),
@@ -1486,7 +1705,7 @@
 
     const compact = h("div", { class: "cheader" });
     compact.appendChild(h("div", { class: "cheader-icon" }, [
-      systemEntry ? systemIcon(systemEntry.system, 20) : icon("gamepad", 20),
+      systemEntry ? systemIcon(systemEntry.system, 26) : icon("gamepad", 20),
     ]));
 
     const main = h("div", { class: "cheader-main" });
@@ -2232,6 +2451,7 @@
     card.appendChild(h("div", { class: "preview-title truncate", title: row.title || row.file },
                        [row.title || row.file]));
     card.addEventListener("click", (e) => handleRowClick(e, row, index));
+    card.addEventListener("dblclick", (e) => { if (!e.target.closest("button")) launchGame(row); });
     return card;
   }
 
@@ -2372,6 +2592,7 @@
     visibleColumns().forEach((col) => el.appendChild(cells[col.id]));
 
     el.addEventListener("click", (e) => handleRowClick(e, row, index));
+    el.addEventListener("dblclick", (e) => { if (!e.target.closest("button")) launchGame(row); });
     el.addEventListener("contextmenu", (e) => { e.preventDefault(); openRowMenu(row, e); });
     return el;
   }
@@ -2498,6 +2719,11 @@
         } },
         { label: row.favorite ? "즐겨찾기 해제" : "즐겨찾기", icon: "star",
           disabled: !single || !star || isArchive() || locked, onSelect: () => toggleFavorite(row, star) },
+        { label: "RetroArch로 실행", icon: "play", hint: "더블클릭",
+          disabled: !single || !!launchBlockReason(row), title: single ? launchBlockReason(row) : null,
+          onSelect: () => launchGame(row) },
+        { label: "RetroArch Core 선택", icon: "settings", disabled: !single || !!launchBlockReason(row),
+          onSelect: () => openCoreDialog(row) },
         "separator",
         { label: "복사", icon: "copy", hint: "Ctrl+C", disabled: isArchive() || locked, onSelect: copySelectedRows },
         { label: "붙여넣기", icon: "upload", hint: "Ctrl+V", disabled: isArchive() || locked, onSelect: pasteClipboard },
@@ -3229,15 +3455,19 @@
       //
       // 실행은 아직 연결되지 않았다. **버튼을 없애는 대신 못 한다고 말한다** -
       // 사라진 기능은 언제 돌아오는지 알 수 없지만, 눌러서 안내를 받으면 안다.
+      const target = { romUid: state.romUid, system: state.system, file: state.file, present: state.present };
+      const blocked = launchBlockReason(target);
       const play = h("button", {
-        class: "icon-btn", title: state.present ? "실행 (RetroArch 연동 예정)" : "ROM 파일이 없습니다",
-        disabled: !state.present,
+        class: "icon-btn detail-launch", title: blocked || "RetroArch로 실행 (행 더블클릭도 됩니다)",
+        disabled: !!blocked,
       }, [icon("play", 14)]);
-      if (state.present) {
-        play.addEventListener("click", () => showToast(
-          "RetroArch 연동은 다음 버전에서 들어옵니다.", "warning"));
-      }
+      play.addEventListener("click", () => launchGame(target));
       header.appendChild(play);
+      const coreBtn = h("button", {
+        class: "icon-btn detail-core", title: blocked || "RetroArch Core 선택", disabled: !!blocked,
+      }, [icon("settings", 13)]);
+      coreBtn.addEventListener("click", () => openCoreDialog(target));
+      header.appendChild(coreBtn);
 
       const star = h("button", {
         class: "icon-btn fav-btn" + (state.favorite ? " on" : ""),
@@ -4259,6 +4489,7 @@
   async function init() {
     bindEvents();
     await loadAppSettings();
+    await loadRetroarchState();
     await loadCollections();
     renderAll();
     // Collection이 하나도 없어도 선택을 강요하지 않는다 - 빈 메인 화면을 정상적으로
