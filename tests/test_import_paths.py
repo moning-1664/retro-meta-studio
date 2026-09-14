@@ -219,6 +219,36 @@ class StorageMoveWithSeparateRomPathTests(unittest.TestCase):
         self.assertEqual(ps2.storage_id, self.storage_id)
         self.assertIsNone(ps2.rom_path)
 
+    def test_progress_advances_while_the_files_are_moving(self):
+        """진행률이 파일을 옮기는 동안 실제로 움직여야 한다.
+
+        예전에는 System 하나가 통째로 한 걸음이라, ROM을 수십 개 옮기는 내내
+        진행률이 멈춰 있다가 끝나는 순간 100%가 됐다(실사용 피드백). 픽스처의
+        파일은 작아서 원래는 나누지 않으므로(MOVE_SPLIT_MIN_BYTES) 나누는 경로를
+        강제로 태운다.
+        """
+        from app.plan import applier
+
+        self.api.plan_storage_change(self.cid, "ps2", self.storage_id)
+        plan = self.api._plan(self.cid)
+        collection, cache, provider = self.api._plan_context(self.cid)
+
+        seen = []
+        original = applier.MOVE_SPLIT_MIN_BYTES
+        applier.MOVE_SPLIT_MIN_BYTES = 0
+        try:
+            applier.apply_plan(plan, collection, cache, self.api.registry, provider,
+                               progress_cb=lambda done, total, label: seen.append((done, total)))
+        finally:
+            applier.MOVE_SPLIT_MIN_BYTES = original
+
+        # ps2에는 ROM이 둘이므로 이동 중에 두 번, 정리까지 최소 세 번은 보고된다.
+        self.assertGreaterEqual(len(seen), 3, seen)
+        # 중간에 멈춘 채로 끝나면 안 된다 - 마지막에는 반드시 끝까지 찬다.
+        self.assertEqual(seen[-1][0], seen[-1][1], seen)
+        # 걸음은 뒤로 가지 않는다.
+        self.assertEqual([d for d, _ in seen], sorted(d for d, _ in seen), seen)
+
     def test_a_second_move_back_to_internal_also_works(self):
         """옛 rom_path가 안 지워지는 버그였다면 이 왕복에서 다시 실패했을 것이다."""
         self.api.plan_storage_change(self.cid, "ps2", self.storage_id)

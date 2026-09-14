@@ -57,15 +57,21 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
     deletes = [e for e in runnable if e.op == OP_DELETE]
     moves = [e for e in runnable if e.op == OP_STORAGE_CHANGE]
 
+    # Storage 이동은 **옮길 ROM 수만큼** 걸음을 잡는다(§ MOVE_PROGRESS_STEPS). System
+    # 하나를 한 걸음으로 두면 수십 GB를 옮기는 내내 진행률이 멈춰 있다.
+    move_units = {entry.key: max(1, sum(1 for row in cache.query_rows(systems=[entry.system])
+                                        if row["present"]))
+                  for entry in moves}
+
     # 진행률에 마지막 정리 단계 몫을 하나 더 얹는다. 파일 작업이 끝나기 전에 진행률이
     # 100%에 도달하지 않도록.
-    total = len(adds) + len(deletes) + len(moves) + 1
+    total = len(adds) + len(deletes) + sum(move_units.values()) + 1
     done = 0
     errors = []
 
-    def step(label):
+    def step(label, amount=1):
         nonlocal done
-        done += 1
+        done += amount
         if progress_cb:
             progress_cb(done, total, label)
 
@@ -78,8 +84,12 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
         _apply_delete(entry, collection, adapter, cache, provider, errors)
         step(entry.filename)
     for entry in moves:
-        _apply_storage_change(entry, collection, adapter, cache, registry, provider, errors)
-        step(entry.system)
+        reported = _apply_storage_change(entry, collection, adapter, cache, registry,
+                                         provider, errors, step)
+        # 이동이 도중에 멈췄어도 이 항목 몫은 끝까지 채운다 - 안 채우면 작업이 다
+        # 끝났는데도 진행률이 중간에 걸린 채로 사라진다.
+        if reported < move_units[entry.key]:
+            step(entry.system, move_units[entry.key] - reported)
 
     _write_media_links(adds, collection, adapter, media_links, errors)
     # 백업은 **여기서** 정리한다. 복사가 끝난 시점이 아니라 그 항목의 작업 전체가
@@ -478,7 +488,34 @@ def _stat_size(path) -> int:
         return 0
 
 
-def _apply_storage_change(entry, collection, adapter, cache, registry, provider, errors):
+#: Storage 이동을 몇 걸음으로 나눠 보여줄지. COPY_BATCH와 같은 이유(진행률이 멈춰
+#: 보이면 앱이 죽은 것으로 읽힌다)지만, 이동은 **System 하나를 통째로 한 걸음**으로
+#: 두고 있었다 - ROM 수십 개를 옮기는 내내 진행률이 멈춰 있다가 끝나는 순간 100%가
+#: 됐다(실사용 피드백: "한참 멈춰 있다가 갑자기 완료된다"). 파일 수와 무관하게 대략
+#: 이만큼의 걸음으로 나눈다.
+MOVE_PROGRESS_STEPS = 20
+
+#: 이보다 작으면 나누지 않는다. 어차피 금방 끝나는데 나누면 robocopy 프로세스를
+#: 띄우는 비용만 걸음 수만큼 늘어난다.
+MOVE_SPLIT_MIN_BYTES = 64 * 1024 * 1024
+
+
+def _move_chunks(pairs, sizes):
+    """이동을 진행률이 움직일 만큼 나눈다.
+
+    한 번에 다 넘기면 robocopy가 끝날 때까지 아무 소식이 없고, 파일마다 끊으면
+    프로세스를 띄우는 비용이 파일 수만큼 붙는다. 그래서 **전체를 스무 걸음쯤**으로
+    나눈다 - 파일이 적으면 한 걸음이 한두 개, 수천 개면 한 걸음이 수백 개다.
+    """
+    if sum(sizes) <= MOVE_SPLIT_MIN_BYTES:
+        yield list(pairs)
+        return
+    size = max(1, -(-len(pairs) // MOVE_PROGRESS_STEPS))
+    for start in range(0, len(pairs), size):
+        yield list(pairs[start:start + size])
+
+
+def _apply_storage_change(entry, collection, adapter, cache, registry, provider, errors, step):
     """System의 ROM 파일을 새 Storage로 옮기고 배치 정보를 갱신한다.
 
     media는 Collection root에 남으므로 건드리지 않는다.
@@ -486,6 +523,9 @@ def _apply_storage_change(entry, collection, adapter, cache, registry, provider,
     **이동과 Registry 갱신은 하나의 논리적 트랜잭션이다.** 둘 중 하나만 성공하면
     "파일은 External인데 Registry는 Internal"처럼 앱이 ROM을 찾지 못하는 상태가
     된다. 그래서 어느 단계가 실패하든 이미 옮긴 파일을 되돌린다.
+
+    옮긴 파일 수만큼 `step(label, amount)`로 진행률을 올리고, 그렇게 이미 보고한
+    걸음 수를 돌려준다 - 호출부가 남은 몫을 채워 진행률이 항상 끝까지 차게 한다.
     """
     old_layout = adapter.layout(collection, entry.system)
 
@@ -493,7 +533,7 @@ def _apply_storage_change(entry, collection, adapter, cache, registry, provider,
     if system_entry is None:
         entry.status, entry.error = STATUS_FAILED, "System을 찾을 수 없습니다."
         errors.append(f"{entry.system}: System을 찾을 수 없습니다.")
-        return
+        return 0
 
     # 옮긴 뒤의 배치를 가정한 layout이 필요하다. Registry를 먼저 바꾸면 실패 시
     # 되돌리기가 번거로우므로 메모리 상의 Collection만 잠시 바꿔서 계산한다.
@@ -528,20 +568,29 @@ def _apply_storage_change(entry, collection, adapter, cache, registry, provider,
         entry.error = (f"대상 Storage에 같은 이름의 파일이 {len(collisions)}개 있습니다: "
                        f"{collisions[0].name} 등")
         errors.append(f"{entry.system}: {entry.error}")
-        return
+        return 0
 
-    moved = []
+    moved, reported = [], 0
     if pairs:
-        # 기본 timeout(300초)은 같은 볼륨 안의 rename을 가정한 값이다. Storage
-        # 이동은 흔히 **다른 볼륨**(외장 SD/USB)으로 실제 바이트를 복사하므로,
-        # ROM 몇 개만 커도(PS2/PS3 이미지는 GB 단위) 5분을 넘기기 쉽다 - 그러면
-        # robocopy가 강제 종료되어 파일이 다 안 옮겨진 채 "이동 실패"만 반복해서
-        # 쌓였다(실사용 피드백). 옮길 총 용량에 비례해 넉넉히 늘린다 - 못해도
-        # 20MB/s(느린 USB/SD 기준)는 나온다고 보고, 거기에 여유를 더한다.
-        total_bytes = sum(_stat_size(src) for src, _ in pairs)
-        timeout_sec = max(300.0, total_bytes / (20 * 1024 * 1024) + 60.0)
-        results = file_ops.move_files(pairs, timeout_sec=timeout_sec)
-        moved = [(src, dest) for src, dest in pairs if results.get(str(dest))]
+        sizes = [_stat_size(src) for src, _ in pairs]
+        for chunk in _move_chunks(pairs, sizes):
+            # 기본 timeout(300초)은 같은 볼륨 안의 rename을 가정한 값이다. Storage
+            # 이동은 흔히 **다른 볼륨**(외장 SD/USB)으로 실제 바이트를 복사하므로,
+            # ROM 몇 개만 커도(PS2/PS3 이미지는 GB 단위) 5분을 넘기기 쉽다 - 그러면
+            # robocopy가 강제 종료되어 파일이 다 안 옮겨진 채 "이동 실패"만 반복해서
+            # 쌓였다(실사용 피드백). 옮길 용량에 비례해 넉넉히 늘린다 - 못해도
+            # 20MB/s(느린 USB/SD 기준)는 나온다고 보고, 거기에 여유를 더한다.
+            chunk_bytes = sum(_stat_size(src) for src, _ in chunk)
+            timeout_sec = max(300.0, chunk_bytes / (20 * 1024 * 1024) + 60.0)
+            results = file_ops.move_files(chunk, timeout_sec=timeout_sec)
+            done_here = [(src, dest) for src, dest in chunk if results.get(str(dest))]
+            moved.extend(done_here)
+            reported += len(chunk)
+            step(f"{entry.system} ({len(moved)}/{len(pairs)})", len(chunk))
+            if len(done_here) != len(chunk):
+                # 한 묶음이라도 실패하면 남은 묶음은 시작하지 않는다 - 어차피 아래에서
+                # 전부 되돌리므로, 옮기다 만 것을 더 늘릴 이유가 없다.
+                break
         if len(moved) != len(pairs):
             # 일부만 옮겨진 상태를 그대로 두면 Registry와도, 사용자의 기대와도 어긋난다.
             # 옮겨진 것을 원래 자리로 되돌려서 "아무 일도 없었던" 상태로 만든다.
@@ -552,7 +601,7 @@ def _apply_storage_change(entry, collection, adapter, cache, registry, provider,
                            f"{len(pairs) - len(moved)}개 이동 실패 후 되돌리기도 실패 - "
                            "파일이 두 Storage에 나뉘어 있습니다")
             errors.append(f"{entry.system}: {entry.error}")
-            return
+            return reported
 
     try:
         # rom_path를 None으로 같이 지운다 - 파일이 실제로 new_layout.rom_dir로
@@ -569,12 +618,13 @@ def _apply_storage_change(entry, collection, adapter, cache, registry, provider,
                        f"배치 갱신 실패({e}) 후 되돌리기도 실패 - 파일 위치와 설정이 "
                        "어긋나 있습니다")
         errors.append(f"{entry.system}: {entry.error}")
-        return
+        return reported
 
     # 메모리 상의 Collection도 갱신해야 뒤이은 항목들이 새 배치를 본다.
     system_entry.storage_id = entry.storage_to
     system_entry.rom_path = None
     entry.status = STATUS_APPLIED
+    return reported
 
 
 def _restore_moved(moved, errors, entry) -> bool:
