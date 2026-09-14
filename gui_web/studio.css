@@ -207,6 +207,13 @@ body { font-size: var(--fs-body); }
 .nav-label, .nav-group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-group-name { font-size: var(--fs-eyebrow); letter-spacing: .8px; color: var(--muted); }
 .nav-count { font-size: calc(9px * var(--font-scale)); font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Storage 충돌 - 같은 System 폴더가 여러 Storage에. 색만으로 말하지 않게 !와 툴팁을 함께 둔다. */
+.nav-conflict {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px;
+  border-radius: 50%; background: var(--danger); color: #fff; font-size: 10px; font-weight: 800; line-height: 1;
+}
+.nav-system.conflict .nav-label { color: var(--danger); }
+.xml-result .xml-needs-id { color: var(--warning); margin-top: 8px; }
 .nav-group { margin-top: 6px; }
 .nav-system { padding-left: 13px; }
 /* Storage 이동이 Plan에 올라간 System - Apply 전까지는 미리보기다(실사용

@@ -1090,6 +1090,14 @@
       row.classList.add("nav-system");
       row.insertBefore(systemIcon(sys.system, 18), row.firstChild);
       if (!sys.count) row.classList.add("empty");
+      if (sys.conflict && sys.conflict.length) {
+        row.classList.add("conflict");
+        const where = sys.conflict.map((c) => `${c.label}: ${c.path}`).join("\n");
+        row.insertBefore(h("span", {
+          class: "nav-conflict",
+          title: `같은 System 폴더가 여러 Storage에 있어 쓰기가 막혔습니다.\n${where}\n우클릭에서 한쪽 폴더를 지우거나 이름을 바꾸세요.`,
+        }, ["!"]), row.lastChild);
+      }
       const storage = storageById[sys.storageId];
       const pendingTo = pendingMoves[sys.system];
       if (pendingTo) {
@@ -1135,6 +1143,12 @@
             xmlBtn.addEventListener("click", (e) => { e.stopPropagation(); runAdapterAction(action); });
             head.appendChild(xmlBtn);
           });
+        }
+        if (storage.kind === "external" && !isCompare()) {
+          const gear = h("button", { class: "icon-btn storage-settings-btn", title: "Storage 설정 (이름·경로·Android Storage ID)" },
+                         [icon("settings", 11)]);
+          gear.addEventListener("click", (e) => { e.stopPropagation(); openStorageSettings(storage); });
+          head.appendChild(gear);
         }
         group.appendChild(head);
 
@@ -1241,8 +1255,20 @@
         closeModal();
         const r = await api.addExternalStorage(S.activeId, labelInput.value.trim(), path);
         if (!r.ok) { showToast(r.error, "error"); return; }
+        // 그 폴더 밑의 System을 External에 붙인다(사용자 결정: 추가하면 External 밑에 보여야 한다).
+        const attached = await api.attachStorageSystems(S.activeId, r.data);
         await ensureDetail(S.activeId);
         renderNav(); renderHeader(); renderStatusBar();
+        if (!attached.ok) { showToast(attached.error, "error"); return; }
+        const a = attached.data;
+        const parts = [];
+        if (a.added.length) parts.push(`새 System ${formatCount(a.added.length)}개`);
+        if (a.moved.length) parts.push(`External로 옮김 ${formatCount(a.moved.length)}개`);
+        if (a.conflicts.length) parts.push(`충돌 ${formatCount(a.conflicts.length)}개 (${a.conflicts.join(", ")})`);
+        showToast(parts.length ? `External Storage를 추가했습니다 - ${parts.join(" · ")}`
+          : "External Storage를 추가했습니다 - 그 폴더에서 ROM이 든 System 폴더를 찾지 못했습니다.",
+          a.conflicts.length ? "warning" : "info");
+        if (a.added.length || a.moved.length) await runScan(S.activeId);
       } }, ["추가"]),
     ]);
   }
@@ -1257,6 +1283,16 @@
   function openSystemMenu(sys, storages, event) {
     const current = storages.find((s) => s.id === sys.storageId);
     const items = [];
+    if (sys.conflict && sys.conflict.length) {
+      items.push({ section: "충돌 해결 - 쓰기 막힘" });
+      sys.conflict.forEach((side) => {
+        items.push({ label: `${side.label} 폴더 이름 바꾸기…`, icon: "tag", title: side.path,
+          onSelect: () => openRenameSystemFolder(sys, side) });
+        items.push({ label: `${side.label} 폴더 삭제…`, icon: "trash", danger: true, title: side.path,
+          onSelect: () => confirmRemoveSystemFolder(sys, side) });
+      });
+      items.push("separator");
+    }
     const others = storages.filter((s) => s.id !== sys.storageId);
     if (others.length) {
       items.push({ section: "Storage 옮기기" });
@@ -1267,6 +1303,9 @@
       }));
       items.push("separator");
     }
+    items.push({ label: "System 이름 바꾸기…", icon: "tag", disabled: !!(sys.conflict && sys.conflict.length),
+      title: "ROM·gamelist·media 폴더 이름을 함께 바꿉니다.",
+      onSelect: () => openRenameSystemFolder(sys, { storageId: sys.storageId, label: current ? current.label : sys.storageId, path: null }) });
     items.push({ label: "gamelist 만들기", icon: "fileWarning",
       title: "이 System에 gamelist가 없으면 ROM 파일명만 담아 만듭니다.",
       onSelect: () => openMetadataBootstrap(S.activeId, [sys.system]) });
@@ -1665,6 +1704,126 @@
     return wrap;
   }
 
+
+  // ------------------------------------------------------------------
+  // Storage 충돌 · External Storage 설정 (bridge: app/storage_layout.py)
+  // ------------------------------------------------------------------
+  //: 같은 System 폴더가 여러 Storage에 있으면(ES-DE는 System당 ROM 경로 하나만 인정한다) 그 System은
+  //: 충돌이다 - 빨간 !로 표시하고 백엔드가 쓰기를 막는다. 한쪽 폴더를 지우거나 이름을 바꾸면 풀린다.
+  function currentSystemConflict(system) {
+    const d = activeDetail();
+    if (!d || !system) return null;
+    const row = (d.systems || []).find((s) => String(s.system).toLowerCase() === String(system).toLowerCase());
+    return row && row.conflict && row.conflict.length ? row.conflict : null;
+  }
+
+  async function refreshAfterLayoutChange() {
+    const id = S.activeId;
+    await ensureDetail(id);
+    if (id !== S.activeId) return;
+    resetList();
+    renderAll();
+    await reloadList();
+    await refreshPlan();
+  }
+
+  /** 한 Storage 쪽 System 폴더 이름 바꾸기. side.path가 없으면 등록된 쪽 전체(ROM·gamelist·media 폴더). */
+  function openRenameSystemFolder(sys, side) {
+    const input = h("input", { class: "field-input rename-system-input", value: sys.system });
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "modal-text" }, [side.path
+        ? `${side.label}의 ${side.path} 폴더 이름을 바꿉니다.`
+        : `${sys.system.toUpperCase()} System의 폴더 이름을 바꿉니다(ROM·gamelist·media 폴더를 함께 바꿉니다).`]),
+      h("div", { class: "field-label" }, ["새 System 이름"]), input,
+      h("div", { class: "modal-hint" }, ["ES-DE는 폴더 이름으로 System을 알아봅니다. 영문 소문자 이름(예: psx, snes)을 쓰세요."]),
+    ]);
+    showModal(`${sys.system.toUpperCase()} 이름 바꾸기`, body, [
+      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+      h("button", { class: "btn primary rename-system-save", onClick: async () => {
+        const name = input.value.trim();
+        if (!name || name === sys.system) { showToast("새 이름을 입력하세요.", "warning"); return; }
+        closeModal();
+        const r = await api.renameSystemFolder(S.activeId, sys.system, side.storageId, name);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        await refreshAfterLayoutChange();
+        showToast(`${sys.system.toUpperCase()} → ${String(r.data.to).toUpperCase()} 이름을 바꿨습니다.`);
+      } }, ["이름 바꾸기"]),
+    ]);
+    setTimeout(() => { input.focus(); input.select(); }, 30);
+  }
+
+  /** 한 Storage 쪽 ROM 폴더만 지운다(충돌 해결). 되돌릴 수 없으니 전체 삭제처럼 두 번 묻는다. */
+  async function confirmRemoveSystemFolder(sys, side) {
+    const p = await api.systemFolderPreview(S.activeId, sys.system, side.storageId);
+    if (!p.ok) { showToast(p.error, "error"); return; }
+    const d = p.data;
+    const check = h("input", { type: "checkbox", class: "sysdel-ack-input" });
+    const confirmBtn = h("button", { class: "btn danger sysdel-confirm" }, ["확인"]);
+    confirmBtn.disabled = true;
+    check.addEventListener("change", () => { confirmBtn.disabled = !check.checked; });
+    confirmBtn.addEventListener("click", async () => {
+      if (!check.checked) return;
+      closeModal();
+      const r = await api.removeSystemFolder(S.activeId, sys.system, side.storageId);
+      if (!r.ok) { showToast(r.error, "error"); return; }
+      await refreshAfterLayoutChange();
+      showToast(`${d.label}의 ${sys.system.toUpperCase()} 폴더를 지웠습니다.`);
+    });
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "sysdel-warning" }, [
+        h("div", { class: "sysdel-warning-title" }, ["되돌릴 수 없는 삭제입니다"]),
+        h("div", { class: "modal-text" }, [`${d.label} 쪽 ROM 폴더만 지웁니다 - 파일 ${formatCount(d.fileCount)}개(${formatBytes(d.totalBytes)}). gamelist와 media는 남깁니다.`]),
+      ]),
+      h("div", { class: "sysdel-list" }, [h("div", { class: "sysdel-target" }, [
+        h("span", { class: "sysdel-kind" }, [d.label]), h("span", { class: "sysdel-path", title: d.path }, [d.path]),
+      ])]),
+      d.remaining && d.remaining.length ? h("div", { class: "modal-text sysdel-kept" },
+        [`남는 쪽: ${d.remaining.map((x) => `${x.label} (${x.path})`).join(", ")}`]) : null,
+      h("label", { class: "sysdel-ack" }, [check, h("span", {}, ["확인하였습니다"])]),
+    ]);
+    showModal(`${sys.system.toUpperCase()} - ${d.label} 폴더 삭제`, body, [
+      h("button", { class: "btn", onClick: closeModal }, ["취소"]), confirmBtn,
+    ]);
+  }
+
+  /** External Storage 설정 - 이름, PC 경로, 안드로이드 Storage ID와 기기 경로(ES-DE XML용). */
+  function openStorageSettings(storage) {
+    const label = h("input", { class: "field-input storage-label", value: storage.label });
+    const root = h("input", { class: "field-input storage-root", value: storage.rootPath });
+    const deviceId = h("input", { class: "field-input storage-device-id", value: storage.deviceId || "", placeholder: "예: 1234-ABCD" });
+    const deviceRoot = h("input", { class: "field-input storage-device-root", value: storage.deviceRoot || "" });
+    const syncPlaceholder = () => {
+      const id = deviceId.value.trim();
+      deviceRoot.placeholder = id ? `/storage/${id}` : "/storage/<Storage ID>";
+    };
+    deviceId.addEventListener("input", syncPlaceholder);
+    syncPlaceholder();
+    const browse = h("button", { class: "btn", onClick: async () => {
+      const r = await api.pickFolder("External Storage 폴더");
+      if (r.ok && r.data) root.value = r.data;
+    } }, [icon("folderOpen", 12)]);
+    const body = h("div", { class: "modal-body storage-settings" }, [
+      h("div", { class: "field-label" }, ["이름"]), label,
+      h("div", { class: "field-label" }, ["이 PC에서의 경로"]), h("div", { class: "field-row" }, [root, browse]),
+      h("div", { class: "field-label" }, ["Android Storage ID"]), deviceId,
+      h("div", { class: "modal-hint" }, ["기기의 /storage/ 아래 SD카드 폴더 이름입니다. ES-DE custom_systems XML의 경로를 만드는 데 씁니다."]),
+      h("div", { class: "field-label" }, ["기기에서 이 Storage의 경로"]), deviceRoot,
+      h("div", { class: "modal-hint" }, ["비워 두면 /storage/<Storage ID>를 씁니다. PC 경로가 SD카드의 하위 폴더라면 그 경로까지 적으세요(예: /storage/1234-ABCD/ROMs)."]),
+    ]);
+    showModal(`${storage.label} 설정`, body, [
+      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+      h("button", { class: "btn primary storage-settings-save", onClick: async () => {
+        const r = await api.updateStorage(S.activeId, storage.id, label.value, root.value, deviceId.value, deviceRoot.value);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        closeModal();
+        await ensureDetail(S.activeId);
+        renderNav();
+        renderHeader();
+        showToast("Storage 설정을 저장했습니다.");
+      } }, ["저장"]),
+    ]);
+  }
+
   function openStorageMenu(storage) {
     const stats = h("div", { class: "modal-body" }, [
       h("div", { class: "health-row" }, [h("span", {}, ["경로"]), h("span", {}, [storage.rootPath])]),
@@ -1827,13 +1986,24 @@
     const r = await api.runAdapterAction(S.activeId, action.id);
     if (!r.ok) { showToast(r.error, "error"); return; }
     const data = r.data || {};
-    if (data.written === false) {
+    const needs = data.needsDeviceId || [];
+    const noTemplate = data.noTemplate || [];
+    if (data.written === false && !needs.length) {
       // 만들 내용이 없는 것과 실패한 것은 다르다 - 왜 아무 일도 없었는지 말해준다.
-      showToast("Collection 밖에 있는 System이 없어 만들 XML이 없습니다.");
+      showToast("External Storage나 Collection 밖에 있는 System이 없어 만들 XML이 없습니다.");
       return;
     }
-    const systems = (data.systems || []).join(", ");
-    showToast(`${action.label} 완료${systems ? ` - ${systems}` : ""}`);
+    const systems = data.systems || [];
+    const body = h("div", { class: "modal-body xml-result" }, [
+      h("div", { class: "modal-text" }, [data.written
+        ? `${data.path}에 ${formatCount(systems.length)}개 System을 적었습니다 (ES-DE ${data.platform}).`
+        : "XML을 쓰지 않았습니다."]),
+      systems.length ? h("div", { class: "sysdel-list" }, systems.map((s) => h("div", { class: "sysdel-file" }, [s]))) : null,
+      (data.kept || []).length ? h("div", { class: "modal-hint" }, [`기존 파일의 다른 System ${formatCount(data.kept.length)}개는 그대로 두었습니다.`]) : null,
+      needs.length ? h("div", { class: "modal-text xml-needs-id" }, [`Android Storage ID가 없어 빠진 System: ${needs.join(", ")} - External 그룹 머리의 설정(⚙)에서 입력하세요.`]) : null,
+      noTemplate.length ? h("div", { class: "modal-hint" }, [`ES-DE 기본 목록에 없는 System(확장자·실행 명령이 비어 있음): ${noTemplate.join(", ")}`]) : null,
+    ]);
+    showModal(action.label, body, [h("button", { class: "btn primary", onClick: closeModal }, ["닫기"])]);
   }
 
   // ------------------------------------------------------------------
@@ -3502,8 +3672,10 @@
 
     if (state.tab === "metadata") {
       const footer = h("div", { class: "detail-footer" });
-      const save = h("button", { class: "btn primary w-full" },
-        [icon("save", 13), h("span", {}, ["저장 (Ctrl+S)"])]);
+      const conflictInfo = !state.archive && currentSystemConflict(state.system);
+      const save = h("button", { class: "btn primary w-full detail-save", disabled: !!conflictInfo },
+        [icon("save", 13), h("span", {}, [conflictInfo ? "쓰기 막힘 - Storage 충돌" : "저장 (Ctrl+S)"])]);
+      if (conflictInfo) save.title = "같은 System 폴더가 여러 Storage에 있습니다 - System 우클릭에서 한쪽을 지우거나 이름을 바꾸세요.";
       save.addEventListener("click", handleSaveDetail);
       footer.appendChild(save);
       inner.appendChild(footer);

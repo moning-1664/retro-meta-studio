@@ -31,12 +31,13 @@ test("Frontend 고유 기능은 External Storage 그룹 옆에 있다(§22)", as
   const internalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "INTERNAL" }) });
   const externalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "EXTERNAL SD" }) });
   await expect(internalGroup.locator(".nav-group-head .icon-btn")).toHaveCount(0);
-  await expect(externalGroup.locator(".nav-group-head .icon-btn")).toHaveCount(1);
+  await expect(externalGroup.locator(".nav-group-head .icon-btn[title*='XML']")).toHaveCount(1);
+  await expect(externalGroup.locator(".nav-group-head .storage-settings-btn")).toHaveCount(1);
 });
 
 test("ES-DE XML 생성을 실행하면 결과를 알려준다", async ({ page }) => {
   const externalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "EXTERNAL SD" }) });
-  await externalGroup.locator(".nav-group-head .icon-btn").click();
-  await expect(page.locator("#toast")).toContainText("완료");
-  await expect(page.locator("#toast")).toContainText("ps2");
+  await externalGroup.locator(".nav-group-head .icon-btn[title*='XML']").click();
+  await expect(page.locator(".xml-result")).toContainText("es_systems.xml");
+  await expect(page.locator(".xml-result")).toContainText("ps2");
 });

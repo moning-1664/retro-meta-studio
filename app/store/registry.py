@@ -110,6 +110,11 @@ MIGRATIONS = (
             WHERE storage_id = 'roms'""",
         "DELETE FROM collection_storages WHERE storage_id = 'roms'",
     )),
+    Migration(3, (
+        # External Storage를 안드로이드 기기의 어느 저장소로 볼지(ES-DE custom_systems XML 경로용).
+        "ALTER TABLE collection_storages ADD COLUMN device_id TEXT",
+        "ALTER TABLE collection_storages ADD COLUMN device_root TEXT",
+    )),
 )
 
 
@@ -207,7 +212,7 @@ class RegistryStore:
             self._append_change_locked(CHANGE_LAYOUT_UPDATED, collection_id, {"storage": storage_id})
 
     def update_storage(self, collection_id, storage_id, **fields):
-        allowed = {"kind", "label", "root_path", "volume_key", "capacity_bytes"}
+        allowed = {"kind", "label", "root_path", "volume_key", "capacity_bytes", "device_id", "device_root"}
         unknown = set(fields) - allowed
         if unknown:
             raise RegistryError(f"수정할 수 없는 필드입니다: {sorted(unknown)}")
@@ -395,7 +400,8 @@ class RegistryStore:
         storages = [
             StorageLocation(storage_id=r["storage_id"], kind=r["kind"], label=r["label"],
                             root_path=r["root_path"], volume_key=r["volume_key"],
-                            capacity_bytes=r["capacity_bytes"])
+                            capacity_bytes=r["capacity_bytes"], device_id=r["device_id"],
+                            device_root=r["device_root"])
             for r in self._conn.execute(
                 "SELECT * FROM collection_storages WHERE collection_id=? ORDER BY kind DESC, storage_id", (cid,))
         ]

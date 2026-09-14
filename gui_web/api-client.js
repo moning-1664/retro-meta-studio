@@ -40,6 +40,13 @@
     ...mockRetroarch, systemCores: { ...mockRetroarch.systemCores }, gameCores: { ...mockRetroarch.gameCores },
     cores: mockRetroarch.coresDir ? MOCK_CORES.slice() : [], unverified: MOCK_UNVERIFIED.slice(),
   });
+  //: Storage 충돌(같은 System 폴더가 여러 Storage에). 테스트는 페이지를 열기 전에
+  //: window.__RMS_MOCK_CONFLICTS = { ps2: [{storageId,label,path}, ...] }로 채운다.
+  const mockConflicts = (typeof window !== "undefined" && window.__RMS_MOCK_CONFLICTS) || {};
+  const mockDetailView = () => ({
+    ...mockDetail,
+    systems: mockDetail.systems.map((s) => (mockConflicts[s.system] ? { ...s, conflict: mockConflicts[s.system] } : s)),
+  });
   const mockDetail = {
     id: "c1", name: "Master Library", frontend: "es-de", frontendLabel: "ES-DE",
     target: "windows", arch: "x64", rootPath: "D:\\ES-DE", systemCount: 2, totalGames: 3,
@@ -113,8 +120,8 @@
 
   const mock = {
     list_collections: () => ok(mockCollections),
-    collection_detail: () => ok(mockDetail),
-    open_collection: () => ok(mockDetail),
+    collection_detail: () => ok(mockDetailView()),
+    open_collection: () => ok(mockDetailView()),
     close_collection: () => ok(true),
     list_rows: (id, systems) => {
       const rows = systems && systems.length ? mockRows.filter((r) => systems.includes(r.system)) : mockRows;
@@ -162,8 +169,8 @@
       { id: "emulationstation", label: "EmulationStation" },
     ]),
     adapter_actions: () => ok([{ id: "esde-custom-systems", label: "ES-DE XML 생성" }]),
-    run_adapter_action: () => ok({ path: "D:\ES-DE\custom_systems\es_systems.xml",
-                                  systems: ["ps2"], written: true }),
+    run_adapter_action: () => ok({ path: "D:\\ES-DE\\custom_systems\\es_systems.xml", platform: "windows",
+                                  systems: ["ps2"], written: true, needsDeviceId: [], noTemplate: [], kept: [] }),
     plan_state: () => ok({
                           total: Object.keys(mockPendingMoves).length + mockFailedEntries.length,
                           added: 0, deleted: 0, moved: Object.keys(mockPendingMoves).length,
@@ -359,6 +366,30 @@
       return ok({ system, types });
     },
     media_cleanup: () => ok({ removed: 2, failed: [] }),
+    update_storage: (id, storageId, label, rootPath, deviceId, deviceRoot) => {
+      const storage = mockDetail.storages.find((s) => s.id === storageId);
+      if (!storage) return Promise.resolve({ ok: false, error: "Storage를 찾을 수 없습니다." });
+      if (deviceId && !/^[A-Za-z0-9-]+$/.test(deviceId)) return Promise.resolve({ ok: false, error: "Storage ID는 영문·숫자와 - 만 쓸 수 있습니다(예: 1234-ABCD)." });
+      if (label) storage.label = label;
+      if (rootPath) storage.rootPath = rootPath;
+      storage.deviceId = deviceId || ""; storage.deviceRoot = deviceRoot || "";
+      return ok(true);
+    },
+    attach_storage_systems: () => ok({ added: [], moved: [], conflicts: [] }),
+    rename_system_folder: (id, system, storageId, name) => {
+      delete mockConflicts[system];
+      mockDetail.systems.forEach((s) => { if (s.system === system) s.system = name; });
+      mockDetail.storages.forEach((st) => st.systems.forEach((s) => { if (s.system === system) s.system = name; }));
+      mockRows.forEach((r) => { if (r.system === system) r.system = name; });
+      return ok({ from: system, to: name, renamed: [], registered: true });
+    },
+    system_folder_preview: (id, system, storageId) => {
+      const sides = mockConflicts[system] || [];
+      const side = sides.find((s) => s.storageId === storageId) || { label: storageId, path: `X:\\${system}` };
+      return ok({ system, storageId, label: side.label, path: side.path, fileCount: 2, totalBytes: 2048,
+                  registered: false, remaining: sides.filter((s) => s.storageId !== storageId) });
+    },
+    remove_system_folder: (id, system) => { delete mockConflicts[system]; return ok({ removed: system, movedTo: null }); },
     move_system: (id, system, storageId) => {
       for (const s of mockDetail.storages) s.systems = s.systems.filter((x) => x.system !== system);
       const target = mockDetail.storages.find((s) => s.id === storageId);
@@ -545,6 +576,12 @@
     addExternalStorage: (id, label, rootPath) => call("add_external_storage", id, label, rootPath),
     removeStorage: (id, storageId) => call("remove_storage", id, storageId),
     moveSystem: (id, system, storageId) => call("move_system", id, system, storageId),
+    updateStorage: (id, storageId, label, rootPath, deviceId, deviceRoot) =>
+      call("update_storage", id, storageId, label, rootPath, deviceId, deviceRoot),
+    attachStorageSystems: (id, storageId) => call("attach_storage_systems", id, storageId),
+    renameSystemFolder: (id, system, storageId, name) => call("rename_system_folder", id, system, storageId, name),
+    systemFolderPreview: (id, system, storageId) => call("system_folder_preview", id, system, storageId),
+    removeSystemFolder: (id, system, storageId) => call("remove_system_folder", id, system, storageId),
     systemRemovalPreview: (id, system, force) => call("system_removal_preview", id, system, !!force),
     removeSystem: (id, system, force) => call("remove_system", id, system, !!force),
     openSystemFolder: (id, system, kind) => call("open_system_folder", id, system, kind),

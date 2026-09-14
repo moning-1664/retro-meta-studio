@@ -15,6 +15,7 @@ pywebview 브릿지. JS에서 부를 수 있는 유일한 표면이다.
 from __future__ import annotations
 
 import base64
+import re
 import logging
 from collections import OrderedDict
 import traceback
@@ -28,6 +29,7 @@ from app.model.constants import MEDIA_TYPES, VIDEO_MEDIA_TYPE, normalize_system
 from app import dashboard
 from app import media_cleanup
 from app import system_ops
+from app import storage_layout
 from app.launch import retroarch
 from app.model.plan import OP_STORAGE_CHANGE, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan
 from app.plan import builder, clipboard
@@ -249,7 +251,16 @@ class Api:
                 "capacityBytes": volume.capacity_bytes,
                 "freeBytes": volume.free_bytes,
                 "systems": _sorted_systems(collection.systems_in(storage.storage_id), games),
+                "deviceId": storage.device_id or "",
+                "deviceRoot": storage.device_root or "",
             })
+
+        systems = _sorted_systems(collection.systems, games, with_storage=True)
+        clash = self._conflicts(collection)
+        for row in systems:
+            sides = clash.get(row["system"].lower())
+            if sides:
+                row["conflict"] = sides
 
         return ok({
             **self._collection_summary(collection),
@@ -261,7 +272,7 @@ class Api:
             # 나타났다. Storage는 용량·볼륨·파일 작업을 위한 내부 개념이고, 사용자가
             # 보는 단위는 System이다. 어느 Storage에 있는지는 각 항목이 들고만 있고
             # (배지/툴팁용), 계층을 만들지 않는다.
-            "systems": _sorted_systems(collection.systems, games, with_storage=True),
+            "systems": systems,
             "totalGames": cache.count_rows(),
         })
 
@@ -396,6 +407,9 @@ class Api:
         row = cache.get_row(int(rom_uid))
         if row is None:
             return err("항목을 찾을 수 없습니다.")
+        blocked = self._ensure_writable(collection, [row["system"]])
+        if blocked:
+            return blocked
 
         adapter = get_adapter(collection.frontend)
         tag = getattr(adapter, "FAVORITE_TAG", None)
@@ -433,6 +447,10 @@ class Api:
     @guarded
     def move_system(self, collection_id, system, storage_id):
         """배치 정보만 바꾼다. 실제 파일 이동은 Plan Apply가 한다(스펙 §10)."""
+        collection = self.registry.get_collection(collection_id)
+        blocked = self._ensure_writable(collection, [system]) if collection else None
+        if blocked:
+            return blocked
         self.registry.move_system(collection_id, system, storage_id)
         return ok(True)
 
@@ -528,8 +546,113 @@ class Api:
         collection, cache, provider, _adapter = self._system_context(collection_id)
         if not any(entry.system == system for entry in collection.systems):
             return err(f"System을 찾을 수 없습니다: {system}")
+        blocked = self._ensure_writable(collection, [system])
+        if blocked:
+            return blocked
         result = media_cleanup.cleanup_media(cache, provider, self.workspace, collection_id,
                                              system, media_types)
+        return ok(result)
+
+    # ------------------------------------------------------------------
+    # Storage 충돌 / External 연결 / 폴더 이름 바꾸기·삭제 (app/storage_layout.py)
+    # ------------------------------------------------------------------
+    def _conflicts(self, collection):
+        return storage_layout.conflicts(collection, self.workspace.provider_for(collection),
+                                        get_adapter(collection.frontend))
+
+    def _ensure_writable(self, collection, systems):
+        """같은 System 폴더가 여러 Storage에 있으면 그 System에는 쓰지 않는다(사용자 결정).
+        막히면 화면에 그대로 보여줄 err를, 괜찮으면 None을 돌려준다."""
+        wanted = {str(s).lower() for s in systems if s}
+        if not wanted:
+            return None
+        clash = self._conflicts(collection)
+        hit = sorted(s for s in wanted if s in clash)
+        if not hit:
+            return None
+        return err(f"{', '.join(h.upper() for h in hit)} System 폴더가 여러 Storage에 함께 있어 쓰기가 막혀 "
+                   "있습니다. System 우클릭에서 한쪽 폴더를 지우거나 이름을 바꾸면 풀립니다.")
+
+    def _drop_plan_entries(self, collection_id, system):
+        plan = self._plans.get(collection_id)
+        if plan:
+            for key in [e.key for e in plan.entries if e.system.lower() == str(system).lower()]:
+                plan.remove(key)
+
+    @guarded
+    def update_storage(self, collection_id, storage_id, label=None, root_path=None, device_id=None,
+                       device_root=None):
+        """Storage 설정 - 이름, PC 경로(External만), 안드로이드 Storage ID와 기기 경로."""
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            return err("Collection을 찾을 수 없습니다.")
+        storage_entry = collection.storage(storage_id)
+        if storage_entry is None:
+            return err("Storage를 찾을 수 없습니다.")
+        fields = {}
+        if label is not None:
+            fields["label"] = str(label).strip() or storage_entry.label
+        if root_path is not None and storage_entry.is_external and str(root_path).strip():
+            fields["root_path"] = str(root_path).strip()
+        if device_id is not None:
+            value = str(device_id).strip()
+            if value and not re.match(r"^[A-Za-z0-9\-]+$", value):
+                return err("Storage ID는 영문·숫자와 - 만 쓸 수 있습니다(예: 1234-ABCD).")
+            fields["device_id"] = value or None
+        if device_root is not None:
+            value = str(device_root).strip().rstrip("/")
+            if value and not value.startswith("/"):
+                return err("기기 경로는 /로 시작해야 합니다(예: /storage/1234-ABCD/ROMs).")
+            fields["device_root"] = value or None
+        self.registry.update_storage(collection_id, storage_id, **fields)
+        return ok(True)
+
+    @guarded
+    def attach_storage_systems(self, collection_id, storage_id):
+        """External Storage root 밑의 System 폴더를 Collection에 붙인다. 파일은 건드리지 않는다."""
+        collection, _cache, provider, adapter = self._system_context(collection_id)
+        try:
+            return ok(storage_layout.attach_storage(self.registry, collection, provider, adapter, storage_id))
+        except storage_layout.StorageLayoutError as e:
+            return err(e)
+
+    @guarded
+    def rename_system_folder(self, collection_id, system, storage_id, new_name):
+        """한 Storage 쪽 System 폴더의 이름을 바꾼다(충돌 해결). 바꾼 뒤 그 System을 다시 스캔한다."""
+        if self.jobs.busy_targets(collection_id):
+            return err("작업이 진행 중이라 지금은 이름을 바꿀 수 없습니다.")
+        collection, cache, provider, adapter = self._system_context(collection_id)
+        try:
+            result = storage_layout.rename_folder(self.registry, collection, provider, adapter, cache,
+                                                  system, storage_id, new_name)
+        except (storage_layout.StorageLayoutError, OSError) as e:
+            return err(e)
+        if result["registered"]:
+            self._drop_plan_entries(collection_id, system)
+        self.workspace.scan(collection_id, force=True, systems=[result["to"]])
+        return ok(result)
+
+    @guarded
+    def system_folder_preview(self, collection_id, system, storage_id):
+        collection, _cache, provider, adapter = self._system_context(collection_id)
+        try:
+            return ok(storage_layout.folder_preview(collection, provider, adapter, system, storage_id))
+        except storage_layout.StorageLayoutError as e:
+            return err(e)
+
+    @guarded
+    def remove_system_folder(self, collection_id, system, storage_id):
+        """한 Storage 쪽의 ROM 폴더만 지운다(충돌 해결). gamelist/media는 남긴다."""
+        if self.jobs.busy_targets(collection_id):
+            return err("작업이 진행 중이라 지금은 지울 수 없습니다.")
+        collection, cache, provider, adapter = self._system_context(collection_id)
+        try:
+            result = storage_layout.remove_folder(self.registry, collection, provider, adapter, cache,
+                                                  system, storage_id)
+        except (storage_layout.StorageLayoutError, OSError) as e:
+            return err(e)
+        self._drop_plan_entries(collection_id, system)
+        self.workspace.scan(collection_id, force=True, systems=[system])
         return ok(result)
 
     def _next_storage_id(self, collection_id):
@@ -729,6 +852,9 @@ class Api:
         row = cache.get_row(int(rom_uid))
         if row is None:
             return err("항목을 찾을 수 없습니다.")
+        blocked = self._ensure_writable(collection, [row["system"]])
+        if blocked:
+            return blocked
 
         merged = {**row["fields"], **{k: v for k, v in (fields or {}).items()}}
         # frontend_raw는 보통 읽은 그대로 다시 쓴다. 즐겨찾기처럼 사용자가 직접 바꾸는
@@ -818,6 +944,10 @@ class Api:
     @guarded
     def plan_delete(self, collection_id, rom_uids):
         collection, cache, provider = self._plan_context(collection_id)
+        blocked = self._ensure_writable(collection, [(cache.get_row(int(uid)) or {}).get("system")
+                                                     for uid in rom_uids or []])
+        if blocked:
+            return blocked
         result = builder.plan_delete(self._plan(collection_id), collection, cache, rom_uids,
                                      provider)
         return ok(result)
@@ -825,6 +955,9 @@ class Api:
     @guarded
     def plan_storage_change(self, collection_id, system, storage_to):
         collection, cache, _ = self._plan_context(collection_id)
+        blocked = self._ensure_writable(collection, [system])
+        if blocked:
+            return blocked
         result = builder.plan_storage_change(self._plan(collection_id), collection, cache,
                                              system, storage_to)
         return ok(result)
@@ -860,6 +993,9 @@ class Api:
         descriptor, items = clipboard.read_items(self.registry)
         if not items:
             return err("붙여넣을 항목이 없습니다.")
+        blocked = self._ensure_writable(collection, [item.get("system") for item in items])
+        if blocked:
+            return blocked
         policy = self._transfer_policy()
         unmatched = policy["unmatchedRom"]
 
@@ -936,6 +1072,9 @@ class Api:
             return err("적용할 Plan이 없습니다.")
 
         collection, cache, provider = self._plan_context(collection_id)
+        blocked = self._ensure_writable(collection, [entry.system for entry in plan.entries])
+        if blocked:
+            return blocked
         report = validate(plan, collection, cache, provider)
         if report["blocked"]:
             return err("용량이 부족합니다. Plan을 줄이거나 저장 공간을 확보해주세요.")
@@ -1193,6 +1332,14 @@ class Api:
         if collection is None:
             return err("Collection을 찾을 수 없습니다.")
         provider = storage.for_path(collection.root_path)
+        clash = self._conflicts(collection)
+        if systems:
+            blocked = self._ensure_writable(collection, systems)
+            if blocked:
+                return blocked
+        elif clash:
+            # 전체 대상이면 충돌한 System만 빼고 만든다 - 하나 때문에 전부 막을 이유는 없다.
+            systems = [e.system for e in collection.systems if e.system.lower() not in clash]
         return ok(metadata_service.generate(collection, provider, systems))
 
     # ------------------------------------------------------------------

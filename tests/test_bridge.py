@@ -142,6 +142,10 @@ class BridgeTests(unittest.TestCase):
         (self.dir / "sd" / "ps2").mkdir(parents=True, exist_ok=True)
         (self.dir / "sd" / "ps2" / "FFX.iso").write_bytes(b"already here")
 
+        # 이 상태는 Storage 충돌이라 평소엔 Plan 전에 막힌다(test_storage_layout). 여기서는 그 가드를
+        # 끄고, 적용 도중 파일이 생긴 경우의 마지막 안전망(적용기의 충돌 처리)을 본다.
+        self.assertIn("쓰기가 막혀", self.api.plan_storage_change(self.cid, "ps2", storage_id)["error"])
+        self.api._conflicts = lambda collection: {}
         self.api.plan_storage_change(self.cid, "ps2", storage_id)
         job = self.api.start_apply(self.cid)
         result = wait_job(self.api, job["data"]["jobId"])

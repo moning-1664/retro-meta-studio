@@ -253,6 +253,9 @@ class PlanRecoveryTests(unittest.TestCase):
         (sd / "ps2").mkdir(parents=True)
         (sd / "ps2" / "MGS2.iso").write_bytes(b"already here")
 
+        # 이 상태는 Storage 충돌이라 평소엔 적용 전에 막힌다. 가드를 끄고 적용기의 마지막 안전망을 본다.
+        self.assertIn("쓰기가 막혀", self.api.start_apply(self.dst)["error"])
+        self.api._conflicts = lambda collection: {}
         self.api.start_apply(self.dst)
         wait_idle(self.api)
 

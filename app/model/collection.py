@@ -37,6 +37,11 @@ class StorageLocation:
     # 마지막으로 관측한 총 용량. None이면 Unknown - MTP나 일부 네트워크 공유처럼
     # 용량을 못 읽는 저장소는 Capacity Check를 건너뛴다(스펙 §5, §20).
     capacity_bytes: int | None = None
+    #: 안드로이드 기기에서 이 Storage(SD카드 등)의 ID. `/storage/<id>` 폴더 이름이다.
+    #: ES-DE custom_systems XML의 경로를 만드는 데 쓴다(사용자 결정).
+    device_id: str | None = None
+    #: 기기에서 이 Storage root에 해당하는 경로. 비면 `/storage/<device_id>`.
+    device_root: str | None = None
 
     @property
     def is_external(self) -> bool:

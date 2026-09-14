@@ -23,6 +23,7 @@ ES-DE Frontend Adapter.
 
 from __future__ import annotations
 
+import copy
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -136,6 +137,10 @@ class EsDeAdapter(FrontendAdapter):
                     found.append(entry.name)
                     break
         return found
+
+    def rom_system_dirs(self, provider, root) -> list[str]:
+        """이 폴더 바로 아래에서 ROM이 들어 있는 System 폴더 이름. Storage 충돌 판정에 쓴다."""
+        return self._systems_with_roms(provider, root)
 
     def list_systems(self, provider, collection) -> list[str]:
         systems = set()
@@ -395,46 +400,106 @@ class EsDeAdapter(FrontendAdapter):
     def extras(self):
         return [AdapterAction(self.CUSTOM_SYSTEMS_ACTION, "ES-DE XML 생성")]
 
+    #: ES-DE 3.1이 기본으로 들고 있는 System 정의(resources/systems/<platform>/es_systems.xml).
+    #: MIT 라이선스 - 같은 폴더의 ES-DE-LICENSE.txt.
+    TEMPLATE_DIR = Path(__file__).with_name("esde_templates")
+
+    @staticmethod
+    def esde_platform(collection) -> str:
+        target = str(collection.target or collection.os or "").lower()
+        return target if target in ("android", "linux") else "windows"
+
+    @classmethod
+    def _template_systems(cls, platform) -> dict:
+        path = cls.TEMPLATE_DIR / f"es_systems_{platform}.xml"
+        try:
+            root = ET.fromstring(read_document(path) or b"")
+        except (OSError, ET.ParseError):
+            return {}
+        return {(node.findtext("name") or "").strip().lower(): node for node in root.findall("system")}
+
     def write_custom_systems(self, collection) -> dict:
         """`custom_systems/es_systems.xml`을 만든다(§22).
 
         **Storage 기능이 아니라 ES-DE Adapter의 기능이다.** 다른 Frontend는 System을
-        다른 위치에 두는 문제를 각자의 방식으로 풀기 때문에, 이걸 일반 기능으로
-        올리면 ES-DE의 사정이 공통 모델로 새어 나간다.
+        다른 위치에 두는 문제를 각자의 방식으로 푼다.
 
-        Collection root 아래에 있는 System은 ES-DE가 알아서 찾으므로 적지 않는다 -
-        전부 적으면 사용자가 ES-DE에서 직접 손본 설정까지 덮어쓰게 된다.
+        **ES-DE에서 custom 항목은 같은 이름의 기본 System 정의를 통째로 대신한다.** 그래서
+        확장자·실행 명령을 비워 두면 그 System의 게임이 보이지 않는다(예전 출력이 그랬다).
+        ES-DE 기본 정의를 그대로 복사하고 `<path>`만 바꾼다.
+
+        대상:
+        - External Storage의 System 전부
+        - (Windows/Linux) ROM이 Collection root 밖에 있는 System - ES-DE가 스스로 못 찾는다
+        - (Android) Internal은 ES-DE 기본 ROM 폴더(%ROMPATH%)를 쓰므로 적지 않는다
+
+        안드로이드 External은 기기 경로로 적는다: `<Storage의 기기 경로>/<Storage 안의 상대 경로>`.
+        Storage ID가 없으면 그 System은 빼고 알려준다. 기존 파일의 다른 System 항목은 그대로 둔다.
         """
+        platform = self.esde_platform(collection)
+        templates = self._template_systems(platform)
         root = Path(collection.root_path)
-        entries = []
-        for system in collection.systems:
-            layout = self.layout(collection, system.system)
-            rom_dir = Path(layout.rom_dir)
-            try:
-                rom_dir.relative_to(root)
-                continue   # root 안에 있으면 ES-DE가 스스로 찾는다
-            except ValueError:
-                entries.append((system.system, rom_dir))
+        generated, needs_id, no_template = [], [], []
+        for entry in collection.systems:
+            storage = collection.storage(entry.storage_id)
+            rom_dir = Path(self.layout(collection, entry.system).rom_dir)
+            external = storage is not None and storage.is_external
+            if not external:
+                if platform == "android":
+                    continue
+                try:
+                    rom_dir.relative_to(root)
+                    continue   # root 안에 있으면 ES-DE가 스스로 찾는다
+                except ValueError:
+                    pass
+            if platform == "android":
+                if storage is None or not storage.device_id:
+                    needs_id.append(entry.system)
+                    continue
+                base = (storage.device_root or f"/storage/{storage.device_id}").rstrip("/")
+                try:
+                    relative = rom_dir.relative_to(Path(storage.root_path)).as_posix()
+                except ValueError:
+                    relative = entry.system
+                path_text = f"{base}/{relative}"
+            else:
+                path_text = str(rom_dir)
+            template = templates.get(entry.system.lower())
+            if template is None:
+                node = ET.Element("system")
+                for tag, value in (("name", entry.system), ("fullname", entry.system.upper()), ("path", ""),
+                                   ("extension", ""), ("command", ""), ("platform", entry.system),
+                                   ("theme", entry.system)):
+                    ET.SubElement(node, tag).text = value
+                no_template.append(entry.system)
+            else:
+                node = copy.deepcopy(template)
+            node.find("path").text = path_text
+            generated.append((entry.system, node))
 
         path = root / "custom_systems" / "es_systems.xml"
-        if not entries:
-            return {"path": str(path), "systems": [], "written": False}
+        result = {"path": str(path), "platform": platform, "systems": [n for n, _ in generated],
+                  "needsDeviceId": needs_id, "noTemplate": no_template, "kept": [], "written": False}
+        if not generated:
+            return result
 
+        names = {n.lower() for n, _ in generated}
         xml_root = ET.Element("systemList")
-        for name, rom_dir in entries:
-            node = ET.SubElement(xml_root, "system")
-            ET.SubElement(node, "name").text = name
-            ET.SubElement(node, "fullname").text = name.upper()
-            ET.SubElement(node, "path").text = str(rom_dir)
-            # 확장자와 실행 명령은 ES-DE 기본값을 쓰게 비워 둔다 - 우리가 추측해서
-            # 채우면 사용자의 에뮬레이터 설정을 덮어쓰는 셈이 된다.
-            ET.SubElement(node, "extension").text = ""
-            ET.SubElement(node, "command").text = ""
-            ET.SubElement(node, "platform").text = name
-            ET.SubElement(node, "theme").text = name
-
+        existing_data = read_document(path)
+        if existing_data:
+            try:
+                for node in ET.fromstring(existing_data).findall("system"):
+                    name = (node.findtext("name") or "").strip()
+                    if name.lower() not in names:
+                        xml_root.append(node)
+                        result["kept"].append(name)
+            except ET.ParseError:
+                pass   # 깨진 기존 파일은 새로 쓴다 - 읽을 수 없는 내용을 살릴 방법이 없다
+        for _, node in generated:
+            xml_root.append(node)
         write_xml(path, xml_root)
-        return {"path": str(path), "systems": [name for name, _ in entries], "written": True}
+        result["written"] = True
+        return result
 
     # ------------------------------------------------------------------
     @staticmethod
