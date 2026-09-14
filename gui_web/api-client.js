@@ -269,10 +269,10 @@
         system, games: sys.count, kept: [],
         blockers: sys.count ? [`게임이 ${sys.count}개 있습니다. 게임이 없는 System만 삭제할 수 있습니다.`] : [],
         targets: [
-          { kind: "rom", path: `D:\ES-DE\${system}`, isDir: true, fileCount: 1,
-            files: [`D:\ES-DE\${system}\systeminfo.txt`] },
-          { kind: "metadata", path: `D:\ES-DE\gamelists\${system}`, isDir: true, fileCount: 1,
-            files: [`D:\ES-DE\gamelists\${system}\gamelist.xml`] },
+          { kind: "rom", path: `D:\\ES-DE\\${system}`, isDir: true, fileCount: 1,
+            files: [`D:\\ES-DE\\${system}\\systeminfo.txt`] },
+          { kind: "metadata", path: `D:\\ES-DE\\gamelists\\${system}`, isDir: true, fileCount: 1,
+            files: [`D:\\ES-DE\\gamelists\\${system}\\gamelist.xml`] },
         ],
       });
     },
@@ -285,7 +285,7 @@
       mockDetail.systemCount = mockDetail.systems.length;
       return ok({ system, removed: [], kept: [] });
     },
-    open_system_folder: (id, system, kind) => ok({ path: `D:\ES-DE\${kind}\${system}` }),
+    open_system_folder: (id, system, kind) => ok({ path: `D:\\ES-DE\\${kind}\\${system}` }),
     move_system: (id, system, storageId) => {
       for (const s of mockDetail.storages) s.systems = s.systems.filter((x) => x.system !== system);
       const target = mockDetail.storages.find((s) => s.id === storageId);

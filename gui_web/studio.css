@@ -434,6 +434,25 @@ body { font-size: var(--fs-body); }
   cursor: col-resize; z-index: 2;
 }
 .col-resize:hover { background: var(--accent-gold); opacity: .45; }
+/* 머리글 드래그로 컬럼 순서 바꾸기 - 놓일 자리에 세로 막대를 보인다. */
+.lh[draggable="true"] { cursor: grab; }
+.lh.dragging { opacity: .45; }
+.lh.drop-before { box-shadow: inset 2px 0 0 var(--accent-gold); }
+.lh.drop-after { box-shadow: inset -2px 0 0 var(--accent-gold); }
+
+/* Settings > GameList Columns 편집기 */
+.stg-columns { display: flex; flex-direction: column; gap: 2px; margin: 6px 0 12px; }
+.stg-column-row {
+  display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 2px 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel);
+}
+.stg-column-row.off .stg-column-name span { color: var(--muted); }
+.stg-column-name { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+.stg-column-note { color: var(--muted); font-size: var(--fs-caption); }
+.stg-column-move { display: flex; gap: 2px; }
+.stg-column-move .icon-btn { padding: 3px; background: transparent; }
+.stg-column-move .icon-btn:disabled { opacity: .3; cursor: default; }
+.stg-column-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; }
 
 #list-scroll { flex: 1; overflow: auto; position: relative; background: var(--list-bg); }
 /* 폭은 app.js가 컬럼 합으로 정한다 - 가로로 넘칠 것이 있어야 가로 스크롤이 생긴다. */

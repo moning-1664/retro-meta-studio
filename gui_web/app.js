@@ -40,11 +40,71 @@
 
   /** 컬럼 폭의 합. 목록이 이보다 좁은 화면에 놓이면 좌우로 스크롤해야 한다. */
   function totalColumnWidth() {
-    return COLUMNS.reduce((sum, col) => sum + (S.colWidths[col.id] || col.width), 0) + 16;
+    return visibleColumns().reduce((sum, col) => sum + (S.colWidths[col.id] || col.width), 0) + 16;
   }
 
   function gridTemplate() {
-    return COLUMNS.map((c) => `${S.colWidths[c.id] || c.width}px`).join(" ");
+    return visibleColumns().map((c) => `${S.colWidths[c.id] || c.width}px`).join(" ");
+  }
+
+  // ---- 컬럼 순서/표시 ------------------------------------------------------
+  // **앱 전체 설정**(Settings > gamelist)이다 - Collection마다 다르게 둘 이유가 없고,
+  // 폭은 화면 크기와 데이터에 따라 달라서 지금처럼 Collection별 ui_state에 남긴다.
+  // No.는 항상 맨 앞이고 Title은 숨길 수 없다(무엇의 목록인지 알 수 없게 된다).
+  const COLUMN_BY_ID = Object.fromEntries(COLUMNS.map((c) => [c.id, c]));
+  const LOCKED_COLUMNS = new Set(["no", "title"]);
+
+  function columnName(col) {
+    return col.id === "fav" ? "★ Favorite" : col.label;
+  }
+
+  /** 저장된 순서/숨김을 현재 컬럼 정의에 맞춰 푼다. 모르는 id는 버리고, 새로 생긴
+   * 컬럼은 뒤에 붙인다 - 설정이 옛 버전에서 왔어도 목록이 깨지지 않는다. */
+  function columnLayout() {
+    const conf = (S.settings && S.settings.gamelist) || {};
+    const order = (Array.isArray(conf.order) ? conf.order : [])
+      .filter((id, i, all) => COLUMN_BY_ID[id] && id !== "no" && all.indexOf(id) === i);
+    COLUMNS.forEach((c) => { if (c.id !== "no" && !order.includes(c.id)) order.push(c.id); });
+    const hidden = new Set((Array.isArray(conf.hidden) ? conf.hidden : [])
+      .filter((id) => COLUMN_BY_ID[id] && !LOCKED_COLUMNS.has(id)));
+    return { order: ["no", ...order], hidden };
+  }
+
+  function visibleColumns() {
+    const { order, hidden } = columnLayout();
+    return order.filter((id) => !hidden.has(id)).map((id) => COLUMN_BY_ID[id]);
+  }
+
+  function saveColumnLayout(order, hidden) {
+    updateSettings("gamelist", { order: order.filter((id) => id !== "no"), hidden: [...hidden] });
+  }
+
+  function toggleColumn(id, visible) {
+    if (LOCKED_COLUMNS.has(id)) return;
+    const { order, hidden } = columnLayout();
+    if (visible) hidden.delete(id); else hidden.add(id);
+    saveColumnLayout(order, hidden);
+  }
+
+  /** id를 targetId 앞(after면 뒤)으로 옮긴다. No. 앞으로는 못 간다. */
+  function moveColumn(id, targetId, after) {
+    if (id === "no" || id === targetId || !COLUMN_BY_ID[id]) return;
+    const { order, hidden } = columnLayout();
+    const rest = order.filter((x) => x !== id);
+    const at = targetId === "no" ? 1 : rest.indexOf(targetId) + (after ? 1 : 0);
+    rest.splice(Math.max(1, at), 0, id);
+    saveColumnLayout(rest, hidden);
+  }
+
+  function moveColumnBy(id, delta) {
+    const { order } = columnLayout();
+    const j = order.indexOf(id) + delta;
+    if (id === "no" || j < 1 || j >= order.length) return;
+    moveColumn(id, order[j], delta > 0);
+  }
+
+  function resetColumns() {
+    updateSettings("gamelist", { order: [], hidden: [] });
   }
 
   /** 행 텍스트를 말줄임(...)으로 자르는 안쪽 span.
@@ -114,6 +174,7 @@
   const DEFAULT_SETTINGS = {
     appearance: { theme: "stitch", density: "compact", scale: 100, previewDefault: true },
     navigation: { hideEmptySystems: false },
+    gamelist: { order: [], hidden: [] },
   };
   const APPEARANCE_CACHE_KEY = "rms.appearance";
 
@@ -284,7 +345,9 @@
   async function loadAppSettings() {
     const r = await api.getAppSettings();
     S.settings = mergeSettings(r.ok ? r.data : null);
-    if (applyAppearance(S.settings.appearance)) refreshListGeometry();
+    // 줄 높이나 컬럼 배치가 기본값과 다르면 이미 그린 목록을 다시 맞춘다.
+    applyAppearance(S.settings.appearance);
+    refreshListGeometry();
   }
 
   let settingsTimer = null;
@@ -296,6 +359,7 @@
     pendingSettings[section] = { ...(pendingSettings[section] || {}), ...patch };
     if (section === "appearance" && applyAppearance(S.settings.appearance)) refreshListGeometry();
     if (section === "navigation") renderNav();
+    if (section === "gamelist") refreshListGeometry();
     clearTimeout(settingsTimer);
     settingsTimer = setTimeout(() => {
       const send = pendingSettings;
@@ -317,7 +381,43 @@
       get: () => S.settings,
       update: updateSettings,
       reset: () => updateSettings("appearance", { ...DEFAULT_SETTINGS.appearance }),
+      renderColumns: columnSettingsEditor,
     });
+  }
+
+  /** Settings > Metadata & Media > GameList Columns. 머리글 드래그/우클릭과 같은 값을 바꾼다. */
+  function columnSettingsEditor() {
+    const wrap = h("div", { class: "stg-columns" });
+    const draw = () => {
+      clear(wrap);
+      const { order, hidden } = columnLayout();
+      order.forEach((id, i) => {
+        const col = COLUMN_BY_ID[id];
+        const locked = LOCKED_COLUMNS.has(id);
+        const check = h("input", { type: "checkbox", disabled: locked });
+        check.checked = !hidden.has(id);
+        check.addEventListener("change", () => { toggleColumn(id, check.checked); draw(); });
+        const up = h("button", { class: "icon-btn col-up", title: "앞으로", disabled: id === "no" || i <= 1 },
+          [icon("chevronUp", 11)]);
+        up.addEventListener("click", () => { moveColumnBy(id, -1); draw(); });
+        const down = h("button", { class: "icon-btn col-down", title: "뒤로",
+          disabled: id === "no" || i === order.length - 1 }, [icon("chevronDown", 11)]);
+        down.addEventListener("click", () => { moveColumnBy(id, 1); draw(); });
+        wrap.appendChild(h("div", { class: "stg-column-row" + (hidden.has(id) ? " off" : ""), "data-column": id }, [
+          h("label", { class: "stg-column-name" }, [check, h("span", {}, [columnName(col)])]),
+          locked ? h("span", { class: "stg-column-note" }, [id === "no" ? "항상 맨 앞" : "항상 표시"]) : null,
+          h("div", { class: "stg-column-move" }, [up, down]),
+        ]));
+      });
+      const reset = h("button", { class: "btn compact stg-column-reset" }, ["기본값으로"]);
+      reset.addEventListener("click", () => { resetColumns(); draw(); });
+      wrap.appendChild(h("div", { class: "stg-column-actions" }, [
+        h("span", { class: "stg-help" }, ["목록 머리글을 끌어 순서를 바꾸고, 우클릭으로 표시할 컬럼을 고를 수도 있습니다."]),
+        reset,
+      ]));
+    };
+    draw();
+    return wrap;
   }
 
   // ------------------------------------------------------------------
@@ -1569,8 +1669,10 @@
     // 본문과 같은 폭을 갖게 해야 가로로 밀었을 때 컬럼이 어긋나지 않는다.
     head.style.minWidth = totalColumnWidth() + "px";
     syncHeadScroll();
+    // 머리글 우클릭 = 컬럼 표시 메뉴. head는 다시 만들지 않는 요소라 속성으로 한 번만 단다.
+    head.oncontextmenu = (e) => { e.preventDefault(); if (!isCompare()) openColumnMenu(e); };
 
-    COLUMNS.forEach((col) => {
+    visibleColumns().forEach((col) => {
       const sorted = col.key && S.order === col.key;
       const cell = h("div", { class: "lh lh-" + col.id + (sorted ? " sorted" : "") },
                      [col.label]);
@@ -1594,8 +1696,64 @@
         handle.addEventListener("click", (e) => e.stopPropagation());
         cell.appendChild(handle);
       }
+      if (!isCompare()) bindColumnDrag(cell, col.id);
       head.appendChild(cell);
     });
+  }
+
+  /** 머리글을 끌어 컬럼 순서를 바꾼다. 놓는 자리의 왼쪽/오른쪽 절반으로 앞/뒤를 정한다. */
+  let draggingColumn = null;
+  function bindColumnDrag(cell, id) {
+    const clearMarks = () => cell.classList.remove("drop-before", "drop-after");
+    cell.draggable = id !== "no";
+    cell.addEventListener("dragstart", (e) => {
+      if (id === "no") { e.preventDefault(); return; }
+      draggingColumn = id;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/x-rms-column", id);
+      cell.classList.add("dragging");
+    });
+    cell.addEventListener("dragend", () => {
+      draggingColumn = null;
+      document.querySelectorAll("#list-head .lh").forEach((c) =>
+        c.classList.remove("dragging", "drop-before", "drop-after"));
+    });
+    cell.addEventListener("dragover", (e) => {
+      if (!draggingColumn || draggingColumn === id) return;
+      e.preventDefault();
+      const rect = cell.getBoundingClientRect();
+      const after = id === "no" || e.clientX > rect.left + rect.width / 2;
+      cell.classList.toggle("drop-after", after);
+      cell.classList.toggle("drop-before", !after);
+    });
+    cell.addEventListener("dragleave", clearMarks);
+    cell.addEventListener("drop", (e) => {
+      if (!draggingColumn) return;
+      e.preventDefault();
+      const after = cell.classList.contains("drop-after");
+      clearMarks();
+      const moving = draggingColumn;
+      draggingColumn = null;
+      moveColumn(moving, id, after);
+    });
+  }
+
+  function openColumnMenu(event) {
+    const { order, hidden } = columnLayout();
+    const items = [{ section: "컬럼 표시" }];
+    order.filter((id) => id !== "no").forEach((id) => {
+      const locked = LOCKED_COLUMNS.has(id);
+      const visible = !hidden.has(id);
+      items.push({
+        label: columnName(COLUMN_BY_ID[id]), icon: visible ? "check" : null, disabled: locked,
+        hint: locked ? "항상 표시" : null, title: locked ? "Title은 숨길 수 없습니다." : null,
+        onSelect: () => toggleColumn(id, !visible),
+      });
+    });
+    items.push("separator",
+      { label: "기본 순서와 표시로", onSelect: resetColumns },
+      { label: "Settings에서 설정", icon: "settings", onSelect: () => openSettings("metadata") });
+    showContextMenu(menuPoint(event), "GameList 컬럼", "머리글을 끌어 순서를 바꿉니다", items);
   }
 
   /** 컬럼 경계를 끌어 폭을 바꾼다. 놓는 순간 저장한다. */
@@ -1932,7 +2090,7 @@
     return h("div", {
       class: "lrow placeholder",
       style: { height: ROW_HEIGHT + "px", gridTemplateColumns: gridTemplate() },
-    }, COLUMNS.map((col) => h("div", { class: "lc lc-" + col.id },
+    }, visibleColumns().map((col) => h("div", { class: "lc lc-" + col.id },
       col.id === "no" ? [truncSpan(String(index + 1))]
         : (col.id === "file" || col.id === "title") ? [h("span", { class: "skeleton" })] : [])));
   }
@@ -1967,13 +2125,15 @@
     });
 
     // No. - 화면에 보이는 순번이 아니라 목록 전체에서의 순번이다.
-    el.appendChild(h("div", { class: "lc lc-no" }, [truncSpan(String(index + 1))]));
+    // 칸은 id별로 만들어 두고, 마지막에 사용자가 정한 순서/표시대로 붙인다.
+    const cells = {};
+    cells.no = h("div", { class: "lc lc-no" }, [truncSpan(String(index + 1))]);
     // ROM 파일이 실제로 있으면 파일명을 제목과 같은 색으로, 없으면(메타데이터만) 흐리게.
     const missingRom = row.present === false;
-    el.appendChild(h("div", {
+    cells.file = h("div", {
       class: "lc lc-file " + (missingRom ? "rom-missing" : "rom-present"),
       title: missingRom ? `${row.file} - ROM 파일 없음` : row.file,
-    }, [truncSpan(row.file)]));
+    }, [truncSpan(row.file)]);
 
     const titleCell = h("div", { class: "lc lc-title" }, [truncSpan(row.title || row.file)]);
     titleCell.title = row.title || row.file;
@@ -1986,13 +2146,13 @@
       badge.addEventListener("click", (e) => { e.stopPropagation(); openMatchDialog(row); });
       titleCell.appendChild(badge);
     }
-    el.appendChild(titleCell);
+    cells.title = titleCell;
 
     // Description이 가장 넓다. 목록만 훑어도 어떤 게임인지 알 수 있어야 한다.
     const desc = (row.desc || "").replace(/\s+/g, " ").trim();
-    el.appendChild(h("div", { class: "lc lc-desc", title: desc }, [truncSpan(desc)]));
-    el.appendChild(h("div", { class: "lc lc-region" }, [truncSpan(row.region || "")]));
-    el.appendChild(h("div", { class: "lc lc-rating" }, [formatRating(row.rating)]));
+    cells.desc = h("div", { class: "lc lc-desc", title: desc }, [truncSpan(desc)]);
+    cells.region = h("div", { class: "lc lc-region" }, [truncSpan(row.region || "")]);
+    cells.rating = h("div", { class: "lc lc-rating" }, [formatRating(row.rating)]);
 
     // 별표는 눌러서 바로 켜고 끈다. 상세 패널을 열지 않아도 되게.
     const star = h("button", {
@@ -2000,11 +2160,12 @@
       title: row.favorite ? "즐겨찾기 해제" : "즐겨찾기",
     }, [row.favorite ? "★" : "☆"]);
     star.addEventListener("click", (e) => { e.stopPropagation(); toggleFavorite(row, star); });
-    el.appendChild(h("div", { class: "lc lc-fav" }, [star]));
+    cells.fav = h("div", { class: "lc lc-fav" }, [star]);
 
-    el.appendChild(h("div", { class: "lc lc-genre", title: row.genre || "" },
-                     [truncSpan(row.genre || "")]));
-    el.appendChild(h("div", { class: "lc lc-status" }, [statusMark(row)]));
+    cells.genre = h("div", { class: "lc lc-genre", title: row.genre || "" },
+                    [truncSpan(row.genre || "")]);
+    cells.status = h("div", { class: "lc lc-status" }, [statusMark(row)]);
+    visibleColumns().forEach((col) => el.appendChild(cells[col.id]));
 
     el.addEventListener("click", (e) => handleRowClick(e, row, index));
     el.addEventListener("contextmenu", (e) => { e.preventDefault(); openRowMenu(row, e); });
