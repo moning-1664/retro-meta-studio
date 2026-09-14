@@ -18,9 +18,16 @@
   const GB = 1024 * MB;
   const TB = 1024 * GB;
   const TARGET_MAX = 8 * TB;
-  //: 사람이 실제로 쓰는 용량 눈금. 슬라이더는 **이 목록에만** 자석처럼 붙는다(사용자 결정).
-  //: 텍스트 입력은 여전히 자유롭고, 여기 가까우면(snap()) 이 값에 붙는다.
+  //: 사람이 실제로 쓰는 용량 눈금(프리셋). 슬라이더는 연속으로 움직이다가 이 값 **근처에 오면
+  //: 자석처럼 붙는다**(사용자 결정). 텍스트 입력은 자유롭고, 여기 가까우면(snap()) 이 값에 붙는다.
   const SNAP = [32 * GB, 64 * GB, 128 * GB, 256 * GB, 512 * GB, 1 * TB, 2 * TB, 3 * TB, 4 * TB, 8 * TB];
+  //: 눈금 아래에 글자로 적는 프리셋 - 로그 눈금에서 고르게(0/25/50/75/100%) 떨어진 값이다.
+  const TICK_LABELS = new Set([32 * GB, 128 * GB, 512 * GB, 2 * TB, 8 * TB]);
+  //: 슬라이더는 32GB~8TB를 **로그 눈금**으로 편다(32→64와 4→8TB가 같은 거리). 1000칸.
+  const SLIDER_MIN = SNAP[0];
+  const SLIDER_STEPS = 1000;
+  //: 프리셋에서 이 칸 수 안이면 그 값에 붙는다(트랙 길이의 ±1.4%).
+  const SNAP_RANGE = 14;
   //: 사용량 막대에 따로 칠하는 System 수. 나머지는 "기타"로 묶는다(색이 8개를 넘으면
   //: 구분이 안 된다).
   const TOP_SYSTEMS = 7;
@@ -45,17 +52,36 @@
     return Math.abs(nearest - bytes) <= Math.max(GB, nearest * 0.03) ? nearest : bytes;
   }
 
-  //: ▲/▼ 버튼과 슬라이더가 함께 쓰는 "다음/이전 단계"(사용자 결정 - 임의 크기가 아니라
-  //: SNAP 목록 위를 움직인다). 지금 값이 목록에 없어도(직접 입력한 값이라도) 그보다
-  //: 크거나 작은 가장 가까운 단계로 옮긴다.
-  const nextStep = (bytes) => SNAP.find((v) => v > bytes) ?? SNAP[SNAP.length - 1];
-  const prevStep = (bytes) => [...SNAP].reverse().find((v) => v < bytes) ?? SNAP[0];
-  const stepIndex = (bytes) => {
-    if (!bytes) return 0;
-    let best = 0, diff = Infinity;
-    SNAP.forEach((v, i) => { const d = Math.abs(v - bytes); if (d < diff) { diff = d; best = i; } });
-    return best;
+  /** 보여줄 수 있는 단위로 반올림한다 - 1TB 미만은 1GB, 그 이상은 0.1TB. */
+  function roundCapacity(bytes) {
+    if (bytes >= TB) return Math.round(Math.round(bytes / (TB / 10)) * (TB / 10));
+    return Math.max(GB, Math.round(bytes / GB) * GB);
+  }
+
+  //: 프리셋 사이의 다음/이전 프리셋. 키보드(슬라이더의 ←→)가 쓴다.
+  const nextPreset = (bytes) => SNAP.find((v) => v > bytes) ?? SNAP[SNAP.length - 1];
+  const prevPreset = (bytes) => [...SNAP].reverse().find((v) => v < bytes) ?? SNAP[0];
+
+  //: ▲/▼의 세밀한 한 칸(사용자 결정 - 프리셋만 건너뛰지 않는다). 크기에 비례해 커지고,
+  //: 프리셋을 넘어가지는 않는다(그 사이에 프리셋이 있으면 거기서 멈춘다).
+  const fineStep = (bytes) => (bytes >= TB ? TB / 10 : bytes >= 256 * GB ? 16 * GB : bytes >= 64 * GB ? 8 * GB : 2 * GB);
+  const stepUp = (bytes) => (!bytes ? SNAP[0]
+    : Math.min(TARGET_MAX, roundCapacity(bytes + fineStep(bytes)), nextPreset(bytes) > bytes ? nextPreset(bytes) : TARGET_MAX));
+  const stepDown = (bytes) => {
+    const below = [...SNAP].reverse().find((v) => v < bytes);
+    return Math.max(GB, roundCapacity(bytes - fineStep(bytes - 1)), below ?? GB);
   };
+
+  const LOG_MIN = Math.log(SLIDER_MIN);
+  const LOG_SPAN = Math.log(TARGET_MAX) - LOG_MIN;
+  const toPos = (bytes) => Math.round(
+    ((Math.log(Math.min(TARGET_MAX, Math.max(SLIDER_MIN, bytes))) - LOG_MIN) / LOG_SPAN) * SLIDER_STEPS);
+  /** 슬라이더 위치 → 값. 프리셋 근처면 그 프리셋과 그 자리(pos)를 돌려준다. */
+  function sliderValueAt(pos) {
+    const preset = SNAP.find((p) => Math.abs(toPos(p) - pos) <= SNAP_RANGE);
+    if (preset) return { bytes: preset, pos: toPos(preset), snapped: true };
+    return { bytes: roundCapacity(Math.exp(LOG_MIN + (pos / SLIDER_STEPS) * LOG_SPAN)), pos, snapped: false };
+  }
 
   function render(host, data, ctx) {
     const { h, icon, formatBytes, formatCount } = ctx;
@@ -79,62 +105,79 @@
     };
     const hideTip = () => { tip.hidden = true; };
 
-    // ---------------------------------------------------------- 머리
+    // ---------------------------------------------------------- 머리 + Validate 결과
     const validateBtn = h("button", { class: "btn compact dsb-validate" },
       [icon("check", 12), h("span", {}, ["Validate Collection"])]);
     const validation = h("div", { class: "dsb-validation", "aria-live": "polite" });
     const ISSUE_LABEL = { missingRom: "ROM 없음", missingMetadata: "이름 없음" };
-    /** 제목 + 목록 하나. 항목이 없으면 아무것도 안 붙인다. */
-    const issueSection = (title, items, render) => {
-      if (!items.length) return;
-      validation.appendChild(h("div", { class: "dsb-validate-section-title" }, [title]));
-      const list = h("ul", { class: "dsb-invalid" });
-      const LIMIT = 20;
-      items.slice(0, LIMIT).forEach((item) => list.appendChild(render(item)));
-      if (items.length > LIMIT) {
-        list.appendChild(h("li", { class: "dsb-muted" }, [`… 외 ${formatCount(items.length - LIMIT)}개`]));
-      }
-      validation.appendChild(list);
-    };
 
-    validateBtn.addEventListener("click", async () => {
-      validateBtn.disabled = true;
-      validation.textContent = "Metadata 파일을 검사하는 중…";
-      const r = await ctx.onValidate();
-      validateBtn.disabled = false;
+    // 결과는 ctx에 둔다 - 표 정렬로 화면을 다시 그려도 사라지지 않고, ✕로만 지운다(사용자 요구).
+    // 세부 목록은 접힌 채로 시작하고 ▼로 펼친다. 펼치면 전부 보여주되 칸 안에서 스크롤한다.
+    function drawValidation() {
       while (validation.firstChild) validation.removeChild(validation.firstChild);
+      const r = ctx.validation;
+      if (!r) return;
+      if (r.running) { validation.appendChild(h("div", { class: "dsb-muted" }, ["Metadata 파일을 검사하는 중…"])); return; }
+
+      const clearBtn = h("button", { class: "icon-btn dsb-validate-clear", title: "결과 지우기" }, [icon("x", 10)]);
+      clearBtn.addEventListener("click", () => { ctx.validation = null; ctx.validationOpen = false; drawValidation(); });
+
       if (!r.ok) {
-        validation.appendChild(statusLine("bad", r.error || "검사하지 못했습니다."));
+        validation.appendChild(h("div", { class: "dsb-validate-head" }, [
+          statusLine("bad", r.error || "검사하지 못했습니다."), h("span", { class: "dsb-validate-spacer" }), clearBtn]));
         return;
       }
       const { checked, invalid, duplicates, issues, statuses } = r.data;
+      const problems = invalid.length + duplicates.length + issues.length;
 
       // 네 가지 상태를 늘 보여준다(사용자 요구) - Metadata Health 카드와 같은 기준이다
-      // (app/dashboard.py::validate_collection, Complete/Missing Media/Missing
-      // Description은 그 카드가 쓰는 cache.metadata_health()와 같은 값).
-      validation.appendChild(h("div", { class: "dsb-validate-summary" }, [
+      // (app/dashboard.py::validate_collection).
+      const summary = h("div", { class: "dsb-validate-summary" }, [
         statusLine("good", `Complete ${formatCount(statuses.complete)}`),
         statuses.missingMedia ? statusLine("warn", `Missing Media ${formatCount(statuses.missingMedia)}`) : null,
         statuses.missingDescription
           ? statusLine("warn", `Missing Description ${formatCount(statuses.missingDescription)}`) : null,
         statuses.invalidXml ? statusLine("bad", `Invalid XML ${formatCount(statuses.invalidXml)}`)
           : statusLine("good", "Invalid XML 0"),
-      ]));
-
-      if (!invalid.length && !duplicates.length && !issues.length) {
-        validation.appendChild(statusLine("good", `Metadata 파일 ${formatCount(checked)}개 확인 · 문제 없음`));
-        return;
+        problems ? null : statusLine("good", `Metadata 파일 ${formatCount(checked)}개 확인 · 문제 없음`),
+      ]);
+      const head = h("div", { class: "dsb-validate-head" }, [summary, h("span", { class: "dsb-validate-spacer" })]);
+      if (problems) {
+        const toggle = h("button", { class: "btn compact dsb-validate-toggle", "aria-expanded": String(!!ctx.validationOpen) },
+          [`세부 문제 ${formatCount(problems)}개 `, ctx.validationOpen ? "▲" : "▼"]);
+        toggle.addEventListener("click", () => { ctx.validationOpen = !ctx.validationOpen; drawValidation(); });
+        head.appendChild(toggle);
       }
+      head.appendChild(clearBtn);
+      validation.appendChild(head);
+      if (!problems) return;
 
+      const details = h("div", { class: "dsb-validate-details" });
+      details.hidden = !ctx.validationOpen;
+      const issueSection = (title, items, line) => {
+        if (!items.length) return;
+        details.appendChild(h("div", { class: "dsb-validate-section-title" }, [title]));
+        details.appendChild(h("ul", { class: "dsb-invalid" }, items.map(line)));
+      };
       issueSection(`읽을 수 없는 파일 ${formatCount(invalid.length)}개`, invalid, (item) =>
         h("li", { title: item.error }, [h("b", {}, [String(item.system).toUpperCase()]), ` ${item.path}`]));
-
       issueSection(`중복된 Metadata ${formatCount(duplicates.length)}개`, duplicates, (item) =>
         h("li", {}, [h("b", {}, [String(item.system).toUpperCase()]), ` ${item.filename} · ${formatCount(item.count)}개`]));
-
       issueSection(`ROM 연결·이름 문제 ${formatCount(issues.length)}개`, issues, (item) =>
         h("li", {}, [h("b", {}, [String(item.system).toUpperCase()]),
           ` ${item.filename} · ${item.issues.map((k) => ISSUE_LABEL[k] || k).join(", ")}`]));
+      validation.appendChild(details);
+    }
+
+    validateBtn.addEventListener("click", async () => {
+      validateBtn.disabled = true;
+      ctx.validation = { running: true };
+      drawValidation();
+      const r = await ctx.onValidate();
+      validateBtn.disabled = false;
+      ctx.validation = r;
+      ctx.validationOpen = false;
+      drawValidation();
     });
 
     host.appendChild(h("div", { class: "dsb-head" }, [
@@ -145,6 +188,7 @@
       validateBtn,
     ]));
     host.appendChild(validation);
+    drawValidation();
 
     // ---------------------------------------------------------- 요약 카드
     const tiles = h("div", { class: "dsb-tiles" });
@@ -213,34 +257,63 @@
         placeholder: "예: 512 GB", title: "예: 512 GB, 1 TB", "aria-label": `${s.label} 목표 용량` });
       const commit = (bytes) => {
         if (!bytes) { input.value = formatCapacity(target); return; }
+        // 슬라이더를 키보드로 움직이는 중이면 새로 그린 뒤에도 슬라이더에 초점을 남긴다.
+        const keepFocus = document.activeElement === slider;
         ctx.onTargetChange(s.id, snap(bytes));
-        row.replaceWith(targetRow(s));
+        const next = targetRow(s);
+        row.replaceWith(next);
+        if (keepFocus) next.querySelector(".dsb-target-slider").focus();
       };
-      // ▲/▼(버튼과 텍스트 칸의 화살표 키)와 Slider는 **같은 단계 목록**(SNAP) 위를
-      // 움직인다(사용자 결정) - 임의의 바이트만큼이 아니라 32G/64G/…/8T 중 다음/이전 값으로.
+      // ▲/▼(버튼과 텍스트 칸의 화살표 키)는 세밀하게 한 칸씩 움직이고 프리셋에서는 멈춘다.
       input.addEventListener("keydown", (e) => {
         if (e.key === "Enter") { e.preventDefault(); commit(parseCapacity(input.value)); }
-        else if (e.key === "ArrowUp") { e.preventDefault(); commit(nextStep(target || 0)); }
-        else if (e.key === "ArrowDown") { e.preventDefault(); if (target) commit(prevStep(target)); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); commit(stepUp(target || 0)); }
+        else if (e.key === "ArrowDown") { e.preventDefault(); if (target) commit(stepDown(target)); }
       });
       input.addEventListener("change", () => commit(parseCapacity(input.value)));
-      const up = h("button", { class: "dsb-spin", title: "다음 단계" }, ["▲"]);
-      const down = h("button", { class: "dsb-spin", title: "이전 단계" }, ["▼"]);
-      up.addEventListener("click", () => commit(nextStep(target || 0)));
-      down.addEventListener("click", () => { if (target) commit(prevStep(target)); });
+      const up = h("button", { class: "dsb-spin", title: "조금 크게" }, ["▲"]);
+      const down = h("button", { class: "dsb-spin", title: "조금 작게" }, ["▼"]);
+      up.addEventListener("click", () => commit(stepUp(target || 0)));
+      down.addEventListener("click", () => { if (target) commit(stepDown(target)); });
 
-      // Slider - 32GB~8TB의 정해진 10단계에만 자석처럼 붙는다(연속 값이 아니다). 끄는
-      // 동안은 미리보기 글자만 바꾸고(row를 새로 만들면 드래그가 끊긴다), 손을 뗀
-      // 순간(change)에만 실제로 반영해 목표 용량 저장·막대·요약을 다시 그린다.
-      const sliderValue = h("span", { class: "dsb-slider-value" }, [target ? formatCapacity(target) : "—"]);
+      // Slider - 로그 눈금 위를 연속으로 움직이고, 프리셋 근처에 오면 그 값에 딱 붙는다
+      // (눈금이 켜지고 값 글자가 강조된다). 끄는 동안은 미리보기만 바꾸고(row를 새로 만들면
+      // 드래그가 끊긴다), 손을 뗀 순간(change)에만 반영한다. 키보드 ←→는 프리셋 단위로 움직인다.
+      const initial = target ? sliderValueAt(toPos(target)) : null;
+      let current = target ? { bytes: target, snapped: SNAP.includes(target) } : null;
+      const sliderValue = h("span", { class: "dsb-slider-value" + (current && current.snapped ? " snapped" : "") },
+        [target ? formatCapacity(target) : "—"]);
       const slider = h("input", {
-        type: "range", class: "dsb-target-slider", min: "0", max: String(SNAP.length - 1), step: "1",
-        value: String(stepIndex(target)), "aria-label": `${s.label} 목표 용량 단계`,
+        type: "range", class: "dsb-target-slider", min: "0", max: String(SLIDER_STEPS), step: "1",
+        value: String(target ? toPos(target) : 0), "aria-label": `${s.label} 목표 용량`,
+        "aria-valuetext": target ? formatCapacity(target) : "목표 없음",
       });
+      const ticks = h("div", { class: "dsb-slider-ticks", "aria-hidden": "true" }, SNAP.map((p) => h("span", {
+        class: "dsb-tick" + (initial && initial.snapped && initial.bytes === p && target === p ? " on" : "")
+          + (TICK_LABELS.has(p) ? " labeled" : ""),
+        "data-bytes": String(p),
+        style: { left: `calc(8px + (100% - 16px) * ${toPos(p) / SLIDER_STEPS})` },
+      }, [TICK_LABELS.has(p) ? formatCapacity(p).replace(" ", "") : ""])));
+      const markTicks = () => ticks.querySelectorAll(".dsb-tick").forEach((tick) =>
+        tick.classList.toggle("on", !!current && current.snapped && Number(tick.dataset.bytes) === current.bytes));
       slider.addEventListener("input", () => {
-        sliderValue.textContent = formatCapacity(SNAP[Number(slider.value)]);
+        current = sliderValueAt(Number(slider.value));
+        if (current.snapped) slider.value = String(current.pos);
+        sliderValue.textContent = formatCapacity(current.bytes);
+        sliderValue.classList.toggle("snapped", current.snapped);
+        slider.setAttribute("aria-valuetext", formatCapacity(current.bytes));
+        markTicks();
       });
-      slider.addEventListener("change", () => commit(SNAP[Number(slider.value)]));
+      slider.addEventListener("change", () => { if (current) commit(current.bytes); });
+      slider.addEventListener("keydown", (e) => {
+        const base = target || 0;
+        const to = { ArrowRight: nextPreset(base), ArrowUp: nextPreset(base),
+          ArrowLeft: prevPreset(base), ArrowDown: prevPreset(base),
+          Home: SNAP[0], End: SNAP[SNAP.length - 1] }[e.key];
+        if (!to) return;
+        e.preventDefault();
+        commit(to);
+      });
 
       const summary = !target
         ? "목표를 정하지 않았습니다"
@@ -251,7 +324,10 @@
           h("span", { class: "dsb-target-kind" }, [s.kind === "external" ? "External" : "Internal"]),
           h("span", { class: "dsb-target-controls" }, [input, h("span", { class: "dsb-spins" }, [up, down])]),
         ]),
-        h("div", { class: "dsb-target-slider-row" }, [slider, sliderValue]),
+        h("div", { class: "dsb-target-slider-row" }, [
+          h("div", { class: "dsb-slider-track" }, [slider, ticks]),
+          sliderValue,
+        ]),
         h("div", { class: "dsb-meter " + level }, [
           h("div", { class: "dsb-meter-fill", style: { width: `${Math.min(100, ratio * 100)}%` } }),
         ]),
@@ -294,28 +370,30 @@
       : s.missingMedia > 0 ? ["warn", `Media 없음 ${formatCount(s.missingMedia)}`]
       : s.missingMetadata > 0 ? ["warn", `Metadata 없음 ${formatCount(s.missingMetadata)}`]
       : ["good", "정상"]);
+    const storageName = (s) => (storageById[s.storageId] || {}).label || s.storageId;
+    //: [key, 머리글, 정렬 값, 칸 내용, 숫자 칸인지]
     const COLS = [
-      ["system", "System", (s) => s.system],
-      ["storage", "Storage", (s) => (storageById[s.storageId] || {}).label || s.storageId],
-      ["games", "Games", (s) => s.games],
-      ["size", "ROM size", (s) => s.romBytes],
-      ["media", "Media size", (s) => s.mediaBytes],
-      ["status", "Status", (s) => statusOf(s)[1]],
+      ["system", "System", (s) => s.system, (s) => s.system.toUpperCase(), false],
+      ["storage", "Storage", storageName, storageName, false],
+      ["games", "Games", (s) => s.games, (s) => formatCount(s.games), true],
+      ["size", "ROM size", (s) => s.romBytes, (s) => formatBytes(s.romBytes), true],
+      ["media", "Media size", (s) => s.mediaBytes, (s) => formatBytes(s.mediaBytes), true],
+      ["total", "Total size", (s) => s.romBytes + s.mediaBytes, (s) => formatBytes(s.romBytes + s.mediaBytes), true],
+      ["status", "Status", (s) => statusOf(s)[1], null, false],
     ];
     const table = h("table", { class: "dsb-table" });
     const thead = h("thead");
     const tbody = h("tbody");
     const headRow = h("tr");
-    COLS.forEach(([key, label]) => {
+    COLS.forEach(([key, label, , , numeric]) => {
       const btn = h("button", { class: "dsb-sort" + (sort.key === key ? " on" : "") },
         [label, sort.key === key ? (sort.desc ? " ↓" : " ↑") : ""]);
       btn.addEventListener("click", () => {
         if (sort.key === key) sort.desc = !sort.desc;
-        else { sort.key = key; sort.desc = key !== "system" && key !== "storage" && key !== "status"; }
-        tableCard.replaceWith(render.table ? tableCard : tableCard);
+        else { sort.key = key; sort.desc = numeric; }
         render(host, data, ctx);
       });
-      headRow.appendChild(h("th", { class: ["games", "size", "media"].includes(key) ? "num" : "",
+      headRow.appendChild(h("th", { class: numeric ? "num" : "",
         "aria-sort": sort.key === key ? (sort.desc ? "descending" : "ascending") : "none" }, [btn]));
     });
     thead.appendChild(headRow);
@@ -326,14 +404,10 @@
       return sort.desc ? -c : c;
     }).forEach((s) => {
       const [level, label] = statusOf(s);
-      const tr = h("tr", { tabindex: "0", title: `${s.system.toUpperCase()} 목록 열기`, "data-system": s.system }, [
-        h("td", { class: "dsb-sys" }, [s.system.toUpperCase()]),
-        h("td", {}, [(storageById[s.storageId] || {}).label || s.storageId]),
-        h("td", { class: "num" }, [formatCount(s.games)]),
-        h("td", { class: "num" }, [formatBytes(s.romBytes)]),
-        h("td", { class: "num" }, [formatBytes(s.mediaBytes)]),
-        h("td", {}, [statusLine(level, label)]),
-      ]);
+      const tr = h("tr", { tabindex: "0", title: `${s.system.toUpperCase()} 목록 열기`, "data-system": s.system },
+        COLS.map(([key, , , cell, numeric]) => h("td", {
+          class: key === "system" ? "dsb-sys" : key === "total" ? "num dsb-total" : numeric ? "num" : "",
+        }, [cell ? cell(s) : statusLine(level, label)])));
       const open = () => ctx.onOpenSystem(s.system);
       tr.addEventListener("click", open);
       tr.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
@@ -355,5 +429,5 @@
     }
   }
 
-  window.RMSDashboard = { render, parseCapacity, formatCapacity };
+  window.RMSDashboard = { render, parseCapacity, formatCapacity, sliderValueAt, toPos, stepUp, stepDown };
 })();

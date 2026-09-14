@@ -472,18 +472,29 @@ body { font-size: var(--fs-body); }
 .lh.drop-after { box-shadow: inset -2px 0 0 var(--accent-gold); }
 
 /* Settings > GameList Columns 편집기 */
-.stg-columns { display: flex; flex-direction: column; gap: 2px; margin: 6px 0 12px; }
+/* Settings > GameList Columns - ☰ 손잡이를 끌어 순서를 바꾼다. 좌우로 늘어지지 않게 폭을 줄였다. */
+.stg-columns { max-width: 300px; margin: 4px 0 12px; }
+.stg-column-list { display: flex; flex-direction: column; gap: 1px; }
 .stg-column-row {
-  display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 2px 8px;
+  display: flex; align-items: center; gap: 6px; min-height: 24px; padding: 0 8px 0 2px;
   border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel);
+  font-size: var(--fs-caption);
 }
 .stg-column-row.off .stg-column-name span { color: var(--muted); }
-.stg-column-name { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
-.stg-column-note { color: var(--muted); font-size: var(--fs-caption); }
-.stg-column-move { display: flex; gap: 2px; }
-.stg-column-move .icon-btn { padding: 3px; background: transparent; }
-.stg-column-move .icon-btn:disabled { opacity: .3; cursor: default; }
-.stg-column-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; }
+.stg-column-row.dragging { opacity: .45; }
+.stg-column-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.stg-column-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.stg-column-grip {
+  flex: none; width: 18px; height: 20px; padding: 0; border-radius: 4px; background: transparent;
+  color: var(--muted); font-size: 12px; line-height: 20px; cursor: grab; touch-action: none;
+}
+.stg-column-grip:hover:not(:disabled), .stg-column-grip:focus-visible { color: var(--accent); background: var(--card2); outline: none; }
+.stg-column-grip:disabled { opacity: .25; cursor: default; }
+.stg-column-row.dragging .stg-column-grip { cursor: grabbing; }
+.stg-column-name { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; cursor: pointer; }
+.stg-column-note { color: var(--muted); font-size: var(--fs-eyebrow); }
+.stg-column-actions { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-top: 6px; }
+.stg-column-reset { flex: none; white-space: nowrap; }
 
 /* Settings > Import/Export > ROM 미매칭 정책 - 라디오 두 개 + 체크박스 세 개가 한 값을 공유한다. */
 .stg-unmatched { padding: 4px 0 14px; }
@@ -598,6 +609,13 @@ body { font-size: var(--fs-body); }
 #detail-panel.off { display: none; }
 #detail-panel-inner { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .rom-info { padding: 4px 2px; }
+/* ROM 탭 - RetroArch Core 선택(예전에는 Detail 머리의 옵션 버튼 → 대화상자) */
+.rom-core { margin-top: 12px; padding: 10px 2px 0; border-top: 1px solid var(--border); }
+.rom-core-title { margin-bottom: 6px; font-size: var(--fs-eyebrow); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.rom-core-note { margin: 4px 0; font-size: var(--fs-caption); color: var(--muted); }
+.rom-core .core-select { width: 100%; margin: 8px 0 2px; }
+.rom-core .core-scope { margin-top: 6px; font-size: var(--fs-caption); }
+.rom-core-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
 
 /* Detail 상단 줄 - GameList 상단 줄과 같은 높이라 아래 구분선이 한 줄로 이어지고,
    그 아래 Detail 제목/탭이 GameList의 Toolbar와 같은 선에서 시작한다(레이아웃
@@ -1019,14 +1037,27 @@ button.sb-badge { cursor: pointer; }
 .dsb-eyebrow { font-size: var(--fs-eyebrow); letter-spacing: .12em; color: var(--muted); }
 .dsb-title { font-size: calc(18px * var(--font-scale)); font-weight: 700; }
 .dsb-validate { gap: 6px; }
-.dsb-validation { min-height: 18px; margin-bottom: 10px; font-size: var(--fs-caption); color: var(--muted); }
-.dsb-invalid { margin: 6px 0 0; padding-left: 18px; color: var(--text); font-size: var(--fs-caption); }
-.dsb-invalid li { margin: 2px 0; word-break: break-all; }
+.dsb-validation { margin-bottom: 10px; font-size: var(--fs-caption); color: var(--muted); }
+.dsb-validation:empty { display: none; }
+/* Validate 결과 - 요약 한 줄(+ ▼ 세부 펼치기, ✕ 지우기)과, 펼치면 칸 안에서 스크롤하는 세부 목록. */
+.dsb-validate-head {
+  display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 10px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+}
+.dsb-validate-spacer { flex: 1; }
+.dsb-validate-toggle { flex: none; white-space: nowrap; }
+.dsb-validate-clear { flex: none; }
+.dsb-validate-details {
+  max-height: 240px; overflow: auto; margin-top: 4px; padding: 2px 10px 8px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+}
+.dsb-invalid { margin: 4px 0 0; padding-left: 18px; color: var(--text); font-size: var(--fs-caption); }
+.dsb-invalid li { margin: 1px 0; word-break: break-all; }
 /* Validate Collection 결과 - 네 가지 상태 요약(Complete/Missing Media/Missing
    Description/Invalid XML)과 그 아래 세부 목록(읽을 수 없는 파일/중복 Metadata/
    ROM 연결·이름 문제). */
-.dsb-validate-summary { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 4px; }
-.dsb-validate-section-title { font-weight: 650; color: var(--text); margin: 10px 0 2px; }
+.dsb-validate-summary { display: flex; flex-wrap: wrap; gap: 4px 14px; min-width: 0; }
+.dsb-validate-section-title { font-weight: 650; color: var(--text); margin: 8px 0 0; }
 .dsb-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
 .dsb-tile { padding: 11px 13px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; min-width: 0; }
 .dsb-tile-label { font-size: var(--fs-eyebrow); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
@@ -1084,12 +1115,23 @@ button.sb-badge { cursor: pointer; }
 .dsb-spin:hover { color: var(--accent); border-color: var(--accent); }
 /* Storage target Slider - 32GB~8TB의 정해진 단계에만 붙는다(연속 값이 아니다). 숫자
    입력/▲▼ 버튼과 같은 값을 공유한다. */
-.dsb-target-slider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.dsb-target-slider { flex: 1; accent-color: var(--accent); }
-.dsb-slider-value {
-  flex: none; width: 52px; text-align: right; font-variant-numeric: tabular-nums;
-  color: var(--muted); font-size: var(--fs-caption);
+.dsb-target-slider-row { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 6px; }
+.dsb-slider-track { position: relative; flex: 1; padding-bottom: 13px; }
+.dsb-target-slider { display: block; width: 100%; margin: 0; accent-color: var(--accent); }
+/* 프리셋 눈금 - 슬라이더가 붙은 눈금이 켜진다(값 글자도 함께). */
+.dsb-slider-ticks { position: absolute; left: 0; right: 0; top: 17px; height: 12px; pointer-events: none; }
+.dsb-tick {
+  position: absolute; top: 0; transform: translateX(-50%);
+  font-size: 9px; line-height: 1; color: var(--muted); white-space: nowrap;
 }
+.dsb-tick::before { content: ""; display: block; width: 1px; height: 4px; margin: 0 auto 1px; background: var(--border); }
+.dsb-tick.on { color: var(--accent); font-weight: 650; }
+.dsb-tick.on::before { width: 2px; height: 5px; background: var(--accent); }
+.dsb-slider-value {
+  flex: none; width: 52px; padding-top: 1px; text-align: right; font-variant-numeric: tabular-nums;
+  color: var(--muted); font-size: var(--fs-caption); transition: color .12s;
+}
+.dsb-slider-value.snapped { color: var(--accent); font-weight: 650; }
 .dsb-target-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 5px; font-size: var(--fs-caption); }
 .dsb-bar + .dsb-bar { margin-top: 9px; }
 .dsb-bar-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 4px; font-size: var(--fs-caption); }
@@ -1102,15 +1144,16 @@ button.sb-badge { cursor: pointer; }
 .dsb-status.bad .dsb-status-icon { color: var(--danger); }
 .dsb-status.muted { color: var(--muted); }
 .dsb-table-wrap { overflow-x: auto; }
-.dsb-table { width: 100%; border-collapse: collapse; font-size: var(--fs-caption); }
+.dsb-table { width: auto; border-collapse: collapse; font-size: var(--fs-caption); }
 .dsb-table th { text-align: left; padding: 0; border-bottom: 1px solid var(--border); }
 .dsb-table th.num, .dsb-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
-.dsb-sort { width: 100%; padding: 6px 8px; text-align: inherit; color: var(--muted); font-size: var(--fs-eyebrow); letter-spacing: .06em; text-transform: uppercase; }
+.dsb-sort { width: 100%; padding: 4px 18px 4px 0; text-align: inherit; color: var(--muted); font-size: var(--fs-eyebrow); letter-spacing: .06em; text-transform: uppercase; }
 .dsb-sort:hover, .dsb-sort.on { color: var(--text); }
-.dsb-table td { padding: 6px 8px; border-bottom: 1px solid var(--list-row-border); white-space: nowrap; }
+.dsb-table td { padding: 3px 18px 3px 0; border-bottom: 1px solid var(--list-row-border); white-space: nowrap; }
 .dsb-table tbody tr { cursor: pointer; }
 .dsb-table tbody tr:hover, .dsb-table tbody tr:focus { background: var(--card2); outline: none; }
 .dsb-sys { font-weight: 650; }
+.dsb-table td.dsb-total { color: var(--text); font-weight: 600; }
 
 /* ------------------------------------------------------------ 컨텍스트 메뉴
    게임 행과 System이 같은 메뉴를 쓴다(app.js showContextMenu). */

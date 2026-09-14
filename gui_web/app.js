@@ -210,7 +210,7 @@
     transfer: { includeRom: true, includeMedia: true, conflict: "ask",
                 unmatchedRomMode: "skip", unmatchedRomMetadata: true, unmatchedRomMedia: true, unmatchedRomVideo: true },
     //: Media 탭의 영상(사용자 결정: 소리 켬, 반복 켬, 5초 뒤 자동 재생 - 전부 Settings에서 바꾼다).
-    media: { videoMode: "auto", videoDelay: 5, videoSound: true, videoLoop: true },
+    media: { videoMode: "auto", videoDelay: 3, videoSound: true, videoLoop: true },
   };
   const APPEARANCE_CACHE_KEY = "rms.appearance";
 
@@ -479,39 +479,90 @@
     });
   }
 
-  /** Settings > Metadata & Media > GameList Columns. 머리글 드래그/우클릭과 같은 값을 바꾼다. */
+  /** Settings > Metadata & Media > GameList Columns. 머리글 드래그/우클릭과 같은 값을 바꾼다.
+   * 순서는 ☰ 손잡이를 끌어 바꾼다(사용자 결정 - 위/아래 버튼보다 직관적). 손잡이에 초점이
+   * 있으면 ↑↓ 키로도 한 칸씩 옮긴다. No.는 늘 맨 앞이라 손잡이가 꺼져 있다. */
   function columnSettingsEditor() {
     const wrap = h("div", { class: "stg-columns" });
-    const draw = () => {
+    const draw = (focusId) => {
       clear(wrap);
       const { order, hidden } = columnLayout();
-      order.forEach((id, i) => {
+      const list = h("div", { class: "stg-column-list" });
+      order.forEach((id) => {
         const col = COLUMN_BY_ID[id];
         const locked = LOCKED_COLUMNS.has(id);
+        const fixed = id === "no";
         const check = h("input", { type: "checkbox", disabled: locked });
         check.checked = !hidden.has(id);
         check.addEventListener("change", () => { toggleColumn(id, check.checked); draw(); });
-        const up = h("button", { class: "icon-btn col-up", title: "앞으로", disabled: id === "no" || i <= 1 },
-          [icon("chevronUp", 11)]);
-        up.addEventListener("click", () => { moveColumnBy(id, -1); draw(); });
-        const down = h("button", { class: "icon-btn col-down", title: "뒤로",
-          disabled: id === "no" || i === order.length - 1 }, [icon("chevronDown", 11)]);
-        down.addEventListener("click", () => { moveColumnBy(id, 1); draw(); });
-        wrap.appendChild(h("div", { class: "stg-column-row" + (hidden.has(id) ? " off" : ""), "data-column": id }, [
+        const grip = h("button", {
+          class: "stg-column-grip", disabled: fixed, "aria-label": `${columnName(col)} 순서 바꾸기`,
+          title: fixed ? "No.는 항상 맨 앞입니다" : "끌어서 순서 바꾸기 (↑↓ 키도 됩니다)",
+        }, ["\u2630"]);
+        const rowEl = h("div", { class: "stg-column-row" + (hidden.has(id) ? " off" : ""), "data-column": id }, [
+          grip,
           h("label", { class: "stg-column-name" }, [check, h("span", {}, [columnName(col)])]),
-          locked ? h("span", { class: "stg-column-note" }, [id === "no" ? "항상 맨 앞" : "항상 표시"]) : null,
-          h("div", { class: "stg-column-move" }, [up, down]),
-        ]));
+          locked ? h("span", { class: "stg-column-note" }, [fixed ? "항상 맨 앞" : "항상 표시"]) : null,
+        ]);
+        if (!fixed) {
+          grip.addEventListener("keydown", (e) => {
+            if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+            e.preventDefault();
+            moveColumnBy(id, e.key === "ArrowUp" ? -1 : 1);
+            draw(id);
+          });
+          grip.addEventListener("pointerdown", (e) => startColumnDrag(e, id, rowEl, list, () => draw()));
+        }
+        list.appendChild(rowEl);
       });
+      wrap.appendChild(list);
       const reset = h("button", { class: "btn compact stg-column-reset" }, ["기본값으로"]);
       reset.addEventListener("click", () => { resetColumns(); draw(); });
       wrap.appendChild(h("div", { class: "stg-column-actions" }, [
-        h("span", { class: "stg-help" }, ["목록 머리글을 끌어 순서를 바꾸고, 우클릭으로 표시할 컬럼을 고를 수도 있습니다."]),
+        h("span", { class: "stg-help" }, ["☰를 끌어 순서를 바꿉니다. 목록 머리글을 끌거나 우클릭해도 됩니다."]),
         reset,
       ]));
+      if (focusId) {
+        const again = wrap.querySelector(`.stg-column-row[data-column="${focusId}"] .stg-column-grip`);
+        if (again) again.focus();
+      }
     };
     draw();
     return wrap;
+  }
+
+  /** ☰ 손잡이 끌기. 포인터가 올라간 행의 위/아래 절반에 따라 그 앞/뒤에 놓는다. */
+  function startColumnDrag(event, id, rowEl, list, redraw) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const rows = [...list.querySelectorAll(".stg-column-row")];
+    let target = null;
+    let after = false;
+    const unmark = () => rows.forEach((r) => r.classList.remove("drop-before", "drop-after"));
+    rowEl.classList.add("dragging");
+    const onMove = (e) => {
+      unmark();
+      target = null;
+      for (const r of rows) {
+        if (r === rowEl) continue;
+        const rect = r.getBoundingClientRect();
+        if (e.clientY < rect.top || e.clientY >= rect.bottom) continue;
+        // No. 앞으로는 못 간다 - No. 위에 놓으면 그 뒤로 간다.
+        after = r.dataset.column === "no" || e.clientY > rect.top + rect.height / 2;
+        target = r.dataset.column;
+        r.classList.add(after ? "drop-after" : "drop-before");
+        break;
+      }
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      rowEl.classList.remove("dragging");
+      unmark();
+      if (target) { moveColumn(id, target, after); redraw(); }
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
   }
 
   // ------------------------------------------------------------------
@@ -769,48 +820,32 @@
     });
   }
 
+  /** Collection 탭 우클릭 - 다른 우클릭과 같은 플로팅 메뉴다(사용자 결정 - 예전의 버튼 대화상자 대신). */
   function openTabMenu(collection, event) {
-    const body = h("div", { class: "modal-body" }, [
-      h("div", { class: "modal-text" }, [`${collection.name} (${collection.rootPath})`]),
-    ]);
-    const actions = [
-      h("button", { class: "btn", onClick: () => { closeModal(); promptRename(collection); } }, ["이름 변경"]),
-    ];
+    const items = [{ label: "이름 변경…", icon: "tag", onSelect: () => promptRename(collection) }];
     if (isDetached()) {
-      actions.push(h("button", { class: "btn primary tab-merge", onClick: () => { closeModal(); mergeIntoMain(); } },
-        ["메인 창으로 합치기"]));
-      showModal("Collection", body, [...actions, h("button", { class: "btn", onClick: closeModal }, ["닫기"])]);
+      items.push({ label: "메인 창으로 합치기", icon: "layoutList", onSelect: mergeIntoMain });
+      showContextMenu(menuPoint(event), collection.name, collection.rootPath, items, collection.rootPath);
       return;
     }
-    actions.push(h("button", { class: "btn tab-detach", onClick: () => { closeModal(); detachTab(collection.id); } },
-      ["새 창으로 분리"]));
-    actions.push(h("button", { class: "btn", onClick: () => {
-      closeModal();
-      openConvert(collection);
-    } }, ["Convert"]));
+    items.push({ label: "새 창으로 분리", icon: "previewPane", onSelect: () => detachTab(collection.id) });
+    items.push("separator");
+    items.push({ label: "Convert…", icon: "arrowLeftRight", onSelect: () => openConvert(collection) });
     // Compare는 두 단계다(§54): 한 탭에서 기준을 정하고, 다른 탭에서 그 기준과 비교한다.
     if (S.compareBase && S.compareBase !== collection.id) {
       const baseName = (S.collections.find((c) => c.id === S.compareBase) || {}).name || "기준";
-      actions.push(h("button", { class: "btn primary", onClick: () => {
-        closeModal();
-        runCompare(S.compareBase, collection.id);
-      } }, [`${baseName}와 비교`]));
+      items.push({ label: `${baseName}와 비교`, icon: "scale", onSelect: () => runCompare(S.compareBase, collection.id) });
     } else {
-      actions.push(h("button", { class: "btn", onClick: () => {
-        closeModal();
+      items.push({ label: "Compare 기준으로 지정", icon: "scale", onSelect: () => {
         S.compareBase = collection.id;
         showToast("비교 기준으로 지정했습니다. 다른 Collection 탭을 우클릭해 비교를 시작하세요.");
-      } }, ["Compare 기준으로 지정"]));
+      } });
     }
-    showModal("Collection", body, [
-      ...actions,
-      h("button", { class: "btn danger", onClick: () => {
-        closeModal();
-        showConfirm("Collection 제거", "등록 목록에서 제거합니다. 실제 파일은 삭제되지 않습니다.", true,
-          async () => { await api.deleteCollection(collection.id); closeTab(collection.id); await loadCollections(); renderAll(); });
-      } }, ["제거"]),
-      h("button", { class: "btn primary", onClick: closeModal }, ["닫기"]),
-    ]);
+    items.push("separator");
+    items.push({ label: "제거…", icon: "trash", danger: true, title: "등록 목록에서만 제거합니다. 실제 파일은 그대로입니다.",
+      onSelect: () => showConfirm("Collection 제거", "등록 목록에서 제거합니다. 실제 파일은 삭제되지 않습니다.", true,
+        async () => { await api.deleteCollection(collection.id); closeTab(collection.id); await loadCollections(); renderAll(); }) });
+    showContextMenu(menuPoint(event), collection.name, collection.rootPath, items, collection.rootPath);
   }
 
   function promptRename(collection) {
@@ -3717,11 +3752,6 @@
       }, [icon("play", 14)]);
       play.addEventListener("click", () => launchGame(target));
       header.appendChild(play);
-      const coreBtn = h("button", {
-        class: "icon-btn detail-core", title: blocked || "RetroArch Core 선택", disabled: !!blocked,
-      }, [icon("settings", 13)]);
-      coreBtn.addEventListener("click", () => openCoreDialog(target));
-      header.appendChild(coreBtn);
 
       const star = h("button", {
         class: "icon-btn fav-btn" + (state.favorite ? " on" : ""),
@@ -4145,6 +4175,75 @@
         h("span", {}, [label]), h("span", { class: "truncate" }, [value])]));
     });
     body.appendChild(box);
+    if (!state.archive) body.appendChild(romCoreSection(state));
+  }
+
+  /** ROM 탭의 RetroArch Core 선택(사용자 결정 - Detail 머리의 옵션 버튼과 대화상자 대신, 비어 있던
+   * ROM 탭에 둔다). 실행 실패로 Core를 물어야 할 때는 여전히 대화상자(openCoreDialog)를 쓴다 -
+   * 저장한 뒤 이어서 실행해야 하기 때문이다. */
+  function romCoreSection(state) {
+    const section = h("div", { class: "rom-core" }, [h("div", { class: "rom-core-title" }, ["RetroArch Core"])]);
+    const target = { romUid: state.romUid, system: state.system, file: state.file, present: state.present };
+    const blocked = launchBlockReason(target);
+    if (blocked) {
+      section.appendChild(h("div", { class: "rom-core-note" }, [blocked]));
+      return section;
+    }
+    const content = h("div", { class: "rom-core-body" }, [h("div", { class: "rom-core-note" }, ["불러오는 중…"])]);
+    section.appendChild(content);
+    const collectionId = S.activeId;
+    const draw = async () => {
+      const info = await api.retroarchGameInfo(collectionId, state.romUid);
+      // 그 사이 다른 게임이나 탭으로 넘어갔으면 그리지 않는다.
+      if (S.detailState !== state || S.activeId !== collectionId) return;
+      clear(content);
+      if (!info.ok) { content.appendChild(h("div", { class: "rom-core-note" }, [info.error])); return; }
+      const d = info.data;
+      if (!d.cores.length) {
+        content.appendChild(h("div", { class: "rom-core-note" }, ["Core 폴더가 없거나 비어 있습니다."]));
+        content.appendChild(h("button", { class: "btn compact rom-core-settings", onClick: () => openSettings("emulator") },
+          ["Settings > Emulator 열기"]));
+        return;
+      }
+      const system = String(d.system).toUpperCase();
+      const select = h("select", { class: "field-input core-select" }, [
+        h("option", { value: "" }, ["Core를 고르세요"]),
+        ...d.cores.map((core) => h("option", { value: core }, [`${coreLabel(core)}  (${core})`])),
+      ]);
+      select.value = d.gameCore || d.systemCore || "";
+      const scopeName = `rom-core-scope-${state.romUid}`;
+      const sysRadio = h("input", { type: "radio", name: scopeName, class: "core-scope-system" });
+      const gameRadio = h("input", { type: "radio", name: scopeName, class: "core-scope-game" });
+      if (d.gameCore) gameRadio.checked = true; else sysRadio.checked = true;
+      const save = h("button", { class: "btn primary compact core-save" }, ["저장"]);
+      save.addEventListener("click", async () => {
+        if (!select.value) { showToast("Core를 고르세요.", "warning"); return; }
+        const forGame = gameRadio.checked;
+        const r = forGame
+          ? await api.setGameCore(d.system, d.file, select.value)
+          : await api.setSystemCore(d.system, select.value);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        showToast(forGame ? "이 게임의 Core를 지정했습니다." : `${system} 기본 Core를 저장했습니다.`);
+        draw();
+      });
+      const current = (label, value) => h("div", { class: "health-row" }, [h("span", {}, [label]), h("span", { class: "truncate" }, [value])]);
+      content.appendChild(current(`${system} 기본값`, d.systemCore ? coreLabel(d.systemCore) : "없음"));
+      content.appendChild(current("이 게임 지정", d.gameCore ? coreLabel(d.gameCore) : "없음 (System 기본값 사용)"));
+      content.appendChild(select);
+      content.appendChild(h("label", { class: "core-scope" }, [sysRadio, h("span", {}, [`${system} 전체의 기본값으로 저장`])]));
+      content.appendChild(h("label", { class: "core-scope" }, [gameRadio, h("span", {}, ["이 게임에만 지정"])]));
+      content.appendChild(h("div", { class: "rom-core-actions" }, [
+        d.gameCore ? h("button", { class: "btn compact core-clear", onClick: async () => {
+          const r = await api.setGameCore(d.system, d.file, null);
+          if (!r.ok) { showToast(r.error, "error"); return; }
+          showToast("이 게임의 Core 지정을 지웠습니다 - System 기본값으로 실행됩니다.");
+          draw();
+        } }, ["게임 지정 해제"]) : null,
+        save,
+      ]));
+    };
+    draw();
+    return section;
   }
 
   async function handleSaveDetail() {

@@ -17,18 +17,18 @@ async function startCompare(page) {
   await expect(page.locator(".ctab:not(.archive)")).toHaveCount(2);
 
   await page.locator(".ctab", { hasText: "Master Library" }).click({ button: "right" });
-  await page.locator(".modal-actions .btn", { hasText: "Compare 기준으로 지정" }).click();
+  await page.locator(".ctx-menu .ctx-item", { hasText: "Compare 기준으로 지정" }).click();
   await expect(page.locator("#toast")).toContainText("비교 기준으로 지정");
 
   await page.locator(".ctab", { hasText: "Android ES-DE" }).click({ button: "right" });
-  await page.locator(".modal-actions .btn", { hasText: "와 비교" }).click();
+  await page.locator(".ctx-menu .ctx-item", { hasText: "와 비교" }).click();
   await expect(page.locator("#filter-bar.compare")).toBeVisible();
 }
 
 test("기준을 정하기 전에는 '비교' 항목이 나오지 않는다", async ({ page }) => {
   await page.locator(".ctab:not(.archive)").first().click({ button: "right" });
-  await expect(page.locator(".modal-actions .btn", { hasText: "Compare 기준으로 지정" })).toBeVisible();
-  await expect(page.locator(".modal-actions .btn", { hasText: "와 비교" })).toHaveCount(0);
+  await expect(page.locator(".ctx-menu .ctx-item", { hasText: "Compare 기준으로 지정" })).toBeVisible();
+  await expect(page.locator(".ctx-menu .ctx-item", { hasText: "와 비교" })).toHaveCount(0);
 });
 
 test("비교를 시작하면 두 Collection 이름과 필터가 막대에 뜬다", async ({ page }) => {

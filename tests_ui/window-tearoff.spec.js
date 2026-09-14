@@ -16,7 +16,7 @@ test.describe("메인 창", () => {
     });
     await expect(page.locator(".ctab:not(.archive)")).toHaveCount(1);
     await page.locator(".ctab:not(.archive)").first().click({ button: "right" });
-    await page.locator(".tab-detach").click();
+    await page.locator(".ctx-menu .ctx-item", { hasText: "새 창으로 분리" }).click();
     await expect(page.locator(".ctab:not(.archive)")).toHaveCount(0);
     expect(await page.evaluate(() => window.__calls)).toEqual([["detach", "c1"]]);
     await expect(page.locator(".ctab.archive")).toBeVisible();
@@ -24,7 +24,7 @@ test.describe("메인 창", () => {
 
   test("다른 창이 합치면 탭이 다시 열린다", async ({ page }) => {
     await page.locator(".ctab:not(.archive)").first().click({ button: "right" });
-    await page.locator(".tab-detach").click();
+    await page.locator(".ctx-menu .ctx-item", { hasText: "새 창으로 분리" }).click();
     await expect(page.locator(".ctab:not(.archive)")).toHaveCount(0);
     await page.evaluate(() => window.__rmsAdoptCollection("c1"));
     await expect(page.locator(".ctab.active", { hasText: "Master Library" })).toBeVisible();
@@ -59,8 +59,8 @@ test.describe("떼어 낸 창", () => {
       window.api.mergeWindow = async () => { window.__merged += 1; return { ok: true, data: true }; };
     });
     await page.locator(".ctab.detached").click({ button: "right" });
-    await expect(page.locator(".tab-detach")).toHaveCount(0);
-    await page.locator(".tab-merge").click();
+    await expect(page.locator(".ctx-menu .ctx-item", { hasText: "새 창으로 분리" })).toHaveCount(0);
+    await page.locator(".ctx-menu .ctx-item", { hasText: "메인 창으로 합치기" }).click();
     await expect.poll(() => page.evaluate(() => window.__merged)).toBe(1);
   });
 

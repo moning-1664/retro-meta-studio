@@ -113,7 +113,7 @@ test.describe("Validate Collection - 강화된 결과", () => {
     await expect(page.locator(".dsb-invalid")).toContainText("이름 없음");
   });
 
-  test("문제가 많으면 20개까지만 보여주고 나머지는 개수로 알려준다", async ({ page }) => {
+  test("세부 문제는 접힌 채로 시작하고, ▼로 모두 펼쳐 칸 안에서 스크롤하며, ✕로 지운다", async ({ page }) => {
     await page.evaluate(() => {
       const issues = Array.from({ length: 25 }, (_, i) => ({
         system: "ps2", filename: `G${i}.iso`, issues: ["missingRom"],
@@ -125,9 +125,35 @@ test.describe("Validate Collection - 강화된 결과", () => {
     });
     await openDashboard(page);
     await page.locator(".dsb-validate").click();
-    await expect(page.locator(".dsb-invalid li")).toHaveCount(21);   // 20개 + "외 5개"
-    await expect(page.locator(".dsb-invalid li").last()).toContainText("외 5개");
+    const details = page.locator(".dsb-validate-details");
+    await expect(details).toBeHidden();
+    await expect(page.locator(".dsb-validate-toggle")).toContainText("세부 문제 25개");
+    await page.locator(".dsb-validate-toggle").click();
+    await expect(details).toBeVisible();
+    await expect(page.locator(".dsb-invalid li")).toHaveCount(25);   // 잘라내지 않는다
+    expect(await details.evaluate((el) => getComputedStyle(el).overflowY)).toBe("auto");
+    await page.locator(".dsb-validate-toggle").click();
+    await expect(details).toBeHidden();
+    await page.locator(".dsb-validate-clear").click();
+    await expect(page.locator(".dsb-validate-head")).toHaveCount(0);
   });
+
+  test("검사 결과는 표를 다시 정렬해도 남는다", async ({ page }) => {
+    await openDashboard(page);
+    await page.locator(".dsb-validate").click();
+    await expect(page.locator(".dsb-validation")).toContainText("문제 없음");
+    await page.locator(".dsb-sort", { hasText: "Games" }).click();
+    await expect(page.locator(".dsb-validation")).toContainText("문제 없음");
+  });
+});
+
+test("System 표는 Media size 뒤에 Total size(ROM + Media)를 보여준다", async ({ page }) => {
+  await openDashboard(page);
+  const heads = (await page.locator(".dsb-table thead th").allTextContents()).map((t) => t.replace(/[↑↓]/g, "").trim());
+  expect(heads).toEqual(["System", "Storage", "Games", "ROM size", "Media size", "Total size", "Status"]);
+  const totals = await page.locator(".dsb-table tbody td.dsb-total").allTextContents();
+  expect(totals.length).toBeGreaterThan(0);
+  totals.forEach((text) => expect(text).toMatch(/\d/));
 });
 
 test("목표 용량을 바꾸면 그 Collection의 화면 상태로 저장된다", async ({ page }) => {
@@ -153,35 +179,77 @@ test("Archive 탭에서는 Dashboard를 열지 않고 이유를 알려준다", a
   await expect(page.locator("#dashboard-view")).toBeHidden();
 });
 
-// Storage target Slider - 32G~8T의 10단계에만 자석처럼 붙는다(사용자 결정). 숫자 입력/
-// ▲▼ 버튼과 값을 공유하지만, 기존 Storage Usage 계산(사용량 막대·표)에는 영향을 주지 않는다.
+// Storage target Slider - 32GB~8TB를 로그 눈금으로 연속해서 움직이다가, 프리셋 근처에 오면 그 값에 딱
+// 붙는다(사용자 결정). ▲▼는 세밀하게 한 칸씩 움직이고 프리셋에서 멈춘다. 키보드 ←→는 프리셋 단위.
+// 기존 Storage Usage 계산(사용량 막대·표)에는 영향을 주지 않는다.
 test.describe("Storage target Slider", () => {
+  const GB = 1024 ** 3;
+  const TB = 1024 ** 4;
   const row = (page) => page.locator(".dsb-target[data-storage='internal']");
   const slider = (page) => row(page).locator(".dsb-target-slider");
   const input = (page) => row(page).locator(".dsb-target-input");
   const sliderValue = (page) => row(page).locator(".dsb-slider-value");
+  const posOf = (page, bytes) => page.evaluate((b) => window.RMSDashboard.toPos(b), bytes);
+  // 드래그 중인 것처럼 값만 바꾸고 input 이벤트를 보낸다(손을 떼는 것은 release).
+  const dragTo = (page, pos) => slider(page).evaluate((el, p) => {
+    el.value = String(p);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }, pos);
+  const release = (page) => slider(page).evaluate((el) => el.dispatchEvent(new Event("change", { bubbles: true })));
 
   const setTarget = async (page, text) => {
     await input(page).fill(text);
     await input(page).press("Enter");
   };
 
-  test("텍스트로 512 GB를 정하면 Slider가 그 단계로 옮겨간다", async ({ page }) => {
+  test("텍스트로 512 GB를 정하면 Slider가 그 자리로 옮겨가고 그 눈금이 켜진다", async ({ page }) => {
     await openDashboard(page);
     await setTarget(page, "512 GB");
-    // SNAP = [32,64,128,256,512]GB, 1,2,3,4,8TB - 512GB는 인덱스 4다.
-    await expect(slider(page)).toHaveAttribute("value", "4");
+    await expect(slider(page)).toHaveAttribute("value", String(await posOf(page, 512 * GB)));
     await expect(sliderValue(page)).toHaveText("512 GB");
+    await expect(sliderValue(page)).toHaveClass(/snapped/);
+    await expect(row(page).locator(`.dsb-tick[data-bytes='${512 * GB}']`)).toHaveClass(/on/);
   });
 
-  test("Slider를 옮기면 숫자 입력/미리보기가 같은 값을 보여준다", async ({ page }) => {
+  test("끄는 동안 프리셋 근처에 오면 그 값에 딱 붙는다", async ({ page }) => {
+    await openDashboard(page);
+    await setTarget(page, "128 GB");
+    const at = await posOf(page, 512 * GB);
+    await dragTo(page, at + 9);
+    await expect(sliderValue(page)).toHaveText("512 GB");
+    await expect(sliderValue(page)).toHaveClass(/snapped/);
+    expect(await slider(page).evaluate((el) => el.value)).toBe(String(at));   // 손잡이도 눈금 위로 붙는다
+    await release(page);
+    await expect(input(page)).toHaveValue("512 GB");
+  });
+
+  test("프리셋에서 먼 자리에서는 세밀한 값이 된다", async ({ page }) => {
+    await openDashboard(page);
+    await setTarget(page, "128 GB");
+    const a = await posOf(page, 256 * GB);
+    const b = await posOf(page, 512 * GB);
+    await dragTo(page, Math.round((a + b) / 2));
+    await expect(sliderValue(page)).not.toHaveClass(/snapped/);
+    const text = await sliderValue(page).textContent();
+    expect(text).toMatch(/^\d+ GB$/);
+    const value = parseInt(text, 10);
+    expect(value).toBeGreaterThan(300);
+    expect(value).toBeLessThan(420);
+    await release(page);
+    await expect(input(page)).toHaveValue(text);
+  });
+
+  test("키보드 ←→는 프리셋 단위로 움직이고 초점이 Slider에 남는다", async ({ page }) => {
     await openDashboard(page);
     await setTarget(page, "512 GB");
     await slider(page).focus();
-    await page.keyboard.press("ArrowRight");   // 512GB -> 1TB
-    await expect(sliderValue(page)).toHaveText("1 TB");
+    await page.keyboard.press("ArrowRight");
     await expect(input(page)).toHaveValue("1 TB");
-    await expect(slider(page)).toHaveAttribute("value", "5");
+    await expect(slider(page)).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await expect(input(page)).toHaveValue("2 TB");
+    await page.keyboard.press("ArrowLeft");
+    await expect(input(page)).toHaveValue("1 TB");
   });
 
   test("Slider 값은 Collection ui_state에 저장된다", async ({ page }) => {
@@ -196,37 +264,40 @@ test.describe("Storage target Slider", () => {
     await slider(page).focus();
     await page.keyboard.press("ArrowRight");
     await expect.poll(() => saved.filter((s) => s.dashboardTargets).length).toBeGreaterThan(0);
-    expect(saved.at(-1).dashboardTargets.internal).toBe(1024 ** 4);
+    expect(saved.at(-1).dashboardTargets.internal).toBe(TB);
   });
 
   test("최댓값은 8TB고 그 이상으로 넘어가지 않는다", async ({ page }) => {
     await openDashboard(page);
     await setTarget(page, "4 TB");
     await slider(page).focus();
-    await page.keyboard.press("ArrowRight");   // 4TB -> 8TB (마지막 단계)
+    await page.keyboard.press("ArrowRight");
     await expect(sliderValue(page)).toHaveText("8 TB");
-    await page.keyboard.press("ArrowRight");   // 더 눌러도 8TB에 머문다
+    await page.keyboard.press("ArrowRight");
     await expect(sliderValue(page)).toHaveText("8 TB");
     await expect(input(page)).toHaveValue("8 TB");
+    await dragTo(page, 1000);
+    await expect(sliderValue(page)).toHaveText("8 TB");
   });
 
-  test("▲/▼ 버튼도 같은 10단계 위를 다음/이전으로 움직인다(임의 증분이 아니다)", async ({ page }) => {
+  test("▲/▼는 세밀하게 한 칸씩 움직인다", async ({ page }) => {
     await openDashboard(page);
     await setTarget(page, "128 GB");
     await row(page).locator(".dsb-spin", { hasText: "▲" }).click();
-    await expect(input(page)).toHaveValue("256 GB");
-    await expect(slider(page)).toHaveAttribute("value", "3");
+    await expect(input(page)).toHaveValue("136 GB");
     await row(page).locator(".dsb-spin", { hasText: "▼" }).click();
     await expect(input(page)).toHaveValue("128 GB");
-    await expect(slider(page)).toHaveAttribute("value", "2");
   });
 
-  test("목록에 없는 값(600 GB)에서 ▲를 누르면 바로 위 단계로 붙는다", async ({ page }) => {
+  test("▲/▼는 프리셋을 건너뛰지 않고 거기서 멈춘다", async ({ page }) => {
     await openDashboard(page);
-    await setTarget(page, "600 GB");
-    await expect(input(page)).toHaveValue("600 GB");   // 512GB 근처지만 허용 오차 밖이라 그대로 유지
+    await setTarget(page, "124 GB");
+    await expect(input(page)).toHaveValue("124 GB");
     await row(page).locator(".dsb-spin", { hasText: "▲" }).click();
-    await expect(input(page)).toHaveValue("1 TB");
+    await expect(input(page)).toHaveValue("128 GB");
+    await setTarget(page, "600 GB");
+    await row(page).locator(".dsb-spin", { hasText: "▲" }).click();
+    await expect(input(page)).toHaveValue("616 GB");
   });
 
   test("Slider와 ▲▼는 사용량 막대·System 표 숫자를 바꾸지 않는다", async ({ page }) => {
@@ -236,6 +307,7 @@ test.describe("Storage target Slider", () => {
     await setTarget(page, "512 GB");
     await slider(page).focus();
     await page.keyboard.press("ArrowRight");
+    await row(page).locator(".dsb-spin", { hasText: "▲" }).click();
     await expect(page.locator(".dsb-tiles")).toHaveText(usageBefore);
     await expect(page.locator(".dsb-table tbody")).toHaveText(tableBefore);
   });

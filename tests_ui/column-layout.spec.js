@@ -107,14 +107,32 @@ test.describe("Settings - GameList Columns", () => {
     await expect(page.locator(".stg-column-row[data-column='desc']")).toHaveClass(/off/);
   });
 
-  test("뒤로 버튼으로 순서를 바꾸고, 기본값으로 되돌린다", async ({ page }) => {
+  test("☰ 손잡이를 끌어 순서를 바꾸고, 기본값으로 되돌린다", async ({ page }) => {
     await openColumns(page);
-    await page.locator(".stg-column-row[data-column='file'] .col-down").click();
+    await expect(page.locator(".stg-column-row .col-down, .stg-column-row .col-up")).toHaveCount(0);
+    const grip = await page.locator(".stg-column-row[data-column='file'] .stg-column-grip").boundingBox();
+    const title = page.locator(".stg-column-row[data-column='title']");
+    const box = await title.boundingBox();
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 40, box.y + box.height * 0.8, { steps: 6 });
+    await expect(title).toHaveClass(/drop-after/);
+    await page.mouse.up();
     await expect.poll(() => headLabels(page)).toEqual(
       ["No.", "Title", "File", "Description", "Region", "Rating", "★", "Genre", "Status"]);
     await page.locator(".stg-column-row[data-column='desc'] input").uncheck();
     await page.locator(".stg-column-reset").click();
     await expect.poll(() => headLabels(page)).toEqual(HEADERS);
+  });
+
+  test("손잡이에 초점이 있으면 ↑↓ 키로 옮기고, No. 손잡이는 꺼져 있다", async ({ page }) => {
+    await openColumns(page);
+    await expect(page.locator(".stg-column-row[data-column='no'] .stg-column-grip")).toBeDisabled();
+    await page.locator(".stg-column-row[data-column='file'] .stg-column-grip").focus();
+    await page.keyboard.press("ArrowDown");
+    await expect.poll(() => headLabels(page)).toEqual(
+      ["No.", "Title", "File", "Description", "Region", "Rating", "★", "Genre", "Status"]);
+    await expect(page.locator(".stg-column-row[data-column='file'] .stg-column-grip")).toBeFocused();
   });
 
   test("머리글 메뉴에서 Settings로 바로 간다", async ({ page }) => {

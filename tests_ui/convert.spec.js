@@ -10,7 +10,7 @@ test.beforeEach(async ({ page }) => { await openApp(page); });
 
 async function openConvertPreview(page) {
   await page.locator(".ctab:not(.archive)").first().click({ button: "right" });
-  await page.locator(".modal-actions .btn", { hasText: "Convert" }).click();
+  await page.locator(".ctx-menu .ctx-item", { hasText: "Convert" }).click();
   await expect(page.locator(".modal-title")).toHaveText("Convert");
   await modalButton(page, "다음").click();
   await expect(page.locator(".modal-title")).toHaveText("Convert 미리보기");
@@ -18,12 +18,12 @@ async function openConvertPreview(page) {
 
 test("탭 우클릭에서 Convert를 시작한다", async ({ page }) => {
   await page.locator(".ctab:not(.archive)").first().click({ button: "right" });
-  await expect(page.locator(".modal-actions .btn", { hasText: "Convert" })).toBeVisible();
+  await expect(page.locator(".ctx-menu .ctx-item", { hasText: "Convert" })).toBeVisible();
 });
 
 test("대상 Collection을 고르게 하고 원본 보존을 알린다", async ({ page }) => {
   await page.locator(".ctab:not(.archive)").first().click({ button: "right" });
-  await page.locator(".modal-actions .btn", { hasText: "Convert" }).click();
+  await page.locator(".ctx-menu .ctx-item", { hasText: "Convert" }).click();
 
   // 자기 자신은 대상에 없어야 한다.
   const options = page.locator(".modal-body select option");

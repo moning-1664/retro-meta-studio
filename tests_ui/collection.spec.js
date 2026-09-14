@@ -41,9 +41,17 @@ test("Metadata 디렉토리 하나만 있어도 추가되고, 이름은 폴더�
   await expect(page.locator(".ctab.active")).toContainText("ES-DE");
 });
 
+test("탭 우클릭은 대화상자가 아니라 플로팅 메뉴다", async ({ page }) => {
+  await page.locator(".ctab:not(.archive)").first().click({ button: "right" });
+  await expect(page.locator(".ctx-menu .ctx-title")).toHaveText("Master Library");
+  await expect(page.locator(".modal-actions")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".ctx-menu")).toHaveCount(0);
+});
+
 test("탭 우클릭 -> 이름 변경이 탭 제목에 반영된다", async ({ page }) => {
   await page.locator(".ctab:not(.archive)").first().click({ button: "right" });
-  await page.locator(".modal-actions .btn", { hasText: "이름 변경" }).click();
+  await page.locator(".ctx-menu .ctx-item", { hasText: "이름 변경" }).click();
   await page.locator(".modal-body .field-input").fill("이름 바꾼 컬렉션");
   await modalButton(page, "저장").click();
   await expect(page.locator(".ctab:not(.archive)").first()).toContainText("이름 바꾼 컬렉션");
@@ -51,7 +59,7 @@ test("탭 우클릭 -> 이름 변경이 탭 제목에 반영된다", async ({ pa
 
 test("탭 우클릭 -> 제거는 확인을 거친 뒤 탭을 닫는다", async ({ page }) => {
   await page.locator(".ctab:not(.archive)").first().click({ button: "right" });
-  await page.locator(".modal-actions .btn.danger", { hasText: "제거" }).click();
+  await page.locator(".ctx-menu .ctx-item.danger", { hasText: "제거" }).click();
   await expect(page.locator(".modal-text")).toContainText("실제 파일은 삭제되지 않습니다");
   await modalButton(page, "확인").click();
   await expect(page.locator(".ctab:not(.archive)")).toHaveCount(0);

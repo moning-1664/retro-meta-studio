@@ -183,14 +183,14 @@
         add(h("div", { class: "stg-subsection-title" }, ["GameList Columns"]));
         add(ctx.renderColumns ? ctx.renderColumns() :
           h("div", { class: "stg-info" }, ["컬럼 순서/표시 설정은 준비 중입니다."]));
-        const m = { videoMode: "auto", videoDelay: 5, videoSound: true, videoLoop: true, ...(s.media || {}) };
+        const m = { videoMode: "auto", videoDelay: 3, videoSound: true, videoLoop: true, ...(s.media || {}) };
         add(h("div", { class: "stg-subsection-title" }, ["Video"]));
         add(row("media.videoMode", "영상 재생",
           select(m.videoMode, [["auto", "자동 재생"], ["manual", "눌러서 재생"], ["off", "재생 안 함"]],
             (v) => ctx.update("media", { videoMode: v })),
           "Media 탭의 Screenshot 자리에서 영상을 보여줍니다. 재생 중에 누르면 멈춥니다."));
         add(row("media.videoDelay", "자동 재생 대기",
-          select(m.videoDelay, [[3, "3초"], [5, "5초"], [10, "10초"], [15, "15초"]],
+          select(m.videoDelay, [[0, "0초"], [1, "1초"], [3, "3초"], [5, "5초"], [10, "10초"], [15, "15초"]],
             (v) => ctx.update("media", { videoDelay: Number(v) })),
           "게임을 고르고 이 시간만큼 그대로 두면 재생합니다. 그 전에 다른 게임으로 넘기면 재생하지 않습니다."));
         add(row("media.videoSound", "소리", toggle(m.videoSound, (v) => ctx.update("media", { videoSound: v }))));

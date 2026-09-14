@@ -72,22 +72,34 @@ test.describe("실행", () => {
     expect(await page.evaluate(async () => (await window.api.retroarchSettings()).data.systemCores.snes)).toBe("snes9x_libretro.dll");
   });
 
-  test("이 게임에만 Core를 지정할 수 있고 해제도 된다", async ({ page }) => {
+  test("Core 선택은 ROM 탭에 있고, 이 게임에만 지정하거나 해제한다", async ({ page }) => {
     await configure(page);
     await row(page, "SMW.sfc").locator(".lc-file").click();
-    await page.locator(".detail-core").click();
-    await page.locator(".core-select").selectOption("mgba_libretro.dll");
-    await page.locator(".core-scope-game").check();
-    await page.locator(".core-save").click();
-    let s = await page.evaluate(async () => (await window.api.retroarchSettings()).data);
+    await expect(page.locator(".detail-core")).toHaveCount(0);   // Detail 머리의 옵션 버튼은 없앴다
+    await page.locator(".detail-tab", { hasText: "ROM" }).click();
+    const core = page.locator(".rom-core");
+    await core.locator(".core-select").selectOption("mgba_libretro.dll");
+    await core.locator(".core-scope-game").check();
+    await core.locator(".core-save").click();
+    await expect(page.locator(".toast-msg")).toHaveText("이 게임의 Core를 지정했습니다.");
+    const settings = () => page.evaluate(async () => (await window.api.retroarchSettings()).data);
+    let s = await settings();
     expect(s.gameCores["snes/SMW.sfc"]).toBe("mgba_libretro.dll");
     expect(s.systemCores.snes).toBeUndefined();
 
-    await page.locator(".detail-core").click();
-    await expect(page.locator(".core-scope-game")).toBeChecked();
-    await modalButton(page, "게임 지정 해제").click();
-    s = await page.evaluate(async () => (await window.api.retroarchSettings()).data);
+    await expect(core.locator(".core-scope-game")).toBeChecked();
+    await core.locator(".core-clear").click();
+    await expect(core.locator(".core-clear")).toHaveCount(0);
+    s = await settings();
     expect(s.gameCores["snes/SMW.sfc"]).toBeUndefined();
+  });
+
+  test("실행할 수 없는 System은 ROM 탭에 이유만 보여준다", async ({ page }) => {
+    await configure(page);
+    await row(page, "FFX.iso").locator(".lc-file").click();
+    await page.locator(".detail-tab", { hasText: "ROM" }).click();
+    await expect(page.locator(".rom-core")).toContainText("검증되지 않았습니다");
+    await expect(page.locator(".rom-core .core-select")).toHaveCount(0);
   });
 
   test("행을 더블클릭하면 실행한다", async ({ page }) => {
