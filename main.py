@@ -16,6 +16,7 @@ if not getattr(sys, "frozen", False):
 import webview  # noqa: E402
 
 from bridge.api import Api  # noqa: E402
+from bridge.windows import WindowManager  # noqa: E402
 
 
 #: 넉넉한 화면에서 열고 싶은 크기.
@@ -55,14 +56,39 @@ def _fit_to_screen(preferred, minimum):
     return (width, height), min_size, position
 
 
+#: 떼어 낸 Collection 창은 메인 창보다 조금 작게, 조금 비켜서 연다.
+DETACHED_SCALE = 0.8
+DETACHED_OFFSET = 48
+
+
 def main():
     api = Api()
     gui_dir = Path(__file__).resolve().parent / "gui_web"
     (width, height), min_size, (x, y) = _fit_to_screen(PREFERRED_SIZE, MIN_SIZE)
-    window = webview.create_window(
-        "RetroMeta Studio",
+
+    def create_window(title, js_api, detached):
+        # 창마다 js_api(WindowBridge)가 따로 붙는다 - bridge/windows.py.
+        w, h, left, top = width, height, x, y
+        if detached:
+            w = max(min_size[0], int(width * DETACHED_SCALE))
+            h = max(min_size[1], int(height * DETACHED_SCALE))
+            left = None if x is None else x + DETACHED_OFFSET
+            top = None if y is None else y + DETACHED_OFFSET
+        return _create_window(gui_dir, title, js_api, (w, h), min_size, (left, top))
+
+    WindowManager(api, create_window).create_main()
+    try:
+        webview.start()
+    finally:
+        api.close()
+
+
+def _create_window(gui_dir, title, js_api, size, min_size, position):
+    (width, height), (x, y) = size, position
+    return webview.create_window(
+        title,
         str(gui_dir / "index.html"),
-        js_api=api,
+        js_api=js_api,
         width=width, height=height, min_size=min_size, x=x, y=y,
         background_color="#0d1520",
         # 앱이 자기 제목 표시줄을 그린다(`gui_web`의 `#titlebar` + `window_control`).
@@ -80,11 +106,6 @@ def main():
         # `window_resize` 브릿지로 크기를 바꾼다(gui_web의 `.resize-grip`).
         resizable=True,
     )
-    api._window = window
-    try:
-        webview.start()
-    finally:
-        api.close()
 
 
 if __name__ == "__main__":

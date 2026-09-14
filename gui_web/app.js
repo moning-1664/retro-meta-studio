@@ -378,6 +378,63 @@
     await send();
   }
 
+  // ------------------------------------------------------------------
+  // 여러 창 (bridge/windows.py) - 메인 창은 Archive와 여러 Collection 탭, 떼어 낸 창은 Collection 하나.
+  // ------------------------------------------------------------------
+  S.window = { id: "main", role: "main", collectionId: null };
+  const isDetached = () => S.window.role === "detached";
+
+  async function loadWindowInfo() {
+    const r = await api.windowInfo();
+    if (r.ok && r.data) S.window = r.data;
+    document.body.classList.toggle("detached-window", isDetached());
+  }
+
+  /** 탭을 화면에서만 뺀다. release면 Collection도 닫는다(떼어 낼 때는 새 창이 이어받으므로 닫지 않는다). */
+  async function dropTab(id, release) {
+    if (release) await api.closeCollection(id);
+    S.tabs = S.tabs.filter((t) => t !== id);
+    delete S.detail[id];
+    delete S.scope[id];
+    if (S.activeId === id) {
+      S.activeId = S.tabs[0] || null;
+      resetList();
+      if (S.activeId) await ensureDetail(S.activeId);
+    }
+    renderAll();
+    if (S.activeId) await reloadList();
+  }
+
+  async function detachTab(id) {
+    await flushPendingUiState();
+    const r = await api.detachCollection(id);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    await dropTab(id, false);
+  }
+
+  async function mergeIntoMain() {
+    await flushPendingUiState();
+    const r = await api.mergeWindow();
+    if (!r.ok) showToast(r.error, "error");
+  }
+
+  // 다른 창이 보내는 알림(bridge/windows.py WindowManager.broadcast / merge).
+  window.__rmsSettingsChanged = (stored) => {
+    S.settings = mergeSettings(stored);
+    applyAppearance(S.settings.appearance);
+    renderAll();
+    if (S.activeId) refreshListGeometry();
+  };
+  window.__rmsCollectionsChanged = async () => {
+    await loadCollections();
+    renderAll();
+  };
+  window.__rmsAdoptCollection = async (id) => {
+    await loadCollections();
+    await openTab(id);
+    showToast("떼어 낸 창의 Collection을 다시 붙였습니다.");
+  };
+
   async function loadAppSettings() {
     const r = await api.getAppSettings();
     S.settings = mergeSettings(r.ok ? r.data : null);
@@ -601,6 +658,26 @@
   function renderTabs() {
     const bar = $("tabs-bar");
     clear(bar);
+    if (isDetached()) {
+      // 떼어 낸 창: Collection 탭 하나. 닫기는 창 닫기와 같다.
+      S.tabs.forEach((id) => {
+        const collection = S.collections.find((c) => c.id === id);
+        if (!collection) return;
+        const tab = h("div", { class: "ctab active detached" }, [icon("gamepad", 13),
+          h("span", { class: "ctab-name" }, [collection.name])]);
+        const close = h("button", { class: "ctab-close", title: "창 닫기" }, [icon("x", 9)]);
+        close.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          await flushPendingUiState();
+          api.windowControl("close");
+        });
+        tab.appendChild(close);
+        tab.addEventListener("contextmenu", (e) => { e.preventDefault(); openTabMenu(collection, e); });
+        bar.appendChild(tab);
+        document.title = `${collection.name} - RetroMeta Studio`;
+      });
+      return;
+    }
     const archiveTab = h("div", { class: "ctab archive" + (isArchive() ? " active" : ""),
       title: "여러 Collection에서 수집한 Metadata 보관소" }, [
       icon("database", 13), h("span", { class: "ctab-name" }, ["Archive"]),
@@ -699,6 +776,14 @@
     const actions = [
       h("button", { class: "btn", onClick: () => { closeModal(); promptRename(collection); } }, ["이름 변경"]),
     ];
+    if (isDetached()) {
+      actions.push(h("button", { class: "btn primary tab-merge", onClick: () => { closeModal(); mergeIntoMain(); } },
+        ["메인 창으로 합치기"]));
+      showModal("Collection", body, [...actions, h("button", { class: "btn", onClick: closeModal }, ["닫기"])]);
+      return;
+    }
+    actions.push(h("button", { class: "btn tab-detach", onClick: () => { closeModal(); detachTab(collection.id); } },
+      ["새 창으로 분리"]));
     actions.push(h("button", { class: "btn", onClick: () => {
       closeModal();
       openConvert(collection);
@@ -747,6 +832,7 @@
 
   async function selectTab(id) {
     if (S.activeId === id) return;
+    if (isDetached() && id !== S.window.collectionId) return;
     if (id !== ARCHIVE_ID && !S.tabs.includes(id)) { await openTab(id); return; }
     S.activeId = id;
     S.view = "list";
@@ -762,21 +848,15 @@
 
   async function closeTab(id) {
     // Collection을 닫아도 Cache와 실제 파일은 그대로 둔다(스펙 §2.2).
-    await api.closeCollection(id);
-    S.tabs = S.tabs.filter((t) => t !== id);
-    delete S.detail[id];
-    delete S.scope[id];
-    if (S.activeId === id) {
-      S.activeId = S.tabs[0] || null;
-      resetList();
-      if (S.activeId) await ensureDetail(S.activeId);
-    }
-    renderAll();
-    if (S.activeId) await reloadList();
+    await dropTab(id, true);
   }
 
   async function openTab(id) {
     if (S.tabs.includes(id)) { await selectTab(id); return; }
+    if (isDetached() && id !== S.window.collectionId) {
+      showToast("떼어 낸 창에는 Collection을 하나만 열 수 있습니다. 메인 창에서 여세요.", "warning");
+      return;
+    }
     if (S.tabs.length >= MAX_TABS) {
       showToast(`동시에 열 수 있는 Collection은 ${MAX_TABS}개까지입니다.`, "warning");
       return;
@@ -4758,12 +4838,14 @@
 
   async function init() {
     bindEvents();
+    await loadWindowInfo();
     await loadAppSettings();
     await loadRetroarchState();
     await loadCollections();
     renderAll();
     // Collection이 하나도 없어도 선택을 강요하지 않는다 - 빈 메인 화면을 정상적으로
     // 띄우고, "+ Collection"을 사용자가 직접 누르게 한다.
+    if (isDetached()) { if (S.window.collectionId) await openTab(S.window.collectionId); return; }
     if (S.collections.length) await openTab(S.collections[0].id);
   }
 

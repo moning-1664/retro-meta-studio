@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 APP_JS = ROOT / "gui_web" / "app.js"
 API_CLIENT_JS = ROOT / "gui_web" / "api-client.js"
 API_PY = ROOT / "bridge" / "api.py"
+WINDOWS_PY = ROOT / "bridge" / "windows.py"
 
 
 def strip_js_comments(src: str) -> str:
@@ -42,10 +43,20 @@ def api_client_methods(src: str) -> dict:
 
 
 def python_api_methods() -> dict:
-    """bridge/api.py의 Api 공개 메서드 -> (필수 인자 수, 전체 인자 수). self 제외."""
-    tree = ast.parse(API_PY.read_text(encoding="utf-8"))
-    cls = next(n for n in ast.walk(tree)
-               if isinstance(n, ast.ClassDef) and n.name == "Api")
+    """창의 js_api가 가진 공개 메서드 -> (필수 인자 수, 전체 인자 수). self 제외.
+
+    실제 js_api는 창마다 붙는 WindowBridge(bridge/windows.py)이고, 그 외 메서드는 Api로 넘긴다.
+    그래서 Api 메서드에 WindowBridge에만 있는 창 메서드(window_info 등)를 더한다."""
+    out = {}
+    for path, name in ((API_PY, "Api"), (WINDOWS_PY, "WindowBridge")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        cls = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.ClassDef) and n.name == name)
+        out.update(_class_methods(cls))
+    return out
+
+
+def _class_methods(cls) -> dict:
     out = {}
     for node in cls.body:
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):

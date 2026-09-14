@@ -267,6 +267,14 @@
       return ok({ launched: true, core });
     },
     window_control: () => ok(true),
+    // 창 역할. 목업은 주소의 ?window=w1&collection=c2 로 떼어 낸 창을 흉내 낸다.
+    window_info: () => {
+      const q = new URLSearchParams(location.search);
+      const id = q.get("window") || "main";
+      return ok({ id, role: id === "main" ? "main" : "detached", collectionId: q.get("collection") });
+    },
+    detach_collection: () => ok({ windowId: "w1" }),
+    merge_window: () => ok(true),
     window_resize: () => ok(true),
 
     // --- 상태를 바꾸는 호출 ---------------------------------------------
@@ -676,6 +684,9 @@
     retroarchGameInfo: (id, romUid) => call("retroarch_game_info", id, romUid),
     launchGame: (id, romUid) => call("launch_game", id, romUid),
     windowControl: (action) => call("window_control", action),
+    windowInfo: () => call("window_info"),
+    detachCollection: (id) => call("detach_collection", id),
+    mergeWindow: () => call("merge_window"),
     windowSetBounds: (x, y, width, height) => call("window_set_bounds", x, y, width, height),
     windowResize: (width, height) => call("window_resize", width, height),
   };
