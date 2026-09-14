@@ -18,8 +18,9 @@
   const GB = 1024 * MB;
   const TB = 1024 * GB;
   const TARGET_MAX = 8 * TB;
-  //: 사람이 실제로 쓰는 용량 눈금. 여기 가까우면 그 값에 붙인다.
-  const SNAP = [32 * GB, 64 * GB, 128 * GB, 256 * GB, 512 * GB, 1 * TB, 2 * TB, 4 * TB, 8 * TB];
+  //: 사람이 실제로 쓰는 용량 눈금. 슬라이더는 **이 목록에만** 자석처럼 붙는다(사용자 결정).
+  //: 텍스트 입력은 여전히 자유롭고, 여기 가까우면(snap()) 이 값에 붙는다.
+  const SNAP = [32 * GB, 64 * GB, 128 * GB, 256 * GB, 512 * GB, 1 * TB, 2 * TB, 3 * TB, 4 * TB, 8 * TB];
   //: 사용량 막대에 따로 칠하는 System 수. 나머지는 "기타"로 묶는다(색이 8개를 넘으면
   //: 구분이 안 된다).
   const TOP_SYSTEMS = 7;
@@ -44,7 +45,17 @@
     return Math.abs(nearest - bytes) <= Math.max(GB, nearest * 0.03) ? nearest : bytes;
   }
 
-  const stepFor = (bytes) => (bytes < TB ? 16 * GB : bytes < 4 * TB ? 128 * GB : 512 * GB);
+  //: ▲/▼ 버튼과 슬라이더가 함께 쓰는 "다음/이전 단계"(사용자 결정 - 임의 크기가 아니라
+  //: SNAP 목록 위를 움직인다). 지금 값이 목록에 없어도(직접 입력한 값이라도) 그보다
+  //: 크거나 작은 가장 가까운 단계로 옮긴다.
+  const nextStep = (bytes) => SNAP.find((v) => v > bytes) ?? SNAP[SNAP.length - 1];
+  const prevStep = (bytes) => [...SNAP].reverse().find((v) => v < bytes) ?? SNAP[0];
+  const stepIndex = (bytes) => {
+    if (!bytes) return 0;
+    let best = 0, diff = Infinity;
+    SNAP.forEach((v, i) => { const d = Math.abs(v - bytes); if (d < diff) { diff = d; best = i; } });
+    return best;
+  };
 
   function render(host, data, ctx) {
     const { h, icon, formatBytes, formatCount } = ctx;
@@ -174,16 +185,31 @@
         ctx.onTargetChange(s.id, snap(bytes));
         row.replaceWith(targetRow(s));
       };
+      // ▲/▼(버튼과 텍스트 칸의 화살표 키)와 Slider는 **같은 단계 목록**(SNAP) 위를
+      // 움직인다(사용자 결정) - 임의의 바이트만큼이 아니라 32G/64G/…/8T 중 다음/이전 값으로.
       input.addEventListener("keydown", (e) => {
         if (e.key === "Enter") { e.preventDefault(); commit(parseCapacity(input.value)); }
-        else if (e.key === "ArrowUp") { e.preventDefault(); commit((target || 0) + stepFor(target || 0)); }
-        else if (e.key === "ArrowDown") { e.preventDefault(); commit(Math.max(GB, (target || 0) - stepFor(target || 0))); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); commit(nextStep(target || 0)); }
+        else if (e.key === "ArrowDown") { e.preventDefault(); if (target) commit(prevStep(target)); }
       });
       input.addEventListener("change", () => commit(parseCapacity(input.value)));
-      const up = h("button", { class: "dsb-spin", title: "늘리기" }, ["▲"]);
-      const down = h("button", { class: "dsb-spin", title: "줄이기" }, ["▼"]);
-      up.addEventListener("click", () => commit((target || 0) + stepFor(target || 0)));
-      down.addEventListener("click", () => commit(Math.max(GB, (target || 0) - stepFor(target || 0))));
+      const up = h("button", { class: "dsb-spin", title: "다음 단계" }, ["▲"]);
+      const down = h("button", { class: "dsb-spin", title: "이전 단계" }, ["▼"]);
+      up.addEventListener("click", () => commit(nextStep(target || 0)));
+      down.addEventListener("click", () => { if (target) commit(prevStep(target)); });
+
+      // Slider - 32GB~8TB의 정해진 10단계에만 자석처럼 붙는다(연속 값이 아니다). 끄는
+      // 동안은 미리보기 글자만 바꾸고(row를 새로 만들면 드래그가 끊긴다), 손을 뗀
+      // 순간(change)에만 실제로 반영해 목표 용량 저장·막대·요약을 다시 그린다.
+      const sliderValue = h("span", { class: "dsb-slider-value" }, [target ? formatCapacity(target) : "—"]);
+      const slider = h("input", {
+        type: "range", class: "dsb-target-slider", min: "0", max: String(SNAP.length - 1), step: "1",
+        value: String(stepIndex(target)), "aria-label": `${s.label} 목표 용량 단계`,
+      });
+      slider.addEventListener("input", () => {
+        sliderValue.textContent = formatCapacity(SNAP[Number(slider.value)]);
+      });
+      slider.addEventListener("change", () => commit(SNAP[Number(slider.value)]));
 
       const summary = !target
         ? "목표를 정하지 않았습니다"
@@ -194,6 +220,7 @@
           h("span", { class: "dsb-target-kind" }, [s.kind === "external" ? "External" : "Internal"]),
           h("span", { class: "dsb-target-controls" }, [input, h("span", { class: "dsb-spins" }, [up, down])]),
         ]),
+        h("div", { class: "dsb-target-slider-row" }, [slider, sliderValue]),
         h("div", { class: "dsb-meter " + level }, [
           h("div", { class: "dsb-meter-fill", style: { width: `${Math.min(100, ratio * 100)}%` } }),
         ]),

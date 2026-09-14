@@ -1021,6 +1021,14 @@ button.sb-badge { cursor: pointer; }
 .dsb-spin:first-child { border-radius: 4px 4px 0 0; }
 .dsb-spin:last-child { border-top: 0; border-radius: 0 0 4px 4px; }
 .dsb-spin:hover { color: var(--accent); border-color: var(--accent); }
+/* Storage target Slider - 32GB~8TB의 정해진 단계에만 붙는다(연속 값이 아니다). 숫자
+   입력/▲▼ 버튼과 같은 값을 공유한다. */
+.dsb-target-slider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.dsb-target-slider { flex: 1; accent-color: var(--accent); }
+.dsb-slider-value {
+  flex: none; width: 52px; text-align: right; font-variant-numeric: tabular-nums;
+  color: var(--muted); font-size: var(--fs-caption);
+}
 .dsb-target-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 5px; font-size: var(--fs-caption); }
 .dsb-bar + .dsb-bar { margin-top: 9px; }
 .dsb-bar-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 4px; font-size: var(--fs-caption); }
