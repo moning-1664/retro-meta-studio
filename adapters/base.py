@@ -32,6 +32,26 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
 
+#: ROM 폴더에 흔히 섞여 있지만 ROM이 아닌 파일의 확장자. **모든 Adapter가 이 하나를 쓴다.**
+#:
+#: 예전엔 Adapter마다 같은 목록을 복사해 뒀고(.sav/.srm/.state 정도), 에뮬레이터가 만든
+#: 세이브·설정·로그나 개발 파일(.java, .json 등)이 Gamelist에 게임처럼 떴다(실사용 피드백).
+#: **디스크 이미지·압축 형식은 절대 넣지 않는다** - .cue/.bin/.iso/.chd/.zip/.7z 등은
+#: 그 자체가 ROM이다. 여기 없는 확장자는 ROM일 수 있다고 본다.
+NON_ROM_EXTENSIONS = frozenset({
+    # 메타데이터 / 그림
+    ".xml", ".txt", ".nfo", ".jpg", ".jpeg", ".png", ".webp",
+    # 세이브 / 상태 / 메모리카드
+    ".sav", ".srm", ".state", *(f".state{i}" for i in range(10)), ".mcr", ".mcd", ".dsv", ".rtc",
+    # 설정 / 로그 / DB
+    ".ini", ".cfg", ".conf", ".json", ".log", ".db", ".db3", ".sqlite", ".sqlite3",
+    # 백업 / 임시 / 받는 중
+    ".bak", ".tmp", ".temp", ".part", ".crdownload",
+    # 개발 / 스크립트 파일
+    ".java", ".class", ".py", ".js",
+})
+
+
 @dataclass(frozen=True)
 class Detection:
     """이 경로가 이 Frontend인지에 대한 판정. 확신이 없으면 confidence를 낮게 준다."""

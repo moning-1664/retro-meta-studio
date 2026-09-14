@@ -27,7 +27,7 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from adapters.base import (AdapterAction, Detection, FrontendAdapter, GameEntry,
+from adapters.base import (NON_ROM_EXTENSIONS, AdapterAction, Detection, FrontendAdapter, GameEntry,
                            Layout, MediaFile, read_document, register, serialize_xml,
                            write_document, write_xml)
 from app.model.constants import ESDE_IGNORED_SYSTEMS
@@ -70,8 +70,6 @@ RESERVED_DIRS = {"gamelists", "downloaded_media", "themes", "custom_systems",
 #: ES-DE의 manuals 폴더는 PDF이고, 이것이 빠져 있어서 사용자의 백업에서 설명서 660개가
 #: 통째로 스캔되지 않았다. 그림이 아니라고 media가 아닌 것은 아니다.
 MEDIA_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".mp4", ".avi", ".webm", ".pdf"}
-NON_ROM_EXTENSIONS = {".xml", ".txt", ".jpg", ".jpeg", ".png", ".webp", ".db", ".ini",
-                      ".cfg", ".srm", ".sav", ".state", ".bak", ".tmp"}
 
 
 class EsDeAdapter(FrontendAdapter):

@@ -1831,12 +1831,24 @@
     });
   }
 
+  /** 아직 받지 않은 줄의 자리표시. **실제 행과 같은 컬럼 틀을 쓴다.**
+   *
+   * 예전엔 컬럼 폭 없이 칸 세 개만 넣어서, 스크롤하는 동안 그 줄들이 한 칸짜리 전체
+   * 폭으로 그려졌다가 데이터가 오면 제 폭으로 돌아갔다(실사용 피드백: "스크롤 중 File
+   * 쪽 넓이가 커졌다가 스크롤이 끝나면 원래 크기로 돌아온다"). */
   function placeholderRow(index) {
-    return h("div", { class: "lrow placeholder", style: { height: ROW_HEIGHT + "px" } }, [
-      h("div", { class: "lc lc-check" }),
-      h("div", { class: "lc lc-index" }, [String(index + 1)]),
-      h("div", { class: "lc lc-title" }, [h("span", { class: "skeleton" })]),
-    ]);
+    if (isCompare()) {
+      return h("div", { class: "lrow placeholder", style: { height: ROW_HEIGHT + "px" } }, [
+        h("div", { class: "lc lc-index" }, [String(index + 1)]),
+        h("div", { class: "lc lc-title" }, [h("span", { class: "skeleton" })]),
+      ]);
+    }
+    return h("div", {
+      class: "lrow placeholder",
+      style: { height: ROW_HEIGHT + "px", gridTemplateColumns: gridTemplate() },
+    }, COLUMNS.map((col) => h("div", { class: "lc lc-" + col.id },
+      col.id === "no" ? [truncSpan(String(index + 1))]
+        : (col.id === "file" || col.id === "title") ? [h("span", { class: "skeleton" })] : [])));
   }
 
   function compareRowElement(row, index) {
@@ -1870,7 +1882,12 @@
 
     // No. - 화면에 보이는 순번이 아니라 목록 전체에서의 순번이다.
     el.appendChild(h("div", { class: "lc lc-no" }, [truncSpan(String(index + 1))]));
-    el.appendChild(h("div", { class: "lc lc-file", title: row.file }, [truncSpan(row.file)]));
+    // ROM 파일이 실제로 있으면 파일명을 제목과 같은 색으로, 없으면(메타데이터만) 흐리게.
+    const missingRom = row.present === false;
+    el.appendChild(h("div", {
+      class: "lc lc-file " + (missingRom ? "rom-missing" : "rom-present"),
+      title: missingRom ? `${row.file} - ROM 파일 없음` : row.file,
+    }, [truncSpan(row.file)]));
 
     const titleCell = h("div", { class: "lc lc-title" }, [truncSpan(row.title || row.file)]);
     titleCell.title = row.title || row.file;
@@ -2743,7 +2760,13 @@
     const header = h("div", { class: "detail-header" }, [
       h("div", { style: { minWidth: "0", flex: "1" } }, [
         h("div", { class: "detail-eyebrow" }, ["METADATA"]),
-        h("div", { class: "detail-filename" }, [state.file]),
+        h("div", { class: "detail-filename-row" }, [
+          h("div", { class: "detail-filename", title: state.file }, [state.file]),
+          h("button", {
+            class: "icon-btn detail-copy", title: "파일명 복사",
+            onClick: () => copyTextToClipboard(state.file, "파일명을 복사했습니다."),
+          }, [icon("copy", 11)]),
+        ]),
         h("div", { class: "detail-system" }, [systemIcon(state.system, 13), String(state.system).toUpperCase()]),
       ]),
     ]);
@@ -3112,9 +3135,19 @@
       return;
     }
 
-    // 저장은 즉시 파일에 반영된다(결정 D1). 목록의 제목만 갱신한다.
-    const cached = [...S.rowCache.entries()].find(([, row]) => row.romUid === state.romUid);
-    if (cached) cached[1].title = r.data.title;
+    // 저장은 즉시 파일에 반영된다(결정 D1). 목록에 보이는 칸도 전부 새 값으로 바꾼다 -
+    // 예전엔 제목만 바꿔서, Description을 고쳐도 다른 System에 갔다 와야 목록에
+    // 보였다(실사용 피드백).
+    const cached = rowByUid(state.romUid);
+    if (cached) {
+      const saved = r.data || {};
+      Object.assign(cached, {
+        title: saved.title || fields.name || cached.title,
+        desc: fields.desc || "", region: fields.region || "",
+        genre: fields.genre || "", rating: fields.rating || "",
+        hasMetadata: true,
+      });
+    }
     renderListWindow();
     showToast("저장되었습니다.");
   }
@@ -3666,6 +3699,11 @@
     });
   }
 
+  function hasTextSelection() {
+    const selection = window.getSelection();
+    return !!selection && !selection.isCollapsed && String(selection).trim() !== "";
+  }
+
   function bindEvents() {
     bindResizeGrip();
     const scroll = $("list-scroll");
@@ -3724,7 +3762,11 @@
         }
       }
       if (e.key === "Delete") { e.preventDefault(); deleteSelection(); }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") { e.preventDefault(); copySelectedRows(); }
+      // 글자를 드래그해 골라 둔 상태면 그 글자를 복사한다(브라우저 기본 동작). 예전엔 늘
+      // 게임 복사로 가로채서 Detail의 파일명 같은 글자를 복사할 수 없었다.
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && !hasTextSelection()) {
+        e.preventDefault(); copySelectedRows();
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") { e.preventDefault(); pasteClipboard(); }
     });
   }

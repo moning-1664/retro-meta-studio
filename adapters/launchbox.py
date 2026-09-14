@@ -36,7 +36,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from adapters.base import (Detection, FrontendAdapter, GameEntry, Layout, MediaFile, read_xml, register, write_xml)
+from adapters.base import (NON_ROM_EXTENSIONS, Detection, FrontendAdapter, GameEntry, Layout, MediaFile, read_xml, register, write_xml)
 
 #: 공통 모델 <-> `<Game>` 태그.
 FIELD_TAGS = {
@@ -64,8 +64,6 @@ IMAGE_FOLDERS = {
 VIDEO_FOLDER = "Videos"
 
 MEDIA_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".mp4", ".avi", ".webm"}
-NON_ROM_EXTENSIONS = {".xml", ".txt", ".jpg", ".jpeg", ".png", ".webp", ".db", ".ini",
-                      ".cfg", ".srm", ".sav", ".state", ".bak", ".tmp"}
 
 #: LaunchBox가 파일명으로 쓸 수 없어 `_`로 바꾸는 문자들.
 _ILLEGAL = ':*?"<>|/\\'

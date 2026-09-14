@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from adapters.base import (Detection, FrontendAdapter, GameEntry, Layout, MediaFile,
+from adapters.base import (NON_ROM_EXTENSIONS, Detection, FrontendAdapter, GameEntry, Layout, MediaFile,
                            read_text_document, register, write_text_document)
 
 METADATA_FILENAME = "metadata.pegasus.txt"
@@ -75,8 +75,6 @@ ASSET_ALIASES = {
 }
 
 MEDIA_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".mp4", ".avi", ".webm"}
-NON_ROM_EXTENSIONS = {".txt", ".xml", ".jpg", ".jpeg", ".png", ".webp", ".db", ".ini",
-                      ".cfg", ".srm", ".sav", ".state", ".bak", ".tmp"}
 #: System 폴더 안에 있지만 게임이 아닌 것들.
 RESERVED_DIRS = {"media", "assets"}
 

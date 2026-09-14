@@ -613,11 +613,15 @@ body { font-size: var(--fs-body); }
 .add-collection-history .picker-list { margin-top: 6px; max-height: 180px; }
 
 /* Media 확대(lightbox) - showModal을 재사용해 ESC/바깥클릭 닫기를 공짜로 얻는다. */
-.modal-card.lightbox-card { width: min(90vw, 900px); max-height: 92vh; }
-.lightbox-body { align-items: center; justify-content: center; }
+/* 카드는 이미지 크기에 맞춰 줄고, 창보다 커지지 않는다. 이미지는 제목줄 높이를 뺀 창 안에
+   비율을 지킨 채 들어간다 - 예전엔 카드 폭이 고정이고 이미지 높이만 84vh라서 창이 낮으면
+   카드 밖으로 넘치거나 스크롤이 생겼다(실사용 피드백). */
+.modal-card.lightbox-card { width: auto; max-width: 94vw; max-height: 94vh; overflow: hidden; }
+.lightbox-body { align-items: center; justify-content: center; overflow: hidden; }
 /* 큰 이미지 자체가 닫기 버튼이다 - 커서로 그것을 알린다. */
 .lightbox-img {
-  max-width: 100%; max-height: 84vh; object-fit: contain;
+  display: block; max-width: calc(94vw - 32px); max-height: calc(94vh - 72px);
+  width: auto; height: auto; object-fit: contain;
   border-radius: var(--radius-md); cursor: zoom-out;
 }
 /* 버튼이 없으므로 빈 줄이 남지 않게 한다. */
@@ -990,3 +994,14 @@ button.sb-badge { cursor: pointer; }
 .ctx-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctx-hint { font-size: var(--fs-caption); color: var(--muted); }
 .ctx-sep { height: 1px; margin: 4px 2px; background: var(--border); }
+
+/* Gamelist 파일명 - ROM 파일이 있으면 제목과 같은 색, 없으면(메타데이터만) 흐리게(사용자 요청).
+   색은 테마의 목록 토큰을 따른다. */
+.lc-file.rom-present { color: var(--list-text); }
+.lc-file.rom-missing { color: var(--list-muted); }
+
+/* Detail 파일명 - 글자로 골라 복사할 수 있고, 옆 버튼으로 한 번에 복사한다. */
+.detail-filename-row { display: flex; align-items: center; gap: 4px; min-width: 0; margin-top: 1px; }
+.detail-filename-row .detail-filename { flex: 1; min-width: 0; margin-top: 0; user-select: text; cursor: text; }
+.detail-copy { flex: none; padding: 3px; background: transparent; opacity: .7; }
+.detail-copy:hover { opacity: 1; }

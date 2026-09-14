@@ -40,7 +40,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from adapters.base import (Detection, FrontendAdapter, GameEntry, Layout, MediaFile, read_xml, register, write_xml)
+from adapters.base import (NON_ROM_EXTENSIONS, Detection, FrontendAdapter, GameEntry, Layout, MediaFile, read_xml, register, write_xml)
 from app.model.constants import ESDE_IGNORED_SYSTEMS
 from utils import normalize_esde_date, normalize_esde_rating
 
@@ -65,8 +65,6 @@ TAG_FOR_TYPE = {"screenshots": "image", "covers": "thumbnail", "marquees": "marq
 MEDIA_SUBDIR = "media"
 
 MEDIA_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".mp4", ".avi", ".webm"}
-NON_ROM_EXTENSIONS = {".xml", ".txt", ".jpg", ".jpeg", ".png", ".webp", ".db", ".ini",
-                      ".cfg", ".srm", ".sav", ".state", ".bak", ".tmp"}
 RESERVED_DIRS = {"gamelists", "downloaded_images", "downloaded_videos", "downloaded_media",
                  "media", "themes", "collections", "scripts", "tools"}
 
