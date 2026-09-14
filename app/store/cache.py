@@ -230,6 +230,28 @@ class CacheStore:
     def system_stats(self) -> list[dict]:
         return [dict(r) for r in self._conn.execute("SELECT * FROM system_stats ORDER BY system")]
 
+    def media_type_counts(self, system) -> dict[str, dict]:
+        """이 System의 media type별 개수·용량. "System 전체 미디어 정리" 대화상자의
+        체크박스 옆 숫자로 쓴다."""
+        rows = self._conn.execute(
+            "SELECT m.media_type, COUNT(*) AS n, COALESCE(SUM(m.size),0) AS bytes"
+            "  FROM media m JOIN roms r ON r.rom_uid = m.rom_uid"
+            " WHERE r.system = ? GROUP BY m.media_type", (system,))
+        return {row["media_type"]: {"count": int(row["n"]), "bytes": int(row["bytes"])} for row in rows}
+
+    def media_paths(self, system, media_types) -> list[str]:
+        """이 System에서 media_types에 속하는 실제 파일 경로. "System 전체 미디어
+        정리"가 지울 대상을 고르는 데 쓴다 - ROM과 Metadata, 고르지 않은 타입은
+        여기 나오지 않는다."""
+        if not media_types:
+            return []
+        placeholders = ",".join("?" * len(media_types))
+        rows = self._conn.execute(
+            f"SELECT m.rel_path FROM media m JOIN roms r ON r.rom_uid = m.rom_uid"
+            f" WHERE r.system = ? AND m.media_type IN ({placeholders})",
+            (system, *media_types))
+        return [row["rel_path"] for row in rows]
+
     def metadata_health(self) -> dict:
         """Dashboard의 Metadata Health - 게임 수와 항목별로 갖춘 게임 수.
 

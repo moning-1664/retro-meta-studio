@@ -256,3 +256,109 @@ test.describe("ROM 없는 항목 정리", () => {
     await expect(page.locator(".modal-title")).toHaveCount(0);
   });
 });
+
+// System 전체 미디어 정리 - System 우클릭 메뉴(사용자 결정, 2026-09). Cover/Screenshot/
+// Video 등 media 종류를 체크박스로 골라 그 System 전체에서만 지운다.
+test.describe("System 전체 미디어 정리", () => {
+  const mediaItem = (page) => page.locator(".ctx-menu .ctx-item", { hasText: "System 전체 미디어 정리" });
+  const mockTypes = (page, types) => page.evaluate((data) => {
+    window.api.mediaCleanupPreview = async (id, system) => ({ ok: true, data: { system, types: data } });
+  }, types);
+  const spyCleanup = async (page) => {
+    await page.evaluate(() => {
+      window.__cleaned = [];
+      window.api.mediaCleanup = (id, system, mediaTypes) => {
+        window.__cleaned.push([system, mediaTypes]);
+        return Promise.resolve({ ok: true, data: { removed: mediaTypes.length, failed: [] } });
+      };
+    });
+  };
+
+  test("System 메뉴에 항목이 있다", async ({ page }) => {
+    await navSystem(page, "PS2").click({ button: "right" });
+    await expect(mediaItem(page)).toBeEnabled();
+  });
+
+  test("정리할 media가 없으면 안내만 뜨고 모달은 열리지 않는다", async ({ page }) => {
+    await mockTypes(page, []);
+    await navSystem(page, "PS2").click({ button: "right" });
+    await mediaItem(page).click();
+    await expect(page.locator(".toast-msg")).toHaveText("PS2에 정리할 media가 없습니다.");
+    await expect(page.locator(".modal-title")).toHaveCount(0);
+  });
+
+  test("타입별 개수·용량을 보여주고, 하나도 안 고르면 삭제 버튼이 꺼져 있다", async ({ page }) => {
+    await mockTypes(page, [
+      { type: "covers", label: "Covers", count: 3, bytes: 3000 },
+      { type: "videos", label: "Videos", count: 1, bytes: 500000 },
+    ]);
+    await navSystem(page, "PS2").click({ button: "right" });
+    await mediaItem(page).click();
+    await expect(page.locator(".modal-title")).toHaveText("PS2 - 미디어 정리");
+    await expect(page.locator(".media-clean-row")).toHaveCount(2);
+    await expect(page.locator(".media-clean-row", { hasText: "Covers" })).toContainText("3개");
+    await expect(modalButton(page, "삭제")).toBeDisabled();
+  });
+
+  test("체크한 타입만 골라서 지운다", async ({ page }) => {
+    await mockTypes(page, [
+      { type: "covers", label: "Covers", count: 3, bytes: 3000 },
+      { type: "videos", label: "Videos", count: 1, bytes: 500000 },
+    ]);
+    await spyCleanup(page);
+    await navSystem(page, "PS2").click({ button: "right" });
+    await mediaItem(page).click();
+    await page.locator(".media-clean-row", { hasText: "Videos" }).locator("input").check();
+    await expect(modalButton(page, "삭제")).toBeEnabled();
+    await modalButton(page, "삭제").click();
+    await expect.poll(() => page.evaluate(() => window.__cleaned)).toEqual([["ps2", ["videos"]]]);
+    await expect(page.locator(".toast-msg")).toHaveText("PS2에서 media 1개를 지웠습니다.");
+  });
+
+  test("여러 타입을 함께 고를 수 있다", async ({ page }) => {
+    await mockTypes(page, [
+      { type: "covers", label: "Covers", count: 3, bytes: 3000 },
+      { type: "videos", label: "Videos", count: 1, bytes: 500000 },
+    ]);
+    await spyCleanup(page);
+    await navSystem(page, "PS2").click({ button: "right" });
+    await mediaItem(page).click();
+    await page.locator(".media-clean-row", { hasText: "Covers" }).locator("input").check();
+    await page.locator(".media-clean-row", { hasText: "Videos" }).locator("input").check();
+    await modalButton(page, "삭제").click();
+    await expect.poll(() => page.evaluate(() => window.__cleaned)).toEqual([["ps2", ["covers", "videos"]]]);
+  });
+
+  test("취소하면 아무것도 지우지 않는다", async ({ page }) => {
+    await mockTypes(page, [{ type: "covers", label: "Covers", count: 3, bytes: 3000 }]);
+    await spyCleanup(page);
+    await navSystem(page, "PS2").click({ button: "right" });
+    await mediaItem(page).click();
+    await page.locator(".media-clean-row").locator("input").check();
+    await modalButton(page, "취소").click();
+    await expect(page.locator(".modal-title")).toHaveCount(0);
+    expect(await page.evaluate(() => window.__cleaned)).toEqual([]);
+  });
+
+  test("일부 삭제 실패는 경고로 알린다", async ({ page }) => {
+    await mockTypes(page, [{ type: "covers", label: "Covers", count: 2, bytes: 2000 }]);
+    await page.evaluate(() => {
+      window.api.mediaCleanup = async () => ({ ok: true, data: { removed: 1, failed: ["D:\\x\\a.png"] } });
+    });
+    await navSystem(page, "PS2").click({ button: "right" });
+    await mediaItem(page).click();
+    await page.locator(".media-clean-row").locator("input").check();
+    await modalButton(page, "삭제").click();
+    await expect(page.locator("#toast.warning .toast-msg")).toHaveText("PS2에서 media 1개를 지웠습니다. (1개 실패)");
+  });
+
+  test("백엔드 오류는 토스트로 알리고 모달을 열지 않는다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.api.mediaCleanupPreview = async () => ({ ok: false, error: "System을 찾을 수 없습니다." });
+    });
+    await navSystem(page, "PS2").click({ button: "right" });
+    await mediaItem(page).click();
+    await expect(page.locator(".toast-msg")).toHaveText("System을 찾을 수 없습니다.");
+    await expect(page.locator(".modal-title")).toHaveCount(0);
+  });
+});

@@ -26,6 +26,7 @@ from app import paths
 from app.model.collection import STORAGE_INTERNAL
 from app.model.constants import MEDIA_TYPES, VIDEO_MEDIA_TYPE
 from app import dashboard
+from app import media_cleanup
 from app import system_ops
 from app.model.plan import OP_STORAGE_CHANGE, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan
 from app.plan import builder, clipboard
@@ -497,6 +498,34 @@ class Api:
         rows = cache.query_rows(systems=[system], present=False, order="title")
         return ok({"system": system, "items": [
             {"romUid": r["rom_uid"], "filename": r["filename"], "title": r["title"]} for r in rows]})
+
+    @guarded
+    def media_cleanup_preview(self, collection_id, system):
+        """System 우클릭 > "System 전체 미디어 정리" 대화상자의 체크박스 - type별
+        개수·용량을 보여준다. 실제로 하나도 없는 type은 목록에서 뺀다."""
+        collection, cache, _provider, _adapter = self._system_context(collection_id)
+        if not any(entry.system == system for entry in collection.systems):
+            return err(f"System을 찾을 수 없습니다: {system}")
+        counts = media_cleanup.media_type_counts(cache, system)
+        return ok({"system": system, "types": [
+            {"type": key, "label": MEDIA_LABELS.get(key, key), "count": info["count"], "bytes": info["bytes"]}
+            for key, info in sorted(counts.items(), key=lambda kv: -kv[1]["count"]) if info["count"]]})
+
+    @guarded
+    def media_cleanup(self, collection_id, system, media_types):
+        """선택한 media type의 파일만 지운다(사용자 결정) - ROM·Metadata·다른 타입은
+        그대로 둔다. 지운 뒤 그 System을 다시 스캔해 Cache를 실제 디스크 상태로
+        맞춘다(app/media_cleanup.py)."""
+        if not media_types:
+            return err("지울 media 종류를 골라주세요.")
+        if self.jobs.busy_targets(collection_id):
+            return err("작업이 진행 중이라 지금은 정리할 수 없습니다.")
+        collection, cache, provider, _adapter = self._system_context(collection_id)
+        if not any(entry.system == system for entry in collection.systems):
+            return err(f"System을 찾을 수 없습니다: {system}")
+        result = media_cleanup.cleanup_media(cache, provider, self.workspace, collection_id,
+                                             system, media_types)
+        return ok(result)
 
     def _next_storage_id(self, collection_id):
         existing = {s.storage_id for s in self.registry.get_collection(collection_id).storages}

@@ -177,6 +177,15 @@ body { font-size: var(--fs-body); }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .sysdel-kept { margin-top: 8px; color: var(--muted); }
+
+/* System 전체 미디어 정리 - Cover/Screenshot/Video 등 타입을 체크박스로 고른다. */
+.media-clean-list { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
+.media-clean-row {
+  display: flex; align-items: center; gap: 8px; padding: 7px 8px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel);
+}
+.media-clean-name { flex: 1; }
+.media-clean-count { color: var(--muted); font-size: var(--fs-caption); }
 /* 전체 삭제 경고 - 되돌릴 수 없다는 것을 먼저 보이고, 체크해야 확인 버튼이 켜진다. */
 .sysdel-warning {
   padding: 8px 10px; border: 1px solid var(--danger); border-radius: var(--radius-md);

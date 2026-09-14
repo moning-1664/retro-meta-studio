@@ -295,6 +295,15 @@
       items: mockRows.filter((r) => r.system === system && r.present === false)
         .map((r) => ({ romUid: r.romUid, filename: r.file, title: r.title })),
     }),
+    media_cleanup_preview: (id, system) => {
+      const types = [];
+      if (mockRows.some((r) => r.system === system && r.hasMedia)) {
+        types.push({ type: "covers", label: "Covers", count: 1, bytes: 10 },
+          { type: "videos", label: "Videos", count: 1, bytes: 100 });
+      }
+      return ok({ system, types });
+    },
+    media_cleanup: () => ok({ removed: 2, failed: [] }),
     move_system: (id, system, storageId) => {
       for (const s of mockDetail.storages) s.systems = s.systems.filter((x) => x.system !== system);
       const target = mockDetail.storages.find((s) => s.id === storageId);
@@ -485,6 +494,8 @@
     removeSystem: (id, system, force) => call("remove_system", id, system, !!force),
     openSystemFolder: (id, system, kind) => call("open_system_folder", id, system, kind),
     orphanMetadataPreview: (id, system) => call("orphan_metadata_preview", id, system),
+    mediaCleanupPreview: (id, system) => call("media_cleanup_preview", id, system),
+    mediaCleanup: (id, system, mediaTypes) => call("media_cleanup", id, system, mediaTypes),
 
     listRows: (id, q) => call("list_rows", id, q.systems || null, q.storageIds || null,
                               q.search || null, q.order || "title", !!q.descending,

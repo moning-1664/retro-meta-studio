@@ -1240,6 +1240,10 @@
       label: "ROM 없는 항목 정리", icon: "eraser",
       title: "Metadata/Media는 있는데 ROM 파일이 없는 항목을 찾아 지웁니다.",
       onSelect: () => confirmOrphanCleanup(sys),
+    }, {
+      label: "System 전체 미디어 정리", icon: "imageOff",
+      title: "Cover/Screenshot/Video 등 media 종류를 골라 이 System 전체에서 지웁니다.",
+      onSelect: () => confirmMediaCleanup(sys),
     });
     // 폴더 경로는 백엔드(Adapter layout)가 정한다 - Storage 배치와 System별 경로 지정을 따른다.
     items.push("separator", { section: "폴더 열기" });
@@ -1308,6 +1312,59 @@
         if (S.autoPlan) showToast(`${formatCount(uids.length)}개를 삭제 예정으로 표시했습니다.`);
         else await applyPlan();
       } }, ["삭제"]),
+    ]);
+  }
+
+  /** System 전체 미디어 정리(System 우클릭, 사용자 결정) - Cover/Screenshot/Video 등
+   * media 종류를 체크박스로 골라 그 System 전체에서 지운다. ROM·Metadata·고르지
+   * 않은 타입은 건드리지 않는다. 실제로 파일이 있는 타입만 목록에 나온다. */
+  async function confirmMediaCleanup(sys) {
+    const collectionId = S.activeId;
+    const preview = await api.mediaCleanupPreview(collectionId, sys.system);
+    if (!preview.ok) { showToast(preview.error, "error"); return; }
+    const types = preview.data.types;
+    const name = sys.system.toUpperCase();
+    if (!types.length) { showToast(`${name}에 정리할 media가 없습니다.`); return; }
+
+    const checks = types.map((t) => {
+      const input = h("input", { type: "checkbox" });
+      const row = h("label", { class: "media-clean-row" }, [
+        input,
+        h("span", { class: "media-clean-name" }, [t.label]),
+        h("span", { class: "media-clean-count" }, [`${formatCount(t.count)}개 · ${formatBytes(t.bytes)}`]),
+      ]);
+      return { type: t.type, input, row };
+    });
+
+    const confirmBtn = h("button", { class: "btn danger" }, ["삭제"]);
+    confirmBtn.disabled = true;
+    checks.forEach((c) => c.input.addEventListener("change", () => {
+      confirmBtn.disabled = !checks.some((x) => x.input.checked);
+    }));
+    confirmBtn.addEventListener("click", async () => {
+      const selected = checks.filter((c) => c.input.checked).map((c) => c.type);
+      if (!selected.length) return;
+      closeModal();
+      const r = await api.mediaCleanup(collectionId, sys.system, selected);
+      if (!r.ok) { showToast(r.error, "error"); return; }
+      if (collectionId === S.activeId) {
+        await ensureDetail(collectionId);
+        resetList();
+        renderAll();
+        await reloadList();
+      }
+      const failed = r.data.failed || [];
+      showToast(`${name}에서 media ${formatCount(r.data.removed)}개를 지웠습니다.`
+        + (failed.length ? ` (${formatCount(failed.length)}개 실패)` : ""), failed.length ? "warning" : "info");
+    });
+
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "modal-text" }, [`${name}에서 지울 media 종류를 고르세요. ROM과 Metadata는 지우지 않습니다.`]),
+      h("div", { class: "media-clean-list" }, checks.map((c) => c.row)),
+    ]);
+    showModal(`${name} - 미디어 정리`, body, [
+      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+      confirmBtn,
     ]);
   }
 
