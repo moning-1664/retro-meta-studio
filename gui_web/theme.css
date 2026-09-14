@@ -46,6 +46,9 @@
 
   /* 면(surface)의 역할. 같은 --card2라도 "창 틀"인지 "목록"인지로 부른다. */
   --chrome: var(--card2);         /* TopBar / Navigator / Collection 헤더 / Toolbar */
+  /* Chrome보다 한 단계 톤 다운한 속성 띠(사용자 결정). System 제목 띠, Dashboard, Detail 탭 바탕,
+     선택되지 않은 탭이 쓴다. 데이터 영역(System 목록, GameList)은 쓰지 않는다 - 그쪽은 --list-bg. */
+  --chrome-sub: #131924;
   --panel: var(--card);           /* Detail 패널, 상태 바, 모달 */
 
   --primary-bg: var(--accent);
@@ -71,6 +74,9 @@
   /* GameList 상단 Chromium(.cheader) / Navigator App Title / Detail 상단 줄의
      공통 높이. 셋의 아래 구분선이 한 줄로 이어져야 한다(사용자 요청). */
   --header-row-h: 62px;
+  /* GameList Toolbar(#filter-bar) 높이. Navigator의 System 제목 띠가 같은 높이라 두 아래 선이 한 줄로
+     이어지고, Detail 머리는 Toolbar + 목록 머리글 높이라 탭이 목록 첫 줄과 같은 선에서 시작한다. */
+  --toolbar-h: 38px;
 }
 
 :root[data-density="normal"] {
@@ -89,6 +95,7 @@
   --list-bg: #0f0f0d; --list-head: #1c1b17; --list-border: #3b3931; --list-row-border: #282720;
   --list-text: #ebe7dc; --list-muted: #a19c90; --list-selected: #351917;
   --media-bg: #090908; --icon-bg: #25231d;
+  --chrome-sub: #181713;
   --ctab-bar: var(--accent-gold);
   --row-focus-bar: var(--accent-gold);
 }
@@ -104,6 +111,7 @@
   --list-bg: #ffffff; --list-head: #e7e7e4; --list-border: #b5b5b1; --list-row-border: #ddddda;
   --list-text: #252525; --list-muted: #575854; --list-selected: #edf3ff;
   --media-bg: #e6e6e3; --icon-bg: #eeeeeb;
+  --chrome-sub: #d5d5d1;
   --cheader-icon-fg: var(--accent-blue);
   --overlay: rgba(40, 40, 38, .35);
   --shadow: rgba(0, 0, 0, .18);
@@ -120,6 +128,7 @@
   --list-bg: #ffffff; --list-head: #e9e3d7; --list-border: #aaa396; --list-row-border: #d9d2c5;
   --list-text: #2b2925; --list-muted: #5e594f; --list-selected: #f5dfdc;
   --media-bg: #e5ded0; --icon-bg: #eee8dc;
+  --chrome-sub: #ccc4b5;
   --primary-fg: var(--accent-gold);
   --ctab-bar: var(--accent-gold);
   --row-focus-bar: var(--accent-gold);

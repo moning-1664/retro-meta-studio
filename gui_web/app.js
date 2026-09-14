@@ -1137,8 +1137,9 @@
       nav.appendChild(navDashboardRow());
       return;
     }
+    // System 제목 띠는 스크롤 영역 밖(바로 위)에 둔다 - Toolbar와 같은 높이의 고정 띠다.
     const eyebrow = h("div", { class: "nav-eyebrow" }, [h("span", { class: "nav-eyebrow-label" }, ["SYSTEMS"])]);
-    scroll.appendChild(eyebrow);
+    nav.insertBefore(eyebrow, scroll);
 
     const scope = activeScope();
     if (isArchive()) {
@@ -2327,7 +2328,7 @@
       // 버튼 안에는 span이 둘이다(아이콘 span이 먼저, 글자 span이 나중) - 그냥
       // "span"으로 고르면 **아이콘 span을 잡아 아이콘을 글자로 덮어썼다.**
       const text = ingest.querySelector(".ingest-label");
-      if (text) text.textContent = `Archive에 수집 — ${label}`;
+      if (text) text.textContent = `수집 · ${label}`;
     }
     // Archive 탭의 "Collection으로 보내기"도 Detail 패널 상단에 있다 - 선택이
     // 바뀔 때마다 renderDetailPanel()을 통째로 다시 그리진 않으므로(Metadata
@@ -3662,7 +3663,7 @@
       const ingest = h("button", { class: "btn compact", id: "archive-ingest-btn",
         "data-scope": scope.kind,
         title: `${scopeLabel}을 Archive에 수집합니다` },
-        [icon("database", 12), h("span", { class: "ingest-label truncate" }, [`Archive에 수집 — ${scopeLabel}`])]);
+        [icon("database", 11), h("span", { class: "ingest-label truncate" }, [`수집 · ${scopeLabel}`])]);
       ingest.addEventListener("click", ingestToArchive);
       bar.appendChild(ingest);
     }
