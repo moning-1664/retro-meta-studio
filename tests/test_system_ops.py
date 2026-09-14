@@ -95,6 +95,52 @@ class SystemOpsTests(unittest.TestCase):
         self.assertTrue(self.root.exists())
         self.assertTrue((self.root / "ps2" / "FFX.iso").exists())
 
+    # ------------------------------------------------------------------ 전체 삭제(force)
+    def test_force_preview_has_no_blockers_and_counts_files(self):
+        preview = self.api.system_removal_preview(self.cid, "ps2", True)["data"]
+        self.assertEqual(preview["blockers"], [])
+        self.assertEqual(preview["games"], 3)
+        self.assertGreaterEqual(preview["totalFiles"], 5)   # ISO 2 + gamelist + 커버 + 동영상
+        self.assertGreater(preview["totalBytes"], 3000)
+        self.assertNotIn("_all", preview["targets"][0])
+
+    def test_force_removes_system_with_games_and_its_plan_entries(self):
+        uid = self.api.list_rows(self.cid, limit=10)["data"]["rows"][0]["romUid"]
+        self.api.plan_delete(self.cid, [uid])
+        self.assertTrue(any(e.system == "ps2" for e in self.api._plan(self.cid).entries))
+
+        r = self.api.remove_system(self.cid, "ps2", True)
+        self.assertTrue(r["ok"], r.get("error"))
+        self.assertGreaterEqual(r["data"]["planRemoved"], 1)
+        for path in (self.root / "ps2", self.root / "gamelists" / "ps2", self.root / "downloaded_media" / "ps2"):
+            self.assertFalse(path.exists(), path)
+        self.assertFalse(any(e.system == "ps2" for e in self.api._plan(self.cid).entries))
+        self.assertNotIn("ps2", self.nav_systems())
+        self.scan()
+        self.assertNotIn("ps2", self.nav_systems())
+        # 다른 System과 Collection root는 그대로다.
+        self.assertTrue((self.root / "gba" / "systeminfo.txt").exists())
+        self.assertTrue(self.root.exists())
+
+    def test_force_in_shared_folder_deletes_only_that_systems_roms(self):
+        shared = self.root / "handhelds"
+        write_file(shared / "Zelda.gba", b"r" * 10)
+        write_file(shared / "readme.txt", b"shared")
+        self.api.registry.upsert_system(self.cid, "gba", "internal", rom_path=str(shared))
+        self.assertFalse(self.api.remove_system(self.cid, "gba")["ok"])   # 기본 삭제는 거절
+        r = self.api.remove_system(self.cid, "gba", True)
+        self.assertTrue(r["ok"], r.get("error"))
+        self.assertFalse((shared / "Zelda.gba").exists())
+        self.assertTrue((shared / "readme.txt").exists())
+
+    def test_force_never_deletes_storage_root(self):
+        write_file(self.root / "Loose.gba", b"r" * 10)
+        self.api.registry.upsert_system(self.cid, "gba", "internal", rom_path=str(self.root))
+        self.assertTrue(self.api.remove_system(self.cid, "gba", True)["ok"])
+        self.assertTrue(self.root.exists())
+        self.assertTrue((self.root / "ps2" / "FFX.iso").exists())
+        self.assertTrue((self.root / "gamelists" / "ps2" / "gamelist.xml").exists())
+
     # ------------------------------------------------------------------ 폴더 열기
     def test_open_system_folders_follow_the_layout(self):
         opened = []

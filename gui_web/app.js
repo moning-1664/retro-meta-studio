@@ -1239,9 +1239,10 @@
     items.push("separator", { section: "폴더 열기" });
     [["rom", "ROM 폴더"], ["metadata", "Metadata 폴더"], ["media", "Media 폴더"]].forEach(([kind, label]) =>
       items.push({ label, icon: "folderOpen", onSelect: () => openSystemFolder(sys.system, kind) }));
+    // 메뉴 최하단, 빨간색(사용자 결정). 누르면 경고 + "확인하였습니다" 체크 + 확인으로 한 번 더 묻는다.
     items.push("separator", {
-      label: "System 삭제", icon: "trash", danger: true, disabled: sys.count > 0,
-      title: sys.count > 0 ? "게임이 있는 System은 삭제할 수 없습니다." : "빈 System의 폴더를 지우고 목록에서 뺍니다.",
+      label: "전체 삭제", icon: "trash", danger: true,
+      title: "이 System의 ROM·Metadata·Media를 디스크에서 지우고 목록에서 뺍니다.",
       onSelect: () => confirmRemoveSystem(sys),
     });
     showContextMenu(menuPoint(event), sys.system.toUpperCase(),
@@ -1254,13 +1255,15 @@
     if (!r.ok) showToast(r.error, "error");
   }
 
-  /** 빈 System 삭제. 먼저 무엇이 지워지는지 보여주고 확인을 받는다.
+  /** System 전체 삭제. **두 번 묻는다**(사용자 결정 - 실수로 지우는 것을 막는다).
    *
-   * 게임이 있는 System은 백엔드가 거절한다(메뉴에서도 비활성). 게임 파일 삭제는
-   * Plan을 거쳐야 하기 때문이다. */
+   * 1) System 우클릭 메뉴 최하단의 빨간 [전체 삭제]
+   * 2) 경고와 지울 목록을 보여주고, "확인하였습니다"를 체크해야 확인 버튼이 켜진다.
+   *    취소하면 아무것도 하지 않는다.
+   * 게임이 있어도 지운다(force). Collection/Storage root와 공용 폴더는 백엔드가 남긴다. */
   async function confirmRemoveSystem(sys) {
     const collectionId = S.activeId;
-    const preview = await api.systemRemovalPreview(collectionId, sys.system);
+    const preview = await api.systemRemovalPreview(collectionId, sys.system, true);
     if (!preview.ok) { showToast(preview.error, "error"); return; }
     const p = preview.data;
     const name = sys.system.toUpperCase();
@@ -1277,35 +1280,54 @@
     p.targets.forEach((t) => {
       list.appendChild(h("div", { class: "sysdel-target" }, [
         h("span", { class: "sysdel-kind" }, [KIND[t.kind] || t.kind]),
-        h("span", { class: "sysdel-path", title: t.path }, [t.path]),
+        h("span", { class: "sysdel-path", title: t.path }, [t.filesOnly ? `${t.path} 안의 파일` : t.path]),
         h("span", { class: "sysdel-count" }, [t.fileCount ? `파일 ${formatCount(t.fileCount)}개` : "비어 있음"]),
       ]));
       t.files.forEach((file) => list.appendChild(h("div", { class: "sysdel-file", title: file }, [file])));
+      if (t.fileCount > t.files.length) {
+        list.appendChild(h("div", { class: "sysdel-file" }, [`… 외 ${formatCount(t.fileCount - t.files.length)}개`]));
+      }
     });
+
+    const summary = !p.targets.length ? "디스크에서 지울 파일이 없습니다. 목록에서만 뺍니다."
+      : p.games ? `게임 ${formatCount(p.games)}개를 포함해 아래 파일 ${formatCount(p.totalFiles)}개(${formatBytes(p.totalBytes)})를 디스크에서 영구히 지우고 목록에서 뺍니다.`
+      : `게임이 없는 System입니다. 아래 파일 ${formatCount(p.totalFiles)}개를 지우고 목록에서 뺍니다.`;
+    const check = h("input", { type: "checkbox", class: "sysdel-ack-input" });
+    const confirmBtn = h("button", { class: "btn danger sysdel-confirm" }, ["확인"]);
+    confirmBtn.disabled = true;
+    check.addEventListener("change", () => { confirmBtn.disabled = !check.checked; });
+    confirmBtn.addEventListener("click", async () => {
+      if (!check.checked) return;
+      closeModal();
+      const r = await api.removeSystem(collectionId, sys.system, true);
+      if (!r.ok) { showToast(r.error, "error"); return; }
+      await ensureDetail(collectionId);
+      if (collectionId !== S.activeId) return;
+      const scope = activeScope();
+      if (scope.kind === "system" && scope.id === sys.system) {
+        await setScope({ kind: "all" });
+      } else {
+        resetList();
+        renderAll();
+        await reloadList();
+      }
+      await refreshPlan();
+      showToast(`${name} System을 삭제했습니다.`);
+    });
+
     const body = h("div", { class: "modal-body" }, [
-      h("div", { class: "modal-text" }, [p.targets.length
-        ? "게임이 없는 System입니다. 아래 폴더와 파일을 지우고 목록에서 뺍니다. 되돌릴 수 없습니다."
-        : "지울 폴더가 없습니다. 목록에서만 뺍니다."]),
+      h("div", { class: "sysdel-warning" }, [
+        h("div", { class: "sysdel-warning-title" }, ["되돌릴 수 없는 삭제입니다"]),
+        h("div", { class: "modal-text" }, [summary]),
+      ]),
       p.targets.length ? list : null,
       p.kept.length ? h("div", { class: "modal-text sysdel-kept" },
-        [`다른 System과 함께 쓰는 폴더는 남깁니다: ${p.kept.map((k) => k.path).join(", ")}`]) : null,
+        [`Collection/Storage 최상위 폴더와 다른 System과 함께 쓰는 폴더는 남깁니다: ${p.kept.map((k) => k.path).join(", ")}`]) : null,
+      h("label", { class: "sysdel-ack" }, [check, h("span", {}, ["확인하였습니다"])]),
     ]);
-    showModal(`${name} System 삭제`, body, [
+    showModal(`${name} 전체 삭제`, body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
-      h("button", { class: "btn danger", onClick: async () => {
-        closeModal();
-        const r = await api.removeSystem(collectionId, sys.system);
-        if (!r.ok) { showToast(r.error, "error"); return; }
-        await ensureDetail(collectionId);
-        if (collectionId !== S.activeId) return;
-        const scope = activeScope();
-        if (scope.kind === "system" && scope.id === sys.system) {
-          await setScope({ kind: "all" });
-        } else {
-          renderNav(); renderHeader();
-        }
-        showToast(`${name} System을 삭제했습니다.`);
-      } }, ["삭제"]),
+      confirmBtn,
     ]);
   }
 

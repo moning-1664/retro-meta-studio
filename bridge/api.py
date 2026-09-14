@@ -423,27 +423,35 @@ class Api:
                 self.workspace.provider_for(collection), get_adapter(collection.frontend))
 
     @guarded
-    def system_removal_preview(self, collection_id, system):
+    def system_removal_preview(self, collection_id, system, force=False):
         """System 삭제 전에 무엇이 지워지고 무엇이 남는지, 지울 수 없는 이유를 알려준다."""
         collection, cache, provider, adapter = self._system_context(collection_id)
         try:
-            return ok(system_ops.removal_preview(collection, cache, provider, adapter, system))
+            return ok(system_ops.removal_preview(collection, cache, provider, adapter, system,
+                                                 force=bool(force)))
         except system_ops.SystemOpError as e:
             return err(e)
 
     @guarded
-    def remove_system(self, collection_id, system):
-        """**게임이 없는** System의 폴더를 지우고 목록에서 뺀다(app/system_ops.py).
+    def remove_system(self, collection_id, system, force=False):
+        """System의 파일을 지우고 목록에서 뺀다(app/system_ops.py).
 
-        게임이 있는 System은 거절한다 - 게임 파일 삭제는 Plan을 거쳐야 한다."""
+        force=False면 게임이 없는 System만 지운다. force=True는 System 우클릭의 [전체 삭제]다 -
+        화면이 경고 + "확인하였습니다" 체크 + 확인으로 두 번 물은 뒤에만 부른다(사용자 결정).
+        그 System을 가리키던 Plan 항목도 함께 뺀다 - 남기면 없는 파일을 대상으로 Apply한다."""
         if self.jobs.busy_targets(collection_id):
             return err("작업이 진행 중이라 지금은 System을 삭제할 수 없습니다.")
         collection, cache, provider, adapter = self._system_context(collection_id)
         try:
-            return ok(system_ops.remove_empty_system(self.registry, collection, cache,
-                                                     provider, adapter, system))
+            result = system_ops.remove_system(self.registry, collection, cache, provider, adapter,
+                                              system, force=bool(force))
         except system_ops.SystemOpError as e:
             return err(e)
+        plan = self._plans.get(collection_id)
+        stale = [e.key for e in plan.entries if e.system == system] if plan else []
+        for key in stale:
+            plan.remove(key)
+        return ok({**result, "planRemoved": len(stale)})
 
     @guarded
     def open_system_folder(self, collection_id, system, kind):

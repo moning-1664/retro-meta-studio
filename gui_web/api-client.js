@@ -262,12 +262,13 @@
       mockDetail.storages.splice(i, 1);
       return ok(true);
     },
-    system_removal_preview: (id, system) => {
+    system_removal_preview: (id, system, force) => {
       const sys = mockDetail.systems.find((x) => x.system === system);
       if (!sys) return Promise.resolve({ ok: false, error: "없는 System" });
       return ok({
         system, games: sys.count, kept: [],
-        blockers: sys.count ? [`게임이 ${sys.count}개 있습니다. 게임이 없는 System만 삭제할 수 있습니다.`] : [],
+        totalFiles: 2, totalBytes: 2048,
+        blockers: sys.count && !force ? [`게임이 ${sys.count}개 있습니다. 게임이 없는 System만 삭제할 수 있습니다.`] : [],
         targets: [
           { kind: "rom", path: `D:\\ES-DE\\${system}`, isDir: true, fileCount: 1,
             files: [`D:\\ES-DE\\${system}\\systeminfo.txt`] },
@@ -276,13 +277,15 @@
         ],
       });
     },
-    remove_system: (id, system) => {
+    remove_system: (id, system, force) => {
       const sys = mockDetail.systems.find((x) => x.system === system);
       if (!sys) return Promise.resolve({ ok: false, error: "없는 System" });
-      if (sys.count) return Promise.resolve({ ok: false, error: "게임이 있는 System은 삭제할 수 없습니다." });
+      if (sys.count && !force) return Promise.resolve({ ok: false, error: "게임이 있는 System은 삭제할 수 없습니다." });
       mockDetail.systems = mockDetail.systems.filter((x) => x.system !== system);
       for (const s of mockDetail.storages) s.systems = s.systems.filter((x) => x.system !== system);
       mockDetail.systemCount = mockDetail.systems.length;
+      for (let i = mockRows.length - 1; i >= 0; i -= 1) if (mockRows[i].system === system) mockRows.splice(i, 1);
+      mockDetail.totalGames = mockRows.length;
       return ok({ system, removed: [], kept: [] });
     },
     window_set_bounds: () => ok(true),
@@ -470,8 +473,8 @@
     addExternalStorage: (id, label, rootPath) => call("add_external_storage", id, label, rootPath),
     removeStorage: (id, storageId) => call("remove_storage", id, storageId),
     moveSystem: (id, system, storageId) => call("move_system", id, system, storageId),
-    systemRemovalPreview: (id, system) => call("system_removal_preview", id, system),
-    removeSystem: (id, system) => call("remove_system", id, system),
+    systemRemovalPreview: (id, system, force) => call("system_removal_preview", id, system, !!force),
+    removeSystem: (id, system, force) => call("remove_system", id, system, !!force),
     openSystemFolder: (id, system, kind) => call("open_system_folder", id, system, kind),
 
     listRows: (id, q) => call("list_rows", id, q.systems || null, q.storageIds || null,

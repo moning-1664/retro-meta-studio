@@ -177,6 +177,14 @@ body { font-size: var(--fs-body); }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .sysdel-kept { margin-top: 8px; color: var(--muted); }
+/* 전체 삭제 경고 - 되돌릴 수 없다는 것을 먼저 보이고, 체크해야 확인 버튼이 켜진다. */
+.sysdel-warning {
+  padding: 8px 10px; border: 1px solid var(--danger); border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.sysdel-warning-title { color: var(--danger); font-weight: 600; margin-bottom: 4px; }
+.sysdel-ack { display: flex; align-items: center; gap: 8px; margin-top: 12px; cursor: pointer; user-select: none; }
+.sysdel-confirm:disabled { opacity: .45; cursor: not-allowed; }
 .nav-row, .nav-group-head {
   display: flex; align-items: center; gap: 6px; min-height: var(--nav-row-h);
   padding: 4px 7px; border-radius: var(--radius-xs); cursor: pointer;
