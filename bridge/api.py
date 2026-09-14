@@ -26,6 +26,7 @@ from app import paths
 from app.model.collection import STORAGE_INTERNAL
 from app.model.constants import MEDIA_TYPES
 from app import dashboard
+from app import system_ops
 from app.model.plan import OP_STORAGE_CHANGE, Plan
 from app.plan import builder, clipboard
 from app.plan.applier import apply_plan
@@ -108,6 +109,19 @@ def guarded(fn):
     wrapper.__name__ = fn.__name__
     wrapper.__doc__ = fn.__doc__
     return wrapper
+
+
+def _reveal_path(path):
+    """파일 탐색기로 폴더를 연다. 테스트는 이 함수를 바꿔 끼운다."""
+    import os
+    import subprocess
+    import sys
+    if sys.platform.startswith("win"):
+        os.startfile(path)  # noqa: S606 - 사용자가 고른 Collection 폴더다
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    else:
+        subprocess.Popen(["xdg-open", path])
 
 
 class Api:
@@ -397,6 +411,53 @@ class Api:
         """배치 정보만 바꾼다. 실제 파일 이동은 Plan Apply가 한다(스펙 §10)."""
         self.registry.move_system(collection_id, system, storage_id)
         return ok(True)
+
+    def _system_context(self, collection_id):
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            raise WorkspaceError("Collection을 찾을 수 없습니다.")
+        return (collection, self.workspace.open(collection_id),
+                self.workspace.provider_for(collection), get_adapter(collection.frontend))
+
+    @guarded
+    def system_removal_preview(self, collection_id, system):
+        """System 삭제 전에 무엇이 지워지고 무엇이 남는지, 지울 수 없는 이유를 알려준다."""
+        collection, cache, provider, adapter = self._system_context(collection_id)
+        try:
+            return ok(system_ops.removal_preview(collection, cache, provider, adapter, system))
+        except system_ops.SystemOpError as e:
+            return err(e)
+
+    @guarded
+    def remove_system(self, collection_id, system):
+        """**게임이 없는** System의 폴더를 지우고 목록에서 뺀다(app/system_ops.py).
+
+        게임이 있는 System은 거절한다 - 게임 파일 삭제는 Plan을 거쳐야 한다."""
+        if self.jobs.busy_targets(collection_id):
+            return err("작업이 진행 중이라 지금은 System을 삭제할 수 없습니다.")
+        collection, cache, provider, adapter = self._system_context(collection_id)
+        try:
+            return ok(system_ops.remove_empty_system(self.registry, collection, cache,
+                                                     provider, adapter, system))
+        except system_ops.SystemOpError as e:
+            return err(e)
+
+    @guarded
+    def open_system_folder(self, collection_id, system, kind):
+        """System의 ROM/Metadata/Media 폴더를 파일 탐색기로 연다.
+
+        경로는 Adapter의 layout이 정한다 - Storage 배치와 System별 경로 지정을 그대로 따른다."""
+        collection, _cache, provider, adapter = self._system_context(collection_id)
+        if not any(entry.system == system for entry in collection.systems):
+            return err(f"System을 찾을 수 없습니다: {system}")
+        try:
+            path = system_ops.folder_path(adapter.layout(collection, system), kind)
+        except system_ops.SystemOpError as e:
+            return err(e)
+        if not path or not provider.exists(path):
+            return err(f"폴더가 없습니다: {path}")
+        _reveal_path(path)
+        return ok({"path": path})
 
     def _next_storage_id(self, collection_id):
         existing = {s.storage_id for s in self.registry.get_collection(collection_id).storages}

@@ -113,6 +113,7 @@
   // ------------------------------------------------------------------
   const DEFAULT_SETTINGS = {
     appearance: { theme: "stitch", density: "compact", scale: 100, previewDefault: true },
+    navigation: { hideEmptySystems: false },
   };
   const APPEARANCE_CACHE_KEY = "rms.appearance";
 
@@ -294,6 +295,7 @@
     S.settings[section] = { ...(S.settings[section] || {}), ...patch };
     pendingSettings[section] = { ...(pendingSettings[section] || {}), ...patch };
     if (section === "appearance" && applyAppearance(S.settings.appearance)) refreshListGeometry();
+    if (section === "navigation") renderNav();
     clearTimeout(settingsTimer);
     settingsTimer = setTimeout(() => {
       const send = pendingSettings;
@@ -816,7 +818,8 @@
       nav.appendChild(navDashboardRow());
       return;
     }
-    scroll.appendChild(h("div", { class: "nav-eyebrow" }, ["SYSTEMS"]));
+    const eyebrow = h("div", { class: "nav-eyebrow" }, [h("span", { class: "nav-eyebrow-label" }, ["SYSTEMS"])]);
+    scroll.appendChild(eyebrow);
 
     const scope = activeScope();
     if (isArchive()) {
@@ -862,6 +865,20 @@
     const pendingMoves = (S.plan && S.plan.pendingMoves) || {};
     const displayStorageId = (sys) => pendingMoves[sys.system] || sys.storageId;
 
+    // 빈 System 숨기기(Settings와 SYSTEMS 제목 옆 버튼이 같은 값을 바꾼다). 지금 보고 있는
+    // System과 이동이 예정된 System은 비어 있어도 남긴다 - 사라지면 어디 있는지 잃는다.
+    const hideEmpty = !!(S.settings && S.settings.navigation && S.settings.navigation.hideEmptySystems);
+    const visibleSystem = (sys) => !hideEmpty || sys.count > 0 || !!pendingMoves[sys.system]
+      || (scope.kind === "system" && scope.id === sys.system);
+    const hiddenCount = (detail.systems || []).filter((sys) => !visibleSystem(sys)).length;
+    const hideToggle = h("button", {
+      class: "icon-btn nav-hide-empty" + (hideEmpty ? " on" : ""),
+      title: hideEmpty ? `빈 System 보이기 (숨김 ${formatCount(hiddenCount)}개)` : "빈 System 숨기기",
+      "aria-pressed": hideEmpty ? "true" : "false",
+    }, [icon(hideEmpty ? "eyeOff" : "eye", 12)]);
+    hideToggle.addEventListener("click", () => updateSettings("navigation", { hideEmptySystems: !hideEmpty }));
+    eyebrow.appendChild(hideToggle);
+
     function renderSystemRow(sys) {
       const row = navRow(sys.system.toUpperCase(), sys.count,
         scope.kind === "system" && scope.id === sys.system,
@@ -897,7 +914,7 @@
     }
 
     if (!externalStorages.length) {
-      (detail.systems || []).forEach((sys) => scroll.appendChild(renderSystemRow(sys)));
+      (detail.systems || []).filter(visibleSystem).forEach((sys) => scroll.appendChild(renderSystemRow(sys)));
     } else {
       (detail.storages || []).forEach((storage) => {
         const group = h("div", { class: "nav-group" });
@@ -934,7 +951,7 @@
           });
         }
 
-        (detail.systems || []).filter((sys) => displayStorageId(sys) === storage.id)
+        (detail.systems || []).filter((sys) => displayStorageId(sys) === storage.id && visibleSystem(sys))
           .forEach((sys) => group.appendChild(renderSystemRow(sys)));
         scroll.appendChild(group);
       });
@@ -1049,9 +1066,78 @@
     items.push({ label: "gamelist 만들기", icon: "fileWarning",
       title: "이 System에 gamelist가 없으면 ROM 파일명만 담아 만듭니다.",
       onSelect: () => openMetadataBootstrap(S.activeId, [sys.system]) });
+    // 폴더 경로는 백엔드(Adapter layout)가 정한다 - Storage 배치와 System별 경로 지정을 따른다.
+    items.push("separator", { section: "폴더 열기" });
+    [["rom", "ROM 폴더"], ["metadata", "Metadata 폴더"], ["media", "Media 폴더"]].forEach(([kind, label]) =>
+      items.push({ label, icon: "folderOpen", onSelect: () => openSystemFolder(sys.system, kind) }));
+    items.push("separator", {
+      label: "System 삭제", icon: "trash", danger: true, disabled: sys.count > 0,
+      title: sys.count > 0 ? "게임이 있는 System은 삭제할 수 없습니다." : "빈 System의 폴더를 지우고 목록에서 뺍니다.",
+      onSelect: () => confirmRemoveSystem(sys),
+    });
     showContextMenu(menuPoint(event), sys.system.toUpperCase(),
       `게임 ${formatCount(sys.count)} · ${current ? current.label : sys.storageId}`, items,
       current ? current.rootPath : null);
+  }
+
+  async function openSystemFolder(system, kind) {
+    const r = await api.openSystemFolder(S.activeId, system, kind);
+    if (!r.ok) showToast(r.error, "error");
+  }
+
+  /** 빈 System 삭제. 먼저 무엇이 지워지는지 보여주고 확인을 받는다.
+   *
+   * 게임이 있는 System은 백엔드가 거절한다(메뉴에서도 비활성). 게임 파일 삭제는
+   * Plan을 거쳐야 하기 때문이다. */
+  async function confirmRemoveSystem(sys) {
+    const collectionId = S.activeId;
+    const preview = await api.systemRemovalPreview(collectionId, sys.system);
+    if (!preview.ok) { showToast(preview.error, "error"); return; }
+    const p = preview.data;
+    const name = sys.system.toUpperCase();
+    const KIND = { rom: "ROM", metadata: "Metadata", media: "Media" };
+
+    if (p.blockers.length) {
+      showModal(`${name} System을 삭제할 수 없습니다`, h("div", { class: "modal-body" },
+        p.blockers.map((text) => h("div", { class: "modal-text sysdel-blocker" }, [text]))),
+        [h("button", { class: "btn primary", onClick: closeModal }, ["닫기"])]);
+      return;
+    }
+
+    const list = h("div", { class: "sysdel-list" });
+    p.targets.forEach((t) => {
+      list.appendChild(h("div", { class: "sysdel-target" }, [
+        h("span", { class: "sysdel-kind" }, [KIND[t.kind] || t.kind]),
+        h("span", { class: "sysdel-path", title: t.path }, [t.path]),
+        h("span", { class: "sysdel-count" }, [t.fileCount ? `파일 ${formatCount(t.fileCount)}개` : "비어 있음"]),
+      ]));
+      t.files.forEach((file) => list.appendChild(h("div", { class: "sysdel-file", title: file }, [file])));
+    });
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "modal-text" }, [p.targets.length
+        ? "게임이 없는 System입니다. 아래 폴더와 파일을 지우고 목록에서 뺍니다. 되돌릴 수 없습니다."
+        : "지울 폴더가 없습니다. 목록에서만 뺍니다."]),
+      p.targets.length ? list : null,
+      p.kept.length ? h("div", { class: "modal-text sysdel-kept" },
+        [`다른 System과 함께 쓰는 폴더는 남깁니다: ${p.kept.map((k) => k.path).join(", ")}`]) : null,
+    ]);
+    showModal(`${name} System 삭제`, body, [
+      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+      h("button", { class: "btn danger", onClick: async () => {
+        closeModal();
+        const r = await api.removeSystem(collectionId, sys.system);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        await ensureDetail(collectionId);
+        if (collectionId !== S.activeId) return;
+        const scope = activeScope();
+        if (scope.kind === "system" && scope.id === sys.system) {
+          await setScope({ kind: "all" });
+        } else {
+          renderNav(); renderHeader();
+        }
+        showToast(`${name} System을 삭제했습니다.`);
+      } }, ["삭제"]),
+    ]);
   }
 
   function openStorageMenu(storage) {

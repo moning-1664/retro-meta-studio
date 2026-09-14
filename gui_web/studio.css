@@ -155,7 +155,28 @@ body { font-size: var(--fs-body); }
   font-size: calc(8px * var(--font-scale)); letter-spacing: 1.2px; color: var(--muted);
   padding: 2px 7px 5px; text-transform: uppercase;
 }
+.nav-eyebrow-label { flex: 1; }
+/* 빈 System 숨기기 - 켜져 있으면 글자색으로 상태를 알린다(아이콘도 눈/가린 눈으로 바뀐다). */
+.nav-eyebrow .icon-btn { padding: 2px; background: transparent; color: var(--muted); opacity: .8; }
+.nav-eyebrow .icon-btn:hover { opacity: 1; }
+.nav-eyebrow .icon-btn.on { color: var(--list-text); opacity: 1; }
 .nav-empty { color: var(--muted); font-size: var(--fs-caption); padding: 12px 6px; }
+
+/* 빈 System 삭제 확인 - 지울 폴더와 그 안의 파일을 그대로 보여준다. */
+.sysdel-list {
+  margin-top: 8px; max-height: 220px; overflow: auto; padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel);
+}
+.sysdel-target { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 4px; }
+.sysdel-target:first-child { margin-top: 0; }
+.sysdel-kind { flex: none; width: 64px; color: var(--muted); font-size: var(--fs-caption); }
+.sysdel-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sysdel-count { flex: none; color: var(--muted); font-size: var(--fs-caption); }
+.sysdel-file {
+  padding-left: 72px; color: var(--muted); font-size: var(--fs-caption);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sysdel-kept { margin-top: 8px; color: var(--muted); }
 .nav-row, .nav-group-head {
   display: flex; align-items: center; gap: 6px; min-height: var(--nav-row-h);
   padding: 4px 7px; border-radius: var(--radius-xs); cursor: pointer;

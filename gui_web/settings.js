@@ -124,6 +124,10 @@
         add(...section("Collections", "Collection 자체의 경로가 아니라 열기/복원 동작을 설정합니다."));
         add(row("collections.restoreTabs", "Restore open tabs", soonToggle(true), null, true));
         add(row("collections.rememberSystem", "Remember last System", soonToggle(true), null, true));
+        add(row("navigation.hideEmptySystems", "Hide empty systems",
+          toggle(s.navigation && s.navigation.hideEmptySystems,
+            (v) => ctx.update("navigation", { hideEmptySystems: v })),
+          "좌측 SYSTEMS 목록에서 게임이 없는 System을 숨깁니다. SYSTEMS 제목 옆 눈 아이콘으로도 바꿀 수 있습니다."));
         add(h("div", { class: "stg-info" }, ["ROM / Metadata / Media 경로는 Collection 탭의 우클릭 메뉴에서 관리합니다."]));
       } else if (key === "metadata") {
         add(...section("Metadata & Media", "목록 표시와 Metadata/Media의 기본 처리 정책입니다."));
