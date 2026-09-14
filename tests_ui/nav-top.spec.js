@@ -22,9 +22,10 @@ test("Dashboard/Add External/App Title/Settings는 스크롤 영역 밖에 있�
   expect(await outside(".nav-top")).toBe(true);
 });
 
-test("Dashboard는 눌러도 아직 아무 기능이 없다는 것을 알린다", async ({ page }) => {
+test("Dashboard를 누르면 Dashboard 화면으로 바뀐다", async ({ page }) => {
+  // 자세한 동작은 dashboard.spec.js에 있다.
   await page.locator(".nav-dashboard").click();
-  await expect(page.locator("#toast")).toContainText("아직 없습니다");
+  await expect(page.locator("#dashboard-view .dsb-title")).toBeVisible();
 });
 
 test("App Title이 Navigator 상단에 있고 GameList 상단 Chromium과 나란하다", async ({ page }) => {

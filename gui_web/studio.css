@@ -873,3 +873,95 @@ button.sb-badge { cursor: pointer; }
   border-radius: 6px; color: var(--danger); background: transparent; font-size: var(--fs-body);
 }
 .stg-danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
+/* ------------------------------------------------------------------ Dashboard
+   Navigator의 Dashboard가 중앙 영역을 통째로 바꾼다(윗줄·아랫줄 대신 이 화면).
+   레거시 style.css에 .dash-* 규칙이 남아 있어 dsb- 접두사를 쓴다. */
+#dashboard-view { display: none; }
+#center.dashboard-mode #header-row,
+#center.dashboard-mode #main-row { display: none; }
+#center.dashboard-mode #dashboard-view { display: block; flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--bg); }
+.dsb { box-sizing: border-box; max-width: 1180px; padding: 18px 22px 30px; color: var(--text); }
+.dsb-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; margin-bottom: 8px; }
+.dsb-eyebrow { font-size: var(--fs-eyebrow); letter-spacing: .12em; color: var(--muted); }
+.dsb-title { font-size: calc(18px * var(--font-scale)); font-weight: 700; }
+.dsb-validate { gap: 6px; }
+.dsb-validation { min-height: 18px; margin-bottom: 10px; font-size: var(--fs-caption); color: var(--muted); }
+.dsb-invalid { margin: 6px 0 0; padding-left: 18px; color: var(--text); font-size: var(--fs-caption); }
+.dsb-invalid li { margin: 2px 0; word-break: break-all; }
+.dsb-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.dsb-tile { padding: 11px 13px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; min-width: 0; }
+.dsb-tile-label { font-size: var(--fs-eyebrow); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.dsb-tile-value { font-size: calc(19px * var(--font-scale)); font-weight: 650; margin-top: 3px; }
+.dsb-tile-sub { font-size: var(--fs-caption); color: var(--muted); margin-top: 2px; }
+.dsb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 8px; margin-top: 8px; }
+.dsb-card { padding: 12px 14px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; min-width: 0; }
+.dsb-card.dsb-wide { grid-column: 1 / -1; }
+.dsb-card-title { font-size: var(--fs-eyebrow); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+.dsb-empty, .dsb-muted { color: var(--muted); font-size: var(--fs-caption); }
+/* 전체 대비 비율 막대 - 조각 사이는 선이 아니라 배경색 2px 틈으로 가른다. */
+.dsb-stack { display: flex; gap: 2px; height: 18px; }
+.dsb-seg { min-width: 3px; flex-basis: 0; }
+.dsb-seg:first-child { border-radius: 4px 0 0 4px; }
+.dsb-seg:last-child { border-radius: 0 4px 4px 0; }
+.dsb-seg:only-child { border-radius: 4px; }
+.dsb-legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 14px; margin-top: 10px; }
+.dsb-legend-item { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--fs-caption); }
+.dsb-swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.dsb-legend-name { font-weight: 600; white-space: nowrap; }
+.dsb-legend-value { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dsb-tip {
+  position: fixed; z-index: 90; pointer-events: none; padding: 6px 9px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 8px 20px var(--shadow); font-size: var(--fs-caption);
+}
+.dsb-tip-main { font-weight: 650; }
+.dsb-tip-sub { color: var(--muted); }
+/* 계량 막대 - 채움은 상태(기본·경고·초과)를, 빈 트랙은 같은 색의 옅은 단계를 쓴다. */
+.dsb-meter { height: 6px; border-radius: 4px; overflow: hidden; background: color-mix(in srgb, var(--meter-fill) 16%, var(--card3)); }
+.dsb-meter-fill { height: 100%; border-radius: 4px; background: var(--meter-fill); }
+.dsb-meter.warn { background: color-mix(in srgb, var(--warning) 16%, var(--card3)); }
+.dsb-meter.warn .dsb-meter-fill { background: var(--warning); }
+.dsb-meter.over { background: color-mix(in srgb, var(--danger) 16%, var(--card3)); }
+.dsb-meter.over .dsb-meter-fill { background: var(--danger); }
+.dsb-meter.none { background: var(--card3); }
+.dsb-target + .dsb-target { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.dsb-target-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.dsb-target-name { font-weight: 650; }
+.dsb-target-kind { font-size: var(--fs-eyebrow); color: var(--muted); }
+.dsb-target-controls { margin-left: auto; display: flex; align-items: center; gap: 3px; }
+.dsb-target-input {
+  width: 84px; height: 24px; padding: 2px 7px; text-align: right; font-family: inherit;
+  font-size: var(--fs-caption); font-variant-numeric: tabular-nums; color: var(--text);
+  background: var(--card2); border: 1px solid var(--border); border-radius: 5px; outline: none;
+}
+.dsb-target-input:focus { border-color: var(--accent); }
+.dsb-spins { display: flex; flex-direction: column; }
+.dsb-spin {
+  width: 18px; height: 12px; padding: 0; font-size: 7px; line-height: 10px;
+  color: var(--muted); background: var(--card2); border: 1px solid var(--border);
+}
+.dsb-spin:first-child { border-radius: 4px 4px 0 0; }
+.dsb-spin:last-child { border-top: 0; border-radius: 0 0 4px 4px; }
+.dsb-spin:hover { color: var(--accent); border-color: var(--accent); }
+.dsb-target-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 5px; font-size: var(--fs-caption); }
+.dsb-bar + .dsb-bar { margin-top: 9px; }
+.dsb-bar-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 4px; font-size: var(--fs-caption); }
+.dsb-statuses { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 12px; font-size: var(--fs-caption); }
+/* 상태는 색만으로 말하지 않는다 - 아이콘에 색, 글자는 본문 색. */
+.dsb-status { display: inline-flex; align-items: center; gap: 4px; color: var(--text); }
+.dsb-status-icon { font-weight: 700; }
+.dsb-status.good .dsb-status-icon { color: var(--success); }
+.dsb-status.warn .dsb-status-icon { color: var(--warning); }
+.dsb-status.bad .dsb-status-icon { color: var(--danger); }
+.dsb-status.muted { color: var(--muted); }
+.dsb-table-wrap { overflow-x: auto; }
+.dsb-table { width: 100%; border-collapse: collapse; font-size: var(--fs-caption); }
+.dsb-table th { text-align: left; padding: 0; border-bottom: 1px solid var(--border); }
+.dsb-table th.num, .dsb-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.dsb-sort { width: 100%; padding: 6px 8px; text-align: inherit; color: var(--muted); font-size: var(--fs-eyebrow); letter-spacing: .06em; text-transform: uppercase; }
+.dsb-sort:hover, .dsb-sort.on { color: var(--text); }
+.dsb-table td { padding: 6px 8px; border-bottom: 1px solid var(--list-row-border); white-space: nowrap; }
+.dsb-table tbody tr { cursor: pointer; }
+.dsb-table tbody tr:hover, .dsb-table tbody tr:focus { background: var(--card2); outline: none; }
+.dsb-sys { font-weight: 650; }

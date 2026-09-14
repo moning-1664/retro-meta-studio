@@ -349,6 +349,27 @@
       mockFavorites[romUid] = !!on;
       return ok({ romUid, favorite: !!on });
     },
+    dashboard_stats: () => ok({
+      collectionId: "c1", collectionName: mockDetail.name,
+      totals: { games: 3, romCount: 3, romBytes: 8700524288, mediaCount: 4, mediaBytes: 3200000 },
+      storages: [
+        { id: "internal", label: "Internal", kind: "internal", romCount: 1, romBytes: 524288,
+          mediaCount: 4, mediaBytes: 3200000, capacityBytes: 512e9, freeBytes: 200e9 },
+        { id: "ext-1", label: "External SD", kind: "external", romCount: 2, romBytes: 8700000000,
+          mediaCount: 0, mediaBytes: 0, capacityBytes: 512e9, freeBytes: 90e9 },
+      ],
+      systems: [
+        { system: "ps2", storageId: "ext-1", mediaStorageId: "internal", games: 2, romCount: 2,
+          romBytes: 8700000000, mediaCount: 3, mediaBytes: 3000000, missingMetadata: 0, missingMedia: 1 },
+        { system: "snes", storageId: "internal", mediaStorageId: "internal", games: 1, romCount: 1,
+          romBytes: 524288, mediaCount: 1, mediaBytes: 200000, missingMetadata: 1, missingMedia: 0 },
+        { system: "gba", storageId: "internal", mediaStorageId: "internal", games: 0, romCount: 0,
+          romBytes: 0, mediaCount: 0, mediaBytes: 0, missingMetadata: 0, missingMedia: 0 },
+      ],
+      health: { total: 3, present: 3, metadata: 2, media: 2, description: 2, cover: 1, complete: 1,
+                missingRom: 0, missingMetadata: 1, missingMedia: 1, missingDescription: 1, missingCover: 2 },
+    }),
+    validate_collection: () => ok({ checked: 2, invalid: [] }),
     get_app_settings: () => ok(JSON.parse(JSON.stringify(mockAppSettings))),
     save_app_settings: (patch) => {
       Object.entries(patch || {}).forEach(([section, value]) => {
@@ -418,6 +439,8 @@
                               q.search || null, q.order || "title", !!q.descending,
                               q.limit || 200, q.offset || 0, !!q.favoritesOnly),
     setFavorite: (id, romUid, on) => call("set_favorite", id, romUid, !!on),
+    dashboardStats: (id) => call("dashboard_stats", id),
+    validateCollection: (id) => call("validate_collection", id),
     getAppSettings: () => call("get_app_settings"),
     saveAppSettings: (patch) => call("save_app_settings", patch),
     getUiState: (id) => call("get_ui_state", id),

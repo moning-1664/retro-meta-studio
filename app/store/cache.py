@@ -230,6 +230,42 @@ class CacheStore:
     def system_stats(self) -> list[dict]:
         return [dict(r) for r in self._conn.execute("SELECT * FROM system_stats ORDER BY system")]
 
+    def metadata_health(self) -> dict:
+        """Dashboard의 Metadata Health - 게임 수와 항목별로 갖춘 게임 수.
+
+        행마다 파이썬으로 돌지 않고 SQL 한 번으로 센다(게임이 수만 개여도 즉시).
+        "갖췄다"의 기준: Description은 빈칸이 아닌 값, Cover는 covers media가 있음,
+        Complete는 ROM·Metadata·Media·Description·Cover를 전부 갖춘 게임이다.
+        """
+        row = self._conn.execute(
+            """SELECT
+                   COUNT(*) AS total,
+                   COALESCE(SUM(r.present), 0) AS present,
+                   COALESCE(SUM(r.has_metadata), 0) AS metadata,
+                   COALESCE(SUM(r.has_media), 0) AS media,
+                   COALESCE(SUM(CASE WHEN d.has_desc THEN 1 ELSE 0 END), 0) AS description,
+                   COALESCE(SUM(CASE WHEN c.rom_uid IS NOT NULL THEN 1 ELSE 0 END), 0) AS cover,
+                   COALESCE(SUM(CASE WHEN r.present = 1 AND r.has_metadata = 1 AND r.has_media = 1
+                                      AND d.has_desc AND c.rom_uid IS NOT NULL
+                                     THEN 1 ELSE 0 END), 0) AS complete
+                 FROM roms r
+                 LEFT JOIN (SELECT rom_uid,
+                                   TRIM(COALESCE(json_extract(fields_json, '$.desc'), '')) <> '' AS has_desc
+                              FROM metadata) d ON d.rom_uid = r.rom_uid
+                 LEFT JOIN (SELECT DISTINCT rom_uid FROM media
+                             WHERE LOWER(media_type) IN ('covers', 'cover')) c ON c.rom_uid = r.rom_uid"""
+        ).fetchone()
+        health = {key: int(row[key] or 0) for key in row.keys()}
+        total = health["total"]
+        health.update({
+            "missingRom": total - health["present"],
+            "missingMetadata": total - health["metadata"],
+            "missingMedia": total - health["media"],
+            "missingDescription": total - health["description"],
+            "missingCover": total - health["cover"],
+        })
+        return health
+
     def storage_usage(self) -> dict[str, int]:
         """Storage별 실사용 바이트(Actual). Plan 계산의 기준값(§82).
 

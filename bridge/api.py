@@ -25,6 +25,7 @@ from adapters import get_adapter
 from app import paths
 from app.model.collection import STORAGE_INTERNAL
 from app.model.constants import MEDIA_TYPES
+from app import dashboard
 from app.model.plan import OP_STORAGE_CHANGE, Plan
 from app.plan import builder, clipboard
 from app.plan.applier import apply_plan
@@ -308,6 +309,38 @@ class Api:
                 merged[section] = value
         self.registry.set_setting(self.APP_SETTINGS_KEY, merged)
         return ok(merged)
+
+    # ------------------------------------------------------------------
+    # Dashboard
+    # ------------------------------------------------------------------
+    @guarded
+    def dashboard_stats(self, collection_id):
+        """Dashboard 화면의 숫자들. 읽기만 한다 - 스캔도 파일 변경도 하지 않는다.
+
+        ui/stitch-v2-redesign은 이것을 main.py에서 Api 인스턴스에 런타임으로 붙였다
+        (`install_dashboard`) - 오류 처리(@guarded)도 테스트도 없이 Cache 내부
+        연결을 밖에서 직접 썼다. 계산은 app/dashboard.py로 옮겼다.
+        """
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            return err("Collection을 찾을 수 없습니다.")
+        cache = self.workspace.open(collection_id)
+        data = dashboard.collection_stats(collection, cache)
+        # 용량/여유 공간은 collection_detail과 같은 곳(볼륨 정보)에서 읽는다.
+        provider = self.workspace.provider_for(collection)
+        for storage, bucket in zip(collection.storages, data["storages"]):
+            volume = provider.volume_info(storage.root_path)
+            bucket["capacityBytes"] = volume.capacity_bytes
+            bucket["freeBytes"] = volume.free_bytes
+        return ok({"collectionId": collection.id, "collectionName": collection.name, **data})
+
+    @guarded
+    def validate_collection(self, collection_id):
+        """Metadata 파일(gamelist.xml 등)이 XML로 읽히는지만 본다. 고치지는 않는다."""
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            return err("Collection을 찾을 수 없습니다.")
+        return ok(dashboard.validate_metadata_files(collection, get_adapter(collection.frontend)))
 
     @guarded
     def set_favorite(self, collection_id, rom_uid, favorite=True):

@@ -1,0 +1,301 @@
+/* ==========================================================================
+   dashboard.js — Collection Dashboard (Navigator의 Dashboard로 중앙 영역을 전환)
+
+   구성은 ui/stitch-v2-redesign의 Dashboard를 따른다: 요약 카드, Storage 사용량,
+   목표 용량, Metadata Health, System 통계 표. 달라진 점:
+
+   - 값의 주인은 app.js다. 이 모듈은 받은 데이터를 그리고 ctx 콜백으로만 알린다 -
+     그 브랜치처럼 탭 이름으로 Collection을 찾거나 브릿지를 직접 부르지 않는다.
+   - 목표 용량은 localStorage가 아니라 그 Collection의 ui_state에 저장한다.
+   - 차트 규칙: 사용량 막대는 상위 7개 + 기타(회색), 조각 사이 2px 틈, 범례 필수,
+     글자는 데이터 색을 입지 않고 옆의 색 표시가 정체를 말한다. 상태는 아이콘+글자.
+     아래의 System 표가 차트의 표 보기 역할을 한다(모든 값을 거기서 읽을 수 있다).
+   ========================================================================== */
+(function () {
+  "use strict";
+
+  const MB = 1024 * 1024;
+  const GB = 1024 * MB;
+  const TB = 1024 * GB;
+  const TARGET_MAX = 8 * TB;
+  //: 사람이 실제로 쓰는 용량 눈금. 여기 가까우면 그 값에 붙인다.
+  const SNAP = [32 * GB, 64 * GB, 128 * GB, 256 * GB, 512 * GB, 1 * TB, 2 * TB, 4 * TB, 8 * TB];
+  //: 사용량 막대에 따로 칠하는 System 수. 나머지는 "기타"로 묶는다(색이 8개를 넘으면
+  //: 구분이 안 된다).
+  const TOP_SYSTEMS = 7;
+
+  function parseCapacity(text) {
+    const m = String(text || "").trim().replace(/,/g, "")
+      .match(/^([0-9]+(?:\.[0-9]+)?)\s*(mb|m|gb|g|tb|t)?$/i);
+    if (!m) return null;
+    const unit = (m[2] || "gb").toLowerCase();
+    const mult = unit[0] === "t" ? TB : unit[0] === "m" ? MB : GB;
+    return Math.max(GB, Math.min(TARGET_MAX, Math.round(Number(m[1]) * mult)));
+  }
+
+  function formatCapacity(bytes) {
+    if (!bytes) return "";
+    if (bytes >= TB) return `${+(bytes / TB).toFixed(bytes % TB ? 1 : 0)} TB`;
+    return `${Math.round(bytes / GB)} GB`;
+  }
+
+  function snap(bytes) {
+    const nearest = SNAP.reduce((best, p) => (Math.abs(p - bytes) < Math.abs(best - bytes) ? p : best), SNAP[0]);
+    return Math.abs(nearest - bytes) <= Math.max(GB, nearest * 0.03) ? nearest : bytes;
+  }
+
+  const stepFor = (bytes) => (bytes < TB ? 16 * GB : bytes < 4 * TB ? 128 * GB : 512 * GB);
+
+  function render(host, data, ctx) {
+    const { h, icon, formatBytes, formatCount } = ctx;
+    while (host.firstChild) host.removeChild(host.firstChild);
+
+    const t = data.totals;
+    const health = data.health;
+    const storageById = Object.fromEntries(data.storages.map((s) => [s.id, s]));
+    const pct = (part, whole) => (whole ? Math.round((part / whole) * 100) : 0);
+
+    // 툴팁은 하나를 돌려 쓴다. 값은 툴팁에서만 볼 수 있는 것이 없다 - 범례와 표에도 있다.
+    const tip = h("div", { class: "dsb-tip", role: "tooltip" });
+    tip.hidden = true;
+    const showTip = (event, lines) => {
+      while (tip.firstChild) tip.removeChild(tip.firstChild);
+      lines.forEach((line, i) => tip.appendChild(h("div", { class: i ? "dsb-tip-sub" : "dsb-tip-main" }, [line])));
+      tip.hidden = false;
+      const x = Math.min(event.clientX + 12, window.innerWidth - tip.offsetWidth - 8);
+      tip.style.left = `${x}px`;
+      tip.style.top = `${event.clientY + 14}px`;
+    };
+    const hideTip = () => { tip.hidden = true; };
+
+    // ---------------------------------------------------------- 머리
+    const validateBtn = h("button", { class: "btn compact dsb-validate" },
+      [icon("check", 12), h("span", {}, ["Validate Collection"])]);
+    const validation = h("div", { class: "dsb-validation", "aria-live": "polite" });
+    validateBtn.addEventListener("click", async () => {
+      validateBtn.disabled = true;
+      validation.textContent = "Metadata 파일을 검사하는 중…";
+      const r = await ctx.onValidate();
+      validateBtn.disabled = false;
+      while (validation.firstChild) validation.removeChild(validation.firstChild);
+      if (!r.ok) {
+        validation.appendChild(statusLine("bad", r.error || "검사하지 못했습니다."));
+        return;
+      }
+      const { checked, invalid } = r.data;
+      if (!invalid.length) {
+        validation.appendChild(statusLine("good", `Metadata 파일 ${formatCount(checked)}개 확인 · 문제 없음`));
+        return;
+      }
+      validation.appendChild(statusLine("bad", `Metadata 파일 ${formatCount(checked)}개 중 ${formatCount(invalid.length)}개를 읽을 수 없습니다`));
+      const list = h("ul", { class: "dsb-invalid" });
+      invalid.forEach((item) => list.appendChild(h("li", { title: item.error }, [
+        h("b", {}, [String(item.system).toUpperCase()]), ` ${item.path}`,
+      ])));
+      validation.appendChild(list);
+    });
+
+    host.appendChild(h("div", { class: "dsb-head" }, [
+      h("div", {}, [
+        h("div", { class: "dsb-eyebrow" }, ["DASHBOARD"]),
+        h("div", { class: "dsb-title" }, [data.collectionName || "Collection"]),
+      ]),
+      validateBtn,
+    ]));
+    host.appendChild(validation);
+
+    // ---------------------------------------------------------- 요약 카드
+    const tiles = h("div", { class: "dsb-tiles" });
+    const tile = (label, value, sub) => tiles.appendChild(h("div", { class: "dsb-tile" }, [
+      h("div", { class: "dsb-tile-label" }, [label]),
+      h("div", { class: "dsb-tile-value" }, [value]),
+      sub ? h("div", { class: "dsb-tile-sub" }, [sub]) : null,
+    ]));
+    tile("Games", formatCount(t.games), `${formatCount(health.present)}개에 ROM 있음`);
+    tile("ROM", formatBytes(t.romBytes), `${formatCount(t.romCount)}개 파일`);
+    tile("Media", formatBytes(t.mediaBytes), `${formatCount(t.mediaCount)}개 파일`);
+    tile("Metadata", formatCount(health.metadata), `전체 ${formatCount(health.total)}개 중`);
+    data.storages.forEach((s) => tile(s.label, formatBytes(s.romBytes + s.mediaBytes),
+      `ROM ${formatCount(s.romCount)}개 · ${s.kind === "external" ? "External" : "Internal"}`));
+    host.appendChild(tiles);
+
+    const grid = h("div", { class: "dsb-grid" });
+    host.appendChild(grid);
+
+    // ---------------------------------------------------------- 사용량 (전체 대비 System 비율)
+    const usage = card("Storage usage · ROM + Media");
+    const ranked = data.systems
+      .map((s) => ({ system: s.system, bytes: s.romBytes + s.mediaBytes }))
+      .filter((s) => s.bytes > 0)
+      .sort((a, b) => b.bytes - a.bytes);
+    const total = ranked.reduce((sum, s) => sum + s.bytes, 0);
+    if (!total) {
+      usage.appendChild(h("div", { class: "dsb-empty" }, ["아직 스캔된 파일이 없습니다."]));
+    } else {
+      const parts = ranked.slice(0, TOP_SYSTEMS).map((s, i) => ({ ...s, name: s.system.toUpperCase(), color: `var(--series-${i + 1})` }));
+      const rest = ranked.slice(TOP_SYSTEMS);
+      if (rest.length) {
+        parts.push({ name: `기타 ${rest.length}개`, bytes: rest.reduce((sum, s) => sum + s.bytes, 0), color: "var(--series-other)" });
+      }
+      const stack = h("div", { class: "dsb-stack", role: "img",
+        "aria-label": parts.map((p) => `${p.name} ${pct(p.bytes, total)}%`).join(", ") });
+      parts.forEach((p) => {
+        const seg = h("div", { class: "dsb-seg", style: { flexGrow: String(p.bytes), background: p.color } });
+        seg.addEventListener("mousemove", (e) => showTip(e, [p.name, `${formatBytes(p.bytes)} · ${pct(p.bytes, total)}%`]));
+        seg.addEventListener("mouseleave", hideTip);
+        stack.appendChild(seg);
+      });
+      usage.appendChild(stack);
+      const legend = h("div", { class: "dsb-legend" });
+      parts.forEach((p) => legend.appendChild(h("div", { class: "dsb-legend-item" }, [
+        h("span", { class: "dsb-swatch", style: { background: p.color } }),
+        h("span", { class: "dsb-legend-name" }, [p.name]),
+        h("span", { class: "dsb-legend-value" }, [`${formatBytes(p.bytes)} · ${pct(p.bytes, total)}%`]),
+      ])));
+      usage.appendChild(legend);
+    }
+    grid.appendChild(usage);
+
+    // ---------------------------------------------------------- 목표 용량
+    const targets = card("Storage target");
+    data.storages.forEach((s) => targets.appendChild(targetRow(s)));
+    grid.appendChild(targets);
+
+    function targetRow(s) {
+      const used = s.romBytes + s.mediaBytes;
+      const target = ctx.targets[s.id] || s.capacityBytes || null;
+      const ratio = target ? used / target : 0;
+      const level = !target ? "none" : ratio > 1 ? "over" : ratio >= 0.9 ? "warn" : "ok";
+
+      const input = h("input", { class: "dsb-target-input", value: formatCapacity(target),
+        placeholder: "예: 512 GB", title: "예: 512 GB, 1 TB", "aria-label": `${s.label} 목표 용량` });
+      const commit = (bytes) => {
+        if (!bytes) { input.value = formatCapacity(target); return; }
+        ctx.onTargetChange(s.id, snap(bytes));
+        row.replaceWith(targetRow(s));
+      };
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); commit(parseCapacity(input.value)); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); commit((target || 0) + stepFor(target || 0)); }
+        else if (e.key === "ArrowDown") { e.preventDefault(); commit(Math.max(GB, (target || 0) - stepFor(target || 0))); }
+      });
+      input.addEventListener("change", () => commit(parseCapacity(input.value)));
+      const up = h("button", { class: "dsb-spin", title: "늘리기" }, ["▲"]);
+      const down = h("button", { class: "dsb-spin", title: "줄이기" }, ["▼"]);
+      up.addEventListener("click", () => commit((target || 0) + stepFor(target || 0)));
+      down.addEventListener("click", () => commit(Math.max(GB, (target || 0) - stepFor(target || 0))));
+
+      const summary = !target
+        ? "목표를 정하지 않았습니다"
+        : `사용 ${formatBytes(used)} / 목표 ${formatCapacity(target)} · ${pct(used, target)}%`;
+      const row = h("div", { class: "dsb-target", "data-storage": s.id }, [
+        h("div", { class: "dsb-target-head" }, [
+          h("span", { class: "dsb-target-name" }, [s.label]),
+          h("span", { class: "dsb-target-kind" }, [s.kind === "external" ? "External" : "Internal"]),
+          h("span", { class: "dsb-target-controls" }, [input, h("span", { class: "dsb-spins" }, [up, down])]),
+        ]),
+        h("div", { class: "dsb-meter " + level }, [
+          h("div", { class: "dsb-meter-fill", style: { width: `${Math.min(100, ratio * 100)}%` } }),
+        ]),
+        h("div", { class: "dsb-target-foot" }, [
+          h("span", {}, [summary]),
+          level === "over" ? statusLine("warn", `목표 초과 ${formatBytes(used - target)}`) : null,
+          s.freeBytes != null ? h("span", { class: "dsb-muted" }, [`디스크 여유 ${formatBytes(s.freeBytes)}`]) : null,
+        ]),
+      ]);
+      return row;
+    }
+
+    // ---------------------------------------------------------- Metadata Health
+    const healthCard = card("Metadata health");
+    [["Metadata", health.metadata], ["Media", health.media],
+     ["Description", health.description], ["Cover", health.cover]].forEach(([label, value]) => {
+      healthCard.appendChild(h("div", { class: "dsb-bar" }, [
+        h("div", { class: "dsb-bar-head" }, [
+          h("span", {}, [label]),
+          h("span", { class: "dsb-muted" }, [`${formatCount(value)} / ${formatCount(health.total)} · ${pct(value, health.total)}%`]),
+        ]),
+        h("div", { class: "dsb-meter ok" }, [
+          h("div", { class: "dsb-meter-fill", style: { width: `${pct(value, health.total)}%` } }),
+        ]),
+      ]));
+    });
+    const statuses = h("div", { class: "dsb-statuses" }, [statusLine("good", `Complete ${formatCount(health.complete)}`)]);
+    [["Missing ROM", health.missingRom], ["Missing Media", health.missingMedia],
+     ["Missing Description", health.missingDescription], ["Missing Cover", health.missingCover]]
+      .filter(([, n]) => n > 0)
+      .forEach(([label, n]) => statuses.appendChild(statusLine("warn", `${label} ${formatCount(n)}`)));
+    healthCard.appendChild(statuses);
+    grid.appendChild(healthCard);
+
+    // ---------------------------------------------------------- System 통계 표
+    const tableCard = card("System statistics");
+    tableCard.classList.add("dsb-wide");
+    const sort = ctx.sort || (ctx.sort = { key: "size", desc: true });
+    const statusOf = (s) => (s.games === 0 ? ["muted", "Empty"]
+      : s.missingMedia > 0 ? ["warn", `Media 없음 ${formatCount(s.missingMedia)}`]
+      : s.missingMetadata > 0 ? ["warn", `Metadata 없음 ${formatCount(s.missingMetadata)}`]
+      : ["good", "정상"]);
+    const COLS = [
+      ["system", "System", (s) => s.system],
+      ["storage", "Storage", (s) => (storageById[s.storageId] || {}).label || s.storageId],
+      ["games", "Games", (s) => s.games],
+      ["size", "ROM size", (s) => s.romBytes],
+      ["media", "Media size", (s) => s.mediaBytes],
+      ["status", "Status", (s) => statusOf(s)[1]],
+    ];
+    const table = h("table", { class: "dsb-table" });
+    const thead = h("thead");
+    const tbody = h("tbody");
+    const headRow = h("tr");
+    COLS.forEach(([key, label]) => {
+      const btn = h("button", { class: "dsb-sort" + (sort.key === key ? " on" : "") },
+        [label, sort.key === key ? (sort.desc ? " ↓" : " ↑") : ""]);
+      btn.addEventListener("click", () => {
+        if (sort.key === key) sort.desc = !sort.desc;
+        else { sort.key = key; sort.desc = key !== "system" && key !== "storage" && key !== "status"; }
+        tableCard.replaceWith(render.table ? tableCard : tableCard);
+        render(host, data, ctx);
+      });
+      headRow.appendChild(h("th", { class: ["games", "size", "media"].includes(key) ? "num" : "",
+        "aria-sort": sort.key === key ? (sort.desc ? "descending" : "ascending") : "none" }, [btn]));
+    });
+    thead.appendChild(headRow);
+    const pick = COLS.find(([key]) => key === sort.key)[2];
+    data.systems.slice().sort((a, b) => {
+      const av = pick(a), bv = pick(b);
+      const c = typeof av === "number" ? av - bv : String(av).localeCompare(String(bv));
+      return sort.desc ? -c : c;
+    }).forEach((s) => {
+      const [level, label] = statusOf(s);
+      const tr = h("tr", { tabindex: "0", title: `${s.system.toUpperCase()} 목록 열기`, "data-system": s.system }, [
+        h("td", { class: "dsb-sys" }, [s.system.toUpperCase()]),
+        h("td", {}, [(storageById[s.storageId] || {}).label || s.storageId]),
+        h("td", { class: "num" }, [formatCount(s.games)]),
+        h("td", { class: "num" }, [formatBytes(s.romBytes)]),
+        h("td", { class: "num" }, [formatBytes(s.mediaBytes)]),
+        h("td", {}, [statusLine(level, label)]),
+      ]);
+      const open = () => ctx.onOpenSystem(s.system);
+      tr.addEventListener("click", open);
+      tr.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(thead);
+    table.appendChild(tbody);
+    tableCard.appendChild(h("div", { class: "dsb-table-wrap" }, [table]));
+    grid.appendChild(tableCard);
+
+    host.appendChild(tip);
+
+    function card(title) {
+      return h("section", { class: "dsb-card" }, [h("div", { class: "dsb-card-title" }, [title])]);
+    }
+    function statusLine(level, text) {
+      const mark = { good: "✓", warn: "⚠", bad: "✕", muted: "–" }[level];
+      return h("span", { class: `dsb-status ${level}` }, [h("span", { class: "dsb-status-icon", "aria-hidden": "true" }, [mark]), text]);
+    }
+  }
+
+  window.RMSDashboard = { render, parseCapacity, formatCapacity };
+})();

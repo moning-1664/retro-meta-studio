@@ -147,6 +147,8 @@
 
   const S = {
     settings: mergeSettings(null),
+    // 중앙 영역: "list"(헤더+목록+Detail) 또는 "dashboard"(Navigator의 Dashboard).
+    view: "list",
     collections: [],
     tabs: [],            // 열려 있는 Collection id (최대 10, 스펙 §2.2)
     activeId: null,
@@ -542,6 +544,7 @@
     if (S.activeId === id) return;
     if (id !== ARCHIVE_ID && !S.tabs.includes(id)) { await openTab(id); return; }
     S.activeId = id;
+    S.view = "list";
     resetList();
     await ensureDetail(id);
     // 사용자가 맞춰 놓은 컬럼 폭과 정렬을 먼저 되살린 뒤에 그린다 - 나중에 불러오면
@@ -789,10 +792,11 @@
    * PENDING_DECISIONS.md) - 이전 프로젝트 기능을 가져올 진입점 자리만 잡아둔다.
    * App Title이 상단으로 옮겨간 자리에 대신 놓는다(사용자 요청). */
   function navDashboardRow() {
-    const row = h("button", { class: "nav-dashboard", title: "Dashboard (준비 중)" }, [
-      icon("dashboard", 14), h("span", {}, ["Dashboard"]),
-    ]);
-    row.addEventListener("click", () => showToast("Dashboard는 아직 없습니다 - 나중에 쓸 자리입니다."));
+    const row = h("button", {
+      class: "nav-dashboard" + (S.view === "dashboard" ? " active" : ""),
+      title: S.view === "dashboard" ? "목록으로 돌아가기" : "Collection Dashboard",
+    }, [icon("dashboard", 14), h("span", {}, ["Dashboard"])]);
+    row.addEventListener("click", () => (S.view === "dashboard" ? showList() : showDashboard()));
     return row;
   }
 
@@ -959,6 +963,8 @@
 
   async function setScope(scope) {
     S.scope[S.activeId] = scope;
+    // Dashboard를 보다가 System을 고르면 그 System의 목록으로 간다.
+    if (S.view === "dashboard") { S.view = "list"; renderCenterView(); }
     resetList();
     // Collection/System을 옮기면 이전 선택은 의미가 없다. 남겨 두면 화면에 보이지도
     // 않는 게임이 선택된 채로 남아, Archive 수집 같은 동작이 그 UID를 대상으로 삼는다.
@@ -3372,7 +3378,55 @@
   // ------------------------------------------------------------------
   // 렌더 / 초기화
   // ------------------------------------------------------------------
+  /** 중앙 영역을 목록/Dashboard 중 하나로 맞춘다. */
+  function renderCenterView() {
+    $("center").classList.toggle("dashboard-mode", S.view === "dashboard");
+  }
+
+  function showList() {
+    S.view = "list";
+    renderCenterView();
+    renderNav();
+  }
+
+  let dashboardToken = 0;
+  async function showDashboard() {
+    if (!S.activeId || isArchive()) {
+      showToast("Dashboard는 Collection 탭에서 볼 수 있습니다.", "warning");
+      return;
+    }
+    const id = S.activeId;
+    const token = ++dashboardToken;
+    S.view = "dashboard";
+    renderCenterView();
+    renderNav();
+    const host = $("dashboard-view");
+    clear(host);
+    const view = h("div", { class: "dsb" }, [h("div", { class: "dsb-empty" }, ["Dashboard를 불러오는 중…"])]);
+    host.appendChild(view);
+    const [stats, ui] = await Promise.all([api.dashboardStats(id), api.getUiState(id)]);
+    // 기다리는 사이 탭을 바꾸거나 목록으로 돌아갔으면 늦게 온 결과를 그리지 않는다.
+    if (token !== dashboardToken || S.view !== "dashboard" || S.activeId !== id) return;
+    if (!stats.ok) {
+      clear(view);
+      view.appendChild(h("div", { class: "dsb-empty" }, [stats.error || "Dashboard 데이터를 읽지 못했습니다."]));
+      return;
+    }
+    const targets = { ...((ui.ok && ui.data && ui.data.dashboardTargets) || {}) };
+    window.RMSDashboard.render(view, stats.data, {
+      h, icon, formatBytes, formatCount, targets,
+      onTargetChange: (storageId, bytes) => {
+        targets[storageId] = bytes;
+        // 목표 용량은 그 Collection의 화면 상태로 기억한다(Storage 구성이 Collection마다 다르다).
+        api.saveUiState(id, { dashboardTargets: { ...targets } });
+      },
+      onValidate: () => api.validateCollection(id),
+      onOpenSystem: (system) => setScope({ kind: "system", id: system }),
+    });
+  }
+
   function renderAll() {
+    renderCenterView();
     renderWindowControls();
     renderTabs();
     renderNav();

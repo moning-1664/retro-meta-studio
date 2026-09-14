@@ -158,3 +158,22 @@
 
 /* MD: Detail 탭 막대 아래 선을 금색으로. */
 :root[data-theme="md"] .detail-tabs { border-bottom-color: var(--accent-gold); }
+
+/* ==========================================================================
+   차트 색 (Dashboard). 테마의 강조색과 따로 둔다 - 강조색은 테마마다 1~2가지라
+   System 여러 개를 구분할 수 없다. 순서가 곧 색맹 안전 장치다(인접한 조각끼리
+   구분되도록 검증된 순서 - 바꾸지 말 것). 어두운 테마와 밝은 테마는 같은 색상을
+   각 배경에 맞춰 밝기만 달리한 한 벌이다.
+   ========================================================================== */
+:root {
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+  --series-5: #d55181; --series-6: #008300; --series-7: #9085e9;
+  --series-other: color-mix(in srgb, var(--muted) 55%, var(--card));
+  /* 계량 막대의 "정상" 채움. 강조색을 쓰면 SFC/MD/NES처럼 강조색이 빨강인 테마에서
+     정상과 초과(위험)가 같은 색이 된다 - 그래서 차트 1번 색을 쓴다. */
+  --meter-fill: var(--series-1);
+}
+:root[data-theme="sfc"], :root[data-theme="nes"] {
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+  --series-5: #e87ba4; --series-6: #008300; --series-7: #4a3aa7;
+}
