@@ -2371,20 +2371,12 @@
     renderListWindow();
   }
 
-  /** Detail 패널 최상단의 고정 공간. GameList의 Overview 줄과 같은 높이라서,
-   * 이 아래 #detail-panel-inner의 제목이 GameList의 Toolbar와 같은 선에서
-   * 시작한다(레이아웃 재검토 §18). 게임을 선택했든 안 했든, Compare 중이든,
-   * Preview가 켜져 있든 꺼져 있든 늘 같은 자리에 같은 것을 보여준다 - Archive
-   * 이동(왼쪽)과 Preview 토글(오른쪽)이다.
-   *
-   * **Preview를 꺼도 이 패널의 폭은 줄어들지 않는다.** 처음엔 폭을 44px로
-   * 접어 GameList가 그만큼 넓어지게 했었는데(탐색기 미리보기 창을 본떴다),
-   * 코드 리뷰로 그 방식 자체가 문제라는 게 확인됐다 - 폭이 바뀌면 그 위의
-   * GameList Overview 줄(.cheader)도 넓이가 따라 바뀌어 재배치되고, 폭 44px
-   * 안에 있던 Preview 아이콘의 세로 위치를 다시 계산하는 과정에서 아래로
-   * 밀려나는 등 부작용이 이어졌다. 대신 패널 폭은 항상 297px로 고정하고,
-   * `#detail-panel-inner`(Metadata/Media/ROM 탭 내용)만 켜고 끈다 - 이 함수는
-   * 그래서 이제 `compact` 없이 하나의 모습만 그린다.
+  /** Detail 윗줄(#detail-top). GameList 상단 줄과 같은 높이라서, 아랫줄
+   * #detail-panel의 제목이 GameList의 Toolbar와 같은 선에서 시작한다(레이아웃
+   * 재검토 §18). 게임을 선택했든 안 했든, Compare 중이든, Preview가 켜져 있든
+   * 꺼져 있든 늘 같은 자리에 같은 것을 보여준다 - Archive 이동(왼쪽)과 Preview
+   * 토글(오른쪽)이다. Preview를 꺼도 **이 줄은 그대로 남는다** - 이 줄까지
+   * 사라지면 다시 켤 방법이 없다.
    */
   function renderDetailTopSpace() {
     const bar = h("div", { class: "detail-topspace" });
@@ -2419,31 +2411,39 @@
       bar.appendChild(ingest);
     }
 
-    const previewToggle = h("div", { class: "detail-preview-toggle" });
-    const previewBtn = h("button", {
+    // 아이콘과 "미리보기" 글자를 합친 전체가 누르는 자리다(사용자 요청). 클릭은
+    // 이 바깥 상자 하나에만 건다 - 안쪽 아이콘 버튼에도 걸면 한 번 눌러 두 번 토글된다.
+    const previewToggle = h("div", {
+      class: "detail-preview-toggle",
+      title: S.previewOn ? "미리보기 끄기" : "미리보기 켜기",
+    });
+    previewToggle.appendChild(h("button", {
       class: "icon-btn" + (S.previewOn ? " on" : ""),
       title: S.previewOn ? "미리보기 끄기" : "미리보기 켜기",
-    }, [icon("previewPane", 15)]);
-    previewBtn.addEventListener("click", () => {
+    }, [icon("previewPane", 15)]));
+    previewToggle.appendChild(h("span", { class: "detail-preview-label" }, ["미리보기"]));
+    previewToggle.addEventListener("click", () => {
       S.previewOn = !S.previewOn;
       saveUiState();
       renderDetailPanel();
     });
-    previewToggle.appendChild(previewBtn);
-    previewToggle.appendChild(h("span", { class: "detail-preview-label" }, ["미리보기"]));
     bar.appendChild(previewToggle);
 
     return bar;
   }
 
   function renderDetailPanel() {
+    const top = $("detail-top");
+    clear(top);
+    top.appendChild(renderDetailTopSpace());
+
     const panel = $("detail-panel");
     clear(panel);
-    panel.appendChild(renderDetailTopSpace());
-    // Preview를 끄면 패널의 폭(297px)은 그대로 두고 #detail-panel-inner(탭
-    // 내용)만 안 그린다 - 위 renderDetailTopSpace()의 주석 참고. 폭을
-    // 줄이면 GameList Overview 줄까지 따라 넓어지며 재배치되는 게 더 이상하다는
-    // 코드 리뷰 피드백을 반영했다(예전엔 44px로 접어 GameList를 넓혔다).
+    // Preview를 끄면 **아랫줄의 Detail 내용 기둥만** 뺀다. 윗줄(#detail-top)은
+    // 남으므로 다시 켤 토글이 사라지지 않고, 빠진 폭은 목록이 쓴다(사용자 요청 -
+    // 예전엔 패널 전체 폭을 44px로 접어 윗줄의 GameList 헤더까지 재배치됐고, 그
+    // 전엔 폭을 그대로 둬서 목록이 전혀 넓어지지 않았다).
+    panel.classList.toggle("off", !S.previewOn);
     if (!S.previewOn) {
       panel.classList.remove("open");
       return;

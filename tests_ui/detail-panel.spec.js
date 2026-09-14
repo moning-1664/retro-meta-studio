@@ -18,36 +18,32 @@ const openFirstGame = async (page) => {
 };
 
 test.describe("미리보기 토글 (Detail 패널 상단, 레이아웃 재검토)", () => {
-  const previewToggle = (page) => page.locator("#detail-panel .detail-topspace .icon-btn[title*='미리보기']");
+  const previewToggle = (page) => page.locator("#detail-top .detail-topspace .icon-btn[title*='미리보기']");
 
   test("토글 버튼이 Detail 패널 상단에 있다", async ({ page }) => {
     await expect(previewToggle(page)).toBeVisible();
   });
 
-  test("끄면 탭 내용(#detail-panel-inner)만 사라지고 패널 폭은 그대로다", async ({ page }) => {
-    // 코드 리뷰 피드백: 예전엔 패널 폭을 44px로 접어 GameList를 넓혔는데,
-    // 그러면 GameList Overview 줄(.cheader)까지 재배치됐다. 이제는 폭이 항상
-    // 297px로 고정이고, 탭 내용만 사라진다.
+  test("끄면 아랫줄의 Detail 내용만 사라지고 윗줄 토글은 남는다", async ({ page }) => {
+    // 윗줄(#detail-top)까지 사라지면 다시 켤 방법이 없다. 자세한 레이아웃 검증은
+    // preview-mode.spec.js에 있다.
     await openFirstGame(page);
-    const widthBefore = (await page.locator("#detail-panel").boundingBox()).width;
     await previewToggle(page).click();
-    await expect(page.locator("#detail-panel-inner")).toHaveCount(0);
-    const widthAfter = (await page.locator("#detail-panel").boundingBox()).width;
-    expect(widthAfter).toBeCloseTo(widthBefore, 0);
-    // 꺼진 상태에도 토글은 남아 있다 - 이게 없으면 다시 켤 방법이 없다.
+    await expect(page.locator("#detail-panel")).toBeHidden();
     await expect(previewToggle(page)).toBeVisible();
   });
 
   test("끈 상태에서 행을 눌러도 패널이 열리지 않는다", async ({ page }) => {
     await previewToggle(page).click();
     await page.locator(".lrow").nth(1).locator(".lc-file").click();
-    await expect(page.locator("#detail-panel")).not.toHaveClass(/open/);
+    await expect(page.locator("#detail-panel")).toBeHidden();
     await expect(page.locator("#detail-panel-inner")).toHaveCount(0);
   });
 
   test("다시 켜면 돌아온다", async ({ page }) => {
     await previewToggle(page).click();
     await previewToggle(page).click();
+    await expect(page.locator("#detail-panel")).toBeVisible();
     await expect(page.locator("#detail-panel-inner")).toHaveCount(1);
   });
 
@@ -117,8 +113,8 @@ test.describe("Detail 상단 빈 공간 (레이아웃 재검토 §18-19)", () =>
   });
 
   test("게임을 고르기 전에도 Archive 이동 버튼과 Preview 토글이 보인다", async ({ page }) => {
-    await expect(page.locator("#detail-panel #archive-ingest-btn")).toBeVisible();
-    await expect(page.locator("#detail-panel .detail-preview-label")).toHaveText("미리보기");
+    await expect(page.locator("#detail-top #archive-ingest-btn")).toBeVisible();
+    await expect(page.locator("#detail-top .detail-preview-label")).toHaveText("미리보기");
   });
 
 });

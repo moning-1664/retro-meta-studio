@@ -6,30 +6,7 @@
 
 :root {
   --font-scale: 1;
-  /* Midnight Arcade 팔레트 */
-  --bg: #090B18;
-  --card: #12172A;
-  --card2: #191F36;
-  --card3: #252B4A;
-  --border: #30385B;
-  --text: #F4F3FF;
-  --muted: #9DA8C8;
-  --accent: #8B5CF6;
-  --accent-hover: #A78BFA;
-  --success: #39D98A;
-  --warning: #FFB74D;
-  --danger: #FF647C;
-  --info: #4EA1FF;
-
-  /* [수정] 최신 목업(v3)에 맞춰 다크 테마에서는 게임리스트도 어두운 톤으로 통일
-     (이전엔 "항상 밝게" 정책이었으나 디자인이 바뀌어 테마를 따라가도록 변경) */
-  --list-bg: #10162A;
-  --list-head: #1B2340;
-  --list-border: #30385B;
-  --list-row-border: #252D4A;
-  --list-text: #F4F3FF;
-  --list-muted: #9DA8C8;
-  --list-selected: #24204A;
+  /* 색 토큰은 theme.css로 옮겼다(테마 4종). 여기는 크기 체계만 둔다. */
 
   /* [신규] 전체 앱에서 통일해서 쓰는 타이포그래피 스케일 (Metadata/Media/Settings가
      다른 화면보다 유독 크게 보이던 문제 - 전부 이 변수만 쓰도록 통일) */
@@ -43,34 +20,12 @@
      이미 이 3단계(8/10/14)로 있었지만 대부분의 컴포넌트가 그 클래스를 안 쓰고
      6~12px 사이 값을 자체적으로 하드코딩해서 실제로는 10종류 넘게 흩어져 있었다.
      기존에 이미 존재하던 3단계에 xs 한 단계만 보태 전체를 이 스케일로 정리한다. */
-  --radius-xs: 6px;   /* 아주 작은 컨트롤 - 아이콘 버튼, 탭, 인풋, 작은 배지 */
-  --radius-sm: 8px;   /* 기본 버튼/행/작은 카드 - 가장 많이 쓰이던 값 */
-  --radius-md: 10px;  /* 중간 크기 카드/패널 */
-  --radius-lg: 14px;  /* 큰 컨테이너 - 모달, 리스트 박스, 상세 패널 */
+  /* Stitch 디자인의 조금 더 단단한 모서리(ui/stitch-v2-redesign). */
+  --radius-xs: 5px;   /* 아주 작은 컨트롤 - 아이콘 버튼, 탭, 인풋, 작은 배지 */
+  --radius-sm: 7px;   /* 기본 버튼/행/작은 카드 - 가장 많이 쓰이던 값 */
+  --radius-md: 9px;   /* 중간 크기 카드/패널 */
+  --radius-lg: 12px;  /* 큰 컨테이너 - 모달, 리스트 박스, 상세 패널 */
   --radius-pill: 999px;
-}
-
-html[data-theme="light"] {
-  --bg: #F3F1FF;
-  --card: #FFFFFF;
-  --card2: #F8F7FF;
-  --card3: #ECE9FE;
-  --border: #DDD9F5;
-  --text: #1A1830;
-  --muted: #6E7190;
-  --accent: #7357E8;
-  --accent-hover: #6145D0;
-  --success: #1EA96B;
-  --warning: #D88919;
-  --danger: #DF4864;
-  --info: #2472E8;
-  --list-bg: #FFFFFF;
-  --list-head: #F7F6FF;
-  --list-border: #DDD9F5;
-  --list-row-border: #EEECEF;
-  --list-text: #1A1830;
-  --list-muted: #6E7190;
-  --list-selected: #F0ECFF;
 }
 
 * { box-sizing: border-box; }
@@ -84,16 +39,11 @@ html, body {
   overflow: hidden;
 }
 
+/* 예전의 accent 그라데이션 배경과 CRT 스캔라인은 뺐다 - 촘촘한 메타데이터 글자와
+   경쟁하고, 밝은 테마(SFC/NES)에서는 얼룩처럼 보인다(Stitch 디자인). */
 #app {
   display: flex; height: 100vh; width: 100vw; position: relative; isolation: isolate;
-  background-image: radial-gradient(circle at 82% -10%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 31%),
-                     linear-gradient(135deg, var(--bg), var(--card));
-}
-/* 은은한 스캔라인(CRT) 텍스처 - 레트로 아케이드 느낌 */
-#app::after {
-  content: ""; pointer-events: none; position: absolute; inset: 0; z-index: 80; opacity: .1;
-  background: repeating-linear-gradient(0deg, transparent 0, transparent 3px, rgba(255,255,255,.035) 4px);
-  mix-blend-mode: overlay;
+  background: var(--bg);
 }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent) !important; outline: none;

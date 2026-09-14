@@ -1,11 +1,14 @@
 /* ==========================================================================
-   studio.css — RetroMeta Studio 셸 레이아웃
+   studio.css — RetroMeta Studio 셸 레이아웃과 컴포넌트
 
-   style.css의 디자인 토큰(--bg/--card/--accent/--fs-* 등)과 기존 컴포넌트
-   (.btn, .icon-btn, .field-*, .detail-*, .identity-*, .media-*, .job-progress-*)를
-   그대로 쓰고, 새 구조에 필요한 것만 여기에 더한다.
+   style.css의 크기 체계(--fs-* / --radius-*)와 기존 컴포넌트(.btn, .icon-btn,
+   .field-*, .detail-*, .identity-*, .media-*, .job-progress-*)를 그대로 쓰고, 새
+   구조에 필요한 것만 여기에 더한다. **색은 theme.css의 토큰만 쓴다** - 16진수를
+   직접 적으면 그 자리만 테마를 따라가지 않는다.
 
-   레이아웃: 타이틀바 / Collection 탭 / [내비 · 중앙 · 상세] / 상태바
+   모양(간격·크기·모서리)은 Stitch 디자인(ui/stitch-v2-redesign)을 실측한 값이다.
+
+   레이아웃: TopBar / [내비 · (윗줄: 헤더 + Detail 상단) (아랫줄: 목록 + Detail)] / 상태바
    ========================================================================== */
 
 html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); overflow: hidden; }
@@ -30,17 +33,18 @@ body { font-size: var(--fs-body); }
    한 막대 안에 나란히 있다. */
 #topbar {
   display: flex; align-items: flex-end; height: 38px; flex: 0 0 38px;
-  background: var(--bg); border-bottom: 1px solid var(--border);
+  background: var(--chrome); border-bottom: 1px solid var(--border);
 }
 
-/* Windows의 창 버튼과 같은 비율(폭이 높이보다 넓다). */
+/* Windows의 창 버튼 크기(46px 폭, 막대 높이 전체). 예전 44px·14px 글자는 작아서
+   누르기 어려웠다(사용자 요청: "윈도우처럼 크게"). */
 .win-btn {
-  width: 44px; height: 100%; border: 0; background: none; cursor: pointer;
-  color: var(--muted); font-size: 14px; line-height: 1;
+  width: 46px; height: 100%; border: 0; background: none; cursor: pointer;
+  color: var(--muted); font-size: 16px; line-height: 1;
   display: flex; align-items: center; justify-content: center;
 }
-.win-btn:hover { background: var(--card2); color: var(--text); }
-.win-btn.close:hover { background: #c42b1c; color: #fff; }
+.win-btn:hover { background: var(--card3); color: var(--text); }
+.win-btn.close:hover { background: var(--danger); color: #fff; }
 /* TopBar가 align-items:flex-end(탭을 아래로 붙이려고)라서, 탭과 상관없는
    이 둘은 따로 stretch를 줘야 막대 전체 높이를 채운다. */
 #window-controls { display: flex; align-self: stretch; flex: 0 0 auto; }
@@ -50,29 +54,34 @@ body { font-size: var(--fs-body); }
    (#tabs-bar)은 넘치면 스크롤되고, 이 자리와 Window Controls는 그 때문에
    찌그러지거나 밀려나지 않는다 - 탐색기(Windows Explorer)가 탭 옆 빈
    공간으로 창을 끄는 것과 같은 방식이다. */
-#topbar-drag { flex: 1 1 0; min-width: 110px; align-self: stretch; }
+#topbar-drag { flex: 1 1 0; min-width: 100px; align-self: stretch; }
 
 /* ------------------------------------------------------------ Collection 탭 */
 #tabs-bar {
-  display: flex; align-items: flex-end; gap: 4px; flex: 0 1 auto; min-width: 0;
+  display: flex; align-items: flex-end; gap: 2px; flex: 0 1 auto; min-width: 0;
   padding: 0 8px; overflow-x: auto; overflow-y: hidden;
 }
 #tabs-bar::-webkit-scrollbar { height: 0; }
 .ctab {
   display: flex; align-items: center; gap: 6px;
-  height: 30px; padding: 0 8px 0 10px; cursor: pointer;
-  background: var(--card); border: 1px solid var(--border); border-bottom: none;
-  border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+  height: 32px; padding: 0 9px 0 11px; cursor: pointer;
+  background: transparent; border: 1px solid transparent; border-bottom: none;
+  border-radius: 7px 7px 0 0;
   color: var(--muted); font-size: var(--fs-body); white-space: nowrap;
-  min-width: 130px; max-width: 220px;
+  min-width: 132px; max-width: 230px;
 }
 /* Archive는 고정 탭이다 - Collection 탭의 기본 폭과 같게 두고, 탭이 늘어나
    #tabs-bar가 좁아져도(스크롤이 생겨도) 이 폭만은 줄지 않는다. Collection
    탭보다 글자가 짧고 닫기 버튼도 없어서, 폭을 맞춰 두지 않으면 Archive만
    유독 작아 보였다. */
-.ctab.archive { width: 130px; flex-shrink: 0; justify-content: center; }
+.ctab.archive { width: 132px; flex-shrink: 0; color: var(--archive-tab-fg); }
 .ctab:hover { background: var(--card2); color: var(--text); }
-.ctab.active { background: var(--card2); color: var(--text); border-color: var(--accent); }
+.ctab.active {
+  background: var(--card); color: var(--text);
+  border-color: var(--border); border-bottom-color: var(--card);
+  box-shadow: inset 0 2px 0 var(--ctab-bar);
+}
+.ctab.archive.active { color: var(--archive-tab-fg); }
 .ctab.active .ctab-name { font-weight: 600; }
 /* flex:1이라 짧은 이름(min-width로 생긴 여유 폭)에서는 닫기 버튼이 탭
    오른쪽 끝까지 밀린다 - 예전엔 이름 폭이 곧 tab 폭이라 닫기가 글자 바로
@@ -83,17 +92,17 @@ body { font-size: var(--fs-body); }
   width: 14px; height: 14px; padding: 0; border: none; border-radius: var(--radius-xs);
   background: transparent; color: inherit; cursor: pointer;
 }
-.ctab-close:hover { background: var(--danger); color: #fff; }
+.ctab-close:hover { background: color-mix(in srgb, var(--danger) 22%, transparent); color: var(--danger); }
 .ctab-add {
   display: flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; margin-bottom: 1px;
-  background: transparent; border: 1px dashed var(--border); border-radius: var(--radius-xs);
+  background: transparent; border: 1px solid transparent; border-radius: var(--radius-xs);
   color: var(--muted); cursor: pointer;
 }
-.ctab-add:hover { color: var(--accent); border-color: var(--accent); }
+.ctab-add:hover { color: var(--accent); border-color: var(--border); background: var(--card2); }
 
 /* ------------------------------------------------------------------ 본문 */
-#app-body { display: grid; grid-template-columns: 214px 1fr auto; min-height: 0; }
+#app-body { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 0; }
 
 /* 좌측 내비게이션.
    Dashboard/Add External/App Title/Settings는 System이 아무리 늘어나도
@@ -101,45 +110,67 @@ body { font-size: var(--fs-body); }
    스크롤하지 않고, System 제목+목록만 담는 .nav-scroll 하나만 스크롤한다. */
 #nav {
   display: flex; flex-direction: column; gap: 2px;
-  /* 위쪽 padding을 GameList 상단 Chromium(.cheader)의 9px와 맞춘다 - 아래
-     .nav-top이 그 행과 세로로 나란히 보이게(사용자 요청). */
-  padding: 9px 8px 10px; overflow: hidden;
-  background: var(--card); border-right: 1px solid var(--border);
+  /* 위쪽 여백은 .nav-top이 직접 갖는다 - 그 줄의 높이가 GameList 상단 줄과
+     정확히 같아야 아래 구분선이 한 줄로 이어진다. */
+  padding: 0 7px 8px; overflow: hidden; min-height: 0;
+  background: var(--chrome); border-right: 1px solid var(--border);
 }
 .nav-scroll {
-  flex: 1 1 auto; min-height: 0; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 2px;
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column; gap: 1px;
 }
-/* Dashboard - 실제 기능은 없다(TODO). 이전 프로젝트 기능을 가져올 진입점 자리.
-   App Title이 상단으로 옮겨가면서 이 자리(최하단)에 대신 놓였다(사용자 요청). */
+/* Navigator 상단 고정 - App Title + Settings.
+   **높이는 Collection을 열었을 때의 GameList 상단 줄(3줄: 이름·부제·용량)에
+   맞춘다**(사용자 요청). 예전엔 App Title 두 줄 높이만 차지해서, Collection을
+   열어 상단 줄이 세 줄로 커지면 두 구분선이 어긋났다. 첫 글자 줄도 .cheader와
+   같은 자리에서 시작하도록 위쪽에 붙인다. */
+.nav-top {
+  display: flex; align-items: flex-start; gap: 8px; flex-shrink: 0;
+  height: var(--header-row-h); box-sizing: border-box;
+  margin: 0 -7px 5px; padding: 12px 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.nav-app-title { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; color: var(--app-title-fg); }
+.nav-app-title-text { min-width: 0; }
+.nav-app-title-name {
+  font-size: calc(11.5px * var(--font-scale)); font-weight: 700; letter-spacing: -.1px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nav-app-title-sub {
+  font-size: calc(8px * var(--font-scale)); letter-spacing: .7px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Dashboard - Navigator 최하단 고정. */
 .nav-dashboard {
-  display: flex; align-items: center; gap: 7px;
-  padding: 6px 8px; margin-top: 6px; padding-top: 8px;
-  border-top: 1px solid var(--border); border-radius: var(--radius-xs);
-  background: transparent; border-left: 0; border-right: 0; border-bottom: 0; color: var(--muted);
+  display: flex; align-items: center; gap: 7px; min-height: 31px;
+  margin-top: 5px; padding: 7px 8px 6px;
+  border: 0; border-top: 1px solid var(--border); border-radius: var(--radius-xs);
+  background: transparent; color: var(--text);
   font-size: var(--fs-body); font-weight: 600; cursor: pointer; text-align: left;
 }
-.nav-dashboard:hover { background: var(--card2); color: var(--text); }
+.nav-dashboard:hover { background: var(--card); }
+.nav-dashboard.active { background: var(--list-selected); box-shadow: inset 2px 0 0 var(--nav-active-bar); }
 .nav-eyebrow {
-  font-size: var(--fs-eyebrow); letter-spacing: 1px; color: var(--muted);
-  padding: 2px 6px 6px; text-transform: uppercase;
+  display: flex; align-items: center; min-height: 28px;
+  font-size: calc(8px * var(--font-scale)); letter-spacing: 1.2px; color: var(--muted);
+  padding: 2px 7px 5px; text-transform: uppercase;
 }
 .nav-empty { color: var(--muted); font-size: var(--fs-caption); padding: 12px 6px; }
 .nav-row, .nav-group-head {
-  display: flex; align-items: center; gap: 7px;
-  padding: 5px 8px; border-radius: var(--radius-xs); cursor: pointer;
-  color: var(--muted); font-size: var(--fs-body); user-select: none;
+  display: flex; align-items: center; gap: 6px; min-height: var(--nav-row-h);
+  padding: 4px 7px; border-radius: var(--radius-xs); cursor: pointer;
+  color: var(--text); font-size: var(--fs-body); user-select: none;
 }
-.nav-row:hover, .nav-group-head:hover { background: var(--card2); color: var(--text); }
+.nav-row:hover, .nav-group-head:hover { background: var(--card); }
 .nav-row.active, .nav-group-head.active {
-  background: var(--list-selected); color: var(--text); box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--list-selected); color: var(--text); box-shadow: inset 2px 0 0 var(--nav-active-bar);
 }
-.nav-all { font-weight: 600; color: var(--text); }
+.nav-all { font-weight: 600; }
 .nav-label, .nav-group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nav-group-name { font-size: var(--fs-eyebrow); letter-spacing: .8px; }
-.nav-count { font-size: var(--fs-caption); color: var(--muted); font-variant-numeric: tabular-nums; }
-.nav-group { margin-top: 8px; }
-.nav-system { padding-left: 14px; }
+.nav-group-name { font-size: var(--fs-eyebrow); letter-spacing: .8px; color: var(--muted); }
+.nav-count { font-size: calc(9px * var(--font-scale)); font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+.nav-group { margin-top: 6px; }
+.nav-system { padding-left: 13px; }
 /* Storage 이동이 Plan에 올라간 System - Apply 전까지는 미리보기다(실사용
    피드백: 드래그해도 화면이 그대로면 "안 먹었다"고 보인다). */
 .nav-system.pending-move { color: var(--accent); outline: 1px dashed var(--accent); outline-offset: -1px; }
@@ -147,55 +178,45 @@ body { font-size: var(--fs-body); }
 .nav-group-head.drop-target { outline: 1px dashed var(--accent); background: var(--card3); }
 .nav-action {
   display: flex; align-items: center; gap: 6px; flex-shrink: 0;
-  padding: 7px 8px; background: transparent; color: var(--muted);
-  border: 1px dashed var(--border); border-radius: var(--radius-xs);
+  padding: 6px 7px; background: var(--card); color: var(--muted);
+  border: 1px solid var(--border); border-radius: var(--radius-xs);
   cursor: pointer; font-size: var(--fs-caption);
 }
 .nav-action:hover { color: var(--accent); border-color: var(--accent); }
 
-/* Navigator 상단 고정 - App Title + Settings(사용자 요청: GameList 상단
-   Chromium의 .cheader와 세로로 나란히 보이도록 최상단으로 옮겼다. 예전엔
-   최하단에 있었다). 자리는 2~3줄로 압축한다 - System scroll 공간을 너무
-   뺏으면 안 된다. */
-.nav-top {
-  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
-  margin-bottom: 6px; padding-bottom: 9px; border-bottom: 1px solid var(--border);
-}
-.nav-app-title { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; color: var(--accent); }
-.nav-app-title-text { min-width: 0; }
-.nav-app-title-name {
-  font-size: var(--fs-body); font-weight: 700; color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.nav-app-title-sub {
-  font-size: var(--fs-eyebrow); color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
-/* 중앙 */
-#center { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* 중앙 - 위아래 두 줄. 윗줄(헤더 + Detail 상단)은 Preview와 상관없이 늘 그대로이고,
+   아랫줄(목록 + Detail 내용)에서만 Detail이 접힌다(사용자 요청: "상단의 미리보기
+   공간은 고정하고, 툴바에 맞춘 줄부터 아래를 접는다"). */
+#center { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--list-bg); }
+#header-row { display: flex; flex: 0 0 auto; min-width: 0; }
+#main-row { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; }
+#list-column { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
 
 /* Collection 헤더 */
-#collection-header { border-bottom: 1px solid var(--border); background: var(--card); }
-.cheader { display: flex; align-items: center; gap: 12px; padding: 9px 14px; }
+#collection-header {
+  flex: 1 1 auto; min-width: 0; min-height: var(--header-row-h); box-sizing: border-box;
+  border-bottom: 1px solid var(--border); background: var(--chrome);
+}
+.cheader { display: flex; align-items: center; gap: 10px; min-height: calc(var(--header-row-h) - 1px); box-sizing: border-box; padding: 8px 13px; }
 .cheader-icon {
   display: flex; align-items: center; justify-content: center;
-  width: 36px; height: 36px; border-radius: var(--radius-md);
-  background: var(--card3); color: var(--accent); flex: none;
+  width: 30px; height: 30px; border-radius: 7px; flex: none;
+  background: var(--icon-bg); border: 1px solid var(--border); color: var(--cheader-icon-fg);
 }
 .cheader-main { flex: 1; min-width: 0; }
-.cheader-name { font-size: var(--fs-title); font-weight: 700; }
-.cheader-sub { font-size: var(--fs-caption); color: var(--muted); display: flex; gap: 6px; }
+.cheader-name { font-size: calc(12px * var(--font-scale)); font-weight: 700; letter-spacing: -.1px; }
+.cheader-sub { font-size: calc(9px * var(--font-scale)); color: var(--muted); display: flex; gap: 6px; }
 .cheader-sub .dot { opacity: .5; }
 .cheader-stats {
-  display: flex; gap: 14px; margin-top: 3px;
-  font-size: var(--fs-caption); color: var(--muted); font-variant-numeric: tabular-nums;
+  display: flex; gap: 12px; margin-top: 3px;
+  font-size: calc(9px * var(--font-scale)); color: var(--muted); font-variant-numeric: tabular-nums;
 }
 .cheader-storage { white-space: nowrap; }
-.cheader-right { display: flex; align-items: center; gap: 6px; }
+.cheader-right { display: flex; align-items: center; gap: 5px; }
+.cheader-right .icon-btn { background: var(--chrome); border: 1px solid transparent; }
 .cheader-expanded {
   display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 14px;
-  padding: 12px 14px; border-top: 1px solid var(--border); background: var(--card2);
+  padding: 12px 14px; border-top: 1px solid var(--border); background: var(--card);
 }
 .cheader-info-row { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; }
 .cheader-info-label { color: var(--muted); font-size: var(--fs-caption); }
@@ -212,25 +233,35 @@ body { font-size: var(--fs-body); }
 
 /* 필터 바 */
 #filter-bar {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--card);
+  display: flex; align-items: center; gap: 6px; min-height: 38px;
+  padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--chrome);
 }
 .search-box {
   display: flex; align-items: center; gap: 6px; flex: 0 1 200px;  /* 검색만 넓게 차지하지 않게 */
-  padding: 5px 9px; background: var(--card2);
+  padding: 5px 8px; background: var(--card);
   border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--muted);
 }
+.search-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent); }
 .search-input {
   flex: 1; min-width: 0; background: transparent; border: none; outline: none;
   color: var(--text); font-size: var(--fs-body); font-family: inherit;
 }
 .mini-select {
-  padding: 5px 8px; background: var(--card2); color: var(--text);
+  padding: 5px 7px; background: var(--card); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--radius-sm);
   font-size: var(--fs-caption); font-family: inherit;
 }
 .filter-spacer { flex: 1; }
 .filter-total { font-size: var(--fs-caption); color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* 버튼 - Stitch의 조금 더 작고 단단한 모양. */
+.btn { min-height: 26px; border-radius: 6px; }
+.btn.primary { background: var(--primary-bg); color: var(--primary-fg); }
+.btn.primary:hover { background: var(--primary-hover); }
+.btn.compact.primary { border: 1px solid var(--primary-bg); }
+.icon-btn { border-radius: var(--radius-xs); background: var(--card2); color: var(--muted); }
+.icon-btn:hover { background: var(--card3); color: var(--text); }
+.icon-btn.on { color: var(--warning); }
 
 /* Detail - Media.
    Cover는 세로로 긴 표지, Screenshot은 가로로 넓은 화면이다. 이 둘이 그 게임을
@@ -283,16 +314,17 @@ body { font-size: var(--fs-body); }
 
 .media-tile {
   position: relative; min-width: 0; min-height: 0; height: 100%;
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
-  /* 그림이 없는 자리도, 그림 옆에 남는 자리도 검게 둔다. */
-  background: #000; overflow: hidden; cursor: default;
+  border: 1px solid var(--border); border-radius: 6px;
+  /* 그림이 없는 자리도, 그림 옆에 남는 자리도 어둡게 둔다. */
+  background: var(--media-bg); overflow: hidden; cursor: default;
 }
+.media-tile.clickable:hover { border-color: var(--accent); }
 /* 라벨은 그림 위에 겹친다 - 레이아웃 공간을 먹지 않아야 그림이 그만큼 커진다. */
 .media-tile-label {
-  position: absolute; left: 5px; top: 4px; z-index: 2;
+  position: absolute; left: 4px; top: 4px; z-index: 2;
   padding: 1px 5px; border-radius: var(--radius-xs);
-  font-size: var(--fs-eyebrow); font-weight: 600; color: #fff;
-  background: rgba(0, 0, 0, .55); pointer-events: none;
+  font-size: calc(8px * var(--font-scale)); font-weight: 600; color: var(--text);
+  background: color-mix(in srgb, var(--card3) 86%, transparent); pointer-events: none;
   max-width: calc(100% - 10px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* 상자를 꽉 채우되 크기는 상자가 정한다. */
@@ -310,7 +342,7 @@ body { font-size: var(--fs-body); }
 
 /* 그림 없이 있고 없고만 말하는 줄. */
 .media-flags {
-  display: flex; align-items: center; gap: 14px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
   padding: 4px 2px; color: var(--list-muted); font-size: var(--fs-caption);
 }
 .media-flag-item { display: flex; align-items: center; gap: 5px; }
@@ -320,7 +352,7 @@ body { font-size: var(--fs-body); }
   display: flex; align-items: center; justify-content: center;
   border: 1px solid currentColor; border-radius: 3px;
 }
-.media-flag-item.on { color: var(--success, #4caf50); }
+.media-flag-item.on { color: var(--success); }
 .media-flag-item.on .media-flag-label { color: var(--text); }
 
 
@@ -359,13 +391,12 @@ body { font-size: var(--fs-body); }
 /* 컬럼 폭은 화면에서 정한다(gridTemplateColumns) - 사용자가 끌어서 바꾸고 그 값이
    저장되기 때문에 CSS에 박아둘 수 없다. */
 #list-head {
-  display: grid; align-items: center; height: 26px; padding: 0 8px;
+  display: grid; align-items: center; height: var(--head-h); padding: 0 8px;
   /* 본문을 가로로 밀면 같이 밀린다(app.js의 syncHeadScroll). */
   flex: 0 0 auto; will-change: transform;
   background: var(--list-head); border-bottom: 1px solid var(--list-border);
-  /* 헤더가 본문보다 작으면 어느 컬럼인지 읽기 어렵다. 대문자 변환도 뺐다 - 한글
-     컬럼명과 섞이면 정렬이 어긋나 보인다. */
-  font-size: var(--fs-caption); letter-spacing: .2px; color: var(--list-muted);
+  /* 대문자 변환은 뺐다 - 한글 컬럼명과 섞이면 정렬이 어긋나 보인다. */
+  font-size: calc(9px * var(--font-scale)); letter-spacing: .45px; color: var(--list-muted);
   user-select: none;
 }
 .lh {
@@ -381,9 +412,9 @@ body { font-size: var(--fs-body); }
   position: absolute; top: 0; right: -3px; width: 7px; height: 100%;
   cursor: col-resize; z-index: 2;
 }
-.col-resize:hover { background: var(--accent); opacity: .45; }
+.col-resize:hover { background: var(--accent-gold); opacity: .45; }
 
-#list-scroll { flex: 1; overflow: auto; position: relative; }
+#list-scroll { flex: 1; overflow: auto; position: relative; background: var(--list-bg); }
 /* 폭은 app.js가 컬럼 합으로 정한다 - 가로로 넘칠 것이 있어야 가로 스크롤이 생긴다. */
 #list-spacer { width: 1px; }
 /* `right: 0`을 주면 폭이 스크롤 컨테이너에 묶여, 컬럼 합이 화면보다 넓어도 넘칠
@@ -396,17 +427,15 @@ body { font-size: var(--fs-body); }
   justify-content: start; align-content: start; gap: 12px; padding: 12px;
 }
 .preview-card.placeholder .preview-cover { background: var(--list-border); }
+/* 행 사이 구분은 가는 선이면 충분하다 - 글자가 이어져 보이던 진짜 원인은 선
+   두께가 아니라 말줄임이 안 먹던 것이었다(.lc-text 참고). */
 .lrow {
   display: grid; align-items: center; padding: 0 8px; cursor: pointer;
-  /* --list-row-border는 --list-bg와 명암 차이가 작아서(둘 다 짙은 남색)
-     구분선이라기보다 픽셀 하나 정도로만 보였다(실사용 피드백: "텍스트가
-     끊기지 않고 연결된 것처럼 보인다"). 목록 테두리에 이미 쓰던 더 밝은
-     --list-border로 바꾸고 두께도 2px로 올렸다. */
-  border-bottom: 2px solid var(--list-border); color: var(--list-text);
+  background: var(--list-bg); border-bottom: 1px solid var(--list-row-border); color: var(--list-text);
 }
 .lrow:hover { background: var(--card2); }
 .lrow.selected { background: var(--list-selected); }
-.lrow.focused { box-shadow: inset 2px 0 0 var(--accent); }
+.lrow.focused { box-shadow: inset 2px 0 0 var(--row-focus-bar); }
 .lrow.placeholder { cursor: default; opacity: .5; }
 .lc {
   min-width: 0; display: flex; align-items: center; gap: 6px;
@@ -428,27 +457,26 @@ body { font-size: var(--fs-body); }
 .lc-fav, .lc-status { justify-content: center; }
 .fav-btn {
   background: none; border: 0; padding: 0; cursor: pointer; line-height: 1;
-  font-size: 13px; color: var(--list-muted);
+  font-size: 13px; color: var(--muted);
 }
-.fav-btn.on { color: var(--warning, #e0a030); }
-.fav-btn:hover { color: var(--warning, #e0a030); }
-.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.fav-btn.on, .fav-btn:hover { color: var(--accent-gold); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-xs); overflow: hidden; }
 .seg-btn {
-  background: var(--card2); border: 0; padding: 3px 7px; cursor: pointer;
+  background: var(--card); border: 0; padding: 3px 7px; cursor: pointer;
   color: var(--muted); display: flex; align-items: center;
 }
-.seg-btn.on { background: var(--accent); color: #fff; }
+.seg-btn:hover { background: var(--card2); color: var(--text); }
+.seg-btn.on { background: var(--card3); color: var(--text); }
 /* Plan의 Apply/Cancel - 같은 Plan을 두고 하는 순간의 동작이라는 걸 구분선으로
    묶어 보여준다(레이아웃 재검토). List/Card 토글과 달리 서로 다른 동작이라
    구분선을 넣었다. */
-.plan-actions .seg-btn { padding: 3px 9px; font-size: var(--fs-caption); }
+.plan-actions .seg-btn { padding: 3px 9px; font-size: var(--fs-caption); color: var(--text); }
 .plan-actions .seg-btn + .seg-btn { border-left: 1px solid var(--border); }
 
 /* Archive에 수집 버튼 - scopeLabel이 System 이름/선택 개수에 따라 들쭉날쭉하다.
    옆의 Plan 버튼들이 밀리지 않도록 폭을 고정한다. 전체 문구는 title 툴팁으로 남는다. */
 #archive-ingest-btn { max-width: 200px; flex-shrink: 0; }
 #archive-ingest-btn .ingest-label { min-width: 0; }
-.icon-btn.on { color: var(--warning, #e0a030); }
 .sys-badge {
   padding: 1px 7px; border-radius: var(--radius-pill);
   background: var(--card3); color: var(--muted);
@@ -457,60 +485,71 @@ body { font-size: var(--fs-body); }
 /* Status는 작고 명확하게. 제목이나 설명 전체를 색칠하지 않는다(스펙 §24). */
 .status-mark { font-size: var(--fs-body); line-height: 1; }
 .status-mark.ok { color: var(--success); }
-.status-mark.warn { color: var(--warning); }
+.status-mark.warn { color: var(--accent-gold); }
 .status-mark.muted { color: var(--muted); opacity: .55; }
 .skeleton {
   display: block; width: 45%; height: 9px; border-radius: var(--radius-pill);
   background: linear-gradient(90deg, var(--card2), var(--card3), var(--card2));
 }
 
-/* 우측 상세 패널 - **고정 컬럼**이다.
-   예전에는 width:0 <-> 340px를 transition으로 오가서 선택할 때마다 패널이 밀려 나오고
-   목록 폭이 그때그때 달라졌다(style.css의 옛 규칙에 아직 transition이 남아 있으므로
-   여기서 폭과 전환을 모두 덮어쓴다). 자리를 늘 차지하게 두면 목록 폭이 흔들리지 않고,
-   아무것도 안 골랐을 때는 빈 칸 대신 안내를 보여준다.
+/* ------------------------------------------------------------ Detail
+   윗줄(#detail-top)과 아랫줄(#detail-panel) 둘로 나뉜다. 둘 다 같은 폭이라 세로로
+   한 기둥처럼 보이고, Preview를 끄면 아랫줄만 사라져 그 자리를 목록이 쓴다.
 
    297px는 340px에서 10% 줄인 306px을, 다시 3% 더 줄인 값이다(레이아웃
    재검토 - GameList에 공간을 더 주려고, 실제 화면에서 Media/Metadata가
-   버티는지 눈으로 보며 두 단계로 줄였다). Media 탭의 Cover 폭(.media-hero
-   첫 컬럼)은 고정 px라 이 축소의 영향을 받지 않는다 - 그 옆 3칸에서만
-   줄어든 폭을 흡수한다. */
+   버티는지 눈으로 보며 두 단계로 줄였다). Stitch 브랜치는 310px로 되돌렸지만
+   사용자가 직접 정한 값이라 유지한다. */
+#detail-top, #detail-panel {
+  flex: 0 0 297px; width: 297px; min-width: 297px; max-width: 297px; box-sizing: border-box;
+  background: var(--panel); border-left: 1px solid var(--border);
+}
+#detail-top { display: flex; flex-direction: column; }
 #detail-panel {
-  width: 297px; flex: 0 0 297px; min-width: 297px; max-width: 297px;
-  overflow: hidden; background: var(--card);
-  border-left: 1px solid var(--border); border-radius: 0;
-  transition: none;
-  /* .detail-topspace(고정 높이) + #detail-panel-inner(나머지 전부)를 세로로
-     쌓는다 - 예전엔 #detail-panel-inner 하나뿐이라 height:100%로 충분했다. */
+  overflow: hidden; border-radius: 0; transition: none;
   display: flex; flex-direction: column;
 }
-#detail-panel.open { width: 297px; border-color: var(--border); }
-/* 미리보기를 꺼도 패널 폭은 297px로 그대로 둔다.
-   예전엔 폭을 44px로 접어 GameList를 넓혔다(탐색기 미리보기 창을 본떴다) -
-   그런데 그러면 위쪽 GameList Overview 줄(.cheader)까지 폭이 바뀌며 다시
-   배치되고, 그 좁은 폭 안에서 Preview 아이콘의 세로 위치를 다시 계산하다가
-   아이콘이 아래로 밀려나는 문제까지 이어졌다(코드 리뷰 피드백). 이제
-   `.detail-topspace`(62px, Preview 토글 포함)는 항상 그대로 두고
-   `#detail-panel-inner`만 껐다 켰다 한다(app.js renderDetailPanel()) - 그래서
-   폭을 줄이는 `.collapsed` 규칙은 더 이상 없다. */
-#detail-panel-inner { width: 297px; min-width: 297px; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* Preview OFF - Detail 내용 기둥만 뺀다. 윗줄의 #detail-top은 남는다. */
+#detail-panel.off { display: none; }
+#detail-panel-inner { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .rom-info { padding: 4px 2px; }
 
-/* Detail 상단 빈 공간 - GameList의 Overview 줄과 같은 높이(62px)로 맞춰서,
-   그 아래 #detail-panel-inner의 제목/탭이 GameList의 Toolbar와 같은 선에서
-   시작하게 한다(레이아웃 재검토 §18). 왼쪽엔 Archive 이동 버튼, 오른쪽엔
-   Preview 토글을 둔다 - 상세 헤더처럼 매번 다시 그려지지 않게 여기서만 만든다.
-   Overview가 Expand로 펼쳐지면 이 높이와 안 맞을 수 있다 - 그건 감수한다. */
+/* Detail 상단 줄 - GameList 상단 줄과 같은 높이라 아래 구분선이 한 줄로 이어지고,
+   그 아래 Detail 제목/탭이 GameList의 Toolbar와 같은 선에서 시작한다(레이아웃
+   재검토 §18). 왼쪽엔 Archive 이동 버튼, 오른쪽엔 Preview 토글. */
 .detail-topspace {
-  height: 62px; flex-shrink: 0; box-sizing: border-box;
+  height: var(--header-row-h); flex-shrink: 0; box-sizing: border-box;
   display: flex; align-items: flex-end; justify-content: space-between; gap: 8px;
-  padding: 0 10px 8px; border-bottom: 1px solid var(--border);
+  padding: 0 9px 7px; border-bottom: 1px solid var(--border);
 }
+.detail-topspace .btn { background: var(--card2); border: 1px solid transparent; font-size: calc(11.5px * var(--font-scale)); }
+.detail-topspace .btn:hover { background: var(--card3); }
+/* 아이콘과 "미리보기" 글자 전체가 한 버튼이다 - 예전엔 아이콘만 눌렸다(사용자 요청). */
+.detail-preview-toggle { cursor: pointer; border-radius: var(--radius-xs); padding-right: 4px; }
+.detail-preview-toggle:hover .detail-preview-label { color: var(--text); }
+
+.detail-header { background: var(--panel); }
+.detail-eyebrow { color: var(--accent); letter-spacing: .85px; }
+.detail-tabs { background: var(--card2); border-bottom: 1px solid var(--border); }
+.detail-tab { border-radius: var(--radius-xs) var(--radius-xs) 0 0; }
+.detail-tab:hover { background: var(--card); color: var(--text); }
+.detail-tab.active { background: var(--panel); color: var(--tab-active-fg); }
+/* 탭 내용을 한 장의 카드로 감싼다(Stitch) - Metadata/Media/ROM이 같은 틀 안에 있다. */
+#detail-panel-inner > .detail-body {
+  margin: 7px; padding: 8px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--card2);
+}
+#detail-panel-inner > .detail-body.media-tab-body { padding: 7px; }
+.identity-card { background: var(--card3); border-color: var(--border); border-radius: 7px; }
+.field-label { color: var(--muted); }
+.field-input, .field-grid .field-input { background: var(--card); border-color: var(--border); border-radius: 6px; color: var(--text); }
+.field-input:focus { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent); }
+.detail-footer { background: var(--card2); }
 
 /* 하단 상태 바 */
 #status-bar {
   display: flex; align-items: center; gap: 14px; padding: 0 14px;
-  background: var(--card); border-top: 1px solid var(--border);
+  background: var(--panel); border-top: 1px solid var(--border);
   font-size: var(--fs-caption); color: var(--muted);
 }
 .sb-left { display: flex; align-items: center; gap: 6px; }
@@ -520,7 +559,7 @@ body { font-size: var(--fs-body); }
 .sb-storage.clickable { cursor: pointer; }
 .sb-storage.clickable:hover b { text-decoration: underline; }
 /* 게임이 없는 System. 목록에서 빼지 않고 뒤로 정렬하되, 한눈에 구분되게 흐리게 둔다. */
-.nav-system.empty .nav-label, .nav-system.empty .nav-count { opacity: .55; }
+.nav-system.empty .nav-label, .nav-system.empty .nav-count { opacity: .45; }
 .sb-storage b { color: var(--text); font-weight: 600; }
 .sb-actions { display: flex; gap: 6px; }
 .sb-actions .btn[disabled] { opacity: .45; cursor: not-allowed; }
@@ -529,13 +568,13 @@ body { font-size: var(--fs-body); }
 .modal-overlay {
   position: fixed; inset: 0; z-index: 60;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(4, 6, 16, .62);
+  background: var(--overlay);
 }
 .modal-card {
   width: min(440px, 92vw); max-height: 84vh; overflow-y: auto;
-  background: var(--card); border: 1px solid var(--border);
+  background: var(--panel); border: 1px solid var(--border);
   border-radius: var(--radius-lg); padding: 16px;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, .48);
+  box-shadow: 0 18px 48px var(--shadow);
 }
 .modal-title { font-size: var(--fs-title); font-weight: 700; margin-bottom: 12px; }
 .modal-body { display: flex; flex-direction: column; gap: 6px; }
@@ -592,14 +631,20 @@ body { font-size: var(--fs-body); }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast-msg {
   padding: 9px 16px; border-radius: var(--radius-pill);
-  background: var(--card3); color: var(--text); border: 1px solid var(--border);
-  font-size: var(--fs-body); box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+  background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  font-size: var(--fs-body); box-shadow: 0 8px 24px var(--shadow);
 }
 #toast.error .toast-msg { border-color: var(--danger); }
 #toast.warning .toast-msg { border-color: var(--warning); }
 
 #job-progress { position: fixed; right: 16px; bottom: 48px; z-index: 70; display: none; }
 #job-progress.show { display: block; }
+
+/* 스크롤바 - 얇게. */
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: var(--card2); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
 /* ------------------------------------------------------------------- Plan */
 /* 상태 기호는 작게만. 제목/설명 전체를 색칠하지 않는다(스펙 §24). */
@@ -610,7 +655,6 @@ body { font-size: var(--fs-body); }
 .sb-del { color: var(--danger); font-variant-numeric: tabular-nums; }
 .sb-storage.over, .cheader-storage.over { color: var(--danger); font-weight: 600; }
 .health-row.over span:last-child { color: var(--danger); font-weight: 600; }
-.btn.compact.primary { border-color: var(--accent); color: var(--text); }
 
 /* 충돌 / 실패 배지 */
 .sb-badge {
@@ -627,10 +671,6 @@ button.sb-badge { cursor: pointer; }
   border: 1px solid var(--border); border-radius: var(--radius-sm);
 }
 .conflict-main { flex: 1; min-width: 0; }
-
-/* Archive 탭은 맨 앞에 고정해 Collection 탭과 구분한다(TopBar 통합 이후). */
-.ctab.archive { color: var(--info); border-style: dashed; }
-.ctab.archive.active { border-style: solid; border-color: var(--info); background: var(--card2); }
 
 /* Match (스펙 §45-49) - 후보가 있다는 것만 조용히 알리고, 누르기 전에는
    아무 일도 일어나지 않는다. 그래서 뱃지는 눈에 띄되 경고처럼 보이지 않게 한다. */
@@ -666,7 +706,7 @@ button.sb-badge { cursor: pointer; }
   flex: none; padding: 1px 7px; border-radius: var(--radius-pill);
   border: 1px solid var(--border); color: var(--muted); font-size: var(--fs-eyebrow);
 }
-.match-tier.tier-exact { border-color: var(--ok, var(--accent)); color: var(--ok, var(--accent)); }
+.match-tier.tier-exact { border-color: var(--success); color: var(--success); }
 .match-tier.tier-heuristic { border-color: var(--warning); color: var(--warning); }
 .match-score { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 .match-option-why { color: var(--info); font-size: var(--fs-eyebrow); margin-top: 1px; }

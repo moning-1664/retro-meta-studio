@@ -6,6 +6,8 @@
   <title>RetroMeta Studio</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="studio.css" />
+  <!-- 테마 토큰과 테마별 변형은 컴포넌트 규칙 뒤에 둔다(theme.css 머리말 참고). -->
+  <link rel="stylesheet" href="theme.css" />
 </head>
 <body>
   <div id="app">
@@ -17,17 +19,26 @@
     <div id="app-body">
       <aside id="nav"></aside>
       <main id="center">
-        <div id="collection-header"></div>
-        <div id="filter-bar"></div>
-        <div id="list-wrap">
-          <div id="list-head"></div>
-          <div id="list-scroll">
-            <div id="list-spacer"></div>
-            <div id="list-window"></div>
+        <!-- 윗줄: GameList 상단 Chromium + Detail 상단(미리보기 토글). 이 줄은 Preview를
+             꺼도 그대로 남는다 - 접히는 것은 아랫줄의 Detail 내용뿐이다(사용자 요청). -->
+        <div id="header-row">
+          <div id="collection-header"></div>
+          <aside id="detail-top"></aside>
+        </div>
+        <div id="main-row">
+          <div id="list-column">
+            <div id="filter-bar"></div>
+            <div id="list-wrap">
+              <div id="list-head"></div>
+              <div id="list-scroll">
+                <div id="list-spacer"></div>
+                <div id="list-window"></div>
+              </div>
+            </div>
           </div>
+          <aside id="detail-panel"></aside>
         </div>
       </main>
-      <aside id="detail-panel"></aside>
     </div>
     <div id="status-bar"></div>
   </div>
