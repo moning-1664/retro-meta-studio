@@ -175,6 +175,8 @@
     appearance: { theme: "stitch", density: "compact", scale: 100, previewDefault: true },
     navigation: { hideEmptySystems: false },
     gamelist: { order: [], hidden: [] },
+    collections: { order: [] },
+    transfer: { includeRom: true, includeMedia: true, conflict: "ask" },
   };
   const APPEARANCE_CACHE_KEY = "rms.appearance";
 
@@ -582,11 +584,77 @@
       tab.appendChild(close);
       tab.addEventListener("click", () => selectTab(id));
       tab.addEventListener("contextmenu", (e) => { e.preventDefault(); openTabMenu(collection, e); });
+      bindTabDrag(tab, id);
       bar.appendChild(tab);
     });
     const add = h("button", { class: "ctab-add", title: "Collection 추가" }, [icon("plus", 13)]);
     add.addEventListener("click", openAddCollection);
     bar.appendChild(add);
+  }
+
+  /** Collection 순서. 사용자가 탭을 끌어 정한 순서(Settings > collections.order)가 먼저고,
+   * 거기 없는 Collection(새로 추가한 것)은 등록 순서대로 뒤에 붙는다. 닫았다 다시 연 탭도
+   * 이 순서의 제자리로 돌아간다. */
+  function collectionOrder() {
+    const saved = (S.settings && S.settings.collections && S.settings.collections.order) || [];
+    const ids = S.collections.map((c) => c.id);
+    return [...saved.filter((id, i) => ids.includes(id) && saved.indexOf(id) === i),
+            ...ids.filter((id) => !saved.includes(id))];
+  }
+
+  function sortTabsByCollectionOrder() {
+    const order = collectionOrder();
+    const rank = (id) => { const i = order.indexOf(id); return i < 0 ? order.length : i; };
+    S.tabs.sort((a, b) => rank(a) - rank(b));
+  }
+
+  function moveTab(id, targetId, after) {
+    if (id === targetId) return;
+    const order = collectionOrder().filter((c) => c !== id);
+    const at = order.indexOf(targetId);
+    if (at < 0) return;
+    order.splice(at + (after ? 1 : 0), 0, id);
+    updateSettings("collections", { order });
+    sortTabsByCollectionOrder();
+    S.collections.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+    renderTabs();
+  }
+
+  /** 탭을 끌어 순서를 바꾼다. Archive 탭은 늘 맨 앞이라 끌 수도, 그 앞에 놓을 수도 없다. */
+  let draggingTab = null;
+  function bindTabDrag(tab, id) {
+    const clearMarks = () => tab.classList.remove("drop-before", "drop-after");
+    tab.draggable = true;
+    tab.dataset.collectionId = id;
+    tab.addEventListener("dragstart", (e) => {
+      draggingTab = id;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/x-rms-tab", id);
+      tab.classList.add("dragging");
+    });
+    tab.addEventListener("dragend", () => {
+      draggingTab = null;
+      document.querySelectorAll("#tabs-bar .ctab").forEach((t) =>
+        t.classList.remove("dragging", "drop-before", "drop-after"));
+    });
+    tab.addEventListener("dragover", (e) => {
+      if (!draggingTab || draggingTab === id) return;
+      e.preventDefault();
+      const rect = tab.getBoundingClientRect();
+      const after = e.clientX > rect.left + rect.width / 2;
+      tab.classList.toggle("drop-after", after);
+      tab.classList.toggle("drop-before", !after);
+    });
+    tab.addEventListener("dragleave", clearMarks);
+    tab.addEventListener("drop", (e) => {
+      if (!draggingTab) return;
+      e.preventDefault();
+      const after = tab.classList.contains("drop-after");
+      clearMarks();
+      const moving = draggingTab;
+      draggingTab = null;
+      moveTab(moving, id, after);
+    });
   }
 
   function openTabMenu(collection, event) {
@@ -682,6 +750,7 @@
     if (!r.ok) { showToast(r.error, "error"); return; }
     S.detail[id] = r.data;
     S.tabs.push(id);
+    sortTabsByCollectionOrder();
     S.activeId = id;
     // openTab은 ensureDetail을 거치지 않고 openCollection 응답을 그대로 쓴다 -
     // Frontend 고유 기능은 여기서 따로 불러와야 한다.
@@ -3908,36 +3977,70 @@
 
   async function loadCollections() {
     const r = await api.listCollections();
-    if (r.ok) S.collections = r.data;
+    if (!r.ok) return;
+    S.collections = r.data;
+    const order = collectionOrder();
+    S.collections.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
   }
 
   //: 레이아웃이 견디는 최소 크기. main.py의 MIN_SIZE와 같은 값이어야 한다 -
   //  여기서 더 작게 줄일 수 있게 두면 창은 줄어드는데 안쪽이 깨진다.
   const MIN_WINDOW = { width: 900, height: 640 };
 
-  /** frameless 창에는 네이티브 크기 조절 테두리가 없다. 손잡이를 끌어 대신한다. */
+  /** frameless 창에는 네이티브 크기 조절 테두리가 없다. 네 변과 네 모서리에 손잡이를 둔다.
+   *
+   * 오른쪽/아래만 끌면 크기만 바꾸면 되지만, 왼쪽/위를 끌면 반대편이 제자리에 있어야
+   * 하므로 위치도 함께 옮긴다(window_set_bounds). 오른쪽 아래 모서리는 눈에 보이는
+   * 손잡이(#resize-grip)가 맡는다. */
+  const RESIZE_EDGES = ["n", "s", "e", "w", "ne", "nw", "sw"];
   function bindResizeGrip() {
     const grip = $("resize-grip");
-    if (!grip) return;
+    if (grip) bindWindowEdge(grip, "se");
+    RESIZE_EDGES.forEach((edge) => {
+      const handle = h("div", { class: `window-resize-grip ${edge}`, "data-edge": edge });
+      document.body.appendChild(handle);
+      bindWindowEdge(handle, edge);
+    });
+  }
 
-    grip.addEventListener("mousedown", (down) => {
+  function bindWindowEdge(handle, edge) {
+    const movesOrigin = edge.includes("n") || edge.includes("w");
+    handle.addEventListener("mousedown", (down) => {
+      if (down.button !== 0) return;
       down.preventDefault();
-      const start = { x: down.screenX, y: down.screenY,
+      const start = { x: down.screenX, y: down.screenY, left: window.screenX, top: window.screenY,
                       width: window.outerWidth, height: window.outerHeight };
       let pending = null;
+      let latest = null;
 
+      const send = () => {
+        pending = null;
+        if (!latest) return;
+        const b = latest;
+        if (movesOrigin) api.windowSetBounds(Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height));
+        else api.windowResize(Math.round(b.width), Math.round(b.height));
+      };
       const onMove = (move) => {
-        const width = Math.max(MIN_WINDOW.width, start.width + (move.screenX - start.x));
-        const height = Math.max(MIN_WINDOW.height, start.height + (move.screenY - start.y));
+        const dx = move.screenX - start.x;
+        const dy = move.screenY - start.y;
+        const b = { left: start.left, top: start.top, width: start.width, height: start.height };
+        if (edge.includes("e")) b.width = Math.max(MIN_WINDOW.width, start.width + dx);
+        if (edge.includes("s")) b.height = Math.max(MIN_WINDOW.height, start.height + dy);
+        if (edge.includes("w")) {
+          b.width = Math.max(MIN_WINDOW.width, start.width - dx);
+          b.left = start.left + (start.width - b.width);
+        }
+        if (edge.includes("n")) {
+          b.height = Math.max(MIN_WINDOW.height, start.height - dy);
+          b.top = start.top + (start.height - b.height);
+        }
+        latest = b;
         // 브릿지 호출은 프레임당 한 번으로 묶는다 - mousemove마다 부르면 창이 끊겨 보인다.
-        if (pending) return;
-        pending = requestAnimationFrame(() => {
-          pending = null;
-          api.windowResize(Math.round(width), Math.round(height));
-        });
+        if (!pending) pending = requestAnimationFrame(send);
       };
       const onUp = () => {
-        if (pending) cancelAnimationFrame(pending);
+        // 마지막 위치는 반드시 보낸다 - 취소만 하면 놓은 자리보다 한 프레임 전 크기로 남는다.
+        if (pending) { cancelAnimationFrame(pending); send(); }
         document.removeEventListener("mousemove", onMove);
         document.removeEventListener("mouseup", onUp);
       };

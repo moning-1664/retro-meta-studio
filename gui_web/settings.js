@@ -137,8 +137,19 @@
         add(row("media.overwrite", "Media overwrite", soonSelect([["ask", "Always ask"], ["replace", "Replace"], ["keep", "Keep existing"]]), null, true));
       } else if (key === "transfer") {
         add(...section("Import / Export", "파일과 Metadata/Media를 옮길 때의 기본값입니다."));
-        add(ctx.renderTransfer ? ctx.renderTransfer() :
-          h("div", { class: "stg-info" }, ["Collection → Collection 복사 정책은 준비 중입니다."]));
+        // 붙여넣기(bridge paste)가 이 값을 읽는다. 기본값은 예전 동작 그대로다.
+        const t = { includeRom: true, includeMedia: true, conflict: "ask", ...(s.transfer || {}) };
+        add(h("div", { class: "stg-subsection-title" }, ["Collection → Collection 복사 (Ctrl+C / Ctrl+V)"]));
+        add(row("transfer.includeRom", "ROM 파일 복사",
+          toggle(t.includeRom, (v) => ctx.update("transfer", { includeRom: v })),
+          "끄면 ROM은 옮기지 않고 메타데이터(와 Media)만 붙여넣습니다. 이미 가진 ROM에 정보만 채울 때 씁니다."));
+        add(row("transfer.includeMedia", "Media 복사",
+          toggle(t.includeMedia, (v) => ctx.update("transfer", { includeMedia: v })),
+          "끄면 커버·스크린샷·동영상을 옮기지 않습니다."));
+        add(row("transfer.conflict", "같은 파일이 이미 있을 때",
+          select(t.conflict, [["ask", "Plan에서 직접 고르기"], ["skip", "기존 파일 두기"], ["overwrite", "덮어쓰기"]],
+            (v) => ctx.update("transfer", { conflict: v })),
+          "이번 붙여넣기로 생긴 충돌에만 적용합니다. 메타데이터는 어느 경우에도 붙여넣습니다."));
         add(row("transfer.backup", "Backup before overwrite", soonToggle(false), null, true));
       } else if (key === "emulator") {
         add(...section("Emulator", "외부 에뮬레이터 실행에 필요한 설정입니다."));

@@ -191,8 +191,9 @@ def plan_add(plan, collection, provider, items):
         plan.add(entry)
         added.append(entry)
 
-    conflicted = sum(1 for e in added if e.conflicts)
-    return {"added": len(added), "skipped": skipped, "conflicts": conflicted}
+    conflicted = [e.key for e in added if e.conflicts]
+    return {"added": len(added), "skipped": skipped, "conflicts": len(conflicted),
+            "conflictKeys": conflicted}
 
 
 def resolve_conflict(plan, collection, provider, key, resolution):

@@ -27,7 +27,7 @@ from app.model.collection import STORAGE_INTERNAL
 from app.model.constants import MEDIA_TYPES
 from app import dashboard
 from app import system_ops
-from app.model.plan import OP_STORAGE_CHANGE, Plan
+from app.model.plan import OP_STORAGE_CHANGE, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan
 from app.plan import builder, clipboard
 from app.plan.applier import apply_plan
 from app.plan.validator import check_capacity, validate
@@ -299,6 +299,9 @@ class Api:
 
     #: 앱 전역 설정(Settings 화면)이 registry의 app_settings에 들어가는 키.
     APP_SETTINGS_KEY = "ui.settings"
+    #: Collection → Collection 복사(붙여넣기) 정책의 기본값. Settings > Import / Export가 바꾼다.
+    #: conflict가 "ask"면 지금처럼 Plan에 충돌로 남겨 사용자가 고른다.
+    TRANSFER_DEFAULTS = {"includeRom": True, "includeMedia": True, "conflict": "ask"}
 
     @guarded
     def get_app_settings(self):
@@ -762,12 +765,40 @@ class Api:
 
     @guarded
     def paste(self, collection_id):
+        """붙여넣기. **Settings의 복사 정책(transfer)을 따른다.**
+
+        - ROM/Media를 빼기로 했으면 Plan에 올리기 전에 그 부분을 뺀다(메타데이터는 늘 간다).
+        - 충돌 기본 처리가 skip/overwrite면 **이번 붙여넣기로 생긴 충돌만** 그렇게 정한다.
+          원래 Plan에 있던 충돌은 사용자가 고를 몫이라 건드리지 않는다.
+        """
         collection, _, provider = self._plan_context(collection_id)
         descriptor, items = clipboard.read_items(self.registry)
         if not items:
             return err("붙여넣을 항목이 없습니다.")
-        result = builder.plan_add(self._plan(collection_id), collection, provider, items)
-        return ok({**result, "source": descriptor.get("sourceName")})
+        policy = self._transfer_policy()
+        if not policy["includeRom"] or not policy["includeMedia"]:
+            items = [{**item,
+                      "rom": item.get("rom") if policy["includeRom"] else None,
+                      "media": item.get("media") if policy["includeMedia"] else []}
+                     for item in items]
+        plan = self._plan(collection_id)
+        result = builder.plan_add(plan, collection, provider, items)
+        keys = result.pop("conflictKeys", [])
+        if policy["conflict"] in (RESOLVE_SKIP, RESOLVE_OVERWRITE):
+            for key in keys:
+                builder.resolve_conflict(plan, collection, provider, key, policy["conflict"])
+            result["autoResolved"] = len(keys)
+            result["conflicts"] = 0
+        return ok({**result, "source": descriptor.get("sourceName"), "policy": policy})
+
+    def _transfer_policy(self):
+        stored = (self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {}).get("transfer") or {}
+        policy = {**self.TRANSFER_DEFAULTS, **{k: v for k, v in stored.items() if k in self.TRANSFER_DEFAULTS}}
+        if policy["conflict"] not in ("ask", RESOLVE_SKIP, RESOLVE_OVERWRITE):
+            policy["conflict"] = "ask"
+        policy["includeRom"] = bool(policy["includeRom"])
+        policy["includeMedia"] = bool(policy["includeMedia"])
+        return policy
 
     @guarded
     def validate_plan(self, collection_id):
@@ -1287,6 +1318,21 @@ class Api:
         window = self._window or (webview.windows[0] if webview.windows else None)
         if window is None:
             return err("창을 찾을 수 없습니다.")
+        window.resize(max(1, int(width)), max(1, int(height)))
+        self._maximized = False
+        return ok(True)
+
+    @guarded
+    def window_set_bounds(self, x, y, width, height):
+        """창 위치와 크기를 함께 바꾼다. 위/왼쪽 테두리를 끌 때 쓴다.
+
+        오른쪽/아래는 크기만 바꾸면 되지만, 왼쪽이나 위를 끌면 반대편 모서리가 제자리에
+        있어야 하므로 위치도 같이 옮겨야 한다."""
+        import webview
+        window = self._window or (webview.windows[0] if webview.windows else None)
+        if window is None:
+            return err("창을 찾을 수 없습니다.")
+        window.move(int(x), int(y))
         window.resize(max(1, int(width)), max(1, int(height)))
         self._maximized = False
         return ok(True)

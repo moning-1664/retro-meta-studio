@@ -285,6 +285,7 @@
       mockDetail.systemCount = mockDetail.systems.length;
       return ok({ system, removed: [], kept: [] });
     },
+    window_set_bounds: () => ok(true),
     open_system_folder: (id, system, kind) => ok({ path: `D:\\ES-DE\\${kind}\\${system}` }),
     move_system: (id, system, storageId) => {
       for (const s of mockDetail.storages) s.systems = s.systems.filter((x) => x.system !== system);
@@ -550,6 +551,7 @@
     runAdapterAction: (id, actionId) => call("run_adapter_action", id, actionId),
     pickFolder: (title) => call("pick_folder", title || ""),
     windowControl: (action) => call("window_control", action),
+    windowSetBounds: (x, y, width, height) => call("window_set_bounds", x, y, width, height),
     windowResize: (width, height) => call("window_resize", width, height),
   };
 })();

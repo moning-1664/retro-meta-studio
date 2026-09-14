@@ -835,6 +835,17 @@ button.sb-badge { cursor: pointer; }
     linear-gradient(135deg, transparent 0 66%, var(--border) 66% 74%, transparent 74% 100%);
 }
 #resize-grip:hover { background-color: var(--card2); }
+/* 네 변과 나머지 모서리의 보이지 않는 손잡이(위치는 style.css의 .window-resize-grip).
+   화면 내용보다는 위, 모달(.modal-overlay z-index 60)보다는 아래 - 모달이 떠 있는 동안
+   바깥 클릭으로 닫는 동작을 가로채면 안 된다. 오른쪽 위 모서리는 창 버튼을 가리지 않게 작게. */
+.window-resize-grip { z-index: 55; }
+.window-resize-grip.ne { width: 5px; height: 5px; }
+
+/* Collection 탭 드래그 - 놓일 자리에 세로 막대를 보인다. */
+.ctab[draggable="true"] { -webkit-user-drag: element; }
+.ctab.dragging { opacity: .5; }
+.ctab.drop-before { box-shadow: inset 2px 0 0 var(--accent-gold); }
+.ctab.drop-after { box-shadow: inset -2px 0 0 var(--accent-gold); }
 
 /* ------------------------------------------------------------------ Settings
    구성은 Stitch 브랜치의 Settings를 따르고 색만 토큰으로 바꿨다(settings.js). */
