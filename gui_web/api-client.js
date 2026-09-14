@@ -408,7 +408,10 @@
       health: { total: 3, present: 3, metadata: 2, media: 2, description: 2, cover: 1, complete: 1,
                 missingRom: 0, missingMetadata: 1, missingMedia: 1, missingDescription: 1, missingCover: 2 },
     }),
-    validate_collection: () => ok({ checked: 2, invalid: [] }),
+    validate_collection: () => ok({
+      checked: 2, invalid: [], duplicates: [], issues: [],
+      statuses: { complete: 1, missingMedia: 1, missingDescription: 1, invalidXml: 0 },
+    }),
     get_app_settings: () => ok(JSON.parse(JSON.stringify(mockAppSettings))),
     save_app_settings: (patch) => {
       Object.entries(patch || {}).forEach(([section, value]) => {

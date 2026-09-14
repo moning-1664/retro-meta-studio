@@ -149,6 +149,13 @@ class LaunchBoxAdapter(FrontendAdapter):
             entries[filename] = self.to_common(game, filename)
         return entries
 
+    def raw_metadata_filenames(self, provider, layout) -> list[str]:
+        root = self._parse(provider, layout.metadata_file)
+        if root is None:
+            return []
+        return [Path((game.findtext("ApplicationPath") or "").strip().replace("\\", "/")).name
+                for game in root.findall("Game") if (game.findtext("ApplicationPath") or "").strip()]
+
     def to_common(self, game, filename) -> GameEntry:
         def text(tag):
             return (game.findtext(tag) or "").strip()

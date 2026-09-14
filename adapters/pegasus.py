@@ -221,6 +221,18 @@ class PegasusAdapter(FrontendAdapter):
             entries[filename] = self.to_common(block, filename)
         return entries
 
+    def raw_metadata_filenames(self, provider, layout) -> list[str]:
+        text = self._read_text(provider, layout.metadata_file)
+        if text is None:
+            return []
+        _header, blocks = parse_metadata(text)
+        return [Path(_block_value(block, "file")).name for block in blocks if _block_value(block, "file")]
+
+    def validate_metadata_syntax(self, provider, path) -> "str | None":
+        """`parse_metadata()`는 줄 단위로 관대하게 읽는다(모르는 줄은 조용히 건너뛴다) -
+        Pegasus 형식에는 "문법 오류"라는 개념이 없다. 파일 자체를 못 읽는 경우만 알린다."""
+        return None if provider.exists(path) else "파일을 읽을 수 없습니다."
+
     def to_common(self, block, filename) -> GameEntry:
         """블록을 (공통 필드, 원본 보존분)으로 나눈다.
 

@@ -13,8 +13,7 @@ ROM과 media로 따로 더한다.
 
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
-from pathlib import Path
+from collections import Counter
 
 
 def collection_stats(collection, cache) -> dict:
@@ -70,20 +69,65 @@ def collection_stats(collection, cache) -> dict:
     }
 
 
-def validate_metadata_files(collection, adapter) -> dict:
-    """Adapter가 알려주는 System별 Metadata 파일이 XML로 읽히는지 본다.
+def validate_collection(collection, adapter, cache, provider) -> dict:
+    """XML 문법부터 ROM/Media 연결까지, System별 Metadata를 훑는다.
 
-    스키마 검증이나 수리는 하지 않는다 - "열리지 않는 파일이 있다"를 알려주는 것까지다.
-    파일이 없는 System(ROM만 있는 Collection)은 검사 대상이 아니다.
+    파일이 없는 System(ROM만 있는 Collection)은 검사 대상이 아니다 - 예전과 같다.
+
+    **집계(Complete/Missing Media/Missing Description)는 `cache.metadata_health()`를
+    그대로 쓴다.** Dashboard의 Metadata Health 카드가 보여주는 숫자와 정확히 같은
+    기준이어야 하는데, 그 계산은 이미 그 함수 하나에 있다(SQL 한 번, `desc`가
+    비어있지 않은지·covers media가 있는지 같은 정의) - 여기서 파일을 다시 읽어
+    따로 계산하면 두 화면의 숫자가 미묘하게 어긋날 수 있다.
+
+    이 함수가 새로 더하는 것은 **파일을 다시 읽어야만 알 수 있는 것들**이다.
+    - Invalid XML: 스캐너(`read_index`)는 깨진 파일을 조용히 빈 목록으로 넘긴다
+      (System 전체 스캔을 막지 않으려는 의도적 선택, adapters/base.py 참고) - 그래서
+      "무엇이 깨졌는지"는 Cache에 없다. 여기서 직접 확인한다.
+    - Missing ROM: Metadata는 있는데 그 ROM 파일이 없는 항목(§3).
+    - Missing Metadata(이름 없음): `name`/`title`이 빈 항목(§2).
+    - Duplicate Metadata: 같은 ROM 파일명에 블록이 두 개 이상(§6) - `read_index()`는
+      dict라서 중복이 있어도 마지막 것만 남아 조용히 사라진다. `raw_metadata_filenames()`
+      로 원본 개수를 그대로 본다.
     """
-    checked, invalid = 0, []
+    checked, invalid, duplicates, issues = 0, [], [], []
     for entry in collection.systems:
-        path = adapter.layout(collection, entry.system).metadata_file
-        if not path or not Path(path).is_file():
+        layout = adapter.layout(collection, entry.system)
+        path = layout.metadata_file
+        if not path or not provider.exists(path):
             continue
         checked += 1
-        try:
-            ET.parse(path)
-        except (ET.ParseError, OSError) as exc:
-            invalid.append({"system": entry.system, "path": str(path), "error": str(exc)})
-    return {"checked": checked, "invalid": invalid}
+
+        error = adapter.validate_metadata_syntax(provider, path)
+        if error:
+            invalid.append({"system": entry.system, "path": str(path), "error": error})
+            continue   # 파일 자체가 안 읽히면 그 안의 게임을 볼 방법이 없다
+
+        for filename, count in Counter(adapter.raw_metadata_filenames(provider, layout)).items():
+            if count > 1:
+                duplicates.append({"system": entry.system, "filename": filename, "count": count})
+
+        rom_files = set(adapter.list_roms(provider, layout))
+        for filename, game in adapter.read_index(provider, layout).items():
+            fields = game.fields or {}
+            game_issues = []
+            if not (fields.get("name") or "").strip():
+                game_issues.append("missingMetadata")
+            if filename not in rom_files:
+                game_issues.append("missingRom")
+            if game_issues:
+                issues.append({"system": entry.system, "filename": filename, "issues": game_issues})
+
+    health = cache.metadata_health()
+    return {
+        "checked": checked, "invalid": invalid,
+        "duplicates": duplicates, "issues": issues,
+        # Dashboard가 최소로 보여줘야 하는 네 상태(사용자 요구). complete/missingMedia/
+        # missingDescription은 위에서 말했듯 cache.metadata_health()와 같은 값이다.
+        "statuses": {
+            "complete": health["complete"],
+            "missingMedia": health["missingMedia"],
+            "missingDescription": health["missingDescription"],
+            "invalidXml": len(invalid),
+        },
+    }

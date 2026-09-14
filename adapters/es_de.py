@@ -197,6 +197,33 @@ class EsDeAdapter(FrontendAdapter):
             entries[filename] = self.to_common(game)
         return entries
 
+    def raw_metadata_filenames(self, provider, layout) -> list[str]:
+        root = self._parse(provider, layout.metadata_file)
+        if root is None:
+            return []
+        return [Path((game.findtext("path") or "").strip()).name
+                for game in root.findall("game") if (game.findtext("path") or "").strip()]
+
+    def validate_metadata_syntax(self, provider, path) -> "str | None":
+        """`_parse()`(=`read_index()`가 실제로 쓰는 관대한 파서)가 읽어내면 유효하다.
+
+        ES-DE는 `<alternativeEmulator>`를 `<gameList>`의 형제로 두거나(실제 백업의
+        26개 중 9개가 이 형태였다) 이스케이프 안 된 `&`를 쓰기도 한다 - `_parse()`는
+        그런 파일도 살려서 읽으므로, 여기서 엄격한 파서만 쓰면 앱이 이미 정상적으로
+        읽는 파일을 "Invalid XML"로 잘못 알리게 된다. 그래도 실패했으면 사람이 읽을
+        오류 메시지를 위해 엄격한 파서로 한 번 더 시도한다.
+        """
+        if self._parse(provider, path) is not None:
+            return None
+        data = read_document(path, provider)
+        if data is None:
+            return "파일을 읽을 수 없습니다."
+        try:
+            ET.fromstring(data)
+            return "형식을 읽을 수 없습니다."
+        except ET.ParseError as exc:
+            return str(exc)
+
     def to_common(self, game) -> GameEntry:
         """`<game>` 요소를 (공통 필드, 원본 보존분)으로 나눈다.
 

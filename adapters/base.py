@@ -171,6 +171,33 @@ class FrontendAdapter:
     def list_roms(self, provider, layout) -> list[str]:
         raise NotImplementedError
 
+    def raw_metadata_filenames(self, provider, layout) -> list[str]:
+        """Metadata 파일에 적힌 ROM 파일명을 **중복까지 그대로**, 적힌 순서대로 돌려준다.
+
+        `read_index()`는 파일명을 key로 쓰는 dict라서 같은 파일명이 두 번 있으면
+        나중 것만 남는다 - 중복 Metadata를 찾으려면(Validate Collection, §6) 원본
+        그대로의 개수를 봐야 한다.
+        """
+        raise NotImplementedError
+
+    def validate_metadata_syntax(self, provider, path) -> "str | None":
+        """이 Metadata 파일이 구조적으로 읽히는지. 문제가 있으면 사람이 읽을 오류
+        메시지를, 없으면 None을 돌려준다.
+
+        기본은 XML이고 `read_xml()`과 같은 파서를 그대로 쓴다 - `read_index()`가
+        실제로 통과시키는 파일을 여기서만 "Invalid XML"로 잘못 알리면 안 된다.
+        더 관대하게 읽는 형식(ES-DE의 `<alternativeEmulator>` 형제 허용, Pegasus의
+        줄 단위 파서)은 각 Adapter가 재정의한다.
+        """
+        data = read_document(path, provider)
+        if data is None:
+            return "파일을 읽을 수 없습니다."
+        try:
+            ET.fromstring(data)
+        except ET.ParseError as exc:
+            return str(exc)
+        return None
+
     def media_dirs(self, layout, media_types=None) -> list[str]:
         """이 System의 media가 실제로 놓이는 디렉터리들.
 

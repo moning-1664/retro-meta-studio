@@ -52,6 +52,84 @@ test("Validate Collection은 결과를 알려준다", async ({ page }) => {
   await expect(page.locator(".dsb-validation")).toContainText("문제 없음");
 });
 
+// Metadata Validation 강화 - XML 문법뿐 아니라 ROM 연결/이름/중복/네 상태 집계까지
+// 보여준다(사용자 요구). 최소 네 상태는 항상 보인다: Complete/Missing Media/
+// Missing Description/Invalid XML.
+test.describe("Validate Collection - 강화된 결과", () => {
+  test("문제가 없어도 네 가지 상태 요약을 항상 보여준다", async ({ page }) => {
+    await openDashboard(page);
+    await page.locator(".dsb-validate").click();
+    const summary = page.locator(".dsb-validate-summary");
+    await expect(summary).toContainText("Complete");
+    await expect(summary).toContainText("Invalid XML 0");
+  });
+
+  test("Invalid XML이 있으면 요약과 목록에 모두 나온다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.api.validateCollection = async () => ({ ok: true, data: {
+        checked: 2, invalid: [{ system: "ps2", path: "D:\\ES-DE\\gamelists\\ps2\\gamelist.xml", error: "junk after document element" }],
+        duplicates: [], issues: [],
+        statuses: { complete: 0, missingMedia: 0, missingDescription: 0, invalidXml: 1 },
+      } });
+    });
+    await openDashboard(page);
+    await page.locator(".dsb-validate").click();
+    await expect(page.locator(".dsb-validate-summary")).toContainText("Invalid XML 1");
+    await expect(page.locator(".dsb-invalid")).toContainText("gamelist.xml");
+  });
+
+  test("중복 Metadata를 시스템/파일명/개수로 보여준다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.api.validateCollection = async () => ({ ok: true, data: {
+        checked: 1, invalid: [], issues: [],
+        duplicates: [{ system: "ps2", filename: "FFX.iso", count: 2 }],
+        statuses: { complete: 1, missingMedia: 0, missingDescription: 0, invalidXml: 0 },
+      } });
+    });
+    await openDashboard(page);
+    await page.locator(".dsb-validate").click();
+    await expect(page.locator(".dsb-validation")).toContainText("중복된 Metadata");
+    await expect(page.locator(".dsb-invalid")).toContainText("FFX.iso");
+    await expect(page.locator(".dsb-invalid")).toContainText("2개");
+  });
+
+  test("ROM 없음/이름 없음 문제를 목록으로 보여준다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.api.validateCollection = async () => ({ ok: true, data: {
+        checked: 1, invalid: [], duplicates: [],
+        issues: [
+          { system: "ps2", filename: "Ghost.iso", issues: ["missingRom"] },
+          { system: "ps2", filename: "NoName.iso", issues: ["missingMetadata"] },
+        ],
+        statuses: { complete: 0, missingMedia: 0, missingDescription: 0, invalidXml: 0 },
+      } });
+    });
+    await openDashboard(page);
+    await page.locator(".dsb-validate").click();
+    await expect(page.locator(".dsb-validation")).toContainText("ROM 연결·이름 문제");
+    await expect(page.locator(".dsb-invalid")).toContainText("Ghost.iso");
+    await expect(page.locator(".dsb-invalid")).toContainText("ROM 없음");
+    await expect(page.locator(".dsb-invalid")).toContainText("NoName.iso");
+    await expect(page.locator(".dsb-invalid")).toContainText("이름 없음");
+  });
+
+  test("문제가 많으면 20개까지만 보여주고 나머지는 개수로 알려준다", async ({ page }) => {
+    await page.evaluate(() => {
+      const issues = Array.from({ length: 25 }, (_, i) => ({
+        system: "ps2", filename: `G${i}.iso`, issues: ["missingRom"],
+      }));
+      window.api.validateCollection = async () => ({ ok: true, data: {
+        checked: 1, invalid: [], duplicates: [], issues,
+        statuses: { complete: 0, missingMedia: 0, missingDescription: 0, invalidXml: 0 },
+      } });
+    });
+    await openDashboard(page);
+    await page.locator(".dsb-validate").click();
+    await expect(page.locator(".dsb-invalid li")).toHaveCount(21);   // 20개 + "외 5개"
+    await expect(page.locator(".dsb-invalid li").last()).toContainText("외 5개");
+  });
+});
+
 test("목표 용량을 바꾸면 그 Collection의 화면 상태로 저장된다", async ({ page }) => {
   const saved = [];
   await page.exposeFunction("__saved", (s) => saved.push(s));

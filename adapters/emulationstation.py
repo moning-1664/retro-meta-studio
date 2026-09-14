@@ -142,6 +142,13 @@ class EmulationStationAdapter(FrontendAdapter):
             entries[filename] = self.to_common(game)
         return entries
 
+    def raw_metadata_filenames(self, provider, layout) -> list[str]:
+        root = self._parse(provider, layout.metadata_file)
+        if root is None:
+            return []
+        return [Path((game.findtext("path") or "").strip().replace("\\", "/")).name
+                for game in root.findall("game") if (game.findtext("path") or "").strip()]
+
     def to_common(self, game) -> GameEntry:
         def text(tag):
             return (game.findtext(tag) or "").strip()

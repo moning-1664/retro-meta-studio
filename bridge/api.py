@@ -362,11 +362,17 @@ class Api:
 
     @guarded
     def validate_collection(self, collection_id):
-        """Metadata 파일(gamelist.xml 등)이 XML로 읽히는지만 본다. 고치지는 않는다."""
+        """Metadata 파일이 실제로 읽히는지부터 ROM/Media 연결까지 본다. 고치지는 않는다.
+
+        집계(Complete/Missing Media/Missing Description)는 Dashboard 통계와 같은
+        기준(cache.metadata_health())을 쓴다 - app/dashboard.py의 docstring 참고.
+        """
         collection = self.registry.get_collection(collection_id)
         if collection is None:
             return err("Collection을 찾을 수 없습니다.")
-        return ok(dashboard.validate_metadata_files(collection, get_adapter(collection.frontend)))
+        cache = self.workspace.open(collection_id)
+        provider = self.workspace.provider_for(collection)
+        return ok(dashboard.validate_collection(collection, get_adapter(collection.frontend), cache, provider))
 
     @guarded
     def set_favorite(self, collection_id, rom_uid, favorite=True):

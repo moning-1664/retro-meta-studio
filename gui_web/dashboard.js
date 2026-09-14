@@ -83,6 +83,20 @@
     const validateBtn = h("button", { class: "btn compact dsb-validate" },
       [icon("check", 12), h("span", {}, ["Validate Collection"])]);
     const validation = h("div", { class: "dsb-validation", "aria-live": "polite" });
+    const ISSUE_LABEL = { missingRom: "ROM 없음", missingMetadata: "이름 없음" };
+    /** 제목 + 목록 하나. 항목이 없으면 아무것도 안 붙인다. */
+    const issueSection = (title, items, render) => {
+      if (!items.length) return;
+      validation.appendChild(h("div", { class: "dsb-validate-section-title" }, [title]));
+      const list = h("ul", { class: "dsb-invalid" });
+      const LIMIT = 20;
+      items.slice(0, LIMIT).forEach((item) => list.appendChild(render(item)));
+      if (items.length > LIMIT) {
+        list.appendChild(h("li", { class: "dsb-muted" }, [`… 외 ${formatCount(items.length - LIMIT)}개`]));
+      }
+      validation.appendChild(list);
+    };
+
     validateBtn.addEventListener("click", async () => {
       validateBtn.disabled = true;
       validation.textContent = "Metadata 파일을 검사하는 중…";
@@ -93,17 +107,34 @@
         validation.appendChild(statusLine("bad", r.error || "검사하지 못했습니다."));
         return;
       }
-      const { checked, invalid } = r.data;
-      if (!invalid.length) {
+      const { checked, invalid, duplicates, issues, statuses } = r.data;
+
+      // 네 가지 상태를 늘 보여준다(사용자 요구) - Metadata Health 카드와 같은 기준이다
+      // (app/dashboard.py::validate_collection, Complete/Missing Media/Missing
+      // Description은 그 카드가 쓰는 cache.metadata_health()와 같은 값).
+      validation.appendChild(h("div", { class: "dsb-validate-summary" }, [
+        statusLine("good", `Complete ${formatCount(statuses.complete)}`),
+        statuses.missingMedia ? statusLine("warn", `Missing Media ${formatCount(statuses.missingMedia)}`) : null,
+        statuses.missingDescription
+          ? statusLine("warn", `Missing Description ${formatCount(statuses.missingDescription)}`) : null,
+        statuses.invalidXml ? statusLine("bad", `Invalid XML ${formatCount(statuses.invalidXml)}`)
+          : statusLine("good", "Invalid XML 0"),
+      ]));
+
+      if (!invalid.length && !duplicates.length && !issues.length) {
         validation.appendChild(statusLine("good", `Metadata 파일 ${formatCount(checked)}개 확인 · 문제 없음`));
         return;
       }
-      validation.appendChild(statusLine("bad", `Metadata 파일 ${formatCount(checked)}개 중 ${formatCount(invalid.length)}개를 읽을 수 없습니다`));
-      const list = h("ul", { class: "dsb-invalid" });
-      invalid.forEach((item) => list.appendChild(h("li", { title: item.error }, [
-        h("b", {}, [String(item.system).toUpperCase()]), ` ${item.path}`,
-      ])));
-      validation.appendChild(list);
+
+      issueSection(`읽을 수 없는 파일 ${formatCount(invalid.length)}개`, invalid, (item) =>
+        h("li", { title: item.error }, [h("b", {}, [String(item.system).toUpperCase()]), ` ${item.path}`]));
+
+      issueSection(`중복된 Metadata ${formatCount(duplicates.length)}개`, duplicates, (item) =>
+        h("li", {}, [h("b", {}, [String(item.system).toUpperCase()]), ` ${item.filename} · ${formatCount(item.count)}개`]));
+
+      issueSection(`ROM 연결·이름 문제 ${formatCount(issues.length)}개`, issues, (item) =>
+        h("li", {}, [h("b", {}, [String(item.system).toUpperCase()]),
+          ` ${item.filename} · ${item.issues.map((k) => ISSUE_LABEL[k] || k).join(", ")}`]));
     });
 
     host.appendChild(h("div", { class: "dsb-head" }, [

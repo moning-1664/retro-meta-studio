@@ -966,6 +966,11 @@ button.sb-badge { cursor: pointer; }
 .dsb-validation { min-height: 18px; margin-bottom: 10px; font-size: var(--fs-caption); color: var(--muted); }
 .dsb-invalid { margin: 6px 0 0; padding-left: 18px; color: var(--text); font-size: var(--fs-caption); }
 .dsb-invalid li { margin: 2px 0; word-break: break-all; }
+/* Validate Collection 결과 - 네 가지 상태 요약(Complete/Missing Media/Missing
+   Description/Invalid XML)과 그 아래 세부 목록(읽을 수 없는 파일/중복 Metadata/
+   ROM 연결·이름 문제). */
+.dsb-validate-summary { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 4px; }
+.dsb-validate-section-title { font-weight: 650; color: var(--text); margin: 10px 0 2px; }
 .dsb-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
 .dsb-tile { padding: 11px 13px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; min-width: 0; }
 .dsb-tile-label { font-size: var(--fs-eyebrow); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
