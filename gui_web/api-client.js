@@ -147,6 +147,12 @@
     },
     // 1x1 투명 PNG - Media 타일이 실제로 <img src>를 채우는지(lightbox 확대 포함)
     // 목업에서도 확인할 수 있게 진짜 data URI를 준다.
+    //: 영상 URL(목업). 실제 재생은 테스트가 HTMLMediaElement를 막아 두고 확인한다.
+    get_media_video_url: (id, romUid) => {
+      const r = mockRows.find((x) => x.romUid === romUid) || mockRows[0];
+      return ok(r.hasMedia ? { url: `media-test/${r.file}.mp4` } : null);
+    },
+    get_archive_media_video_url: () => ok(null),
     get_media_image: () => ok(
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="),
     save_fields: (id, uid, fields) => ok({ title: fields.name || "" }),
@@ -564,6 +570,8 @@
     saveUiState: (id, state) => call("save_ui_state", id, state),
     getRow: (id, romUid) => call("get_row", id, romUid),
     getMediaImage: (id, romUid, label, thumbnail) => call("get_media_image", id, romUid, label, !!thumbnail),
+    getMediaVideoUrl: (id, romUid) => call("get_media_video_url", id, romUid),
+    getArchiveMediaVideoUrl: (romIdentityId) => call("get_archive_media_video_url", romIdentityId),
     saveFields: (id, romUid, fields) => call("save_fields", id, romUid, fields),
 
     planState: (id) => call("plan_state", id),

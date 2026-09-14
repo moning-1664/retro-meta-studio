@@ -43,6 +43,7 @@ from app.store.archive import ArchiveStore
 from app.store.registry import CHANGE_APPLIED, RegistryError, RegistryStore
 from app.workspace import Workspace, WorkspaceError
 from bridge.jobs import JobManager
+from bridge.media_server import MediaServer
 import file_ops
 from utils import normalize_title
 
@@ -154,6 +155,8 @@ class Api:
         # Compare Mode도 Plan처럼 세션 한정이다 - 껐다 켜면 비교 상태는 사라진다.
         # {"baseId":..., "otherId":..., "rows":[...]} 또는 None.
         self._compare = None
+        # 영상 전용 로컬 서버(bridge/media_server.py). 처음 영상을 볼 때 켜진다.
+        self._media_server = MediaServer()
 
     def close(self):
         """앱 종료. 진행 중인 작업을 먼저 멈춘 뒤에 DB를 닫는다.
@@ -162,6 +165,7 @@ class Api:
         멈추지 못한 작업이 남아 있으면 연결을 닫지 않고 그대로 둔다 - 어차피 프로세스가
         끝나면서 정리되고, 크래시로 끝나는 것보다 낫다.
         """
+        self._media_server.stop()
         if not self.jobs.shutdown(timeout=5.0):
             return
         self.workspace.close()
@@ -626,6 +630,18 @@ class Api:
             return ok(None)
         return ok(self._encode_image(item["rel_path"], THUMBNAIL_MAX if thumbnail else None))
 
+    @guarded
+    def get_media_video_url(self, collection_id, rom_uid):
+        """이 게임의 영상을 재생할 URL(로컬 전용 서버). 영상이 없거나 재생할 수 없는 형식이면 None.
+
+        이미지처럼 base64로 실어 보내지 않는다 - 영상은 수~수십 MB라 브릿지가 감당하지 못한다."""
+        row = self.workspace.open(collection_id).get_row(int(rom_uid))
+        if row is None:
+            return err("항목을 찾을 수 없습니다.")
+        item = next((m for m in row["media"] if m["media_type"] == VIDEO_MEDIA_TYPE), None)
+        url = self._media_server.url_for(item["rel_path"]) if item else None
+        return ok({"url": url} if url else None)
+
     def _encode_image(self, path, max_size=None):
         # 썸네일은 카드 하나마다 한 번씩 불린다. 목록을 오갈 때마다 같은 파일을 다시
         # 열어 축소하고 base64로 만드는 것은 순전히 낭비다 - 파일이 그대로면 결과도
@@ -1058,6 +1074,14 @@ class Api:
         if item is None:
             return ok(None)
         return ok(self._encode_image(item["abs_path"], THUMBNAIL_MAX if thumbnail else None))
+
+    @guarded
+    def get_archive_media_video_url(self, rom_identity_id):
+        """Archive 항목의 영상 URL. Archive는 원본 경로만 들고 있으므로 그 파일이 사라졌으면 None."""
+        item = next((m for m in self.archive.media_refs(rom_identity_id)
+                     if m["media_type"] == VIDEO_MEDIA_TYPE), None)
+        url = self._media_server.url_for(item["abs_path"]) if item else None
+        return ok({"url": url} if url else None)
 
     @guarded
     def archive_edit(self, rom_identity_id, fields):

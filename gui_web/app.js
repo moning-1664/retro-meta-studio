@@ -209,6 +209,8 @@
     collections: { order: [] },
     transfer: { includeRom: true, includeMedia: true, conflict: "ask",
                 unmatchedRomMode: "skip", unmatchedRomMetadata: true, unmatchedRomMedia: true, unmatchedRomVideo: true },
+    //: Media 탭의 영상(사용자 결정: 소리 켬, 반복 켬, 5초 뒤 자동 재생 - 전부 Settings에서 바꾼다).
+    media: { videoMode: "auto", videoDelay: 5, videoSound: true, videoLoop: true },
   };
   const APPEARANCE_CACHE_KEY = "rms.appearance";
 
@@ -3271,6 +3273,7 @@
   const fieldRefs = {};
 
   async function openDetail(row) {
+    stopMediaVideo();
     S.focused = row.romUid;
     updateSelectionVisual();
     // 미리보기를 꺼 둔 상태에서는 고르기만 하고 패널을 열지 않는다(탐색기와 같다).
@@ -3401,6 +3404,7 @@
   }
 
   function renderDetailPanel() {
+    stopMediaVideo();
     const top = $("detail-top");
     clear(top);
     top.appendChild(renderDetailTopSpace());
@@ -3700,6 +3704,98 @@
    *   [3DBox][BackCover][Physical][Wheel]
    *   v Video   v Manual   x FanArt
    */
+
+  // ------------------------------------------------------------------
+  // Media 영상 재생 - Screenshot 자리 (Settings > Metadata & Media > Video)
+  // ------------------------------------------------------------------
+  //
+  // **자연스러운 전환이 핵심이다(사용자 요구).** Screenshot을 그대로 둔 채 그 위에 투명한 영상을
+  // 겹쳐 두고, 브라우저가 실제로 첫 프레임을 그린 뒤(`playing`)에야 서서히 보이게 한다. src를
+  // 넣자마자 보이게 하면 로딩 동안 검은 화면이 번쩍인다. 멈출 때는 반대로 서서히 사라진다.
+  //
+  // 영상은 이미지처럼 base64로 받지 않는다 - 로컬 전용 서버의 URL을 받는다(bridge/media_server.py).
+  // 대기 시간이 끝나기 전에 게임을 넘기면 URL을 요청하지도 않는다.
+  let mediaVideo = null;   // 지금 Screenshot 자리에 붙어 있는 영상 하나 { zone, video, timer, playBtn }
+
+  function mediaVideoSettings() {
+    return { ...DEFAULT_SETTINGS.media, ...((S.settings && S.settings.media) || {}) };
+  }
+
+  function stopMediaVideo(options = {}) {
+    const current = mediaVideo;
+    if (!current) return;
+    mediaVideo = null;
+    clearTimeout(current.timer);
+    const { zone, video } = current;
+    zone.classList.remove("video-playing", "video-loading");
+    if (current.playBtn) current.playBtn.remove();
+    try { video.pause(); } catch (_) { /* 이미 떨어져 나간 요소 */ }
+    const release = () => { video.removeAttribute("src"); try { video.load(); } catch (_) { /* 무시 */ } video.remove(); };
+    // 서서히 사라지는 동안(CSS transition)만 남겨 두고 떼어낸다 - 다운로드도 여기서 끊긴다.
+    if (options.fade && zone.isConnected) setTimeout(release, 400); else release();
+  }
+
+  function attachMediaVideo(zone, media) {
+    stopMediaVideo();
+    const settings = mediaVideoSettings();
+    const state = S.detailState;
+    if (!state || !media.Videos || settings.videoMode === "off") return;
+
+    const video = h("video", { class: "media-video", preload: "none" });
+    video.setAttribute("playsinline", "");
+    video.loop = settings.videoLoop !== false;
+    video.muted = settings.videoSound === false;
+    zone.classList.add("has-video");
+    zone.appendChild(video);
+    const current = { zone, video, timer: null, playBtn: null };
+    mediaVideo = current;
+
+    video.addEventListener("playing", () => {
+      if (mediaVideo !== current) return;
+      zone.classList.remove("video-loading");
+      zone.classList.add("video-playing");
+    });
+    // 코덱을 못 읽거나 파일이 사라졌으면 조용히 Screenshot으로 둔다.
+    video.addEventListener("error", () => { if (mediaVideo === current) stopMediaVideo(); });
+
+    const start = async () => {
+      if (mediaVideo !== current) return;
+      const r = state.archive
+        ? await api.getArchiveMediaVideoUrl(state.romIdentityId)
+        : await api.getMediaVideoUrl(S.activeId, state.romUid);
+      if (mediaVideo !== current) return;
+      if (!r.ok || !r.data || !r.data.url) { stopMediaVideo(); return; }
+      zone.classList.add("video-loading");
+      video.src = r.data.url;
+      try {
+        await video.play();
+      } catch (_) {
+        // 소리 있는 자동 재생을 브라우저가 막는 경우가 있다 - 그때는 소리만 끄고 보여준다.
+        if (mediaVideo !== current || video.muted) return;
+        video.muted = true;
+        try { await video.play(); } catch (__) { if (mediaVideo === current) stopMediaVideo(); }
+      }
+    };
+
+    // 재생 중인 영상을 누르면 멈추고 Screenshot으로 돌아간다(확대 창을 열지 않는다).
+    zone.addEventListener("click", (e) => {
+      if (mediaVideo !== current || !zone.matches(".video-playing, .video-loading")) return;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      stopMediaVideo({ fade: true });
+      if (settings.videoMode === "manual") setTimeout(() => { if (zone.isConnected && !mediaVideo) attachMediaVideo(zone, media); }, 420);
+    }, true);
+
+    if (settings.videoMode === "manual") {
+      const btn = h("button", { class: "media-video-play", title: "영상 재생" }, [icon("play", 16)]);
+      btn.addEventListener("click", (e) => { e.stopPropagation(); btn.remove(); current.playBtn = null; start(); });
+      zone.appendChild(btn);
+      current.playBtn = btn;
+    } else {
+      current.timer = setTimeout(start, Math.max(0, Number(settings.videoDelay) || 0) * 1000);
+    }
+  }
+
   function renderMediaTab(body) {
     body.classList.add("media-tab-body");
     const media = S.detailState.media || {};
@@ -3711,7 +3807,9 @@
     hero.appendChild(side);
     body.appendChild(hero);
 
-    body.appendChild(mediaTile(MEDIA_WIDE, media, "wide"));
+    const wide = mediaTile(MEDIA_WIDE, media, "wide");
+    body.appendChild(wide);
+    attachMediaVideo(wide, media);
 
     const rest = h("div", { class: "media-rest" });
     MEDIA_REST.forEach((slot) => rest.appendChild(mediaTile(slot, media, "small")));
