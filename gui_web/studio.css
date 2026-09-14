@@ -791,3 +791,85 @@ button.sb-badge { cursor: pointer; }
     linear-gradient(135deg, transparent 0 66%, var(--border) 66% 74%, transparent 74% 100%);
 }
 #resize-grip:hover { background-color: var(--card2); }
+
+/* ------------------------------------------------------------------ Settings
+   구성은 Stitch 브랜치의 Settings를 따르고 색만 토큰으로 바꿨다(settings.js). */
+.stg-overlay { padding: 28px; backdrop-filter: blur(3px); }
+.stg-panel {
+  width: min(920px, 92vw); height: min(680px, 88vh);
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: 0 24px 70px var(--shadow);
+}
+.stg-head {
+  height: 68px; flex: none; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px; border-bottom: 1px solid var(--border); background: var(--card2);
+}
+.stg-eyebrow { font-size: var(--fs-eyebrow); letter-spacing: .12em; color: var(--muted); }
+.stg-title { font-size: calc(18px * var(--font-scale)); font-weight: 650; }
+.stg-close { width: 32px; height: 32px; border-radius: 6px; font-size: 23px; color: var(--muted); }
+.stg-close:hover { background: var(--card3); color: var(--text); }
+.stg-body { display: grid; grid-template-columns: 225px minmax(0, 1fr); flex: 1; min-height: 0; }
+.stg-nav { padding: 12px 10px; background: var(--bg); border-right: 1px solid var(--border); overflow: auto; }
+.stg-nav-item {
+  width: 100%; text-align: left; padding: 9px 11px; margin-bottom: 3px;
+  border-radius: 7px; color: var(--muted); background: transparent;
+}
+.stg-nav-item:hover { background: var(--card2); color: var(--text); }
+.stg-nav-item.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text);
+  box-shadow: inset 2px 0 var(--accent);
+}
+.stg-nav-name { font-size: var(--fs-body); font-weight: 600; }
+.stg-nav-desc { font-size: var(--fs-caption); margin-top: 2px; opacity: .7; }
+.stg-main { overflow: auto; padding: 24px 28px; }
+.stg-content { max-width: 680px; }
+.stg-section-title { font-size: calc(15px * var(--font-scale)); font-weight: 650; }
+.stg-section-desc { font-size: var(--fs-caption); color: var(--muted); margin: 5px 0 18px; }
+.stg-subsection-title { font-size: calc(12px * var(--font-scale)); font-weight: 650; margin: 22px 0 7px; }
+.stg-row {
+  min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 28px;
+  padding: 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+}
+.stg-row.soon { opacity: .55; }
+.stg-label { min-width: 0; }
+.stg-name { font-size: var(--fs-body); display: flex; align-items: center; gap: 6px; }
+.stg-help { font-size: var(--fs-caption); color: var(--muted); margin-top: 3px; line-height: 1.45; }
+.stg-soon {
+  font-size: var(--fs-eyebrow); padding: 1px 6px; border-radius: var(--radius-pill);
+  background: var(--card3); color: var(--muted);
+}
+.stg-control {
+  min-width: 170px; height: 31px; padding: 0 9px; font-family: inherit;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--card2); color: var(--text); font-size: var(--fs-body);
+}
+.stg-control:disabled { cursor: not-allowed; }
+.stg-text { width: 300px; }
+.stg-range { display: flex; align-items: center; gap: 10px; min-width: 220px; }
+.stg-range input { flex: 1; accent-color: var(--accent); }
+.stg-range-value { width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+.stg-switch { position: relative; width: 36px; height: 20px; flex: none; }
+.stg-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.stg-slider {
+  position: absolute; inset: 0; border-radius: var(--radius-pill); cursor: pointer;
+  background: var(--card3); border: 1px solid var(--border);
+}
+.stg-slider::before {
+  content: ""; position: absolute; width: 14px; height: 14px; left: 2px; top: 2px;
+  border-radius: 50%; background: var(--muted); transition: transform .15s;
+}
+.stg-switch input:checked + .stg-slider { background: color-mix(in srgb, var(--accent) 35%, var(--card2)); border-color: var(--accent); }
+.stg-switch input:checked + .stg-slider::before { transform: translateX(16px); background: var(--accent); }
+.stg-switch input:disabled + .stg-slider { cursor: not-allowed; }
+.stg-info {
+  margin: 16px 0; padding: 10px 12px; border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--card2));
+  color: var(--muted); font-size: var(--fs-caption); line-height: 1.5;
+}
+.stg-danger {
+  padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--danger) 60%, var(--border));
+  border-radius: 6px; color: var(--danger); background: transparent; font-size: var(--fs-body);
+}
+.stg-danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }

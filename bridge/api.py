@@ -282,6 +282,33 @@ class Api:
             return err("Collection을 찾을 수 없습니다.")
         return ok(collection.ui_state or {})
 
+    #: 앱 전역 설정(Settings 화면)이 registry의 app_settings에 들어가는 키.
+    APP_SETTINGS_KEY = "ui.settings"
+
+    @guarded
+    def get_app_settings(self):
+        """Settings 화면의 값. Collection마다가 아니라 **앱 전체에 하나**다.
+
+        ui/stitch-v2-redesign은 이것을 브라우저 localStorage에 뒀다 - 그러면 백엔드
+        (복사 정책 같은 것)가 읽을 수 없고, WebView 저장소가 지워지면 함께 사라진다.
+        """
+        return ok(self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {})
+
+    @guarded
+    def save_app_settings(self, patch):
+        """바뀐 부분만 받아 합친다. 섹션(appearance, gamelist...) 단위로 한 단계
+        깊이까지 병합한다 - 한 섹션의 값 하나를 바꾸려고 나머지를 다 보낼 필요가 없다."""
+        if not isinstance(patch, dict):
+            return err("설정 형식이 올바르지 않습니다.")
+        merged = dict(self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {})
+        for section, value in patch.items():
+            if isinstance(value, dict) and isinstance(merged.get(section), dict):
+                merged[section] = {**merged[section], **value}
+            else:
+                merged[section] = value
+        self.registry.set_setting(self.APP_SETTINGS_KEY, merged)
+        return ok(merged)
+
     @guarded
     def set_favorite(self, collection_id, rom_uid, favorite=True):
         """즐겨찾기를 켜고 끈다. **Frontend의 파일에 그대로 기록한다.**

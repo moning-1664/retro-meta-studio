@@ -81,6 +81,8 @@
   const mockMatchLinks = {};
   const mockFavorites = {};
   const mockUiState = {};
+  // Settings 화면 값(앱 전역). 실제로는 registry의 app_settings에 들어간다.
+  const mockAppSettings = {};
 
   const mockCompare = { on: false, takenAt: 0 };
   const mockCompareRows = [
@@ -347,6 +349,14 @@
       mockFavorites[romUid] = !!on;
       return ok({ romUid, favorite: !!on });
     },
+    get_app_settings: () => ok(JSON.parse(JSON.stringify(mockAppSettings))),
+    save_app_settings: (patch) => {
+      Object.entries(patch || {}).forEach(([section, value]) => {
+        mockAppSettings[section] = (value && typeof value === "object" && !Array.isArray(value))
+          ? { ...(mockAppSettings[section] || {}), ...value } : value;
+      });
+      return ok(JSON.parse(JSON.stringify(mockAppSettings)));
+    },
     get_ui_state: (id) => ok({ ...mockUiState }),
     save_ui_state: (id, state) => {
       Object.assign(mockUiState, state || {});
@@ -408,6 +418,8 @@
                               q.search || null, q.order || "title", !!q.descending,
                               q.limit || 200, q.offset || 0, !!q.favoritesOnly),
     setFavorite: (id, romUid, on) => call("set_favorite", id, romUid, !!on),
+    getAppSettings: () => call("get_app_settings"),
+    saveAppSettings: (patch) => call("save_app_settings", patch),
     getUiState: (id) => call("get_ui_state", id),
     saveUiState: (id, state) => call("save_ui_state", id, state),
     getRow: (id, romUid) => call("get_row", id, romUid),

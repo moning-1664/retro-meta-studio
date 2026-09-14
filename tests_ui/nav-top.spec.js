@@ -41,8 +41,8 @@ test("Dashboard가 Navigator 최하단에 있다", async ({ page }) => {
   expect(dashboardBox.y + dashboardBox.height).toBeGreaterThan(navBox.y + navBox.height - 60);
 });
 
-test("Settings를 누르면 준비 중이라는 안내가 뜬다", async ({ page }) => {
+test("Settings를 누르면 Settings 화면이 열린다", async ({ page }) => {
+  // 자세한 동작은 settings.spec.js에 있다.
   await page.locator(".nav-top .icon-btn").click();
-  await expect(page.locator(".modal-title")).toHaveText("Settings");
-  await expect(page.locator(".modal-text")).toContainText("준비 중");
+  await expect(page.locator(".stg-title")).toHaveText("Settings");
 });

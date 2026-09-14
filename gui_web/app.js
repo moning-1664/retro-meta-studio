@@ -15,7 +15,10 @@
 (function () {
   "use strict";
 
-  const ROW_HEIGHT = 26;   // 이전 프로젝트의 줄 높이. 34는 한 화면에 너무 적게 들어간다
+  // 줄 높이. 이전 프로젝트는 26px였다(34는 한 화면에 너무 적게 들어간다). 이제는
+  // Settings > UI Density가 정한다 - CSS 토큰 --row-h를 applyAppearance()가 읽어 온다.
+  // 가상 스크롤 계산이 모두 이 값을 쓰므로 CSS의 줄 높이와 반드시 같아야 한다.
+  let ROW_HEIGHT = 26;
 
   // Gamelist 컬럼. 이전 프로젝트에서 실제로 쓰던 구성이다 - 제목이 아니라 **설명**이
   // 가장 넓다. 목록만 훑어도 어떤 게임인지 알 수 있어야 하기 때문이다.
@@ -105,7 +108,45 @@
   // ------------------------------------------------------------------
   // 상태
   // ------------------------------------------------------------------
+  // ------------------------------------------------------------------
+  // 앱 전역 설정 (Settings 화면, settings.js)
+  // ------------------------------------------------------------------
+  const DEFAULT_SETTINGS = {
+    appearance: { theme: "stitch", density: "compact", scale: 100, previewDefault: true },
+  };
+  const APPEARANCE_CACHE_KEY = "rms.appearance";
+
+  function mergeSettings(stored) {
+    const merged = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+    Object.entries(stored || {}).forEach(([section, value]) => {
+      merged[section] = (value && typeof value === "object" && !Array.isArray(value))
+        ? { ...(merged[section] || {}), ...value } : value;
+    });
+    return merged;
+  }
+
+  /** 테마·밀도·크기를 <html>에 반영한다. 줄 높이가 바뀌었으면 true.
+   *
+   * 백엔드 설정이 오기 전에도 마지막 값으로 먼저 칠하려고 localStorage에 사본을 둔다 -
+   * 사본은 첫 화면 깜빡임을 줄이는 용도일 뿐이고, 설정의 주인은 registry다. */
+  function applyAppearance(appearance) {
+    const a = { ...DEFAULT_SETTINGS.appearance, ...(appearance || {}) };
+    const html = document.documentElement;
+    html.dataset.theme = a.theme;
+    html.dataset.density = a.density;
+    html.style.setProperty("--font-scale", String(a.scale / 100));
+    try { localStorage.setItem(APPEARANCE_CACHE_KEY, JSON.stringify(a)); } catch (_) { /* 저장소를 못 쓰는 환경 */ }
+    const rowH = parseFloat(getComputedStyle(html).getPropertyValue("--row-h")) || 26;
+    if (rowH === ROW_HEIGHT) return false;
+    ROW_HEIGHT = rowH;
+    return true;
+  }
+
+  // 첫 화면부터 마지막 테마로 그린다 - 백엔드 응답을 기다리면 기본 테마가 잠깐 보인다.
+  try { applyAppearance(JSON.parse(localStorage.getItem(APPEARANCE_CACHE_KEY) || "null")); } catch (_) { /* 사본 없음 */ }
+
   const S = {
+    settings: mergeSettings(null),
     collections: [],
     tabs: [],            // 열려 있는 Collection id (최대 10, 스펙 §2.2)
     activeId: null,
@@ -193,7 +234,9 @@
     if (!r.ok || !r.data) return;
     if (r.data.colWidths) S.colWidths = { ...DEFAULT_COL_WIDTHS, ...r.data.colWidths };
     if (r.data.sort) { S.order = r.data.sort.key || S.order; S.descending = !!r.data.sort.desc; }
-    if (typeof r.data.previewOn === "boolean") S.previewOn = r.data.previewOn;
+    // 한 번도 끄고 켠 적 없는 Collection은 Settings의 "Preview by default"를 따른다.
+    S.previewOn = typeof r.data.previewOn === "boolean"
+      ? r.data.previewOn : S.settings.appearance.previewDefault !== false;
     // 보기 방식도 기억한다. 이것이 빠져 있어서 Card로 보던 사용자가 앱을 다시 열면
     // 언제나 List로 시작했다 - "재시작하면 Card가 한참 뒤에 나온다"의 정체는 사실
     // "Card 상태가 저장되지 않았다"였다.
@@ -222,11 +265,55 @@
   /** 종료 직전에 아직 안 나간 저장을 즉시 보낸다. 안 그러면 컬럼 폭을 조절한 직후
    * 창을 닫을 때 debounce 타이머가 실행되기 전에 앱이 종료되어 그 변경이 사라진다. */
   async function flushPendingUiState() {
+    if (Object.keys(pendingSettings).length) {
+      clearTimeout(settingsTimer);
+      const settings = pendingSettings;
+      pendingSettings = {};
+      await api.saveAppSettings(settings);
+    }
     if (!pendingUiStateFlush) return;
     clearTimeout(uiStateTimer);
     const send = pendingUiStateFlush;
     pendingUiStateFlush = null;
     await send();
+  }
+
+  async function loadAppSettings() {
+    const r = await api.getAppSettings();
+    S.settings = mergeSettings(r.ok ? r.data : null);
+    if (applyAppearance(S.settings.appearance)) refreshListGeometry();
+  }
+
+  let settingsTimer = null;
+  let pendingSettings = {};
+  /** Settings 값을 바꾼다. 화면에는 즉시 반영하고 저장은 모았다가 한 번에 보낸다 -
+   * Ctrl+휠이나 슬라이더는 초당 수십 번 바뀐다. */
+  function updateSettings(section, patch) {
+    S.settings[section] = { ...(S.settings[section] || {}), ...patch };
+    pendingSettings[section] = { ...(pendingSettings[section] || {}), ...patch };
+    if (section === "appearance" && applyAppearance(S.settings.appearance)) refreshListGeometry();
+    clearTimeout(settingsTimer);
+    settingsTimer = setTimeout(() => {
+      const send = pendingSettings;
+      pendingSettings = {};
+      api.saveAppSettings(send);
+    }, 300);
+  }
+
+  /** 줄 높이가 바뀌면 가상 스크롤의 전체 높이와 보이는 구간을 다시 계산한다. */
+  function refreshListGeometry() {
+    if (!S.activeId) return;
+    renderListHead();
+    renderListWindow();
+  }
+
+  function openSettings(sectionId) {
+    window.RMSSettings.open({
+      h, icon, section: sectionId,
+      get: () => S.settings,
+      update: updateSettings,
+      reset: () => updateSettings("appearance", { ...DEFAULT_SETTINGS.appearance }),
+    });
   }
 
   // ------------------------------------------------------------------
@@ -692,13 +779,8 @@
         h("div", { class: "nav-app-title-sub" }, ["Frontend Metadata Editor"]),
       ]),
     ]));
-    const settings = h("button", { class: "icon-btn", title: "Settings (준비 중)" }, [icon("settings", 14)]);
-    settings.addEventListener("click", () => {
-      showModal("Settings", h("div", { class: "modal-body" }, [
-        h("div", { class: "modal-text" },
-          ["아직 준비 중입니다. 어떤 설정이 필요한지 정해지면 채워질 예정입니다."]),
-      ]), [h("button", { class: "btn primary", onClick: closeModal }, ["닫기"])]);
-    });
+    const settings = h("button", { class: "icon-btn", title: "Settings" }, [icon("settings", 14)]);
+    settings.addEventListener("click", () => openSettings());
     top.appendChild(settings);
     return top;
   }
@@ -3358,6 +3440,19 @@
       requestAnimationFrame(() => { ticking = false; renderListWindow(); });
     });
     window.addEventListener("resize", () => renderListWindow());
+    // Ctrl + 휠 = UI 크기(사용자 결정). Shift + 휠은 가로 스크롤이라 쓰지 않는다 -
+    // ui/stitch-v2-redesign이 그 키를 쓰다가 목록 가로 스크롤과 부딪혔다. WebView의
+    // 기본 확대/축소는 막는다 - 둘이 겹치면 글자와 레이아웃이 따로 커진다.
+    window.addEventListener("wheel", (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const { min, max, step } = window.RMSSettings.SCALE;
+      const current = S.settings.appearance.scale;
+      const next = Math.max(min, Math.min(max, current + (e.deltaY < 0 ? step : -step)));
+      if (next === current) return;
+      updateSettings("appearance", { scale: next });
+      showToast(`UI 크기 ${next}%`);
+    }, { passive: false });
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") { if ($("modal-root").firstChild) closeModal(); else closeDetail(); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
@@ -3381,6 +3476,7 @@
 
   async function init() {
     bindEvents();
+    await loadAppSettings();
     await loadCollections();
     renderAll();
     // Collection이 하나도 없어도 선택을 강요하지 않는다 - 빈 메인 화면을 정상적으로

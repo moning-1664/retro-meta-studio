@@ -157,6 +157,31 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(self.api.plan_remove_entry(self.cid, key)["ok"])
         self.assertEqual(self.api.plan_state(self.cid)["data"]["failed"], 0)
 
+    # ------------------------------------------------------------------
+    # 앱 전역 설정 (Settings 화면)
+    # ------------------------------------------------------------------
+    def test_app_settings_start_empty(self):
+        self.assertEqual(self.api.get_app_settings()["data"], {})
+
+    def test_app_settings_merge_one_section_at_a_time(self):
+        """값 하나를 바꾸려고 섹션 전체를 다시 보낼 필요가 없어야 한다."""
+        self.api.save_app_settings({"appearance": {"theme": "sfc", "scale": 110}})
+        self.api.save_app_settings({"appearance": {"density": "normal"}})
+        appearance = self.api.get_app_settings()["data"]["appearance"]
+        self.assertEqual(appearance, {"theme": "sfc", "scale": 110, "density": "normal"})
+
+    def test_app_settings_survive_a_restart(self):
+        """브라우저 저장소가 아니라 registry에 있으므로 앱을 다시 열어도 남는다."""
+        self.api.save_app_settings({"appearance": {"theme": "nes"}})
+        self.api.close()
+        reopened = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.get_app_settings()["data"]["appearance"]["theme"], "nes")
+        self.api = reopened
+
+    def test_app_settings_reject_a_non_object(self):
+        self.assertFalse(self.api.save_app_settings("dark")["ok"])
+
     def test_unknown_capacity_is_reported_as_none(self):
         """용량을 못 읽는 저장소는 오류가 아니라 Unknown이다(스펙 §5)."""
         self.api.add_external_storage(self.cid, "Missing", r"Z:\\does-not-exist")
