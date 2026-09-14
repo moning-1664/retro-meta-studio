@@ -47,7 +47,10 @@ class TransferPolicyTests(unittest.TestCase):
 
     def test_default_policy_keeps_conflicts_for_the_user(self):
         result = self.paste_all()
-        self.assertEqual(result["policy"], {"includeRom": True, "includeMedia": True, "conflict": "ask"})
+        self.assertEqual(result["policy"], {
+            "includeRom": True, "includeMedia": True, "conflict": "ask",
+            "unmatchedRom": {"mode": "skip", "metadata": True, "media": True, "video": True},
+        })
         self.assertEqual(result["conflicts"], 1)
         self.assertEqual([e.filename for e in self.api._plan(self.d).conflict_entries()], ["FFX.iso"])
 
@@ -101,6 +104,126 @@ class TransferPolicyTests(unittest.TestCase):
         result = self.paste_all(conflict="explode", includeRom=0)
         self.assertEqual(result["policy"]["conflict"], "ask")
         self.assertIs(result["policy"]["includeRom"], False)
+
+
+class UnmatchedRomPolicyTests(unittest.TestCase):
+    """원본에 ROM 파일이 없는 항목("ROM 미매칭") - Archive처럼 메타데이터만 있는 게임.
+
+    기본은 아무것도 복사하지 않는다(사용자 결정). "복사"를 고르면 Metadata/Media/Video를
+    독립적으로 켜고 끌 수 있다.
+    """
+
+    def setUp(self):
+        self.dir = temp_root("rms_unmatched_")
+        self.src = build_custom_esde_tree(self.dir / "src", "ps2", [
+            {"filename": "Ghost.iso", "title": "Ghost Game", "genre": "Horror", "rom": False},
+        ], with_media=True)
+        write_file(self.src / "downloaded_media" / "ps2" / "covers" / "Ghost.png", b"c" * 40)
+        (self.src / "downloaded_media" / "ps2" / "videos").mkdir(parents=True, exist_ok=True)
+        write_file(self.src / "downloaded_media" / "ps2" / "videos" / "Ghost.mp4", b"v" * 80)
+
+        self.dst = self.dir / "dst"
+        (self.dst / "ps2").mkdir(parents=True)     # System은 있지만 이 게임은 전혀 없다
+        (self.dst / "gamelists" / "ps2").mkdir(parents=True)   # ES-DE로 인식되려면 필요하다
+        (self.dst / "downloaded_media").mkdir()
+
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.s = self.api.create_collection("S", "es-de", str(self.src))["data"]["id"]
+        self.d = self.api.create_collection("D", "es-de", str(self.dst))["data"]["id"]
+        scan(self.api, self.s)
+        scan(self.api, self.d)
+
+    def paste_ghost(self, **policy):
+        if policy:
+            self.api.save_app_settings({"transfer": policy})
+        row = self.api.list_rows(self.s, limit=10)["data"]["rows"][0]
+        self.assertFalse(row["present"], "이 테스트는 원본에 ROM이 없는 항목을 전제로 한다")
+        self.api.copy_selection(self.s, [row["romUid"]])
+        r = self.api.paste(self.d)
+        self.assertTrue(r["ok"], r.get("error"))
+        return r["data"]
+
+    def test_default_skips_unmatched_rom_entirely(self):
+        result = self.paste_ghost()
+        self.assertEqual(result["added"], 0)
+        self.assertEqual(len(self.api._plan(self.d).entries), 0)
+        self.assertEqual([s["filename"] for s in result["skipped"]], ["Ghost.iso"])
+        self.assertIn("ROM 미매칭", result["skipped"][0]["reason"])
+
+    def test_copy_mode_with_everything_on_adds_metadata_and_media_and_video(self):
+        result = self.paste_ghost(unmatchedRomMode="copy")
+        self.assertEqual(result["added"], 1)
+        entry = self.api._plan(self.d).entries[0]
+        self.assertEqual(entry.payload.get("name"), "Ghost Game")
+        types = {m["type"] for m in entry.source["media"]}
+        self.assertEqual(types, {"covers", "videos"})
+
+    def test_copy_mode_can_exclude_video_only(self):
+        result = self.paste_ghost(unmatchedRomMode="copy", unmatchedRomVideo=False)
+        self.assertEqual(result["added"], 1)
+        entry = self.api._plan(self.d).entries[0]
+        types = {m["type"] for m in entry.source["media"]}
+        self.assertEqual(types, {"covers"})
+
+    def test_copy_mode_can_exclude_media_only(self):
+        result = self.paste_ghost(unmatchedRomMode="copy", unmatchedRomMedia=False)
+        self.assertEqual(result["added"], 1)
+        entry = self.api._plan(self.d).entries[0]
+        types = {m["type"] for m in entry.source["media"]}
+        self.assertEqual(types, {"videos"})
+
+    def test_copy_mode_metadata_off_still_copies_media(self):
+        result = self.paste_ghost(unmatchedRomMode="copy", unmatchedRomMetadata=False)
+        self.assertEqual(result["added"], 1)
+        entry = self.api._plan(self.d).entries[0]
+        self.assertEqual(entry.payload, {})
+        types = {m["type"] for m in entry.source["media"]}
+        self.assertEqual(types, {"covers", "videos"})
+
+    def test_copy_mode_with_everything_off_skips_like_default(self):
+        result = self.paste_ghost(unmatchedRomMode="copy", unmatchedRomMetadata=False,
+                                  unmatchedRomMedia=False, unmatchedRomVideo=False)
+        self.assertEqual(result["added"], 0)
+        self.assertEqual([s["filename"] for s in result["skipped"]], ["Ghost.iso"])
+
+    def test_matched_rom_items_are_not_affected_by_unmatched_policy(self):
+        # 같은 붙여넣기에 ROM이 있는 항목도 섞여 있으면, 미매칭 정책은 미매칭 항목에만 적용된다.
+        write_file(self.src / "ps2" / "RealGame.iso", b"r" * 200)
+        write_file(self.src / "gamelists" / "ps2" / "gamelist.xml",
+                  (self.src / "gamelists" / "ps2" / "gamelist.xml").read_text(encoding="utf-8")
+                  .replace("</gameList>",
+                          "  <game><path>./RealGame.iso</path><name>Real Game</name></game>\n</gameList>"))
+        scan(self.api, self.s, force=True)
+        rows = self.api.list_rows(self.s, limit=10)["data"]["rows"]
+        self.api.copy_selection(self.s, [r["romUid"] for r in rows])
+        result = self.api.paste(self.d)["data"]
+        self.assertEqual(result["added"], 1)   # RealGame만 (Ghost는 기본 정책으로 건너뜀)
+        self.assertEqual([e.filename for e in self.api._plan(self.d).entries], ["RealGame.iso"])
+        self.assertEqual([s["filename"] for s in result["skipped"]], ["Ghost.iso"])
+
+    def test_apply_copy_mode_writes_media_without_a_rom_file(self):
+        self.paste_ghost(unmatchedRomMode="copy")
+        job = self.api.start_apply(self.d)
+        self.assertTrue(job["ok"], job.get("error"))
+        wait_idle(self.api)
+        result = self.api.get_job_progress(job["data"]["jobId"])["data"]
+        self.assertNotEqual(result.get("status"), "error", result)
+        self.assertFalse((self.dst / "ps2" / "Ghost.iso").exists())
+        self.assertTrue((self.dst / "downloaded_media" / "ps2" / "covers" / "Ghost.png").exists())
+        self.assertTrue((self.dst / "downloaded_media" / "ps2" / "videos" / "Ghost.mp4").exists())
+        gamelist = (self.dst / "gamelists" / "ps2" / "gamelist.xml").read_text(encoding="utf-8")
+        self.assertIn("Ghost Game", gamelist)
+
+    def test_settings_default_reads_as_nested_policy_shape(self):
+        policy = self.api._transfer_policy()
+        self.assertEqual(policy["unmatchedRom"],
+                         {"mode": "skip", "metadata": True, "media": True, "video": True})
+
+    def test_invalid_stored_mode_falls_back_to_skip(self):
+        self.api.save_app_settings({"transfer": {"unmatchedRomMode": "bogus"}})
+        policy = self.api._transfer_policy()
+        self.assertEqual(policy["unmatchedRom"]["mode"], "skip")
 
 
 class WindowBoundsTests(unittest.TestCase):

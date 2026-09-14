@@ -176,7 +176,8 @@
     navigation: { hideEmptySystems: false },
     gamelist: { order: [], hidden: [] },
     collections: { order: [] },
-    transfer: { includeRom: true, includeMedia: true, conflict: "ask" },
+    transfer: { includeRom: true, includeMedia: true, conflict: "ask",
+                unmatchedRomMode: "skip", unmatchedRomMetadata: true, unmatchedRomMedia: true, unmatchedRomVideo: true },
   };
   const APPEARANCE_CACHE_KEY = "rms.appearance";
 

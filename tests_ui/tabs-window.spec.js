@@ -133,3 +133,62 @@ test.describe("Settings - Collection → Collection 복사 정책", () => {
     }).toEqual({ includeMedia: false, conflict: "skip" });
   });
 });
+
+test.describe("Settings - ROM 미매칭 정책", () => {
+  const openTransfer = async (page) => {
+    await page.locator(".nav-top .icon-btn[title='Settings']").click();
+    await page.locator(".stg-nav-item[data-section='transfer']").click();
+    await expect(page.locator(".stg-unmatched")).toBeVisible();
+  };
+  const spySave = async (page) => {
+    await page.evaluate(() => {
+      window.__saved = [];
+      const original = window.api.saveAppSettings;
+      window.api.saveAppSettings = (patch) => { window.__saved.push(patch); return original(patch); };
+    });
+  };
+  const lastTransferPatch = async (page) => {
+    const all = await page.evaluate(() => window.__saved);
+    return Object.assign({}, ...all.map((p) => p.transfer || {}));
+  };
+
+  test("기본은 '복사하지 않음'이 선택되어 있고 체크박스는 비활성이다", async ({ page }) => {
+    await openTransfer(page);
+    await expect(page.locator(".stg-unmatched-skip")).toBeChecked();
+    await expect(page.locator(".stg-unmatched-copy")).not.toBeChecked();
+    for (const field of ["metadata", "media", "video"]) {
+      await expect(page.locator(`.stg-unmatched-check[data-field='unmatchedRom${field[0].toUpperCase()}${field.slice(1)}']`))
+        .toBeDisabled();
+    }
+  });
+
+  test("'복사'를 고르면 체크박스가 켜지고 저장된다", async ({ page }) => {
+    await spySave(page);
+    await openTransfer(page);
+    await page.locator(".stg-unmatched-copy").check();
+    await expect.poll(() => lastTransferPatch(page)).toEqual({ unmatchedRomMode: "copy" });
+    for (const field of ["unmatchedRomMetadata", "unmatchedRomMedia", "unmatchedRomVideo"]) {
+      await expect(page.locator(`.stg-unmatched-check[data-field='${field}']`)).toBeEnabled();
+    }
+  });
+
+  test("Metadata/Media/Video는 서로 독립적으로 끌 수 있다", async ({ page }) => {
+    await spySave(page);
+    await openTransfer(page);
+    await page.locator(".stg-unmatched-copy").check();
+    await page.locator(".stg-unmatched-check[data-field='unmatchedRomVideo']").uncheck();
+    // 두 조작이 저장 debounce(300ms) 안에서 한 번에 저장될 수도, 따로 저장될 수도 있다 -
+    // 최종적으로 합쳐진 값만 확인한다(그 사이의 배치 나뉨은 구현 세부사항이다).
+    await expect.poll(async () => (await lastTransferPatch(page)).unmatchedRomVideo).toBe(false);
+    expect((await lastTransferPatch(page)).unmatchedRomMode).toBe("copy");
+    await expect(page.locator(".stg-unmatched-check[data-field='unmatchedRomMetadata']")).toBeChecked();
+    await expect(page.locator(".stg-unmatched-check[data-field='unmatchedRomMedia']")).toBeChecked();
+  });
+
+  test("다시 '복사하지 않음'을 고르면 체크박스가 다시 비활성화된다", async ({ page }) => {
+    await openTransfer(page);
+    await page.locator(".stg-unmatched-copy").check();
+    await page.locator(".stg-unmatched-skip").check();
+    await expect(page.locator(".stg-unmatched-check[data-field='unmatchedRomMetadata']")).toBeDisabled();
+  });
+});

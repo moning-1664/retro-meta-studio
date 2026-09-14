@@ -108,6 +108,55 @@
     const soonSelect = (options) => select(options[0][0], options, null, true);
     const soonToggle = (checked) => toggle(checked, null, true);
 
+    /** ROM 미매칭 정책 - 원본에 ROM 파일이 없는 항목(Archive처럼 메타데이터만 있는 항목)을
+     * 붙여넣을 때 무엇을 할지. 라디오 두 개 + Metadata/Media/Video 체크박스 세 개가
+     * 하나의 값(transfer.unmatchedRom*)을 공유한다 - bridge/api.py의 _transfer_policy와
+     * 같은 기본값이다. "복사"를 고르지 않으면 체크박스는 흐리게 비활성화한다.
+     */
+    function unmatchedRomPolicy(t) {
+      const wrap = h("div", { class: "stg-unmatched", "data-key": "transfer.unmatchedRom" });
+      const radioName = "stg-unmatched-mode";
+      const mode = t.unmatchedRomMode === "copy" ? "copy" : "skip";
+
+      // 라디오를 바꿔도 ctx.update()가 패널을 다시 그리지 않는다(값의 주인은 app.js고, 이
+      // 모듈은 그리기만 한다) - 그래서 체크박스 활성/비활성은 여기서 직접 켜고 끈다.
+      const checkInputs = [];
+      const checks = h("div", { class: "stg-unmatched-checks" });
+      const checkRow = (field, label) => {
+        const input = h("input", {
+          type: "checkbox", class: "stg-unmatched-check", "data-field": field,
+          disabled: mode !== "copy",
+        });
+        input.checked = t[field] !== false;
+        input.addEventListener("change", () => ctx.update("transfer", { [field]: input.checked }));
+        checkInputs.push(input);
+        return h("label", { class: "stg-check-row" }, [input, h("span", {}, [label])]);
+      };
+      checks.appendChild(checkRow("unmatchedRomMetadata", "Metadata"));
+      checks.appendChild(checkRow("unmatchedRomMedia", "Media"));
+      checks.appendChild(checkRow("unmatchedRomVideo", "Video"));
+
+      const setMode = (next) => {
+        ctx.update("transfer", { unmatchedRomMode: next });
+        checkInputs.forEach((input) => { input.disabled = next !== "copy"; });
+      };
+      const skipRadio = h("input", { type: "radio", name: radioName, class: "stg-unmatched-radio stg-unmatched-skip" });
+      skipRadio.checked = mode !== "copy";
+      skipRadio.addEventListener("change", () => { if (skipRadio.checked) setMode("skip"); });
+      const copyRadio = h("input", { type: "radio", name: radioName, class: "stg-unmatched-radio stg-unmatched-copy" });
+      copyRadio.checked = mode === "copy";
+      copyRadio.addEventListener("change", () => { if (copyRadio.checked) setMode("copy"); });
+
+      wrap.appendChild(h("label", { class: "stg-unmatched-option" },
+        [skipRadio, h("span", {}, ["매칭되는 ROM이 없으면 Metadata/Media를 복사하지 않음"])]));
+      wrap.appendChild(h("label", { class: "stg-unmatched-option" },
+        [copyRadio, h("span", {}, ["매칭되는 ROM이 없어도 다음을 복사"])]));
+      wrap.appendChild(checks);
+      wrap.appendChild(h("div", { class: "stg-help" },
+        ["선택한 항목의 원본에 ROM 파일이 없을 때(예: Archive 항목) 무엇을 붙여넣을지 정합니다."]));
+      return wrap;
+    }
+
     // ---------------------------------------------------------------- 섹션
     function content(key) {
       const c = h("div", { class: "stg-content", "data-section": key });
@@ -138,7 +187,14 @@
       } else if (key === "transfer") {
         add(...section("Import / Export", "파일과 Metadata/Media를 옮길 때의 기본값입니다."));
         // 붙여넣기(bridge paste)가 이 값을 읽는다. 기본값은 예전 동작 그대로다.
-        const t = { includeRom: true, includeMedia: true, conflict: "ask", ...(s.transfer || {}) };
+        // unmatchedRom*은 registry에 평평하게 저장한다(bridge/api.py TRANSFER_DEFAULTS 참고) -
+        // "transfer" 섹션 patch는 한 단계 깊이까지만 병합되므로, 중첩 객체로 두면 필드 하나만
+        // 바꿔도 나머지가 지워진다.
+        const t = {
+          includeRom: true, includeMedia: true, conflict: "ask",
+          unmatchedRomMode: "skip", unmatchedRomMetadata: true, unmatchedRomMedia: true, unmatchedRomVideo: true,
+          ...(s.transfer || {}),
+        };
         add(h("div", { class: "stg-subsection-title" }, ["Collection → Collection 복사 (Ctrl+C / Ctrl+V)"]));
         add(row("transfer.includeRom", "ROM 파일 복사",
           toggle(t.includeRom, (v) => ctx.update("transfer", { includeRom: v })),
@@ -150,6 +206,8 @@
           select(t.conflict, [["ask", "Plan에서 직접 고르기"], ["skip", "기존 파일 두기"], ["overwrite", "덮어쓰기"]],
             (v) => ctx.update("transfer", { conflict: v })),
           "이번 붙여넣기로 생긴 충돌에만 적용합니다. 메타데이터는 어느 경우에도 붙여넣습니다."));
+        add(h("div", { class: "stg-subsection-title" }, ["ROM 미매칭일 때"]));
+        add(unmatchedRomPolicy(t));
         add(row("transfer.backup", "Backup before overwrite", soonToggle(false), null, true));
       } else if (key === "emulator") {
         add(...section("Emulator", "외부 에뮬레이터 실행에 필요한 설정입니다."));

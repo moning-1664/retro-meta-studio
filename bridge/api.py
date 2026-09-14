@@ -24,7 +24,7 @@ from pathlib import Path
 from adapters import get_adapter
 from app import paths
 from app.model.collection import STORAGE_INTERNAL
-from app.model.constants import MEDIA_TYPES
+from app.model.constants import MEDIA_TYPES, VIDEO_MEDIA_TYPE
 from app import dashboard
 from app import system_ops
 from app.model.plan import OP_STORAGE_CHANGE, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan
@@ -301,7 +301,16 @@ class Api:
     APP_SETTINGS_KEY = "ui.settings"
     #: Collection → Collection 복사(붙여넣기) 정책의 기본값. Settings > Import / Export가 바꾼다.
     #: conflict가 "ask"면 지금처럼 Plan에 충돌로 남겨 사용자가 고른다.
-    TRANSFER_DEFAULTS = {"includeRom": True, "includeMedia": True, "conflict": "ask"}
+    #: unmatchedRom*은 **원본에 ROM 파일이 없는 항목**(Archive처럼 메타데이터만 있는 항목)의
+    #: 처리 방식이다(사용자 결정) - 기본은 아무것도 복사하지 않고, 켜면 Metadata/Media/Video를
+    #: 독립적으로 고른다. registry에는 평평하게 저장한다 - "transfer" 섹션 patch는 한 단계
+    #: 깊이까지만 병합되므로(save_app_settings), 중첩 객체로 두면 필드 하나만 바꿔도 나머지가
+    #: 지워진다.
+    TRANSFER_DEFAULTS = {
+        "includeRom": True, "includeMedia": True, "conflict": "ask",
+        "unmatchedRomMode": "skip",
+        "unmatchedRomMetadata": True, "unmatchedRomMedia": True, "unmatchedRomVideo": True,
+    }
 
     @guarded
     def get_app_settings(self):
@@ -776,6 +785,9 @@ class Api:
         """붙여넣기. **Settings의 복사 정책(transfer)을 따른다.**
 
         - ROM/Media를 빼기로 했으면 Plan에 올리기 전에 그 부분을 뺀다(메타데이터는 늘 간다).
+        - **원본에 ROM 파일이 없는 항목**(unmatched - Archive처럼 메타데이터만 있는 항목)은
+          `unmatchedRom` 정책을 따로 적용한다. 기본은 아무것도 복사하지 않고 건너뛴다.
+          "복사"를 골랐으면 Metadata/Media/Video를 독립적으로 골라 그것만 담는다.
         - 충돌 기본 처리가 skip/overwrite면 **이번 붙여넣기로 생긴 충돌만** 그렇게 정한다.
           원래 Plan에 있던 충돌은 사용자가 고를 몫이라 건드리지 않는다.
         """
@@ -784,29 +796,62 @@ class Api:
         if not items:
             return err("붙여넣을 항목이 없습니다.")
         policy = self._transfer_policy()
-        if not policy["includeRom"] or not policy["includeMedia"]:
-            items = [{**item,
-                      "rom": item.get("rom") if policy["includeRom"] else None,
-                      "media": item.get("media") if policy["includeMedia"] else []}
-                     for item in items]
+        unmatched = policy["unmatchedRom"]
+
+        prepared, extra_skipped = [], []
+        for item in items:
+            if item.get("rom"):
+                prepared.append({**item,
+                                 "rom": item["rom"] if policy["includeRom"] else None,
+                                 "media": item.get("media") if policy["includeMedia"] else []})
+                continue
+            # ROM 미매칭 - 이 항목의 원본에는 애초에 ROM 파일이 없었다(unmatchedRom, 사용자 결정).
+            if unmatched["mode"] != "copy":
+                extra_skipped.append({"filename": item["filename"], "reason": "ROM 미매칭 - 정책에 따라 건너뜀"})
+                continue
+            media = []
+            for m in item.get("media") or []:
+                wanted = unmatched["video"] if m.get("type") == VIDEO_MEDIA_TYPE else unmatched["media"]
+                if wanted:
+                    media.append(m)
+            fields = item.get("fields") if unmatched["metadata"] else {}
+            if not unmatched["metadata"] and not media:
+                extra_skipped.append({"filename": item["filename"], "reason": "ROM 미매칭 - 정책에 따라 건너뜀"})
+                continue
+            prepared.append({**item, "fields": fields, "media": media})
+
+        if not prepared:
+            return ok({"added": 0, "skipped": extra_skipped, "conflicts": 0,
+                      "source": descriptor.get("sourceName"), "policy": policy})
+
         plan = self._plan(collection_id)
-        result = builder.plan_add(plan, collection, provider, items)
+        result = builder.plan_add(plan, collection, provider, prepared)
         keys = result.pop("conflictKeys", [])
         if policy["conflict"] in (RESOLVE_SKIP, RESOLVE_OVERWRITE):
             for key in keys:
                 builder.resolve_conflict(plan, collection, provider, key, policy["conflict"])
             result["autoResolved"] = len(keys)
             result["conflicts"] = 0
+        result["skipped"] = [*extra_skipped, *result.get("skipped", [])]
         return ok({**result, "source": descriptor.get("sourceName"), "policy": policy})
 
     def _transfer_policy(self):
         stored = (self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {}).get("transfer") or {}
-        policy = {**self.TRANSFER_DEFAULTS, **{k: v for k, v in stored.items() if k in self.TRANSFER_DEFAULTS}}
-        if policy["conflict"] not in ("ask", RESOLVE_SKIP, RESOLVE_OVERWRITE):
-            policy["conflict"] = "ask"
-        policy["includeRom"] = bool(policy["includeRom"])
-        policy["includeMedia"] = bool(policy["includeMedia"])
-        return policy
+        merged = {**self.TRANSFER_DEFAULTS, **{k: v for k, v in stored.items() if k in self.TRANSFER_DEFAULTS}}
+        conflict = merged["conflict"] if merged["conflict"] in ("ask", RESOLVE_SKIP, RESOLVE_OVERWRITE) else "ask"
+        mode = merged["unmatchedRomMode"] if merged["unmatchedRomMode"] in ("skip", "copy") else "skip"
+        return {
+            "includeRom": bool(merged["includeRom"]),
+            "includeMedia": bool(merged["includeMedia"]),
+            "conflict": conflict,
+            # 화면과 테스트가 다루기 쉽도록 중첩된 모양으로 돌려준다. 저장은 평평하게 한다(위 참고).
+            "unmatchedRom": {
+                "mode": mode,
+                "metadata": bool(merged["unmatchedRomMetadata"]),
+                "media": bool(merged["unmatchedRomMedia"]),
+                "video": bool(merged["unmatchedRomVideo"]),
+            },
+        }
 
     @guarded
     def validate_plan(self, collection_id):

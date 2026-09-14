@@ -462,6 +462,20 @@ body { font-size: var(--fs-body); }
 .stg-column-move .icon-btn:disabled { opacity: .3; cursor: default; }
 .stg-column-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; }
 
+/* Settings > Import/Export > ROM 미매칭 정책 - 라디오 두 개 + 체크박스 세 개가 한 값을 공유한다. */
+.stg-unmatched { padding: 4px 0 14px; }
+.stg-unmatched-option {
+  display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; font-size: var(--fs-body);
+}
+.stg-unmatched-radio { accent-color: var(--accent); }
+.stg-unmatched-checks {
+  display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 4px 0 8px 24px;
+}
+.stg-check-row { display: flex; align-items: center; gap: 6px; font-size: var(--fs-body); cursor: pointer; }
+.stg-unmatched-check { accent-color: var(--accent); }
+.stg-unmatched-check:disabled { cursor: not-allowed; }
+.stg-unmatched-checks:has(.stg-unmatched-check:disabled) { opacity: .5; }
+
 #list-scroll { flex: 1; overflow: auto; position: relative; background: var(--list-bg); }
 /* 폭은 app.js가 컬럼 합으로 정한다 - 가로로 넘칠 것이 있어야 가로 스크롤이 생긴다. */
 #list-spacer { width: 1px; }

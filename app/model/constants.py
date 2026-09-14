@@ -19,6 +19,8 @@ from __future__ import annotations
 MEDIA_TYPES = ("3dboxes", "covers", "marquees", "miximages", "screenshots", "videos", "wheel")
 #: Detail 패널 Media 탭에 기본 노출하는 타입(비디오 제외)
 MEDIA_TYPES_UI = ("covers", "miximages", "screenshots", "wheel")
+#: "Media"와 "Video"를 별도 정책으로 다루는 곳(ROM 미매칭 복사 정책 등)이 쓰는 구분.
+VIDEO_MEDIA_TYPE = "videos"
 DEFAULT_MEDIA_TAB = "covers"
 
 FRONTEND_LABELS = {
