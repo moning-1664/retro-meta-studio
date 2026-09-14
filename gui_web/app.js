@@ -1236,6 +1236,11 @@
     items.push({ label: "gamelist 만들기", icon: "fileWarning",
       title: "이 System에 gamelist가 없으면 ROM 파일명만 담아 만듭니다.",
       onSelect: () => openMetadataBootstrap(S.activeId, [sys.system]) });
+    items.push("separator", {
+      label: "ROM 없는 항목 정리", icon: "eraser",
+      title: "Metadata/Media는 있는데 ROM 파일이 없는 항목을 찾아 지웁니다.",
+      onSelect: () => confirmOrphanCleanup(sys),
+    });
     // 폴더 경로는 백엔드(Adapter layout)가 정한다 - Storage 배치와 System별 경로 지정을 따른다.
     items.push("separator", { section: "폴더 열기" });
     [["rom", "ROM 폴더"], ["metadata", "Metadata 폴더"], ["media", "Media 폴더"]].forEach(([kind, label]) =>
@@ -1254,6 +1259,56 @@
   async function openSystemFolder(system, kind) {
     const r = await api.openSystemFolder(S.activeId, system, kind);
     if (!r.ok) showToast(r.error, "error");
+  }
+
+  /** ROM 없는 항목 정리(System 우클릭, 사용자 결정) - Metadata/Media는 있는데 ROM
+   * 파일이 없는 항목을 찾아 보여주고, 확인하면 지운다.
+   *
+   * **삭제 자체는 새로 만들지 않는다** - 기존 Plan 삭제(planDelete → Apply)를 그대로
+   * 쓴다. `_apply_delete`가 이미 ROM 없는 행은 ROM 삭제를 건너뛰고 media와 gamelist
+   * 항목만 지우도록 되어 있다(이미 검증된 경로) - 여기서는 대상을 찾아 보여주고
+   * 확인받는 것까지만 한다. ROM 파일은 원래 없으므로 "전체 삭제"만큼 위험하지
+   * 않다 - 확인 한 번(빈 System 삭제와 같은 무게)이면 된다. */
+  async function confirmOrphanCleanup(sys) {
+    const collectionId = S.activeId;
+    const preview = await api.orphanMetadataPreview(collectionId, sys.system);
+    if (!preview.ok) { showToast(preview.error, "error"); return; }
+    const items = preview.data.items;
+    const name = sys.system.toUpperCase();
+    if (!items.length) { showToast(`${name}에 정리할 항목이 없습니다.`); return; }
+
+    const list = h("div", { class: "sysdel-list" });
+    const LIMIT = 50;
+    items.slice(0, LIMIT).forEach((item) => list.appendChild(h("div", { class: "sysdel-target" }, [
+      h("span", { class: "sysdel-path" }, [item.title || item.filename]),
+      h("span", { class: "sysdel-count" }, [item.filename]),
+    ])));
+    if (items.length > LIMIT) {
+      list.appendChild(h("div", { class: "sysdel-file" }, [`… 외 ${formatCount(items.length - LIMIT)}개`]));
+    }
+
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "modal-text" }, [
+        `${name}에서 ROM 파일이 없는 항목 ${formatCount(items.length)}개를 찾았습니다. `
+        + "Metadata와 Media를 지우고 목록에서 뺍니다. 되돌릴 수 없습니다.",
+      ]),
+      list,
+    ]);
+    showModal(`${name} - ROM 없는 항목 정리`, body, [
+      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+      h("button", { class: "btn danger", onClick: async () => {
+        closeModal();
+        const uids = items.map((item) => item.romUid);
+        const r = await api.planDelete(collectionId, uids);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        await refreshPlan();
+        // Auto Plan이 켜져 있으면(기본값) 아직 파일이 지워지지 않는다 - deleteSelection과
+        // 같은 규칙이다. 꺼져 있으면 applyPlan()이 용량 확인 모달을 띄운 뒤 실제로 적용하고
+        // 목록도 그 안에서 새로고침한다.
+        if (S.autoPlan) showToast(`${formatCount(uids.length)}개를 삭제 예정으로 표시했습니다.`);
+        else await applyPlan();
+      } }, ["삭제"]),
+    ]);
   }
 
   /** System 전체 삭제. **두 번 묻는다**(사용자 결정 - 실수로 지우는 것을 막는다).

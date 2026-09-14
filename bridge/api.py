@@ -485,6 +485,19 @@ class Api:
         _reveal_path(path)
         return ok({"path": path})
 
+    @guarded
+    def orphan_metadata_preview(self, collection_id, system):
+        """이 System에서 Metadata/Media는 있는데 **ROM 파일이 없는** 항목들(System
+        우클릭 > ROM 없는 항목 정리). 목록에서 파일명이 흐리게 보이는 것과 같은 기준
+        (row.present)이다.
+        """
+        collection, cache, _provider, _adapter = self._system_context(collection_id)
+        if not any(entry.system == system for entry in collection.systems):
+            return err(f"System을 찾을 수 없습니다: {system}")
+        rows = cache.query_rows(systems=[system], present=False, order="title")
+        return ok({"system": system, "items": [
+            {"romUid": r["rom_uid"], "filename": r["filename"], "title": r["title"]} for r in rows]})
+
     def _next_storage_id(self, collection_id):
         existing = {s.storage_id for s in self.registry.get_collection(collection_id).storages}
         index = 1

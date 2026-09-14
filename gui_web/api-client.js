@@ -290,6 +290,11 @@
     },
     window_set_bounds: () => ok(true),
     open_system_folder: (id, system, kind) => ok({ path: `D:\\ES-DE\\${kind}\\${system}` }),
+    orphan_metadata_preview: (id, system) => ok({
+      system,
+      items: mockRows.filter((r) => r.system === system && r.present === false)
+        .map((r) => ({ romUid: r.romUid, filename: r.file, title: r.title })),
+    }),
     move_system: (id, system, storageId) => {
       for (const s of mockDetail.storages) s.systems = s.systems.filter((x) => x.system !== system);
       const target = mockDetail.storages.find((s) => s.id === storageId);
@@ -479,6 +484,7 @@
     systemRemovalPreview: (id, system, force) => call("system_removal_preview", id, system, !!force),
     removeSystem: (id, system, force) => call("remove_system", id, system, !!force),
     openSystemFolder: (id, system, kind) => call("open_system_folder", id, system, kind),
+    orphanMetadataPreview: (id, system) => call("orphan_metadata_preview", id, system),
 
     listRows: (id, q) => call("list_rows", id, q.systems || null, q.storageIds || null,
                               q.search || null, q.order || "title", !!q.descending,

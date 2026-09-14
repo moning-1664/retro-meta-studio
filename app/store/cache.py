@@ -293,13 +293,16 @@ class CacheStore:
     }
 
     def query_rows(self, *, systems=None, storage_ids=None, search=None, order="title",
-                   descending=False, limit=None, offset=0, favorites_only=False) -> list[dict]:
+                   descending=False, limit=None, offset=0, favorites_only=False, present=None) -> list[dict]:
         """목록 한 페이지. **정렬·필터·검색은 전부 SQL이 한다.**
 
         Description/Region/Rating/Genre는 `metadata.fields_json` 안에 있어 JOIN해서
         함께 꺼낸다 - 행마다 따로 물어보면 1,500개 목록에서 1,500번을 더 묻게 된다.
+
+        `present`(True/False)를 주면 ROM 파일 실존 여부로도 거른다 - "ROM 없는 항목
+        정리"(System 우클릭)처럼 Metadata/Media만 있고 ROM이 없는 행만 골라야 할 때 쓴다.
         """
-        where, params = self._build_where(systems, storage_ids, search, favorites_only, "r.")
+        where, params = self._build_where(systems, storage_ids, search, favorites_only, "r.", present)
         # sha256을 함께 싣는다 - Match 뱃지가 목록 경로에서 계산되는데, 해시가 빠지면
         # 뱃지와 Match 다이얼로그가 서로 다른 근거로 판정하게 된다.
         sql = (f"SELECT r.rom_uid,r.system,r.filename,r.rel_path,r.storage_id,r.size,"
@@ -375,7 +378,7 @@ class CacheStore:
         return int(row["n"])
 
     @staticmethod
-    def _build_where(systems, storage_ids, search, favorites_only=False, prefix=""):
+    def _build_where(systems, storage_ids, search, favorites_only=False, prefix="", present=None):
         """`prefix`는 JOIN이 있는 쿼리에서 컬럼이 어느 표의 것인지 밝히기 위한 것이다."""
         clauses, params = [], []
         if systems:
@@ -390,6 +393,9 @@ class CacheStore:
             params.extend([needle, needle])
         if favorites_only:
             clauses.append(f"{prefix}favorite = 1")
+        if present is not None:
+            clauses.append(f"{prefix}present = ?")
+            params.append(1 if present else 0)
         return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
 
     def all_entries(self, systems=None) -> list[dict]:
