@@ -138,15 +138,23 @@ body { font-size: var(--fs-body); }
    열어 상단 줄이 세 줄로 커지면 두 구분선이 어긋났다. 첫 글자 줄도 .cheader와
    같은 자리에서 시작하도록 위쪽에 붙인다. */
 .nav-top {
-  display: flex; align-items: flex-start; gap: 8px; flex-shrink: 0;
+  /* 세로 가운데 정렬(실사용 피드백 §8) - 예전엔 위쪽에 붙여서 .cheader와 첫 글자
+     줄을 맞췄는데, 그 목적은 .nav-top 상자 자체의 y 좌표가 .cheader와 같은가로도
+     충분히 지켜진다(tests_ui/nav-top.spec.js) - 안의 내용까지 위에 붙을 필요는
+     없었다. Settings 아이콘만 예외로 아래쪽에 고정한다(아래 참고). */
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
   height: var(--header-row-h); box-sizing: border-box;
-  margin: 0 -7px; padding: 12px 10px 0;
+  margin: 0 -7px; padding: 0 10px;
   border-bottom: 1px solid var(--border);
 }
+/* Settings만 오른쪽 아래 고정(실사용 피드백) - 다른 조용한 도구 버튼(HERO의
+   메타데이터 보내기/가져오기 등)과 같은 줄에 서 보이도록. */
+.nav-top .icon-btn { align-self: flex-end; padding: 3px; }
 .nav-app-title { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; color: var(--app-title-fg); }
 .nav-app-title-text { min-width: 0; }
 .nav-app-title-name {
-  font-size: calc(11.5px * var(--font-scale)); font-weight: 700; letter-spacing: -.1px; color: var(--text);
+  /* 11.5px -> 13px(실사용 피드백 - "크기도 약간 키우자"). */
+  font-size: calc(13px * var(--font-scale)); font-weight: 700; letter-spacing: -.1px; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .nav-app-title-sub {

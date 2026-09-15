@@ -78,6 +78,19 @@
     remote: '<rect x="9" y="2" width="6" height="20" rx="3"/><circle cx="12" cy="7" r="1"/><line x1="10" y1="11" x2="14" y2="11"/><line x1="10" y1="14" x2="14" y2="14"/>',
     // 각진 패드(십자키+버튼 2개, 손잡이 없는 평평한 형태) - NES/Famicom/마스터시스템류
     padRect: '<rect x="2" y="8" width="20" height="9" rx="2"/><line x1="6" y1="10.5" x2="6" y2="14.5"/><line x1="4" y1="12.5" x2="8" y2="12.5"/><circle cx="15" cy="12.5" r="1.1"/><circle cx="18.5" cy="12.5" r="1.1"/>',
+    // Archive 탭 · App Title의 대표 아이콘(실사용 피드백 - "너무 DB 스러운
+    // 아이콘이다. 인베이더 스타일로"). 8비트 스페이스 인베이더 픽셀 실루엣 -
+    // 획이 아니라 칠한 사각형이라 fill/stroke를 로컬로 뒤집는다(play와 같은 방식).
+    invader: '<g fill="currentColor" stroke="none">'
+      + '<rect x="5" y="4" width="2" height="2"/><rect x="17" y="4" width="2" height="2"/>'
+      + '<rect x="7" y="6" width="2" height="2"/><rect x="15" y="6" width="2" height="2"/>'
+      + '<rect x="5" y="8" width="14" height="2"/>'
+      + '<rect x="3" y="10" width="4" height="2"/><rect x="9" y="10" width="6" height="2"/><rect x="17" y="10" width="4" height="2"/>'
+      + '<rect x="1" y="12" width="22" height="2"/>'
+      + '<rect x="1" y="14" width="2" height="2"/><rect x="5" y="14" width="14" height="2"/><rect x="21" y="14" width="2" height="2"/>'
+      + '<rect x="1" y="16" width="2" height="2"/><rect x="5" y="16" width="2" height="2"/><rect x="17" y="16" width="2" height="2"/><rect x="21" y="16" width="2" height="2"/>'
+      + '<rect x="7" y="18" width="4" height="2"/><rect x="13" y="18" width="4" height="2"/>'
+      + '</g>',
   };
 
   function svg(name, size) {

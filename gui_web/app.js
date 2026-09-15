@@ -866,7 +866,7 @@
     }
     const archiveTab = h("div", { class: "ctab archive" + (isArchive() ? " active" : ""),
       title: "여러 Collection에서 수집한 Metadata 보관소" }, [
-      icon("database", IC.md), h("span", { class: "ctab-name" }, ["Archive"]),
+      icon("invader", IC.md), h("span", { class: "ctab-name" }, ["Archive"]),
     ]);
     archiveTab.addEventListener("click", () => selectTab(ARCHIVE_ID));
     bar.appendChild(archiveTab);
@@ -1377,7 +1377,7 @@
   function navTop() {
     const top = h("div", { class: "nav-top" });
     top.appendChild(h("div", { class: "nav-app-title" }, [
-      icon("database", IC.lg),
+      icon("invader", IC.lg),
       h("div", { class: "nav-app-title-text" }, [
         h("div", { class: "nav-app-title-name" }, ["RetroMeta Studio"]),
         h("div", { class: "nav-app-title-sub" }, ["Frontend Metadata Editor"]),
@@ -5322,7 +5322,7 @@
     const scopeLabel = send ? archiveScopeLabel(archiveScope())
       : (scope.kind === "system" ? `${String(scope.id).toUpperCase()} 전체` : "Collection 전체");
     const items = [{
-      label: "Archive", icon: "database",
+      label: "Archive", icon: "invader",
       title: send ? `${scopeLabel}을 Archive로 보냅니다` : "Archive에서 이 Collection으로 가져옵니다",
       onSelect: send ? ingestToArchive : importFromArchive,
     }];
