@@ -2676,11 +2676,17 @@
     // 구분선으로 보여준다. Auto Plan 토글은 뺐다(실사용 시나리오가 확인될 때까지
     // 화면에서 감춘다, PENDING_DECISIONS.md) - 내부 값은 기본 ON을 유지한다.
     const planGroup = h("div", { class: "seg plan-actions" });
+    // **Apply는 실제로 처리될 수(runnable)를 말한다.** total에는 해결 안 된 충돌도
+    // 들어 있는데 Apply는 그것을 건너뛰므로, total을 보여주면 누른 뒤에야 "12개
+    // 중 9개만 됐다"를 알게 된다. Cancel은 충돌뿐인 Plan도 버릴 수 있어야 하니
+    // 그쪽은 total을 그대로 쓴다.
+    const runnable = plan ? (plan.runnable != null ? plan.runnable : plan.total) : 0;
     const apply = h("button", {
-      class: "seg-btn" + (plan && plan.total ? " on" : ""), disabled: !(plan && plan.total),
-      title: plan && plan.total ? "Plan을 실제 파일에 적용합니다" : "적용할 Plan이 없습니다",
-    }, [plan && plan.total ? `Apply (${formatCount(plan.total)})` : "Apply"]);
-    if (plan && plan.total) apply.addEventListener("click", applyPlan);
+      class: "seg-btn" + (runnable ? " on" : ""), disabled: !runnable,
+      title: runnable ? "Plan을 실제 파일에 적용합니다"
+        : (plan && plan.total ? "충돌을 먼저 해결해야 적용할 수 있습니다" : "적용할 Plan이 없습니다"),
+    }, [runnable ? `Apply (${formatCount(runnable)})` : "Apply"]);
+    if (runnable) apply.addEventListener("click", applyPlan);
     planGroup.appendChild(apply);
 
     const cancel = h("button", {
@@ -2897,8 +2903,10 @@
     if (!S.activeId) { renderListWindow(); return; }
     const token = ++S.queryToken;
     const r = await fetchRows({ ...currentQuery(), limit: PAGE_SIZE, offset: 0 });
-    if (!r.ok) { showToast(r.error, "error"); return; }
+    // 버릴지부터 정한다 - 실패 여부보다 먼저다. 순서가 반대면 이미 떠난 System의
+    // 실패가 지금 보고 있는 System 위로 토스트를 띄운다.
     if (token !== S.queryToken) return;   // 더 최신 요청이 있으면 버린다
+    if (!r.ok) { showToast(r.error, "error"); return; }
     S.total = r.data.total;
     S.loadedPages.add(0);
     r.data.rows.forEach((row, i) => S.rowCache.set(i, row));
@@ -3968,8 +3976,17 @@
     if (!S.previewOn) return;
     const tab = (S.detailState && S.detailState.tab) || "metadata";
 
+    // **늦게 온 응답은 버린다.** 고른 줄은 위에서 이미 S.focused에 적었으니, 응답이
+    // 돌아왔을 때 그 값이 아니면 그 사이 사용자가 다른 줄로 옮겨 간 것이다. 이 검사가
+    // 없으면 A -> B를 빠르게 고를 때 느린 A의 응답이 나중에 도착해 B의 상세를 덮어썼고,
+    // 목록은 B를 강조하는데 패널은 A를 보여줬다. 더 나쁜 것은 S.detailState.romUid가
+    // A로 남아, 사용자가 B를 고친다고 믿고 누른 저장이 A에 들어간 것이다.
+    const collectionId = S.activeId;
+    const stale = () => S.focused !== row.romUid || S.activeId !== collectionId;
+
     if (isArchive()) {
       const r = await api.archiveDetail(row.romIdentityId);
+      if (stale()) return;
       if (!r.ok || !r.data) { showToast(r.error || "항목을 찾을 수 없습니다.", "error"); return; }
       const d = r.data;
       S.detailState = {
@@ -3986,7 +4003,8 @@
       return;
     }
 
-    const r = await api.getRow(S.activeId, row.romUid);
+    const r = await api.getRow(collectionId, row.romUid);
+    if (stale()) return;
     if (!r.ok) { showToast(r.error, "error"); return; }
     S.detailState = { ...r.data, tab, draft: null };
     renderDetailPanel();
@@ -4720,7 +4738,12 @@
   // ------------------------------------------------------------------
   async function refreshPlan() {
     if (!S.activeId || isArchive()) { S.plan = null; renderStatusBar(); return; }
-    const r = await api.planState(S.activeId);
+    const collectionId = S.activeId;
+    const r = await api.planState(collectionId);
+    // 늦게 온 이전 Collection의 Plan은 버린다. 이게 없으면 A -> B로 빠르게 옮겼을 때
+    // A의 응답이 나중에 도착해 S.plan이 A의 것이 되고, 툴바는 A의 건수를 보여주면서
+    // Apply는 B에 걸린다 - 사용자가 보는 숫자와 눌렀을 때 벌어지는 일이 달라진다.
+    if (S.activeId !== collectionId) return;
     S.plan = r.ok ? r.data : null;
     renderHeader();
     // Apply/Cancel이 목록 위 툴바에 있으므로 Plan이 바뀌면 툴바도 다시 그려야 한다.
