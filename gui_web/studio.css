@@ -602,7 +602,10 @@ body { font-size: var(--fs-body); }
   flex: 0 0 auto; will-change: transform;
   background: var(--list-head); border-bottom: 1px solid var(--list-border);
   /* 대문자 변환은 뺐다 - 한글 컬럼명과 섞이면 정렬이 어긋나 보인다. */
-  font-size: calc(9px * var(--font-scale)); letter-spacing: .45px; color: var(--list-muted);
+  /* 글자 크기 슬라이더 작업 중에 9px로 줄어든 채 굳었다(실사용 피드백 - "헤더
+     폰트가 작아졌는데 원복된 거 같다") - 본문(게임리스트 행)과 같은 크기로
+     되돌린다. 헤더가 라벨링하는 내용보다 작으면 안 된다. */
+  font-size: var(--fs-body); letter-spacing: .3px; color: var(--list-muted);
   user-select: none;
 }
 .lh {
@@ -619,8 +622,11 @@ body { font-size: var(--fs-body); }
   cursor: col-resize; z-index: 2;
 }
 .col-resize:hover { background: var(--accent-gold); opacity: .45; }
-/* 머리글 드래그로 컬럼 순서 바꾸기 - 놓일 자리에 세로 막대를 보인다. */
-.lh[draggable="true"] { cursor: grab; }
+/* 머리글 드래그로 컬럼 순서 바꾸기 - 놓일 자리에 세로 막대를 보인다.
+   커서는 grab(손 모양)이 아니라 move(십자 화살표)를 쓴다 - 브라우저 기본 손
+   커서가 촌스럽다는 실사용 피드백. move는 "이 자리를 옮긴다"는 뜻을 손을
+   그리지 않고도 전달한다. */
+.lh[draggable="true"] { cursor: move; }
 .lh.dragging { opacity: .45; }
 .lh.drop-before { box-shadow: inset 2px 0 0 var(--accent-gold); }
 .lh.drop-after { box-shadow: inset -2px 0 0 var(--accent-gold); }
@@ -1407,7 +1413,7 @@ button.sb-badge { cursor: pointer; }
 /* Gamelist 파일명 - ROM 파일이 있으면 제목과 같은 색, 없으면(메타데이터만) 흐리게(사용자 요청).
    색은 테마의 목록 토큰을 따른다. */
 .lc-file.rom-present { color: var(--list-text); }
-.lc-file.rom-missing { color: var(--list-muted); }
+.lc-file.rom-missing { color: var(--list-faint, var(--list-muted)); }
 
 /* Detail 파일명 - 글자로 골라 복사할 수 있고, 옆 버튼으로 한 번에 복사한다. */
 .detail-filename-row { display: flex; align-items: center; gap: 4px; min-width: 0; margin-top: 1px; }

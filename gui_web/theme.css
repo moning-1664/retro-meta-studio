@@ -42,6 +42,10 @@
   --list-row-border: #202a36;
   --list-text: #e4eaf1;
   --list-muted: #8d9aaa;
+  /* ROM 없는 항목의 파일명 색 - 어두운 테마에서는 --list-muted가 이미 잘 보이므로
+     그대로 물려받는다. SFC/NES(밝은 테마)만 따로 밝은 회색을 쓴다(아래) - 실사용
+     피드백: "어두운 테마에서는 잘 보이는데 밝은 테마에서는 잘 안 보인다". */
+  --list-faint: var(--list-muted);
   --list-selected: #172b35;
 
   --media-bg: #0b1017;
@@ -113,6 +117,9 @@
   --accent-red: #d13a35; --accent-gold: #d39a18; --accent-blue: #2864c7; --accent-green: #2d8b4b;
   --list-bg: #ffffff; --list-head: #e7e7e4; --list-border: #b5b5b1; --list-row-border: #ddddda;
   --list-text: #252525; --list-muted: #575854; --list-selected: #edf3ff;
+  /* --list-muted는 흰 배경에서도 또렷해서 ROM 없음 표시로 쓰면 본문과 잘 안
+     갈렸다(실사용 피드백) - 더 밝은 회색을 따로 둔다. */
+  --list-faint: #9b9c96;
   --media-bg: #e6e6e3; --icon-bg: #eeeeeb;
   --chrome-sub: #d5d5d1;
   --cheader-icon-fg: var(--accent-blue);
@@ -130,6 +137,8 @@
   --accent-red: #b72e2b; --accent-gold: #b28722; --accent-blue: #6d7782; --accent-green: #687d39;
   --list-bg: #ffffff; --list-head: #e9e3d7; --list-border: #aaa396; --list-row-border: #d9d2c5;
   --list-text: #2b2925; --list-muted: #5e594f; --list-selected: #f5dfdc;
+  /* SFC와 같은 이유로 ROM 없음 표시만 더 밝은 회색을 쓴다(실사용 피드백). */
+  --list-faint: #a19a89;
   --media-bg: #e5ded0; --icon-bg: #eee8dc;
   --chrome-sub: #ccc4b5;
   --primary-fg: var(--accent-gold);

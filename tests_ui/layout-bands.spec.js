@@ -80,6 +80,13 @@ test.describe("기준선", () => {
     const size = await page.locator(".nav-eyebrow").evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
     expect(size).toBeGreaterThanOrEqual(10);
   });
+
+  test("Gamelist 머리글 글씨가 본문(게임 목록 행)만큼 크다(실사용 피드백 §5)", async ({ page }) => {
+    // 글자 크기 슬라이더 작업 중에 9px로 줄어든 채 굳었다 - 본문보다 작으면 안 된다.
+    const headSize = await page.locator("#list-head").evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    const rowSize = await page.locator(".lrow").first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    expect(headSize).toBeGreaterThanOrEqual(rowSize - 0.5);
+  });
 });
 
 test.describe("버튼 크기", () => {
