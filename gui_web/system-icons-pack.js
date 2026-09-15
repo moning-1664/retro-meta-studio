@@ -3,7 +3,9 @@
 
    `gui_web/system-icons-50/<system>.png` 파일이 그 System의 아이콘이다. 사용자가
    파일명을 바꾸거나 새 PNG를 넣는 것만으로 매칭된다 - 코드 표를 고칠 필요가 없다.
-   원본 자산은 `system-icons-50/org/`에 보관한다.
+   편집 전 원본 자산(가공하지 않은 PNG, 안 쓰는 레거시 SVG 스크립트)은 `system-icons-50/org/`에
+   보관한다. 시도했지만 채택하지 않은 대체 스타일 팩은 `system-icons-neon/`에 따로 둔다(같은
+   파일명 규칙이라 나중에 쓰기로 하면 `BASE`만 바꾸면 된다) - `org/`와 달리 이건 완결된 팩이다.
 
    찾는 순서(candidates): 폴더명 그대로 → 구분자 제거 → 별칭 → 지역/변형 접미사를
    뗀 이름. 끝까지 없으면 app.js가 기존 SVG(system-icons.js) → 범용 아이콘으로 넘긴다.
