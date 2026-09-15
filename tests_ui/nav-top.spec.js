@@ -18,8 +18,14 @@ test("Dashboard/Add External/App Title/Settings는 스크롤 영역 밖에 있�
   }, selector);
 
   expect(await outside(".nav-dashboard")).toBe(true);
-  expect(await outside(".nav-action")).toBe(true);
   expect(await outside(".nav-top")).toBe(true);
+
+  // Add External Storage는 이미 External이 있으면 숨는다(사용자 결정) - 기본
+  // mock이 그 상태라 먼저 지워야 이 버튼이 보인다.
+  await page.locator(".storage-remove-btn").click();
+  await page.locator(".modal-actions .btn", { hasText: "확인" }).click();
+  await expect(page.locator(".nav-action")).toBeVisible();
+  expect(await outside(".nav-action")).toBe(true);
 });
 
 test("Dashboard를 누르면 Dashboard 화면으로 바뀐다", async ({ page }) => {

@@ -768,7 +768,7 @@
 
     frontends: () => call("frontends"),
     adapterActions: (id) => call("adapter_actions", id),
-    runAdapterAction: (id, actionId) => call("run_adapter_action", id, actionId),
+    runAdapterAction: (id, actionId, storageId) => call("run_adapter_action", id, actionId, storageId),
     pickFolder: (title) => call("pick_folder", title || ""),
     pickFile: (title, fileTypes, directory) => call("pick_file", title || "", fileTypes || null, directory || ""),
     retroarchSettings: () => call("retroarch_settings"),

@@ -179,6 +179,33 @@ class StorageSettingsAndXmlTests(unittest.TestCase):
         self.assertIn("snes9x", ET.tostring(snes, encoding="unicode"))   # 실행 명령도 살아 있다
         self.assertNotIn("ps2", self.xml_systems())                      # Android Internal은 적지 않는다
 
+    def test_a_storage_id_scopes_generation_to_just_that_storage(self):
+        """External이 둘일 때, 한쪽 그룹의 버튼이 다른 쪽까지 다시 쓰면 안 된다
+        (실사용 피드백 - "external만 골라서 생성하는게 맞다"). Collection당 파일은
+        하나지만, 이번에 쓴 것은 storage_id로 고른 Storage의 System뿐이어야 한다."""
+        cid, ext1 = self.make("windows")
+        write_file(self.sd / "ROMs" / "gba" / "Zelda.gba", b"g" * 20)
+        sd2 = self.dir / "sd2"
+        write_file(sd2 / "n64" / "Mario64.z64", b"n" * 20)
+        wait_job(self.api, self.api.start_scan(cid, force=True)["data"]["jobId"])
+        ext2 = self.api.add_external_storage(cid, "SD2", str(sd2))["data"]
+        self.api.attach_storage_systems(cid, ext2)
+
+        result = self.api.run_adapter_action(cid, "esde-custom-systems", storage_id=ext1)["data"]
+        self.assertEqual(sorted(result["systems"]), ["gba", "snes"])
+        self.assertNotIn("n64", result["systems"])
+        systems = self.xml_systems()
+        self.assertIn("snes", systems)
+        self.assertIn("gba", systems)
+        self.assertNotIn("n64", systems, "다른 External의 System까지 함께 썼다")
+
+        # 이번엔 ext2만 골라 쓴다 - ext1(snes/gba)의 기존 항목은 그대로 남아야 한다.
+        result2 = self.api.run_adapter_action(cid, "esde-custom-systems", storage_id=ext2)["data"]
+        self.assertEqual(result2["systems"], ["n64"])
+        self.assertEqual(sorted(result2["kept"]), ["gba", "snes"])
+        systems2 = self.xml_systems()
+        self.assertEqual(set(systems2), {"snes", "gba", "n64"})
+
     def test_windows_xml_uses_the_pc_path_and_keeps_other_entries(self):
         write_file(self.root / "custom_systems" / "es_systems.xml",
                    '<?xml version="1.0"?>\n<systemList><system><name>mine</name><path>C:\\mine</path></system>'

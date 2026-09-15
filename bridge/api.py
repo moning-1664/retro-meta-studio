@@ -1760,7 +1760,7 @@ class Api:
         return ok([{"id": a.id, "label": a.label} for a in adapter.extras()])
 
     @guarded
-    def run_adapter_action(self, collection_id, action_id):
+    def run_adapter_action(self, collection_id, action_id, storage_id=None):
         collection = self.registry.get_collection(collection_id)
         if collection is None:
             return err("Collection을 찾을 수 없습니다.")
@@ -1768,7 +1768,9 @@ class Api:
         if action_id not in {a.id for a in adapter.extras()}:
             return err("이 Frontend가 지원하지 않는 기능입니다.")
         if action_id == getattr(adapter, "CUSTOM_SYSTEMS_ACTION", None):
-            return ok(adapter.write_custom_systems(collection))
+            # storage_id를 주면 그 Storage만 대상으로 한다(실사용 피드백 - External이
+            # 여러 개일 때 어느 그룹에서 눌러도 전체를 다시 쓰는 것은 의도와 다르다).
+            return ok(adapter.write_custom_systems(collection, storage_id=storage_id))
         return err("아직 구현되지 않은 기능입니다.")
 
     # ------------------------------------------------------------------

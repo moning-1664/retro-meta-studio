@@ -240,15 +240,6 @@ body { font-size: var(--fs-body); }
 .nav-lens { flex: 0 0 auto; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
 .nav-favorites { font-weight: 600; }
 .nav-favorites.active, .nav-favorites:hover { color: var(--accent-gold); }
-/* 스크롤 안의 구역 머리 - Storage 그룹 머리(.nav-group-head)와 같은 무게다. */
-.nav-section { display: flex; align-items: center; gap: 6px; padding: 7px 8px 3px; }
-.nav-section-label {
-  flex: 1; font-size: var(--fs-eyebrow); letter-spacing: .12em;
-  color: var(--muted); text-transform: uppercase;
-}
-.nav-section .icon-btn { padding: 3px; background: transparent; color: var(--muted); opacity: .8; }
-.nav-section .icon-btn:hover { opacity: 1; }
-.nav-section .icon-btn.on { color: var(--list-text); opacity: 1; }
 .nav-label, .nav-group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-group-name { font-size: var(--fs-eyebrow); letter-spacing: .8px; color: var(--muted); }
 .nav-count { font-size: calc(9px * var(--font-scale)); font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -258,8 +249,23 @@ body { font-size: var(--fs-body); }
   border-radius: 50%; background: var(--danger); color: #fff; font-size: 10px; font-weight: 800; line-height: 1;
 }
 .nav-system.conflict .nav-label { color: var(--danger); }
-.xml-result .xml-needs-id { color: var(--warning); margin-top: 8px; }
+/* ES-DE XML 생성 결과 - System마다 한 줄, 점 색깔로만 상태를 말한다(실사용
+   피드백: 예전 문단 세 개짜리는 항목이 적을 때 빈 자리만 넓었다). */
+.xml-table { margin-top: 8px; max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.xml-row { display: flex; align-items: center; gap: 8px; padding: 5px 9px; border-top: 1px solid var(--border); }
+.xml-row:first-child { border-top: 0; }
+.xml-row-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+.xml-row.warn .xml-row-dot { background: var(--warning); }
+.xml-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-body); }
+.xml-row-note { flex: none; color: var(--muted); font-size: var(--fs-caption); }
 .nav-group { margin-top: 6px; }
+/* 접기 화살표 - 왼쪽(사용자 결정), 이름표보다 눈에 덜 띄어야 한다. */
+.nav-group-chevron { padding: 2px; margin-left: -3px; color: var(--muted); background: transparent; }
+/* 제거 버튼은 평소엔 조용하고, 손대려는 순간에만 위험한 색으로 경고한다 -
+   목록에 늘 붉은 아이콘이 떠 있으면 정작 눌러야 할 때 무뎌진다. */
+.storage-remove-btn { color: var(--muted); background: transparent; }
+.storage-remove-btn:hover { color: #fff; background: var(--danger); }
+.storage-root-readonly { padding: 4px 7px; border-radius: var(--radius-xs); background: var(--card3); border: 1px solid var(--border); }
 .nav-system { padding-left: 13px; }
 /* Storage 이동이 Plan에 올라간 System - Apply 전까지는 미리보기다(실사용
    피드백: 드래그해도 화면이 그대로면 "안 먹었다"고 보인다). */

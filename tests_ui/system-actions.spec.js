@@ -7,8 +7,9 @@ const { openApp, modalButton } = require("./_helpers");
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
 const navSystem = (page, name) => page.locator(".nav-system", { hasText: name });
-// 토글은 SYSTEMS 머리에 있다 - 그 목록에만 걸리는 기능이라 목록 머리로 옮겼다.
-const hideToggle = (page) => page.locator(".nav-section .nav-hide-empty");
+// 토글은 맨 위 SYSTEMS 띠에 있다(실사용 피드백) - 그 아래 스크롤 안에 같은
+// 뜻의 머리를 또 두지 않는다.
+const hideToggle = (page) => page.locator(".nav-eyebrow .nav-hide-empty");
 
 test.describe("빈 System 숨기기", () => {
   test("기본은 모두 보이고, SYSTEMS 옆 버튼으로 빈 System을 숨긴다", async ({ page }) => {
@@ -21,9 +22,8 @@ test.describe("빈 System 숨기기", () => {
     await expect(navSystem(page, "GBA")).toBeVisible();
   });
 
-  test("SYSTEMS 머리는 목록 위에, Navigator 띠는 맨 위에 있다", async ({ page }) => {
-    await expect(page.locator(".nav-eyebrow")).toHaveText("NAVIGATOR");
-    await expect(page.locator(".nav-section-label")).toHaveText("SYSTEMS");
+  test("SYSTEMS 띠가 맨 위에 있다", async ({ page }) => {
+    await expect(page.locator(".nav-eyebrow-label")).toHaveText("SYSTEMS");
   });
 
   test("값을 Settings에 저장한다", async ({ page }) => {

@@ -373,6 +373,10 @@
     statusFilter: "all",       // all | metadata | media | missing
     // 컬럼 폭은 사용자가 맞춰 놓는 것이라 Collection별로 기억한다(`ui_state`).
     colWidths: { ...DEFAULT_COL_WIDTHS },
+    // Navigator에서 접어 둔 Storage 그룹 - `${collectionId}:${storageId}`. 세션
+    // 동안만 기억한다(서버에 저장하지 않는다) - 접힘은 지금 화면을 정리해 두는
+    // 용도지 Collection의 영구 설정이 아니다.
+    navCollapsed: new Set(),
     // Shift+Click 범위 선택의 기준점. 마지막으로 "그냥 누른" 행이다.
     selectAnchor: null,
     previewOn: true,
@@ -406,6 +410,7 @@
   //: Archive는 Collection이 아니지만 같은 Gamelist/Detail UI를 쓴다(스펙 §43).
   //  별도 화면을 만들지 않고 특수한 탭 id 하나로 취급한다.
   const ARCHIVE_ID = "archive";
+  const STORAGE_INTERNAL = "internal";   // app/model/collection.py의 같은 상수와 값을 맞춘다.
   const isArchive = () => S.activeId === ARCHIVE_ID;
 
   const MEDIA_LABEL = {
@@ -1397,20 +1402,17 @@
     // **All / Favorites는 System이 아니다.** 예전에는 셋을 한 목록에 섞어 놓아서
     // "All"이 System 이름들 사이에 낀 또 하나의 System처럼 보였다(사용자 피드백).
     //
-    // 순서가 이렇게 정해진 이유가 있다. 맨 위 띠(.nav-eyebrow)는 **Toolbar와 아래
-    // 선을 맞춰야 하는 고정 높이 띠**라(레이아웃 재검토 §18, tests_ui/layout-bands),
-    // 그 위에는 아무것도 못 끼운다. 그래서 띠는 Navigator 전체를 가리키는 이름을
-    // 갖고, 그 아래에 관점(All/Favorites)과 플랫폼 목록(SYSTEMS)이 차례로 온다.
-    const eyebrow = h("div", { class: "nav-eyebrow" }, [h("span", { class: "nav-eyebrow-label" }, ["NAVIGATOR"])]);
+    // 맨 위 띠(.nav-eyebrow)는 **Toolbar와 아래 선을 맞춰야 하는 고정 높이 띠**라
+    // (레이아웃 재검토 §18, tests_ui/layout-bands), 그 위에는 아무것도 못 끼운다.
+    // **라벨은 "SYSTEMS"다.** 예전엔 "NAVIGATOR"였고 그 아래 스크롤 안에 또
+    // "SYSTEMS" 머리가 있어 같은 뜻의 글자가 두 번 보였다(실사용 피드백 - "아래
+    // Systems는 중복") - 이제 이 한 줄이 전부고, 빈 System 숨기기 토글도 여기로
+    // 옮겨 그 중복을 없앴다.
+    const eyebrow = h("div", { class: "nav-eyebrow" }, [h("span", { class: "nav-eyebrow-label" }, ["SYSTEMS"])]);
     nav.insertBefore(eyebrow, scroll);
     // 관점 칸. 스크롤되지 않는다 - System이 아무리 많아도 늘 같은 자리에 있다.
     const lens = h("div", { class: "nav-lens" });
     nav.insertBefore(lens, scroll);
-    // SYSTEMS 머리는 스크롤 안에 있다 - Storage 그룹(INTERNAL/EXTERNAL) 머리와 같은 층이다.
-    const systemsHead = h("div", { class: "nav-section" }, [
-      h("span", { class: "nav-section-label" }, ["SYSTEMS"]),
-    ]);
-    scroll.appendChild(systemsHead);
 
     const scope = activeScope();
     if (isArchive()) {
@@ -1418,8 +1420,6 @@
       all.classList.add("nav-all");
       all.insertBefore(icon("database", IC.md), all.firstChild);
       lens.appendChild(all);
-      scroll.appendChild(h("div", { class: "nav-section" },
-        [h("span", { class: "nav-section-label" }, ["SYSTEMS"])]));
       (detail.archiveSystems || []).forEach((sys) => {
         const row = navRow(sys.system.toUpperCase(), sys.count,
           scope.kind === "system" && scope.id === sys.system,
@@ -1484,8 +1484,8 @@
       "aria-pressed": hideEmpty ? "true" : "false",
     }, [icon(hideEmpty ? "eyeOff" : "eye", 12)]);
     hideToggle.addEventListener("click", () => updateSettings("navigation", { hideEmptySystems: !hideEmpty }));
-    // 이 토글이 거는 것은 System 목록이라 SYSTEMS 머리에 둔다(사용자 결정).
-    systemsHead.appendChild(hideToggle);
+    // SYSTEMS 띠 자체가 이 토글이 거는 목록의 이름이므로 그 자리에 둔다(사용자 결정).
+    eyebrow.appendChild(hideToggle);
 
     function renderSystemRow(sys) {
       const row = navRow(sys.system.toUpperCase(), sys.count,
@@ -1534,27 +1534,39 @@
     } else {
       (detail.storages || []).forEach((storage) => {
         const group = h("div", { class: "nav-group" });
+        const collapsed = S.navCollapsed.has(`${S.activeId}:${storage.id}`);
+        // 접기 화살표 - 왼쪽(사용자 결정). System이 많은 Storage를 접어 두면
+        // 다른 Storage를 보려고 스크롤할 거리가 줄어든다.
+        const chevron = h("button", { class: "icon-btn nav-group-chevron",
+          title: collapsed ? "펼치기" : "접기" }, [icon(collapsed ? "chevronRight" : "chevronDown", IC.sm)]);
+        chevron.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const key = `${S.activeId}:${storage.id}`;
+          if (S.navCollapsed.has(key)) S.navCollapsed.delete(key); else S.navCollapsed.add(key);
+          renderNav();
+        });
         const head = h("div", { class: "nav-group-head" },
-          [h("span", { class: "nav-group-name" }, [storage.label.toUpperCase()])]);
+          [chevron, h("span", { class: "nav-group-name" }, [storage.label.toUpperCase()])]);
 
-        // ES-DE의 custom_systems XML은 External Storage에 있는 System만 대상으로
-        // 하므로(§ write_custom_systems), 그 그룹 옆에만 버튼을 둔다. Collection당
-        // 파일이 하나라 어느 External 그룹에서 눌러도 같은 파일을 다시 쓴다.
-        if (storage.kind === "external" && !isCompare() && S.adapterActions && S.adapterActions.length) {
-          S.adapterActions.forEach((action) => {
-            const xmlBtn = h("button", { class: "icon-btn", title: `${action.label} (External Storage 전체 기준)` },
-                             [icon("save", IC.sm)]);
-            xmlBtn.addEventListener("click", (e) => { e.stopPropagation(); runAdapterAction(action); });
-            head.appendChild(xmlBtn);
-          });
-        }
-        if (storage.kind === "external" && !isCompare()) {
-          const gear = h("button", { class: "icon-btn storage-settings-btn", title: "Storage 설정 (이름·경로·Android Storage ID)" },
+        // **Internal도 External도 같은 설정 버튼 하나다**(실사용 피드백 - "External만
+        // Setting이 있는 것도 이상하다"). update_storage는 이미 Internal의 이름/
+        // Android 경로를 받는다 - PC 경로만 External에서만 뜻이 있다(Internal의
+        // PC 경로는 Collection 경로 자체라 여기서 바꿀 자리가 아니다).
+        if (!isCompare()) {
+          const gear = h("button", { class: "icon-btn storage-settings-btn", title: `${storage.label} 설정` },
                          [icon("settings", IC.sm)]);
           gear.addEventListener("click", (e) => { e.stopPropagation(); openStorageSettings(storage); });
           head.appendChild(gear);
         }
+        // External을 지우면 그 System들을 Internal로 되돌린다(사용자 결정).
+        if (storage.kind === "external" && !isCompare()) {
+          const remove = h("button", { class: "icon-btn storage-remove-btn", title: `${storage.label} 제거` },
+                           [icon("trash", IC.sm)]);
+          remove.addEventListener("click", (e) => { e.stopPropagation(); confirmRemoveExternalStorage(storage); });
+          head.appendChild(remove);
+        }
         group.appendChild(head);
+        if (collapsed) { scroll.appendChild(group); return; }
 
         if (!isCompare()) {
           const systemNames = (detail.systems || [])
@@ -1580,8 +1592,10 @@
     }
 
     // Add External Storage는 System이 아무리 늘어나도 밀려나면 안 되므로 스크롤
-    // 밖(고정 영역)에 둔다.
-    if (!isCompare()) {
+    // 밖(고정 영역)에 둔다. **이미 External이 있으면 숨긴다**(사용자 결정) - 이
+    // Collection이 쓰는 External은 하나뿐이라고 본다. 더 필요하면 먼저 지우고
+    // 다시 추가한다(그룹 머리의 제거 버튼).
+    if (!isCompare() && !externalStorages.length) {
       const add = h("button", { class: "nav-action" }, [icon("plus", IC.sm), h("span", {}, ["Add External Storage"])]);
       add.addEventListener("click", openAddStorage);
       nav.appendChild(add);
@@ -1677,6 +1691,50 @@
         if (a.added.length || a.moved.length) await runScan(S.activeId);
       } }, ["추가"]),
     ]);
+  }
+
+  /** External Storage 제거(사용자 결정) - System을 Internal로 되돌린 뒤 지운다.
+   *
+   * **순서가 중요하다.** removeStorage는 System이 붙어 있으면 거부한다(registry.py -
+   * 말없이 지우면 그 System들이 가리키던 파일이 붕 뜬다). 그래서 먼저 모든 System을
+   * Internal로 옮기는 Plan을 만들고 **그 자리에서 바로 Apply**한 뒤에 지운다 - Plan에만
+   * 올려 두고 사용자가 나중에 Apply를 누르게 하면, 그 사이 화면에는 System이 이미
+   * Internal에 있는 것처럼 보이는데 실제 파일은 아직 External에 있는 어중간한 상태가
+   * 남는다. 이 버튼을 누른 사람은 "지금 되돌리겠다"고 결정한 것이다.
+   */
+  async function confirmRemoveExternalStorage(storage) {
+    if (blockedInCompare("Storage를 제거")) return;
+    const detail = activeDetail();
+    const systems = (detail.systems || []).filter((sys) => sys.storageId === storage.id);
+    const message = systems.length
+      ? `"${storage.label}"을 제거합니다. 이 안의 System ${formatCount(systems.length)}개`
+        + `(${systems.map((s) => s.system.toUpperCase()).join(", ")})를 Internal로 옮긴 뒤 제거합니다.`
+        + ` 실제 파일이 이동합니다.`
+      : `"${storage.label}"을 제거합니다. 이 안에는 System이 없습니다.`;
+    showConfirm("External Storage 제거", message, true, async () => {
+      for (const sys of systems) {
+        const r = await api.planStorageChange(S.activeId, sys.system, STORAGE_INTERNAL);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+      }
+      if (systems.length) {
+        const started = await api.startApply(S.activeId);
+        if (!started.ok) { showToast(started.error, "error"); return; }
+        const result = await pollJob(started.data.jobId, "Internal로 옮기는 중");
+        if (!result.ok) { if (!result.cancelled) showToast(result.error, "error"); return; }
+        const data = result.data || {};
+        if (data.failed || data.partial) {
+          showToast(`일부 System을 옮기지 못해 Storage를 지우지 못했습니다 - Plan을 확인하세요.`, "error");
+          await ensureDetail(S.activeId); renderNav(); renderHeader();
+          return;
+        }
+      }
+      const removed = await api.removeStorage(S.activeId, storage.id);
+      if (!removed.ok) { showToast(removed.error, "error"); return; }
+      await ensureDetail(S.activeId);
+      resetList();
+      renderAll();
+      showToast(`"${storage.label}"을 제거했습니다.`);
+    });
   }
 
   /** System 하나의 정보와 Storage 이동(스펙 §10, §471의 System 메뉴).
@@ -2261,10 +2319,15 @@
     ]);
   }
 
-  /** External Storage 설정 - 이름, PC 경로, 안드로이드 Storage ID와 기기 경로(ES-DE XML용). */
+  /** Storage 설정 - Internal/External 공통(사용자 결정: "External만 Setting이 있는
+   * 것도 이상하다"). 이름, 안드로이드 Storage ID/경로는 둘 다 바꿀 수 있다 - PC 경로만
+   * External에서만 뜻이 있다(Internal의 PC 경로는 Collection 경로 자체라 여기서
+   * 바꿀 자리가 아니다 - update_storage도 Internal의 root_path는 조용히 무시한다).
+   * ES-DE XML 생성은 External에서만 보인다 - custom_systems가 대상으로 삼는 것이
+   * External의 System뿐이기 때문이다(§ write_custom_systems). */
   function openStorageSettings(storage) {
+    const external = storage.kind === "external";
     const label = h("input", { class: "field-input storage-label", value: storage.label });
-    const root = h("input", { class: "field-input storage-root", value: storage.rootPath });
     const deviceId = h("input", { class: "field-input storage-device-id", value: storage.deviceId || "", placeholder: "예: 1234-ABCD" });
     const deviceRoot = h("input", { class: "field-input storage-device-root", value: storage.deviceRoot || "" });
     const syncPlaceholder = () => {
@@ -2273,22 +2336,37 @@
     };
     deviceId.addEventListener("input", syncPlaceholder);
     syncPlaceholder();
-    const browse = h("button", { class: "btn", onClick: async () => {
-      const r = await api.pickFolder("External Storage 폴더");
-      if (r.ok && r.data) root.value = r.data;
-    } }, [icon("folderOpen", IC.sm)]);
+
     const body = h("div", { class: "modal-body storage-settings" }, [
       h("div", { class: "field-label" }, ["이름"]), label,
-      h("div", { class: "field-label" }, ["이 PC에서의 경로"]), h("div", { class: "field-row" }, [root, browse]),
-      h("div", { class: "field-label" }, ["Android Storage ID"]), deviceId,
-      h("div", { class: "modal-hint" }, ["기기의 /storage/ 아래 SD카드 폴더 이름입니다. ES-DE custom_systems XML의 경로를 만드는 데 씁니다."]),
-      h("div", { class: "field-label" }, ["기기에서 이 Storage의 경로"]), deviceRoot,
-      h("div", { class: "modal-hint" }, ["비워 두면 /storage/<Storage ID>를 씁니다. PC 경로가 SD카드의 하위 폴더라면 그 경로까지 적으세요(예: /storage/1234-ABCD/ROMs)."]),
     ]);
-    showModal(`${storage.label} 설정`, body, [
+    let root = null;
+    if (external) {
+      root = h("input", { class: "field-input storage-root", value: storage.rootPath });
+      const browse = h("button", { class: "btn", onClick: async () => {
+        const r = await api.pickFolder("External Storage 폴더");
+        if (r.ok && r.data) root.value = r.data;
+      } }, [icon("folderOpen", IC.sm)]);
+      body.appendChild(h("div", { class: "field-label" }, ["이 PC에서의 경로"]));
+      body.appendChild(h("div", { class: "field-row" }, [root, browse]));
+    } else {
+      // Internal의 PC 경로는 Collection 자체의 경로다 - 여기서 바꾸면 저장은 되지 않고
+      // 조용히 무시되므로, 아예 입력칸을 주지 않고 참고로만 보여준다.
+      body.appendChild(h("div", { class: "field-label" }, ["이 PC에서의 경로"]));
+      body.appendChild(h("div", { class: "modal-text storage-root-readonly" }, [storage.rootPath]));
+    }
+    body.appendChild(h("div", { class: "field-label" }, ["Android Storage ID"]));
+    body.appendChild(deviceId);
+    body.appendChild(h("div", { class: "modal-hint" }, ["기기의 /storage/ 아래 SD카드 폴더 이름입니다. ES-DE custom_systems XML의 경로를 만드는 데 씁니다."]));
+    body.appendChild(h("div", { class: "field-label" }, ["기기에서 이 Storage의 경로"]));
+    body.appendChild(deviceRoot);
+    body.appendChild(h("div", { class: "modal-hint" }, ["비워 두면 /storage/<Storage ID>를 씁니다. PC 경로가 SD카드의 하위 폴더라면 그 경로까지 적으세요(예: /storage/1234-ABCD/ROMs)."]));
+
+    const actions = [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       h("button", { class: "btn primary storage-settings-save", onClick: async () => {
-        const r = await api.updateStorage(S.activeId, storage.id, label.value, root.value, deviceId.value, deviceRoot.value);
+        const r = await api.updateStorage(S.activeId, storage.id, label.value,
+          root ? root.value : null, deviceId.value, deviceRoot.value);
         if (!r.ok) { showToast(r.error, "error"); return; }
         closeModal();
         await ensureDetail(S.activeId);
@@ -2296,7 +2374,17 @@
         renderHeader();
         showToast("Storage 설정을 저장했습니다.");
       } }, ["저장"]),
-    ]);
+    ];
+    if (external && !isCompare() && S.adapterActions && S.adapterActions.length) {
+      // 취소/저장과 같은 줄에 두지 않는다 - 이건 저장과 무관한 별도 동작이다.
+      S.adapterActions.forEach((action) => {
+        actions.unshift(h("button", { class: "btn", onClick: () => {
+          closeModal();
+          runAdapterAction(action, storage.id, storage.label);
+        } }, [icon("save", IC.sm), h("span", {}, [action.label])]));
+      });
+    }
+    showModal(`${storage.label} 설정`, body, actions);
   }
 
   function openStorageMenu(storage) {
@@ -2505,27 +2593,45 @@
     if (r.ok) S.adapterActions = r.data;
   }
 
-  async function runAdapterAction(action) {
+  /** ES-DE XML 생성 결과.
+   *
+   * 예전에는 문단 세 개(만든 System 목록 / Storage ID 없음 / 템플릿 없음)를 따로
+   * 늘어놓았다 - System이 하나뿐이거나 문제가 없으면 그 문단들이 통째로 비어
+   * 보였고, 있어도 긴 설명 문장을 읽어야 무슨 일이 있었는지 알 수 있었다(실사용
+   * 피드백 - "빈 항목이 너무 많고 설명이 너무 길다"). 지금은 System마다 한 줄,
+   * 상태는 글자가 아니라 점 색깔로 말한다.
+   */
+  async function runAdapterAction(action, storageId, storageLabel) {
     if (blockedInCompare(`${action.label}을 실행`)) return;
-    const r = await api.runAdapterAction(S.activeId, action.id);
+    const r = await api.runAdapterAction(S.activeId, action.id, storageId);
     if (!r.ok) { showToast(r.error, "error"); return; }
     const data = r.data || {};
     const needs = data.needsDeviceId || [];
-    const noTemplate = data.noTemplate || [];
+    const noTemplate = new Set(data.noTemplate || []);
+    const systems = data.systems || [];
     if (data.written === false && !needs.length) {
       // 만들 내용이 없는 것과 실패한 것은 다르다 - 왜 아무 일도 없었는지 말해준다.
-      showToast("External Storage나 Collection 밖에 있는 System이 없어 만들 XML이 없습니다.");
+      showToast(`${storageLabel || "이 Storage"}에는 XML로 적을 System이 없습니다.`);
       return;
     }
-    const systems = data.systems || [];
+    const rows = [
+      ...systems.map((s) => ({ name: s, warn: noTemplate.has(s),
+        note: noTemplate.has(s) ? "ES-DE 기본 목록에 없음" : "" })),
+      ...needs.map((s) => ({ name: s, warn: true, note: "Storage ID 없음" })),
+    ];
+    const table = h("div", { class: "xml-table" }, rows.map((row) => h("div", {
+      class: "xml-row" + (row.warn ? " warn" : ""), title: row.note || "정상 반영",
+    }, [
+      h("span", { class: "xml-row-dot" }), h("span", { class: "xml-row-name" }, [row.name]),
+      h("span", { class: "xml-row-note" }, [row.note]),
+    ])));
+    const kept = (data.kept || []).length;
     const body = h("div", { class: "modal-body xml-result" }, [
-      h("div", { class: "modal-text" }, [data.written
-        ? `${data.path}에 ${formatCount(systems.length)}개 System을 적었습니다 (ES-DE ${data.platform}).`
-        : "XML을 쓰지 않았습니다."]),
-      systems.length ? h("div", { class: "sysdel-list" }, systems.map((s) => h("div", { class: "sysdel-file" }, [s]))) : null,
-      (data.kept || []).length ? h("div", { class: "modal-hint" }, [`기존 파일의 다른 System ${formatCount(data.kept.length)}개는 그대로 두었습니다.`]) : null,
-      needs.length ? h("div", { class: "modal-text xml-needs-id" }, [`Android Storage ID가 없어 빠진 System: ${needs.join(", ")} - External 그룹 머리의 설정(⚙)에서 입력하세요.`]) : null,
-      noTemplate.length ? h("div", { class: "modal-hint" }, [`ES-DE 기본 목록에 없는 System(확장자·실행 명령이 비어 있음): ${noTemplate.join(", ")}`]) : null,
+      h("div", { class: "modal-text" }, [
+        `${storageLabel || "External"} · ${formatCount(systems.length + needs.length)}개`,
+        kept ? ` (다른 System ${formatCount(kept)}개는 그대로 둠)` : "",
+      ]),
+      table,
     ]);
     showModal(action.label, body, [h("button", { class: "btn primary", onClick: closeModal }, ["닫기"])]);
   }
