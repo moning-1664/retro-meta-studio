@@ -274,6 +274,42 @@ body { font-size: var(--fs-body); }
   flex: 1 1 auto; min-width: 0; min-height: var(--header-row-h); box-sizing: border-box;
   border-bottom: 1px solid var(--border); background: var(--chrome);
 }
+/* Hero 배경(.cheader-art)을 담기 위한 기준. */
+.cheader { position: relative; overflow: hidden; }
+.cheader > *:not(.cheader-art) { position: relative; z-index: 1; }
+/* 펼쳤을 때 나오는 System 카드. 목록 기둥 안에 있어서 Detail 패널을 밀지 않는다. */
+#collection-expanded { flex: 0 0 auto; min-width: 0; position: relative; overflow: hidden; }
+#collection-expanded:empty { display: none; }
+.cheader-art {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  display: flex; align-items: center; justify-content: flex-end;
+  /* 오른쪽 버튼 열(약 120px)을 피해서 앉힌다 - 아이콘 위에 버튼이 겹치면
+     둘 다 읽기 어려워진다. */
+  padding-right: 128px;
+  /* 오른쪽으로 갈수록 계열 색이 배어 나온다. 왼쪽(글자 영역)은 건드리지 않아서
+     대비가 떨어지지 않는다. */
+  /* 몸체색(base)이 먼저 배어 나오고 끝에서 포인트색(point)이 얹힌다 - 실물의
+     "회색 몸체에 빨간 버튼" 같은 인상을 배경만으로 만든다. */
+  background: linear-gradient(100deg,
+    transparent 30%,
+    color-mix(in srgb, var(--sys-base, var(--accent)) 14%, transparent) 74%,
+    color-mix(in srgb, var(--sys-point, var(--accent)) 22%, transparent) 100%);
+}
+.cheader-art .sys-ic { opacity: .2; }
+/* 전용 그림이 없는 System - 그림은 숨기고 색 물듦만 아주 옅게 남긴다. */
+.cheader-art.generic .sys-ic { display: none; }
+.cheader-art.generic { background: linear-gradient(100deg, transparent 55%,
+  color-mix(in srgb, var(--sys-point, var(--accent)) 9%, transparent) 100%); }
+
+/* 제목 옆 콘솔 포인트 색 바. 색을 못 찾은 System은 테마 accent 한 줄. */
+.cheader-bar {
+  width: 4px; border-radius: var(--radius-pill); flex: none; align-self: stretch;
+  margin: 1px 0; background: var(--accent);
+}
+
+/* 통계 한 칸 - 작은 아이콘 + 숫자. */
+.cheader-stat { display: inline-flex; align-items: center; gap: 4px; }
+.cheader-stat svg { opacity: .75; }
 .cheader { display: flex; align-items: center; gap: 10px; min-height: calc(var(--header-row-h) - 1px); box-sizing: border-box; padding: 8px 13px; }
 .cheader-icon {
   display: flex; align-items: center; justify-content: center;
@@ -299,16 +335,31 @@ body { font-size: var(--fs-body); }
 .cheader-right { display: flex; align-items: center; gap: 5px; }
 .cheader-right .icon-btn { padding: 4px; background: var(--chrome); border: 1px solid transparent; }
 .cheader-expanded {
-  display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 14px;
-  padding: 12px 14px; border-top: 1px solid var(--border); background: var(--card);
+  position: relative; padding: 8px 13px;
+  border-bottom: 1px solid var(--border);
+  /* 띠와 같은 규칙으로 카드 전체가 콘솔 색으로 물든다. */
+  background:
+    linear-gradient(100deg, transparent 34%,
+      color-mix(in srgb, var(--sys-base, transparent) 12%, transparent) 76%,
+      color-mix(in srgb, var(--sys-point, transparent) 18%, transparent) 100%),
+    var(--card);
+  display: grid; grid-template-columns: 1.7fr 1fr 1fr; gap: 10px;
 }
-.cheader-info-row { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; }
-.cheader-info-label { color: var(--muted); font-size: var(--fs-caption); }
-.cheader-info-value { font-size: var(--fs-caption); text-align: right; overflow: hidden; text-overflow: ellipsis; }
-.storage-box { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px; }
-.storage-box-title { font-size: var(--fs-eyebrow); letter-spacing: .8px; color: var(--muted); margin-bottom: 6px; }
-.storage-bar { height: 5px; border-radius: var(--radius-pill); background: var(--card3); margin-top: 8px; overflow: hidden; }
+/* 두 단. 폭은 남고 높이만 먹던 한 단짜리 목록을 접어서 같은 높이에 두 배를 담는다. */
+.cheader-info { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; align-content: start; }
+.cheader-info-row {
+  display: flex; justify-content: space-between; gap: 8px; padding: 1px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+}
+.cheader-info-label { color: var(--muted); font-size: var(--fs-caption); white-space: nowrap; }
+.cheader-info-value { font-size: var(--fs-caption); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 빠진 것이 있을 때만 눈에 띄게 - 0이면 평범한 숫자로 남는다. */
+.cheader-info-row.warn .cheader-info-value { color: var(--warning); font-weight: 600; }
+.storage-box { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 7px 9px; }
+.storage-box-title { font-size: var(--fs-eyebrow); letter-spacing: .8px; color: var(--muted); margin-bottom: 3px; }
+.storage-bar { height: 4px; border-radius: var(--radius-pill); background: var(--card3); margin-top: 5px; overflow: hidden; }
 .storage-bar-fill { height: 100%; background: var(--accent); }
+.storage-box .health-row { padding: 1px 0; }
 .health-row {
   display: flex; justify-content: space-between; gap: 10px;
   padding: 3px 0; font-size: var(--fs-caption); color: var(--muted);

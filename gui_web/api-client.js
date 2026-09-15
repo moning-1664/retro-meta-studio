@@ -50,6 +50,9 @@
   const mockDetail = {
     id: "c1", name: "Master Library", frontend: "es-de", frontendLabel: "ES-DE",
     target: "windows", arch: "x64", rootPath: "D:\\ES-DE", systemCount: 2, totalGames: 3,
+    // Metadata가 없는 항목 수 - 헤더가 "전체 - 빠진 수"로 Metadata 개수를 만든다.
+    totalMissingMetadata: 1, totalMissingMedia: 1,
+    totalRomBytes: 8700000000, totalMediaBytes: 3100000,
     storages: [
       { id: "internal", kind: "internal", label: "Internal", rootPath: "D:\\ES-DE",
         actualBytes: 524288, capacityBytes: 512e9, freeBytes: 200e9,
@@ -61,9 +64,11 @@
     // 좌측 내비게이션이 그리는 평평한 System 목록. 게임이 있는 것이 먼저, 없는 것이
     // 나중, 같으면 이름순 - Storage는 계층이 아니라 각 항목이 들고만 있다.
     systems: [
-      { system: "ps2", count: 2, storageId: "ext-1" },
-      { system: "snes", count: 1, storageId: "internal" },
-      { system: "gba", count: 0, storageId: "internal" },
+      { system: "ps2", count: 2, storageId: "ext-1", missingMetadata: 1, missingMedia: 1,
+        romBytes: 8700000000, mediaBytes: 2900000 },
+      { system: "snes", count: 1, storageId: "internal", missingMetadata: 0, missingMedia: 0,
+        romBytes: 524288, mediaBytes: 195000 },
+      { system: "gba", count: 0, storageId: "internal", missingMetadata: 0 },
     ],
   };
 

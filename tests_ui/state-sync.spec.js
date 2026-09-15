@@ -26,7 +26,9 @@ test.describe("Navigation ↔ Overview 헤더", () => {
   test("System을 고르면 Overview가 'Collection (System)'과 개수를 보여준다", async ({ page }) => {
     await page.locator(".nav-system", { hasText: "PS2" }).click();
     await expect(page.locator(".cheader-name")).toHaveText("Master Library (PS2)");
-    await expect(page.locator(".cheader-stats")).toContainText("2 Games");
+    // 숫자 앞에 작은 아이콘이 붙고, Metadata 개수도 함께 보여준다.
+    await expect(page.locator(".cheader-stats")).toContainText("2 ROMs");
+    await expect(page.locator(".cheader-stats")).toContainText("1 Metadata");
   });
 
   test("All로 돌아오면 Collection 이름으로 돌아온다", async ({ page }) => {
@@ -34,7 +36,7 @@ test.describe("Navigation ↔ Overview 헤더", () => {
     await expect(page.locator(".cheader-name")).toHaveText("Master Library (PS2)");
     await page.locator(".nav-all").click();
     await expect(page.locator(".cheader-name")).toHaveText("Master Library");
-    await expect(page.locator(".cheader-stats")).toContainText("3 Games");
+    await expect(page.locator(".cheader-stats")).toContainText("3 ROMs");
   });
 });
 

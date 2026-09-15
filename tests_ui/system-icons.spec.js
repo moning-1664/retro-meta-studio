@@ -23,12 +23,17 @@ test("Navigator 아이콘 자리는 18px이고 행 높이를 바꾸지 않는다
   expect(Math.round(sysRow.height)).toBe(Math.round(rowBefore.height));
 });
 
-test("System을 고르면 Collection 헤더에 26px 아이콘이 나온다", async ({ page }) => {
+test("System을 고르면 Collection 헤더 배경에 그 System 그림이 깔린다", async ({ page }) => {
+  // 아이콘 상자(26px)는 콘솔 포인트 색 바로 바뀌었다(사용자 결정) - System 그림은
+  // 배경 워터마크로 남는다. 같은 아이콘 팩을 쓰므로 파일 해석 경로는 그대로다.
   await page.locator(".nav-system", { hasText: "GBA" }).click();
-  const ic = page.locator(".cheader-icon .sys-ic");
-  await expect(ic.locator("img.sys-raster")).toHaveAttribute("src", /gba\.png$/);
-  const box = await ic.boundingBox();
-  expect(Math.round(box.width)).toBe(26);
+  const art = page.locator(".cheader .cheader-art .sys-ic");
+  await expect(art.locator("img.sys-raster")).toHaveAttribute("src", /gba\.png$/);
+  const box = await art.boundingBox();
+  expect(Math.round(box.width)).toBe(62);
+  // 제목 옆에는 콘솔 색 바가 선다.
+  await expect(page.locator(".cheader .cheader-bar")).toBeVisible();
+  await expect(page.locator(".cheader .cheader-icon")).toHaveCount(0);
 });
 
 test("이름 후보: 구분자·별칭·지역 접미사를 거쳐 기존 파일명에 닿는다", async ({ page }) => {

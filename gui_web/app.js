@@ -154,7 +154,10 @@
    * (system-icons-pack.js). 없는 파일은 한 번만 확인하고 결과를 기억해 둔다 -
    * Navigator는 자주 다시 그려지므로 매번 없는 파일을 요청하면 깜빡이고 낭비다. */
   const systemIconFile = new Map();   // "base|key" -> 찾은 파일명 | null(없음)
-  function systemIcon(name, size) {
+  /** System 아이콘. `onGeneric`은 전용 그림(PNG/SVG)이 하나도 없어서 범용
+   * 카테고리 아이콘으로 떨어질 때만 불린다 - 그 사실을 알아야 하는 곳이 있다
+   * (Chromium Hero는 그때 배경 그림을 아예 깔지 않는다). */
+  function systemIcon(name, size, onGeneric) {
     const px = size || 14;
     const key = String(name || "").toLowerCase();
     const holder = h("span", { class: "sys-ic", style: { width: `${px}px`, height: `${px}px` } });
@@ -164,6 +167,7 @@
         holder.innerHTML = window.RMSystemIcons.svg(key, px);
       } else {
         holder.appendChild(icon("cartridge", Math.max(10, px - 1)));
+        if (onGeneric) onGeneric();
       }
     };
     const pack = window.RMSystemIconPack;
@@ -185,6 +189,92 @@
     img.src = pack.src(candidates[index]);
     holder.appendChild(img);
     return holder;
+  }
+
+  /** Chromium Hero의 색 - 콘솔마다 **몸체색(base) + 포인트색(points)** 두 가지를 갖는다.
+   *
+   * 실물의 인상을 그대로 옮긴 것이다(사용자 결정). SFC는 회색 몸체에 빨·파·노·초
+   * 버튼, 패미컴은 베이지에 빨강·금색, 메가드라이브는 검정에 검붉은색·파랑 하는 식.
+   * base는 배경 물듦에, points는 제목 옆 세로 바에 쓴다 - 그래서 System을 바꾸면
+   * 화면 색이 그 기기의 색으로 바뀐다.
+   *
+   * **System 하나하나에 지정하지 않는다.** 계열 단위로만 정하고 못 찾으면 테마
+   * 기본색으로 떨어진다 - System이 몇 개로 늘어나든 관리할 것은 이 목록뿐이다. */
+  const SYSTEM_PALETTES = [
+    // 닌텐도 - 거치형
+    [/^(snes|superfamicom|satellaview|sufami)/,
+      { base: "#9b9ba6", points: ["#c0392f", "#2f6fb5", "#e0b32c", "#3f9e57"] }],
+    [/^(nes|famicom|fds|nesh)/, { base: "#d8cbb0", points: ["#b5322c", "#c9a227"] }],
+    [/^(n64)/, { base: "#4a4a52", points: ["#2f6fb5", "#3f9e57", "#c0392f", "#e0b32c"] }],
+    [/^(gamecube|gc)/, { base: "#5f5490", points: ["#6b5bbd", "#3f9e57"] }],
+    [/^(wii|wiiu)/, { base: "#dfe3e8", points: ["#1f9fd8"] }],
+    [/^(switch)/, { base: "#3a3a42", points: ["#e4404a", "#2f9fd8"] }],
+    // 닌텐도 - 휴대용
+    [/^(gb|gbc)/, { base: "#a8ae96", points: ["#8e2f6a", "#3f5aa8"] }],
+    [/^(gba)/, { base: "#6b5bbd", points: ["#8e2f6a", "#3f5aa8"] }],
+    [/^(nds|n3ds|virtualboy)/, { base: "#c8ccd2", points: ["#c0392f"] }],
+    // 세가
+    [/^(megadrive|genesis|segacd|megacd|sega32x|32x)/,
+      { base: "#2b2b30", points: ["#8e2b2b", "#2f6fb5"] }],
+    [/^(mastersystem|sg1000|gamegear)/, { base: "#2b2b30", points: ["#c0392f"] }],
+    [/^(saturn)/, { base: "#3a3a42", points: ["#2f6fb5", "#8e8e96"] }],
+    [/^(dreamcast)/, { base: "#e2e2e4", points: ["#e8622c", "#2f6fb5"] }],
+    // 소니 - 짙은 회색 몸체에 ✕○□△ 네 색
+    [/^(ps[x1-5]?$|psx|ps2|ps3|ps4|ps5|psp|psvita|pocketstation|minis)/,
+      { base: "#5a6472", points: ["#4a7fd4", "#d6453f", "#d97ab0", "#4fae7a"] }],
+    [/^(xbox)/, { base: "#2f2f34", points: ["#5bb85b"] }],
+    // 그 외
+    [/^(atari|lynx|jaguar)/, { base: "#3a2f28", points: ["#d4452c", "#e07b2a"] }],
+    [/^(pcengine|pcfx|supergrafx|turbografx|tg16)/,
+      { base: "#d6d2c8", points: ["#e0842c", "#c0392f"] }],
+    [/^(neogeo|ngp|ngpc)/, { base: "#2b2b30", points: ["#c8443a", "#e8b93a"] }],
+    [/^(amiga|c64|commodore|vic20|plus4|cpc|amstrad|zx|spectrum)/,
+      { base: "#6f6f78", points: ["#d4453f", "#e8b93a", "#3f9e57", "#3a6fc4"] }],
+    [/^(arcade|mame|fba|fbneo|cps[123]?|naomi|model[23]|daphne|neogeocd)/,
+      { base: "#2b2b30", points: ["#c0392f", "#2f6fb5", "#e0b32c", "#3f9e57"] }],
+    [/^(dos|windows|pc98|pc88|x68000|fmtowns|steam|scummvm|linux|android|msx)/,
+      { base: "#4a5568", points: ["#4a90d9"] }],
+  ];
+
+  function systemPalette(name) {
+    const key = String(name || "").toLowerCase();
+    const hit = SYSTEM_PALETTES.find(([re]) => re.test(key));
+    return hit ? hit[1] : null;
+  }
+
+  /** Chromium의 빈 영역에 지금 보고 있는 System을 은은하게 깔아 준다(레이아웃 재검토).
+   *
+   * **새 그림 자산을 만들지 않는다.** Navigator가 쓰는 System 아이콘을 그대로 크게
+   * 키워 아주 낮은 투명도로 깐다 - 전용 PNG가 없어 카테고리 아이콘으로 떨어지는
+   * System도 이 투명도에서는 "은은한 무늬"로만 읽혀서, 콘솔 사진을 System마다
+   * 준비할 때 생기는 "이 System은 지원이 덜 됐나" 하는 인상이 생기지 않는다. */
+  /** 제목 왼쪽의 세로 바. 콘솔의 포인트 색을 그대로 나눠 칠해서, System을 바꾸면
+   * 이 바 하나로 어느 기기인지 알아본다(사용자 결정 - 예전 아이콘 상자는 제목
+   * 크기와 안 맞아 뺐다). 색을 못 찾은 System은 테마 accent 한 줄이다. */
+  function pointBar(system) {
+    const palette = systemPalette(system);
+    const bar = h("div", { class: "cheader-bar", "aria-hidden": "true" });
+    const points = palette ? palette.points : null;
+    if (points && points.length) {
+      const stops = points.map((color, i) =>
+        `${color} ${(i / points.length * 100).toFixed(2)}% ${((i + 1) / points.length * 100).toFixed(2)}%`);
+      bar.style.background = `linear-gradient(180deg, ${stops.join(", ")})`;
+    }
+    return bar;
+  }
+
+  function headerArt(system) {
+    const art = h("div", { class: "cheader-art", "aria-hidden": "true" });
+    const palette = systemPalette(system);
+    if (palette) {
+      art.style.setProperty("--sys-base", palette.base);
+      art.style.setProperty("--sys-point", palette.points[0]);
+    }
+    // **전용 그림이 없으면 배경을 비운다.** 범용 카트리지 아이콘을 크게 깔면
+    // 그것이 있는 System마다 똑같은 실루엣이 반복돼서, 은은한 무늬가 아니라
+    // "이 System들은 뭔가 빠졌다"는 표시로 읽힌다(프로토타입 검토 결과).
+    art.appendChild(systemIcon(system, 62, () => art.classList.add("generic")));
+    return art;
   }
 
   function formatBytes(n) {
@@ -2166,6 +2256,9 @@
   function renderHeader() {
     const host = $("collection-header");
     clear(host);
+    // 확장 칸은 다른 기둥에 있지만 이 함수가 함께 책임진다 - 안 비우면 접어도 남는다.
+    const expandedSlot = $("collection-expanded");
+    if (expandedSlot) clear(expandedSlot);
     const detail = activeDetail();
     if (!detail) return;
 
@@ -2177,10 +2270,15 @@
     const systemEntry = scope.kind === "system"
       ? (detail.systems || []).find((s) => s.system === scope.id) : null;
 
+    // **이 띠의 높이는 절대 변하지 않는다(--header-row-h).** Navigator의 SYSTEMS
+    // 띠와 세로로 맞아야 구분선이 한 줄로 이어지고, 이 줄이 커지면 옆의 Detail
+    // 패널까지 밀린다(사용자 피드백). 펼쳤을 때 커지는 것은 아래 System 카드다.
     const compact = h("div", { class: "cheader" });
-    compact.appendChild(h("div", { class: "cheader-icon" }, [
-      systemEntry ? systemIcon(systemEntry.system, 26) : icon("gamepad", 20),
-    ]));
+    if (systemEntry) compact.appendChild(headerArt(systemEntry.system));
+    // 아이콘 상자 대신 콘솔 포인트 색 바(사용자 결정) - System을 보고 있을 때만.
+    compact.appendChild(systemEntry
+      ? pointBar(systemEntry.system)
+      : h("div", { class: "cheader-icon" }, [icon("gamepad", 20)]));
 
     const main = h("div", { class: "cheader-main" });
     // "Collection 제목 (System)" - Collection 소속을 잃지 않으면서 지금 어느
@@ -2195,8 +2293,17 @@
       h("span", { class: "dot" }, ["·"]),
       detail.arch ? detail.arch.toUpperCase() : "Unknown",
     ]));
+    // 숫자만 나열하면 무엇의 수인지 매번 읽어야 한다 - 앞에 작은 아이콘을 두면
+    // 모양만으로 구분된다(사용자 결정). Metadata는 "전체 - 빠진 수"로 계산해서
+    // 목록에 뜨는 수와 항상 아귀가 맞는다.
+    const romCount = systemEntry ? systemEntry.count : detail.totalGames;
+    const missingMeta = systemEntry
+      ? (systemEntry.missingMetadata || 0) : (detail.totalMissingMetadata || 0);
     const summary = h("div", { class: "cheader-stats" }, [
-      h("span", {}, [`${formatCount(systemEntry ? systemEntry.count : detail.totalGames)} Games`]),
+      h("span", { class: "cheader-stat", title: "ROM 항목 수" },
+        [icon("cartridge", 11), `${formatCount(romCount)} ROMs`]),
+      h("span", { class: "cheader-stat", title: "Metadata가 있는 항목 수" },
+        [icon("fileText", 11), `${formatCount(Math.max(0, romCount - missingMeta))} Metadata`]),
     ]);
     detail.storages.forEach((storage) => {
       // Plan이 있으면 "Actual -> Plan"으로 보여준다(스펙 §19, §30).
@@ -2251,17 +2358,49 @@
 
     if (!S.headerExpanded) return;
 
+    // 펼친 내용은 목록 기둥 안에 그린다 - 헤더 줄을 키우지 않으려는 것이다(위 주석).
+    const expandedHost = $("collection-expanded");
     const panel = h("div", { class: "cheader-expanded" });
+    // **카드에 제목을 다시 쓰지 않는다.** 바로 위 띠에 "Collection (SYSTEM)"이 이미
+    // 있어서, 큰 글씨로 한 번 더 쓰면 같은 것을 두 번 읽게 된다(사용자 피드백).
+    // 콘솔의 정체(포인트 바·그림·색)는 띠가 맡고, 카드는 숫자만 담는다. 다만 색은
+    // 카드까지 이어져서 두 줄이 한 덩어리로 보인다.
+    if (systemEntry) {
+      const palette = systemPalette(systemEntry.system);
+      if (palette) {
+        panel.style.setProperty("--sys-base", palette.base);
+        panel.style.setProperty("--sys-point", palette.points[0]);
+      }
+    }
+
+    // **왼쪽은 Collection의 정체, 오른쪽은 지금 보고 있는 것의 숫자다.**
+    //
+    // 예전에는 일곱 줄을 한 단으로 세로로 늘어놓아서, 폭은 남아돌고 높이만 먹었다.
+    // 두 단으로 접으면 같은 높이에 두 배를 담을 수 있어서, Scan이 이미 세어 둔
+    // 용량·누락 수치를 Dashboard까지 가지 않고 여기서 바로 보여준다.
+    const scoped = systemEntry || null;
+    const romBytes = scoped ? (scoped.romBytes || 0) : (detail.totalRomBytes || 0);
+    const mediaBytes = scoped ? (scoped.mediaBytes || 0) : (detail.totalMediaBytes || 0);
+    const noMeta = scoped ? (scoped.missingMetadata || 0) : (detail.totalMissingMetadata || 0);
+    const noMedia = scoped ? (scoped.missingMedia || 0) : (detail.totalMissingMedia || 0);
+
     const info = h("div", { class: "cheader-info" });
-    [["Frontend", detail.frontendLabel], ["Target", detail.target || "Unknown"],
-     ["OS", detail.os || "Unknown"], ["Architecture", detail.arch || "Unknown"],
-     ["Root Path", detail.rootPath], ["Systems", String(detail.systemCount)],
-     ["Games", formatCount(detail.totalGames)]].forEach(([label, value]) => {
-      info.appendChild(h("div", { class: "cheader-info-row" }, [
+    const infoRow = (label, value, warn) => info.appendChild(
+      h("div", { class: "cheader-info-row" + (warn ? " warn" : "") }, [
         h("span", { class: "cheader-info-label" }, [label]),
-        h("span", { class: "cheader-info-value" }, [value]),
+        h("span", { class: "cheader-info-value", title: String(value) }, [String(value)]),
       ]));
-    });
+    infoRow("Frontend", detail.frontendLabel);
+    infoRow("ROM", formatBytes(romBytes));
+    infoRow("Target", detail.target || "Unknown");
+    infoRow("Media", formatBytes(mediaBytes));
+    infoRow("OS", detail.os || "Unknown");
+    infoRow("Metadata 없음", formatCount(noMeta), noMeta > 0);
+    infoRow("Architecture", detail.arch || "Unknown");
+    infoRow("Media 없음", formatCount(noMedia), noMedia > 0);
+    infoRow("Root Path", detail.rootPath);
+    infoRow(scoped ? "System" : "Systems",
+            scoped ? scoped.system.toUpperCase() : formatCount(detail.systemCount));
     panel.appendChild(info);
 
     detail.storages.forEach((storage) => {
@@ -2284,7 +2423,7 @@
     // Frontend 고유 기능(ES-DE의 custom systems XML)은 여기 두지 않는다 - 그
     // 기능은 External Storage에 있는 System만 대상으로 하므로, Navigator의
     // External Storage 그룹 옆으로 옮겼다(renderNav 참고).
-    host.appendChild(panel);
+    expandedHost.appendChild(panel);
   }
 
   async function loadAdapterActions() {
@@ -4039,22 +4178,35 @@
     } else {
       cover.appendChild(icon("image", 17));
     }
-    const grid = h("div", { class: "identity-grid" });
-    [["Genre", "genre"], ["Release", "releasedate"], ["Players", "players"],
-     ["Region", "region"], ["Developer", "developer"], ["Publisher", "publisher"]].forEach(([label, key]) => {
-      grid.appendChild(h("div", { class: "identity-field" }, [
-        h("div", { class: "identity-field-label" }, [label]),
-        h("div", { class: "identity-field-value truncate" }, [value(key) || "-"]),
-      ]));
-    });
-    card.appendChild(cover);
-    card.appendChild(grid);
-    topFixed.appendChild(card);
-
-    topFixed.appendChild(h("div", { class: "field-label" }, ["Title"]));
+    // **요약 카드에 편집 필드를 다시 보여주지 않는다.**
+    //
+    // 예전에는 Genre/Release/Players/Region/Developer/Publisher 여섯 개를 읽기
+    // 전용으로 늘어놓았는데, 바로 아래 편집 폼에 **같은 여섯 개가 입력칸으로** 또
+    // 있었다. 한 화면에서 같은 값을 두 번 읽는 셈이라 자리만 먹고, 편집한 값과
+    // 카드의 값이 잠깐 어긋나 보이기도 했다.
+    //
+    // 대신 여기에는 폼에 없는 것만 둔다 - 표지, 제목, 그리고 ROM/Media의 실물 상태.
+    const main = h("div", { class: "identity-main" });
+    main.appendChild(h("div", { class: "field-label" }, ["Title"]));
     const nameInput = h("input", { class: "field-input title-input", value: value("name") });
     fieldRefs.name = nameInput;
-    topFixed.appendChild(nameInput);
+    main.appendChild(nameInput);
+
+    const mediaCount = Object.keys(state.media || {}).length;
+    const facts = h("div", { class: "identity-facts" }, [
+      h("span", { class: "identity-fact" + (state.present ? "" : " warn"), title: "ROM 파일" }, [
+        icon("cartridge", 11),
+        state.present ? formatBytes(state.size || 0) : "ROM 없음",
+      ]),
+      h("span", { class: "identity-fact" + (mediaCount ? "" : " warn"), title: "가지고 있는 media 종류" }, [
+        icon("image", 11), `Media ${formatCount(mediaCount)}`,
+      ]),
+    ]);
+    main.appendChild(facts);
+
+    card.appendChild(cover);
+    card.appendChild(main);
+    topFixed.appendChild(card);
     body.appendChild(topFixed);
 
     // Description은 **10줄쯤을 기본으로 두고 넘치면 안에서 스크롤한다.**

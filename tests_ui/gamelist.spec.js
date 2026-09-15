@@ -12,11 +12,15 @@ test("행을 클릭하면 상세 패널이 그 게임으로 열린다", async ({
   await expect(panel.locator(".detail-system")).toContainText("PS2");
 });
 
-test("Metadata 탭의 요약 카드가 필드 값을 채운다", async ({ page }) => {
+test("요약 카드는 편집 폼에 없는 것만 보여준다", async ({ page }) => {
+  // 같은 값을 한 화면에서 두 번 읽게 하지 않는다 - Genre 같은 필드는 아래 편집
+  // 폼에만 있고, 카드에는 제목과 ROM/Media의 실물 상태만 둔다.
   await page.locator(".lrow").first().click();
-  const values = page.locator(".identity-field-value");
-  await expect(values.first()).toHaveText("RPG");           // Genre
   await expect(page.locator(".title-input")).toHaveValue("Final Fantasy X");
+  await expect(page.locator(".identity-facts")).toContainText("Media");
+  await expect(page.locator(".identity-field-value")).toHaveCount(0);
+  // Genre는 편집 폼 쪽에 그대로 있다.
+  await expect(page.locator(".field-grid input").first()).toHaveValue("RPG");
 });
 
 test("탭을 바꿔도 저장 버튼은 Metadata 탭에서만 보인다", async ({ page }) => {

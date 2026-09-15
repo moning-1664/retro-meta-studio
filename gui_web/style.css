@@ -375,12 +375,14 @@ html[data-theme="light"] .raster-icon-pair img.for-dark { display: none; }
 .detail-body-desc-wrap textarea.field-input { flex: 1 1 auto; min-height: 70px; resize: none; }
 /* [신규] Metadata 탭 상단 identity 요약 카드 (대표 이미지 + 핵심 필드 6개) */
 .identity-card { display: flex; gap: 10px; border-radius: var(--radius-sm); padding: 8px; margin-bottom: 10px; background: var(--card3); border: 1px solid var(--border); }
-.identity-cover { flex-shrink: 0; width: 72px; height: 92px; border-radius: var(--radius-xs); overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--list-border); color: var(--muted); }
+.identity-cover { flex-shrink: 0; width: 58px; height: 76px; border-radius: var(--radius-xs); overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--list-border); color: var(--muted); }
 .identity-cover img { width: 100%; height: 100%; object-fit: cover; }
-.identity-grid { flex: 1; min-width: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; align-content: center; }
-.identity-field { min-width: 0; }
-.identity-field-label { font-size:calc(9px * var(--font-scale)); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 2px; }
-.identity-field-value { font-size:calc(11px * var(--font-scale)); color: var(--text); font-weight: 500; }
+.identity-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; justify-content: center; }
+/* 편집 폼에 없는 것만 - ROM과 Media의 실물 상태. */
+.identity-facts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 1px; }
+.identity-fact { display: inline-flex; align-items: center; gap: 4px; font-size:calc(10px * var(--font-scale)); color: var(--muted); }
+.identity-fact svg { opacity: .8; }
+.identity-fact.warn { color: var(--warning); }
 
 .field-label { font-size: var(--fs-eyebrow); text-transform: uppercase; letter-spacing: .03em; color: var(--muted); margin-bottom: 3px; display: flex; align-items: center; gap: 4px; }
 .field-input {

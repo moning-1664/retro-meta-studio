@@ -71,7 +71,7 @@ THUMBNAIL_CACHE_MAX = 256
 _MISS = object()
 
 
-def _sorted_systems(entries, games, *, with_storage=False):
+def _sorted_systems(entries, games, *, with_storage=False, stats=None):
     """게임이 있는 System을 먼저, 없는 것을 뒤에. 같은 상태끼리는 이름순.
 
     빈 System을 별도의 "Empty Systems" 묶음으로 만들지 않는다 - 사용자가 보는 것은
@@ -83,6 +83,19 @@ def _sorted_systems(entries, games, *, with_storage=False):
         row = {"system": entry.system, "count": games.get(entry.system, 0)}
         if with_storage:
             row["storageId"] = entry.storage_id
+        # Metadata가 없는 항목 수. 개수 자체를 따로 주지 않고 "빠진 수"만 주는 이유는,
+        # 화면이 `count - missingMetadata`로 계산하면 목록에 뜨는 수(count)와 항상
+        # 아귀가 맞기 때문이다 - 두 곳에서 따로 센 숫자가 어긋나는 일이 없다.
+        #
+        # 용량과 Media 누락 수도 같이 준다. Scan이 이미 세어 둔 값이라 추가 비용이
+        # 없고, 헤더를 펼쳤을 때 "이 System이 얼마나 차지하고 무엇이 빠졌는지"를
+        # Dashboard까지 가지 않고 바로 볼 수 있다.
+        if stats is not None:
+            stat = stats.get(entry.system) or {}
+            row["missingMetadata"] = int(stat.get("missing_metadata") or 0)
+            row["missingMedia"] = int(stat.get("missing_media") or 0)
+            row["romBytes"] = int(stat.get("rom_bytes") or 0)
+            row["mediaBytes"] = int(stat.get("media_bytes") or 0)
         return row
 
     return sorted((item(e) for e in entries),
@@ -331,7 +344,7 @@ class Api:
                 "deviceRoot": storage.device_root or "",
             })
 
-        systems = _sorted_systems(collection.systems, games, with_storage=True)
+        systems = _sorted_systems(collection.systems, games, with_storage=True, stats=stats)
         clash = self._conflicts(collection)
         for row in systems:
             sides = clash.get(row["system"].lower())
@@ -350,6 +363,10 @@ class Api:
             # (배지/툴팁용), 계층을 만들지 않는다.
             "systems": systems,
             "totalGames": cache.count_rows(),
+            "totalMissingMetadata": sum(int(s.get("missing_metadata") or 0) for s in stats.values()),
+            "totalMissingMedia": sum(int(s.get("missing_media") or 0) for s in stats.values()),
+            "totalRomBytes": sum(int(s.get("rom_bytes") or 0) for s in stats.values()),
+            "totalMediaBytes": sum(int(s.get("media_bytes") or 0) for s in stats.values()),
         })
 
     def _collection_summary(self, collection):
