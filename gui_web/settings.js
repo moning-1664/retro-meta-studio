@@ -54,6 +54,16 @@
     const main = h("div", { class: "stg-main" });
     panel.appendChild(head);
     panel.appendChild(h("div", { class: "stg-body" }, [nav, main]));
+    // **좌측 하단 확인 버튼**(실사용 결정) - 구석의 ×만으로 닫는 것보다, "확인을
+    // 누르면 적용되고 사라진다"는 편이 더 또렷하다. 값 자체는 이미 바뀔 때마다
+    // 즉시 반영돼 있으므로(슬라이더 미리보기 등) 이 버튼이 하는 일은 아직 안 나간
+    // 저장을 그 자리에서 흘려보내고 닫는 것이다 - 취소가 아니라 확인이다.
+    const confirmBtn = h("button", { class: "btn primary stg-confirm" }, ["확인"]);
+    confirmBtn.addEventListener("click", async () => {
+      if (ctx.flush) await ctx.flush();
+      close();
+    });
+    panel.appendChild(h("div", { class: "stg-foot" }, [confirmBtn]));
     overlay.appendChild(panel);
     // 바깥(어두운 영역)을 누르면 닫는다 - 패널 안에서 끌다가 바깥에서 놓는 경우는 닫지 않는다.
     overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });

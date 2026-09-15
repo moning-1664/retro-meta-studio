@@ -606,6 +606,11 @@
       reset: () => updateSettings("appearance", { ...DEFAULT_SETTINGS.appearance }),
       renderColumns: columnSettingsEditor,
       renderEmulator: emulatorSettingsEditor,
+      // 확인 버튼이 부른다(실사용 피드백 §7) - 값은 이미 바뀔 때마다 즉시
+      // 적용돼 있지만(슬라이더 미리보기 등), 서버 저장은 300ms 묶어서 나간다.
+      // "확인을 눌렀는데 화면은 닫혔고 저장은 아직 안 나갔다"가 없도록 그
+      // 자리에서 바로 흘려보낸다.
+      flush: flushPendingUiState,
     });
   }
 

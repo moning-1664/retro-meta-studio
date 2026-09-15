@@ -1163,6 +1163,10 @@ button.sb-badge { cursor: pointer; }
 .stg-close { width: 32px; height: 32px; border-radius: 6px; font-size: 23px; color: var(--muted); }
 .stg-close:hover { background: var(--card3); color: var(--text); }
 .stg-body { display: grid; grid-template-columns: 225px minmax(0, 1fr); flex: 1; min-height: 0; }
+/* 좌측 하단 확인(사용자 결정) - 값은 이미 즉시 적용돼 있으므로 이 버튼은 취소가
+   아니라 "닫아도 좋다"는 확인이다. ×만 있을 때보다 또렷하다. */
+.stg-foot { flex: none; padding: 12px 20px; border-top: 1px solid var(--border); background: var(--card2); }
+.stg-confirm { min-width: 96px; }
 .stg-nav { padding: 12px 10px; background: var(--bg); border-right: 1px solid var(--border); overflow: auto; }
 .stg-nav-item {
   width: 100%; text-align: left; padding: 9px 11px; margin-bottom: 3px;
