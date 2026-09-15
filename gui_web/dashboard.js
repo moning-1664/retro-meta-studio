@@ -127,20 +127,29 @@
           statusLine("bad", r.error || "검사하지 못했습니다."), h("span", { class: "dsb-validate-spacer" }), clearBtn]));
         return;
       }
-      const { checked, invalid, duplicates, issues, statuses } = r.data;
+      const { checked, invalid, duplicates, issues, statuses, countsStale, staleReason } = r.data;
       const problems = invalid.length + duplicates.length + issues.length;
 
-      // 네 가지 상태를 늘 보여준다(사용자 요구) - Metadata Health 카드와 같은 기준이다
-      // (app/dashboard.py::validate_collection).
+      // **Cache에서 온 숫자를 못 믿을 때가 있다.** 검사 전 재스캔이 실패하면
+      // Complete/Missing 세 숫자는 지난 스캔의 기억이다. 그냥 보여주면 지금 숫자인
+      // 줄 알기 때문에, 값 대신 «?»를 두고 왜인지 말한다 - Invalid XML은 파일을
+      // 직접 읽어 세므로 이때도 정확하다.
+      const count = (n) => (countsStale ? "?" : formatCount(n));
       const summary = h("div", { class: "dsb-validate-summary" }, [
-        statusLine("good", `Complete ${formatCount(statuses.complete)}`),
-        statuses.missingMedia ? statusLine("warn", `Missing Media ${formatCount(statuses.missingMedia)}`) : null,
-        statuses.missingDescription
-          ? statusLine("warn", `Missing Description ${formatCount(statuses.missingDescription)}`) : null,
+        statusLine(countsStale ? "warn" : "good", `Complete ${count(statuses.complete)}`),
+        statuses.missingMedia || countsStale
+          ? statusLine("warn", `Missing Media ${count(statuses.missingMedia)}`) : null,
+        statuses.missingDescription || countsStale
+          ? statusLine("warn", `Missing Description ${count(statuses.missingDescription)}`) : null,
         statuses.invalidXml ? statusLine("bad", `Invalid XML ${formatCount(statuses.invalidXml)}`)
           : statusLine("good", "Invalid XML 0"),
-        problems ? null : statusLine("good", `Metadata 파일 ${formatCount(checked)}개 확인 · 문제 없음`),
+        problems || countsStale ? null
+          : statusLine("good", `Metadata 파일 ${formatCount(checked)}개 확인 · 문제 없음`),
       ]);
+      if (countsStale) {
+        summary.appendChild(statusLine("bad",
+          `개수를 다시 세지 못했습니다 - 스캔 실패${staleReason ? ": " + staleReason : ""}`));
+      }
       const head = h("div", { class: "dsb-validate-head" }, [summary, h("span", { class: "dsb-validate-spacer" })]);
       if (problems) {
         const toggle = h("button", { class: "btn compact dsb-validate-toggle", "aria-expanded": String(!!ctx.validationOpen) },

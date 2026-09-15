@@ -123,6 +123,34 @@ class ValidateCollectionTests(unittest.TestCase):
         self.assertEqual(after["missingDescription"], 0,
                          "설명을 채웠는데 숫자가 지난 스캔 그대로다")
 
+    # --- 재스캔이 실패했을 때 (P1 검토) ----------------------------------
+    # 스캔 실패를 조용히 삼키면 옛 Cache로 계산한 숫자가 지금 숫자인 척 나간다 -
+    # 재스캔이 막으려던 바로 그 상태인데, 이번엔 알아챌 방법조차 없다.
+
+    def _break_scan(self):
+        def boom(*_a, **_k):
+            raise RuntimeError("스캔 실패")
+        self.api.workspace.scan = boom
+
+    def test_a_failed_rescan_is_reported_not_swallowed(self):
+        self._break_scan()
+        data = self.api.validate_collection(self.cid)["data"]
+        self.assertTrue(data["countsStale"], "스캔이 실패했는데 숫자를 그대로 내보냈다")
+        self.assertIn("스캔 실패", data["staleReason"])
+
+    def test_a_successful_rescan_is_not_marked_stale(self):
+        data = self.api.validate_collection(self.cid)["data"]
+        self.assertFalse(data["countsStale"])
+        self.assertIsNone(data["staleReason"])
+
+    def test_file_level_findings_survive_a_failed_rescan(self):
+        """Cache와 무관한 검사는 스캔이 실패해도 여전히 정확하다 - 그래서 중단하지 않는다."""
+        write_file(self.root / "gamelists" / "ps2" / "gamelist.xml", "<gameList><game>")
+        self._break_scan()
+        data = self.api.validate_collection(self.cid)["data"]
+        self.assertEqual(len(data["invalid"]), 1, "스캔 실패로 파일 검사까지 잃었다")
+        self.assertEqual(data["statuses"]["invalidXml"], 1)
+
     def test_file_level_findings_read_the_disk_not_the_scan_cache(self):
         """파일을 앱 밖에서 고쳐도 **재스캔 없이** 바로 반영돼야 한다.
 

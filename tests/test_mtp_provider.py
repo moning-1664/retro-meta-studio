@@ -5,6 +5,7 @@
 실제 WPD 호출(storage/mtp_wpd.py)은 기기가 있어야 확인할 수 있다.
 """
 
+import time
 import unittest
 
 import storage
@@ -258,6 +259,65 @@ class ComThreadRecoveryTests(unittest.TestCase):
         self.blocker.set()          # 옛 스레드를 풀어 준다
         idents = {com.run(lambda: _threading.get_ident(), timeout=5.0) for _ in range(8)}
         self.assertEqual(idents, {fresh}, "풀려난 옛 스레드가 새 큐의 일감을 가져갔다")
+
+    def test_many_callers_at_once_still_run_one_at_a_time(self):
+        """Browse/Scan/Apply가 겹쳐 MTP를 동시에 부르는 경우(실기 확인 항목 P2).
+
+        COM 아파트 하나로 몰아 직렬화하는 것이 이 클래스의 존재 이유다. 동시에
+        들어온 호출이 겹쳐 실행되면 그 전제가 깨진다.
+        """
+        from storage.mtp_wpd import _ComThread
+        import threading as _threading
+
+        com = _ComThread(initialize=lambda: None)
+        inside, overlap, results = [], [], []
+        guard = _threading.Lock()
+
+        def work(n):
+            with guard:
+                inside.append(n)
+                if len(inside) > 1:
+                    overlap.append(tuple(inside))
+            time.sleep(0.01)
+            with guard:
+                inside.remove(n)
+            return n
+
+        def caller(n):
+            results.append(com.run(lambda: work(n), timeout=10.0))
+
+        threads = [_threading.Thread(target=caller, args=(i,)) for i in range(12)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(15)
+
+        self.assertEqual(overlap, [], "두 호출이 동시에 기기를 만졌다")
+        self.assertEqual(sorted(results), list(range(12)), "잃어버린 호출이 있다")
+
+    def test_a_hang_does_not_lose_the_calls_queued_behind_it(self):
+        """굳은 호출 하나 때문에 뒤따르던 호출이 조용히 사라지면 안 된다 -
+        사라지면 화면은 «불러오는 중»에서 영영 멈춘다."""
+        from storage.mtp_wpd import _ComThread
+        import threading as _threading
+
+        com = _ComThread(initialize=lambda: None)
+        self._hang(com)
+
+        errors, done = [], []
+
+        def caller(n):
+            try:
+                done.append(com.run(lambda: n, timeout=10.0))
+            except MtpError as e:   # 실패해도 «답»은 와야 한다 - 매달려 있으면 안 된다
+                errors.append(e)
+
+        threads = [_threading.Thread(target=caller, args=(i,)) for i in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(15)
+        self.assertEqual(len(done) + len(errors), 5, "답을 못 받고 매달린 호출이 있다")
 
     def test_the_backend_asks_to_be_told_when_the_thread_is_replaced(self):
         """배선 확인 - 실제 WpdBackend가 재시작 통지를 받도록 걸어 두었는가."""

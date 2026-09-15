@@ -494,14 +494,26 @@ class Api:
         #
         # 스캔은 지문으로 걸러지므로 바뀐 게 없으면 거의 공짜다 - 바뀐 게 있다면
         # 그 재스캔이야말로 정확한 숫자를 내는 데 꼭 필요한 일이다.
+        #
+        # **스캔이 실패하면 그 사실을 숨기지 않는다.** 조용히 넘어가면 옛 Cache로
+        # 계산한 숫자가 지금 숫자인 척 나가고, 이 재스캔이 막으려던 바로 그 상태로
+        # 되돌아간다 - 게다가 이번엔 사용자가 알아챌 방법조차 없다. 파일을 직접 읽어
+        # 얻는 항목(깨진 XML·없는 ROM·중복)은 Cache와 무관하게 여전히 정확하므로
+        # 검사 자체는 끝까지 하고, Cache에서 온 숫자만 «믿을 수 없음»으로 표시한다.
+        stale_reason = None
         try:
             self.workspace.scan(collection_id)
-        except Exception:  # noqa: BLE001 - 스캔이 실패해도 파일 검사는 해 준다
-            pass
+        except Exception as e:  # noqa: BLE001
+            stale_reason = str(e) or e.__class__.__name__
 
         cache = self.workspace.open(collection_id)
         provider = self.workspace.provider_for(collection)
-        return ok(dashboard.validate_collection(collection, get_adapter(collection.frontend), cache, provider))
+        report = dashboard.validate_collection(collection, get_adapter(collection.frontend),
+                                               cache, provider)
+        # 화면이 숫자를 흐리게 보여주고 이유를 말할 수 있도록 함께 내보낸다.
+        report["countsStale"] = stale_reason is not None
+        report["staleReason"] = stale_reason
+        return ok(report)
 
     @guarded
     def set_favorite(self, collection_id, rom_uid, favorite=True):
