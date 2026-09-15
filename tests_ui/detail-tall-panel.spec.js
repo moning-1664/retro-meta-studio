@@ -28,6 +28,25 @@ test.describe("좁은 창(기본) - 추가 정보는 숨어 있다", () => {
     await page.locator(".detail-tab", { hasText: "Media" }).click();
     await expect(page.locator(".media-tab-identity")).not.toBeVisible();
   });
+
+  test("숨어 있으면 Screenshot을 실제로 요청하지도 않는다(코드 리뷰 지적)", async ({ page }) => {
+    // CSS display:none은 화면에서만 감출 뿐이다 - 예전엔 좁은 화면에서도 게임을
+    // 열 때마다 안 보이는 Screenshot을 매번 받아 왔다. 지금은 DOM에 붙은 다음
+    // 프레임에 실제로 보이는지 확인하고서야 요청한다.
+    const seen = [];
+    await page.exposeFunction("__seenLabel", (label) => seen.push(label));
+    await page.evaluate(() => {
+      const original = window.api.getMediaImage;
+      window.api.getMediaImage = (id, romUid, label, thumbnail) => {
+        window.__seenLabel(label);
+        return original(id, romUid, label, thumbnail);
+      };
+    });
+    await openFirstGame(page);   // FFX - Screenshots 미디어가 있다.
+    await page.waitForTimeout(200);   // requestAnimationFrame 이후까지 기다린다.
+    expect(seen).not.toContain("Screenshots");
+    expect(seen).toContain("Covers");   // 항상 보이는 표지는 그대로 요청한다.
+  });
 });
 
 test.describe("넉넉히 큰 창(850px 이상) - 추가 정보가 나타난다", () => {
@@ -78,5 +97,32 @@ test.describe("넉넉히 큰 창(850px 이상) - 추가 정보가 나타난다",
     await openFirstGame(page);
     await page.locator(".detail-tab", { hasText: "Media" }).click();
     await expect(page.locator(".media-tab-desc")).toHaveText("설명 없음");
+  });
+});
+
+// 850px 경계 자체를 확인한다(코드 리뷰 지적 - "850px가 실제 임계값과 맞는지
+// TC로 검증해야 한다"). #detail-panel-inner 높이는 이 mock 화면에서 뷰포트
+// 높이보다 136px 작다(위 chrome/toolbar/header 몫) - 그 오프셋으로 원하는
+// 패널 높이를 정확히 만든다.
+test.describe("850px 경계", () => {
+  const OFFSET = 136;
+  const openAtPanelHeight = async (page, panelHeight) => {
+    await page.setViewportSize({ width: 1280, height: panelHeight + OFFSET });
+    await openApp(page);
+    await openFirstGame(page);
+  };
+
+  test("849px - 아직 숨어 있다", async ({ page }) => {
+    await openAtPanelHeight(page, 849);
+    const h = await page.locator("#detail-panel-inner").evaluate((el) => el.getBoundingClientRect().height);
+    expect(Math.round(h)).toBe(849);
+    await expect(page.locator(".detail-extra-media")).not.toBeVisible();
+  });
+
+  test("850px - 나타난다", async ({ page }) => {
+    await openAtPanelHeight(page, 850);
+    const h = await page.locator("#detail-panel-inner").evaluate((el) => el.getBoundingClientRect().height);
+    expect(Math.round(h)).toBe(850);
+    await expect(page.locator(".detail-extra-media")).toBeVisible();
   });
 });

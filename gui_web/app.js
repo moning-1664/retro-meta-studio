@@ -4557,19 +4557,31 @@
     // Description을 12줄로 멈춘 만큼 남는 세로 공간을, 패널이 넉넉히 클 때만
     // (컨테이너 쿼리, 850px) Screenshot과 나머지 media 유무로 채운다(실사용
     // 피드백) - 비좁은 화면에서는 style.css가 이 블록 자체를 숨긴다.
+    //
+    // **숨겨져 있으면 요청 자체를 안 보낸다.** CSS display:none은 화면에서만
+    // 감출 뿐이라, 여기서 바로 loadMediaImage()를 부르면 좁은 패널에서도 게임을
+    // 넘길 때마다 안 보이는 Screenshot을 매번 받아 온다(코드 리뷰 지적) -
+    // extra가 실제로 DOM에 붙은 다음 프레임에 컨테이너 쿼리 결과(getComputedStyle)를
+    // 보고, 보일 때만 요청한다.
     const extra = h("div", { class: "detail-body-fixed detail-extra-media" });
     extra.appendChild(h("div", { class: "field-label" }, ["Screenshot"]));
     const shot = h("div", { class: "detail-extra-screenshot" });
+    let shotImg = null;
     if (state.media && state.media.Screenshots) {
-      const img = h("img", { alt: "Screenshot" });
-      shot.appendChild(img);
-      loadMediaImage(img, "Screenshots", true);
+      shotImg = h("img", { alt: "Screenshot" });
+      shot.appendChild(shotImg);
     } else {
       shot.appendChild(icon("image", IC.lg));
     }
     extra.appendChild(shot);
     extra.appendChild(mediaFlagRow(state.media || {}));
     body.appendChild(extra);
+    if (shotImg) {
+      const img = shotImg;
+      requestAnimationFrame(() => {
+        if (getComputedStyle(extra).display !== "none") loadMediaImage(img, "Screenshots", true);
+      });
+    }
   }
 
   async function loadMediaImage(img, label, thumbnail) {

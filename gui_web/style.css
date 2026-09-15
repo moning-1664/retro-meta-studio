@@ -400,7 +400,11 @@ html[data-theme="light"] .raster-icon-pair img.for-dark { display: none; }
   display: flex; align-items: center; justify-content: center;
   background: var(--list-border); color: var(--muted); margin-bottom: 8px;
 }
-.detail-extra-screenshot img { width: 100%; height: 100%; object-fit: cover; }
+/* contain이다(cover가 아니다) - Media 탭 본가 Screenshot 타일(.media-tile-preview
+   img)과 같은 규칙(코드 리뷰 지적). 실제 스크린샷은 4:3/16:9/세로 등 비율이
+   다양해서 cover로 자르면 화면 일부가 잘려 나간다 - Cover 아트(.identity-cover,
+   표지는 대개 세로 고정비)와는 사정이 다르다. */
+.detail-extra-screenshot img { width: 100%; height: 100%; object-fit: contain; }
 .media-tab-identity { margin-bottom: 10px; }
 .media-tab-title { font-size: var(--fs-body); font-weight: 650; }
 .media-tab-desc {
