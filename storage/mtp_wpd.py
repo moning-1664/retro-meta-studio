@@ -24,6 +24,7 @@ backend로 검증한다. 여기가 틀리면 고칠 곳도 여기 하나다.
 
 from __future__ import annotations
 
+import hashlib
 import queue
 import re
 import threading
@@ -80,26 +81,43 @@ class _ComThread:
     않으면 comtypes가 없는 환경에서 첫 호출이 영원히 기다린다(실제로 그렇게 멈췄다).
     """
 
-    def __init__(self, initialize=None):
+    def __init__(self, initialize=None, on_restart=None):
         #: 테스트가 COM 대신 다른 초기화를 끼울 수 있게 열어 둔다(기기도 comtypes도 없이
         #: "초기화 실패"와 "응답 없음"을 재현하기 위해서다).
         self._initialize = initialize or _coinitialize
-        self._jobs: queue.Queue = queue.Queue()
+        #: 스레드를 새로 세울 때 부른다 - 옛 아파트에서 만든 COM 포인터를 버리라는 신호다.
+        self._on_restart = on_restart
+        self._lock = threading.Lock()
+        self._stuck = False
+        self._spawn()
+
+    def _spawn(self):
+        """일할 스레드와 그 스레드 전용 큐를 새로 세운다.
+
+        **큐를 스레드에 인자로 넘기는 것이 중요하다.** self._jobs를 읽게 두면, 굳었던
+        옛 스레드가 나중에 풀렸을 때 그때의 self._jobs - 즉 **새 큐** - 에서 일감을
+        꺼내 간다. 두 스레드가 서로 다른 COM 아파트에서 같은 큐를 나눠 먹게 되는데,
+        이건 이 클래스가 존재하는 이유(아파트 하나로 직렬화) 자체를 무너뜨린다.
+        """
+        self._jobs = queue.Queue()
         self._ready = threading.Event()
-        self._start_error: Exception | None = None
-        self._thread = threading.Thread(target=self._loop, name="mtp-com", daemon=True)
+        state = {"error": None}
+        self._state = state
+        self._thread = threading.Thread(
+            target=self._loop, args=(self._jobs, self._ready, state),
+            name="mtp-com", daemon=True)
         self._thread.start()
 
-    def _loop(self):
+    def _loop(self, jobs, ready, state):
         try:
             self._initialize()
         except Exception as e:  # noqa: BLE001
-            self._start_error = e
-            self._ready.set()
+            state["error"] = e
+            ready.set()
             return
-        self._ready.set()
+        ready.set()
         while True:
-            func, done, box = self._jobs.get()
+            func, done, box = jobs.get()
             try:
                 box.append(("ok", func()))
             except Exception as e:  # noqa: BLE001 - 호출한 스레드로 그대로 옮겨 준다
@@ -107,15 +125,35 @@ class _ComThread:
             finally:
                 done.set()
 
+    def _restart(self):
+        """굳은 스레드를 버리고 새로 세운다.
+
+        옛 스레드는 응답 없는 COM 호출 안에 갇혀 있어 깨울 방법이 없다 - daemon이라
+        프로세스가 끝날 때 함께 사라진다. 여기서 하는 일은 **그쪽을 쳐다보지 않는 것**이다.
+        """
+        self._stuck = False
+        if self._on_restart:
+            self._on_restart()
+        self._spawn()
+
     def run(self, func, timeout=_CALL_TIMEOUT):
-        self._ready.wait(10)
-        if self._start_error is not None:
+        with self._lock:
+            # 지난 호출이 timeout으로 끝났다면 그 스레드는 아직 그 호출 안에 갇혀 있다.
+            # 그 위에 일감을 더 쌓으면 뒤에 줄만 서다가 똑같이 timeout이 난다 - 기기를
+            # 다시 꽂아도 앱을 껐다 켜기 전에는 MTP가 영영 안 되던 이유가 이것이다.
+            if self._stuck:
+                self._restart()
+            jobs, ready, state = self._jobs, self._ready, self._state
+
+        ready.wait(10)
+        if state["error"] is not None:
             raise MtpError(
                 "MTP 연결에는 comtypes가 필요합니다. `pip install comtypes` 후 다시 시도해주세요."
-            ) from self._start_error
+            ) from state["error"]
         done, box = threading.Event(), []
-        self._jobs.put((func, done, box))
+        jobs.put((func, done, box))
         if not done.wait(timeout):
+            self._stuck = True   # 다음 호출이 스레드를 새로 세운다
             raise MtpError(
                 "기기가 응답하지 않습니다. 화면 잠금을 풀고 USB 연결을 '파일 전송(MTP)'으로 "
                 "둔 뒤 다시 시도해주세요.")
@@ -137,12 +175,25 @@ def _require_comtypes():
 
 class WpdBackend(MtpBackend):
     def __init__(self):
-        self._com = _ComThread()
+        self._com = _ComThread(on_restart=self._forget_com_state)
         self._api = None            # portabledeviceapi 타입 라이브러리 모듈
         self._types = None          # portabledevicetypes 모듈
         self._key_type = None       # PROPERTYKEY 구조체 타입(생성된 이름이 버전마다 다르다)
         self._device_ids: dict[str, str] = {}    # 기기키 -> WPD device id
         self._opened: dict[str, object] = {}     # WPD device id -> IPortableDevice
+
+    def _forget_com_state(self):
+        """COM 스레드를 새로 세울 때 그 전 아파트에서 만든 것을 전부 버린다.
+
+        열어 둔 IPortableDevice는 **그것을 만든 아파트에 묶인 포인터**다. 스레드가
+        바뀌었는데 그대로 쓰면 기기가 멀쩡해도 호출이 실패한다 - 다음 요청 때 기기를
+        다시 열도록 잊는다. object_id도 세션 안에서만 유효하므로 함께 버린다.
+        """
+        self._api = None
+        self._types = None
+        self._key_type = None
+        self._device_ids = {}
+        self._opened = {}
 
     # --- COM 준비 --------------------------------------------------------
     def _load(self):
@@ -244,10 +295,16 @@ class WpdBackend(MtpBackend):
         return "Android Device"
 
     def _device_key(self, device_id: str, name: str) -> str:
-        """경로에 쓸 기기 키. 일련번호를 쓰고, 못 읽으면 이름 + ID 해시로 대신한다.
+        """경로에 쓸 기기 키. 일련번호를 쓰고, 못 읽으면 기기 ID를 요약해 대신한다.
 
         WPD 기기 ID(`\\\\?\\usb#vid_...`)를 그대로 쓸 수 없다 - 경로에 못 쓰는 문자가
-        섞여 있고 포트를 바꿔 꽂으면 달라진다.
+        섞여 있고, 일련번호를 안 주는 기기에서는 포트를 바꿔 꽂으면 달라진다.
+
+        **이 키는 반드시 재실행해도 같은 값이어야 한다.** Collection이 저장하는 경로가
+        `mtp://<이 키>/...`라서, 같은 기기가 다음 실행에서 다른 키를 받으면 저장해 둔
+        Collection이 통째로 다른 기기를 가리키게 된다. 예전에는 fallback이 파이썬
+        내장 `hash()`였는데, 문자열 해시는 프로세스마다 시드가 달라(PEP 456) 앱을
+        켤 때마다 값이 바뀌었다 - 그래서 시드를 타지 않는 SHA-256으로 요약한다.
         """
         serial = None
         try:
@@ -265,7 +322,10 @@ class WpdBackend(MtpBackend):
             self._opened[device_id] = device
         except Exception:  # noqa: BLE001 - 일련번호를 안 주는 기기가 있다
             serial = None
-        raw = serial or f"{name}-{abs(hash(device_id)) % 10 ** 8}"
+        if not serial:
+            digest = hashlib.sha256(device_id.encode("utf-8")).hexdigest()[:10]
+            serial = f"{name}-{digest}"
+        raw = serial
         return re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-") or "device"
 
     # --- 객체 읽기 -------------------------------------------------------

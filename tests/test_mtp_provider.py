@@ -204,5 +204,129 @@ class ComThreadTests(unittest.TestCase):
         self.assertEqual(seen.pop(), "mtp-com")
 
 
+class ComThreadRecoveryTests(unittest.TestCase):
+    """**응답 없는 호출 하나가 MTP 전체를 영영 막으면 안 된다.**
+
+    기기가 잠들거나 케이블이 흔들리면 COM 호출이 돌아오지 않는다. 부르는 쪽은
+    timeout으로 풀려나지만 일하던 스레드는 그 호출 안에 그대로 갇혀 있다. 그 위에
+    다음 일감을 쌓으면 뒤에 줄만 서다가 똑같이 timeout이 나고, 기기를 다시 꽂아도
+    앱을 껐다 켜기 전에는 MTP가 안 됐다 - 그래서 굳은 스레드는 버리고 새로 세운다.
+    """
+
+    def setUp(self):
+        import threading as _threading
+        self.blocker = _threading.Event()
+        self.addCleanup(self.blocker.set)   # 테스트가 끝나면 갇힌 스레드를 풀어 준다
+
+    def _hang(self, com):
+        """스레드를 묶어 둔 채 timeout을 한 번 일으킨다."""
+        with self.assertRaises(MtpError) as caught:
+            com.run(lambda: self.blocker.wait(30), timeout=0.2)
+        self.assertIn("응답하지 않습니다", str(caught.exception))
+
+    def test_the_call_after_a_timeout_works_instead_of_queueing_behind_it(self):
+        from storage.mtp_wpd import _ComThread
+
+        com = _ComThread(initialize=lambda: None)
+        self._hang(com)
+        # 고치기 전에는 이 호출이 갇힌 일감 뒤에 줄을 서서 또 timeout이 났다.
+        self.assertEqual(com.run(lambda: 42, timeout=5.0), 42)
+
+    def test_a_restart_runs_on_a_different_thread(self):
+        from storage.mtp_wpd import _ComThread
+        import threading as _threading
+
+        com = _ComThread(initialize=lambda: None)
+        before = com.run(lambda: _threading.get_ident(), timeout=5.0)
+        self._hang(com)
+        after = com.run(lambda: _threading.get_ident(), timeout=5.0)
+        self.assertNotEqual(before, after, "굳은 스레드를 그대로 다시 썼다")
+
+    def test_the_old_thread_does_not_steal_jobs_from_the_new_queue(self):
+        """갇혔던 스레드가 나중에 풀려도 새 큐를 넘보면 안 된다.
+
+        넘보면 두 스레드가 서로 다른 COM 아파트에서 같은 큐를 나눠 먹게 되는데,
+        이 클래스가 있는 이유(아파트 하나로 직렬화) 자체가 무너진다.
+        """
+        from storage.mtp_wpd import _ComThread
+        import threading as _threading
+
+        com = _ComThread(initialize=lambda: None)
+        self._hang(com)
+        fresh = com.run(lambda: _threading.get_ident(), timeout=5.0)
+
+        self.blocker.set()          # 옛 스레드를 풀어 준다
+        idents = {com.run(lambda: _threading.get_ident(), timeout=5.0) for _ in range(8)}
+        self.assertEqual(idents, {fresh}, "풀려난 옛 스레드가 새 큐의 일감을 가져갔다")
+
+    def test_the_backend_asks_to_be_told_when_the_thread_is_replaced(self):
+        """배선 확인 - 실제 WpdBackend가 재시작 통지를 받도록 걸어 두었는가."""
+        from storage.mtp_wpd import WpdBackend
+
+        backend = WpdBackend()
+        self.assertEqual(backend._com._on_restart, backend._forget_com_state)
+
+    def test_the_backend_forgets_com_pointers_when_the_thread_is_replaced(self):
+        """열어 둔 기기 포인터는 만든 아파트에 묶여 있다 - 스레드가 바뀌면 버려야 한다.
+
+        이 환경에는 COM이 없어 진짜 초기화가 실패하므로, 통지 배선은 위 테스트가 보고
+        여기서는 빈 초기화를 끼워 **버리는 동작**만 본다.
+        """
+        from storage.mtp_wpd import WpdBackend, _ComThread
+
+        backend = WpdBackend()
+        backend._com = _ComThread(initialize=lambda: None,
+                                  on_restart=backend._forget_com_state)
+        backend._api = object()
+        backend._opened = {"dev": object()}
+        backend._device_ids = {"KEY": "dev"}
+
+        self._hang(backend._com)
+        backend._com.run(lambda: None, timeout=5.0)   # 여기서 스레드를 새로 세운다
+
+        self.assertIsNone(backend._api)
+        self.assertEqual(backend._opened, {})
+        self.assertEqual(backend._device_ids, {})
+
+
+class DeviceKeyTests(unittest.TestCase):
+    """기기 키는 **재실행해도 같은 값이어야 한다.**
+
+    Collection이 저장하는 경로가 `mtp://<기기키>/...`라, 키가 실행마다 달라지면
+    저장해 둔 Collection이 다음 실행에서 엉뚱한 곳을 가리킨다. 일련번호를 주는
+    기기는 그 값을 쓰지만, 안 주는 기기는 fallback을 타므로 그쪽을 검증한다.
+    """
+
+    DEVICE_ID = r"usb#vid_04e8&pid_6860#7&1a2b&0&2#{guid}"
+
+    def _key(self):
+        from storage.mtp_wpd import WpdBackend
+        # 기기가 없으니 일련번호 조회가 실패하고 fallback으로 떨어진다.
+        return WpdBackend()._device_key(self.DEVICE_ID, "Galaxy S21")
+
+    def test_fallback_key_is_the_same_value_every_run(self):
+        # 값을 못 박아 둔다 - 파이썬 내장 hash()는 프로세스마다 시드가 달라(PEP 456)
+        # 이 값을 절대 만들어 내지 못한다. 예전 코드는 그 hash()를 썼다.
+        self.assertEqual(self._key(), "Galaxy-S21-03814637fe")
+
+    def test_fallback_key_survives_a_different_hash_seed(self):
+        import subprocess
+        import sys
+
+        code = (
+            "from storage.mtp_wpd import WpdBackend\n"
+            f"print(WpdBackend()._device_key(r'{self.DEVICE_ID}', 'Galaxy S21'))\n"
+        )
+        seen = set()
+        for seed in ("0", "1", "12345"):
+            out = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                                 text=True, env={"PYTHONHASHSEED": seed, "PATH": ""})
+            seen.add(out.stdout.strip())
+        self.assertEqual(seen, {"Galaxy-S21-03814637fe"})
+
+    def test_key_has_only_path_safe_characters(self):
+        self.assertRegex(self._key(), r"^[A-Za-z0-9._-]+$")
+
+
 if __name__ == "__main__":
     unittest.main()
