@@ -13,8 +13,9 @@ Title Prefix/Postfix - 지역별로 제목 앞뒤에 표시를 자동으로 붙�
    빼내 기억해 두고, 새 제목을 만들 때 정해진 자리(제목 바로 뒤)에 다시 넣는다.
 3. **region 필드로 지역을 분류하고, 설정에 따라 새 장식을 붙인다.** gamelist의
    `region` 값(자유 텍스트라 "USA", "jp", "Europe" 등 표기가 제각각이다)을 5개 구역
-   중 하나로 묶어서 본다. 분류가 안 되면(빈 값이거나 못 알아보는 표기) 장식을 붙이지
-   않는다 - 어느 쪽인지 모르면서 하나로 단정하지 않는다.
+   중 하나로 묶어서 본다. 한국/영어권/일본/유럽 중 어디에도 안 걸리면(빈 값이거나
+   못 알아보는 표기 포함) **글로벌로 본다** - region을 안 채운 Collection이 흔한데,
+   그런 경우까지 전부 "모른다"고 건너뛰면 글로벌 설정이 있으나 마나 하다.
 
 실제 파일에 쓰는 것은 이 모듈의 일이 아니다. 여기서는 문자열만 계산하고, 저장은
 `app/plan/builder.py`(Plan에 올리기)와 `app/plan/applier.py`(Apply 때 실제로 쓰기)가 한다 -
@@ -33,51 +34,67 @@ REGION_LABELS = {
     "kr": "한국(KR)", "en": "영어권(EN)", "jp": "일본(JP)", "eu": "유럽(EU)", "global": "글로벌",
 }
 
-#: gamelist의 `region` 값(자유 텍스트)에서 자주 보는 표기 -> 5개 구역. 토큰 단위로
-#: 맞춘다(공백/쉼표/슬래시로 쪼갠 조각) - "us"처럼 짧은 표기가 다른 단어 안에서 우연히
-#: 걸리는 일을 피하기 위해서다. 앞에 있는 구역이 우선한다(예: "USA, Europe"는 en으로).
+#: gamelist의 `region` 값(자유 텍스트)에서 자주 보는 표기 -> 4개 구역(글로벌은 명시적
+#: 매칭이 아니라 기본값이라 여기 없다). 토큰 단위로 맞춘다(공백/쉼표/슬래시로 쪼갠 조각) -
+#: "us"처럼 짧은 표기가 다른 단어 안에서 우연히 걸리는 일을 피하기 위해서다. 앞에 있는
+#: 구역이 우선한다(예: "USA, Europe"는 en으로).
 _REGION_KEYWORDS: dict[str, set[str]] = {
     "kr": {"kr", "kor", "korea", "한국"},
     "jp": {"jp", "jpn", "japan", "일본"},
     "eu": {"eu", "eur", "europe", "uk", "gb"},
     "en": {"us", "usa", "na", "en", "eng", "english", "america"},
-    "global": {"world", "wor", "glo", "global", "int", "intl", "international"},
 }
-
 _TOKEN_RE = re.compile(r"[A-Za-z가-힣]+")
 
 
-def classify_region(region: str | None) -> str | None:
-    """region 필드 값을 5개 구역 중 하나로 묶는다. 못 알아보면 None(장식을 붙이지 않는다)."""
+def classify_region(region: str | None) -> str:
+    """region 필드 값을 5개 구역 중 하나로 묶는다.
+
+    한국/영어권/일본/유럽 중 어디에도 안 걸리면 **글로벌**로 본다 - "World" 같은 글로벌
+    표기는 물론이고, region을 안 채운 빈 값이나 못 알아보는 표기도 전부 여기 포함된다.
+    region을 안 채운 Collection에서도 글로벌 설정만은 쓸 수 있어야 한다(사용자 결정).
+    """
     tokens = [t.lower() for t in _TOKEN_RE.findall(str(region or ""))]
-    for bucket in REGIONS:
-        keywords = _REGION_KEYWORDS[bucket]
-        if any(t in keywords for t in tokens):
+    for bucket in ("kr", "en", "jp", "eu"):
+        if any(t in _REGION_KEYWORDS[bucket] for t in tokens):
             return bucket
-    return None
+    return "global"
 
 
 # ----------------------------------------------------------------------
-# 디스크 표시 - "(Disk 1 of 3)" 같은 것은 지역 장식이 아니라 따로 인식해서 보존한다.
+# 디스크 표시 - "(Disk 1 of 3)", "(Disc 2)", "(2/2)"처럼 여러 장으로 나뉜 게임의 디스크
+# 번호는 지역 장식이 아니라 따로 인식해서 보존한다.
 # ----------------------------------------------------------------------
-_DISK_RE = re.compile(
+#: "Disk"/"Disc" 단어가 있는 표기 - 단어가 있으니 총 장수 없이 번호 하나만 있어도
+#: ("Disc A") 디스크 표시로 인정한다.
+_DISK_WORD_RE = re.compile(
     r"[\(\[]\s*(dis[ck])\s*\.?\s*([0-9]+|[a-z])\s*(?:(?:of|/)\s*([0-9]+|[a-z]))?\s*[\)\]]",
     re.IGNORECASE,
 )
+#: 단어 없이 숫자만 있는 표기("(2/2)", "(1 of 3)") - **번호와 총 장수가 둘 다 있을 때만**
+#: 인정한다. 총 장수 없이 숫자 하나만 있으면("(1994)") 발매연도 같은 것과 구별할 수
+#: 없어서 디스크 표시로 보지 않는다 - 실사용 피드백: 단어 없는 "(2/2)"가 지역 장식과
+#: 함께 지워졌다.
+_DISK_FRACTION_RE = re.compile(r"[\(\[]\s*([0-9]{1,2})\s*(?:of|/)\s*([0-9]{1,2})\s*[\)\]]")
 
 
 def _extract_disk_marker(title: str) -> tuple[str, str | None]:
     """디스크 표시를 찾아 빼내고 (나머지 제목, 정규화한 표시)를 돌려준다.
 
     여러 개가 있으면 첫 번째만 인정한다 - 정상적인 제목에 디스크 표시는 하나뿐이다.
-    표기는 "Disk"/"Disc", 숫자/로마자 등 제각각이라 **원래 단어(Disk 또는 Disc)는
-    살리고 나머지 모양만** 통일한다(`(Disk 1 of 3)`, `(Disc A)`).
+    표기는 "Disk"/"Disc", 숫자/로마자, 단어 없는 분수 등 제각각이라 **단어가 있으면
+    그 단어(Disk 또는 Disc)를 살리고, 없으면 "Disk"로 통일**하며 나머지 모양만
+    맞춘다(`(Disk 1 of 3)`, `(Disc A)`).
     """
-    m = _DISK_RE.search(title)
-    if not m:
-        return title, None
-    word, num, total = m.group(1), m.group(2), m.group(3)
-    marker = f"({word.capitalize()} {num.upper()}{f' of {total.upper()}' if total else ''})"
+    m = _DISK_WORD_RE.search(title)
+    if m:
+        word, num, total = m.group(1).capitalize(), m.group(2).upper(), m.group(3)
+    else:
+        m = _DISK_FRACTION_RE.search(title)
+        if not m:
+            return title, None
+        word, num, total = "Disk", m.group(1), m.group(2)
+    marker = f"({word} {num}{f' of {total.upper()}' if total else ''})"
     remaining = (title[:m.start()] + " " + title[m.end():]).strip()
     return remaining, marker
 
@@ -184,8 +201,8 @@ def compute_new_title(current_title: str, region: str | None, config: dict | Non
     bucket = classify_region(region)
     core = f"{base} {disk_marker}" if disk_marker else base
 
-    cfg = (normalize_config(config)).get(bucket) if bucket else None
-    if cfg and cfg["enabled"] and cfg["text"].strip():
+    cfg = normalize_config(config)[bucket]
+    if cfg["enabled"] and cfg["text"].strip():
         new_title = (_join_postfix(core, cfg["text"]) if cfg["mode"] == "postfix"
                     else _join_prefix(cfg["text"], core))
     else:

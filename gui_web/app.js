@@ -1405,7 +1405,16 @@
    * 그룹 자체가 없다. 기능은 그대로 두고 들어가는 문만 옮긴다.
    */
   /** System 우클릭 메뉴 - 게임 행 메뉴와 같은 컨텍스트 메뉴를 쓴다. */
-  function openSystemMenu(sys, storages, event) {
+  /** 이 System 전체에 Title Prefix/Postfix를 적용하면 뭐라도 바뀌는 게 있는지. 없으면
+   * 메뉴 항목 자체를 고를 수 없게 한다(사용자 결정) - 눌러서 "바뀔 게 없다"는 안내를
+   * 받는 것보다 아예 흐리게 보이는 편이 직관적이다. */
+  async function titleAffixHasChangesForSystem(system) {
+    const r = await api.titleAffixPreview(S.activeId, null, system);
+    return r.ok && r.data.items.some((i) => i.changed);
+  }
+
+  async function openSystemMenu(sys, storages, event) {
+    const titleAffixDisabled = !sys.count || !(await titleAffixHasChangesForSystem(sys.system));
     const current = storages.find((s) => s.id === sys.storageId);
     const items = [];
     if (sys.conflict && sys.conflict.length) {
@@ -1434,8 +1443,10 @@
     items.push({ label: "gamelist 만들기", icon: "fileWarning",
       title: "이 System에 gamelist가 없으면 ROM 파일명만 담아 만듭니다.",
       onSelect: () => openMetadataBootstrap(S.activeId, [sys.system]) });
-    items.push({ label: "Title Prefix/Postfix 일괄 적용…", icon: "tag",
-      title: "이 System 전체 제목에서 기존 장식을 떼고, Settings에 설정한 지역별 표시를 다시 붙입니다.",
+    items.push({ label: "Title Prefix/Postfix 일괄 적용…", icon: "tag", disabled: titleAffixDisabled,
+      title: titleAffixDisabled
+        ? "지금 설정으로는 이 System에서 바뀔 제목이 없습니다. Settings > Metadata & Media에서 규칙을 확인하세요."
+        : "이 System 전체 제목에서 기존 장식을 떼고, Settings에 설정한 지역별 표시를 다시 붙입니다.",
       onSelect: () => openTitleAffixDialog({ system: sys.system, label: sys.system.toUpperCase() }) });
     items.push("separator", {
       label: "ROM 없는 항목 정리", icon: "eraser",
@@ -3048,7 +3059,7 @@
    * 오클릭 한 번이 곧바로 삭제 확인으로 이어졌다(사용자 요청). 이제는 메뉴를 먼저
    * 띄우고 삭제는 그 안의 한 항목이다. 선택한 여러 개 중 하나를 우클릭하면 선택
    * 전체가 대상이다(탐색기와 같다). */
-  function openRowMenu(row, event) {
+  async function openRowMenu(row, event) {
     if (!S.selected.has(row.romUid)) {
       S.selected = new Set([row.romUid]);
       S.selectAnchor = row.romUid;
@@ -3061,6 +3072,14 @@
     const files = [...S.selected].map((uid) => (rowByUid(uid) || {}).file).filter(Boolean);
     const star = document.querySelector(`.lrow[data-rom-uid="${row.romUid}"] .fav-btn, `
       + `.preview-card[data-rom-uid="${row.romUid}"] .fav-btn`);
+
+    // 적용할 내용이 없으면 아예 고를 수 없게 미리 확인한다(사용자 결정) - 눌러서
+    // "바뀔 게 없다"는 안내를 받는 것보다 흐리게 보이는 편이 직관적이다.
+    let titleAffixDisabled = isArchive() || locked;
+    if (!titleAffixDisabled) {
+      const preview = await api.titleAffixPreview(S.activeId, [...S.selected], null);
+      titleAffixDisabled = !preview.ok || !preview.data.items.some((i) => i.changed);
+    }
 
     showContextMenu(menuPoint(event), single ? (row.title || row.file) : `${formatCount(count)}개 선택됨`,
       single ? row.file : null, [
@@ -3077,7 +3096,9 @@
           onSelect: () => openCoreDialog(row) },
         "separator",
         { label: single ? "Title Prefix/Postfix 적용…" : `Title Prefix/Postfix 적용… (${formatCount(count)}개)`,
-          icon: "tag", disabled: isArchive() || locked,
+          icon: "tag", disabled: titleAffixDisabled,
+          title: titleAffixDisabled && !isArchive() && !locked
+            ? "지금 설정으로는 바뀔 제목이 없습니다. Settings > Metadata & Media에서 규칙을 확인하세요." : null,
           onSelect: () => openTitleAffixDialog({ romUids: [...S.selected],
             label: single ? (row.title || row.file) : `선택한 ${formatCount(count)}개` }) },
         "separator",

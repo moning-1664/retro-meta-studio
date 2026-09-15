@@ -20,12 +20,13 @@ class RegionClassifyTests(unittest.TestCase):
         for region, expected in cases.items():
             self.assertEqual(classify_region(region), expected, region)
 
-    def test_unrecognized_or_empty_region_is_none(self):
+    def test_unrecognized_or_empty_region_falls_back_to_global(self):
+        # region을 안 채운 Collection이 흔하다 - 그런 경우도 글로벌 설정은 적용돼야 한다.
         for region in (None, "", "  ", "Brazil", "???"):
-            self.assertIsNone(classify_region(region))
+            self.assertEqual(classify_region(region), "global")
 
-    def test_multi_token_region_prefers_the_bucket_that_comes_first_in_REGIONS(self):
-        # REGIONS 순서(kr, en, jp, eu, global)대로 먼저 매치되는 쪽이 이긴다.
+    def test_multi_token_region_prefers_the_bucket_that_comes_first_in_priority_order(self):
+        # kr, en, jp, eu 순으로 먼저 매치되는 쪽이 이긴다(글로벌은 나머지 전부의 기본값).
         self.assertEqual(classify_region("USA, Europe"), "en")
         self.assertEqual(classify_region("Europe, Japan"), "jp")
 
@@ -53,6 +54,19 @@ class StripExistingAffixTests(unittest.TestCase):
         self.assertEqual((base, disk), ("Final Fantasy VII", "(Disk 2)"))
         base, disk = strip_existing_title_affix("[Disk A] Xanadu")
         self.assertEqual((base, disk), ("Xanadu", "(Disk A)"))
+
+    def test_bare_fraction_disk_marker_without_the_word_is_recognized(self):
+        # 실사용 피드백: 단어 없는 "(2/2)"가 지역 장식과 함께 지워졌다.
+        base, disk = strip_existing_title_affix("Chrono Trigger (2/2)")
+        self.assertEqual((base, disk), ("Chrono Trigger", "(Disk 2 of 2)"))
+        base, disk = strip_existing_title_affix("Chrono Trigger (1 of 3)")
+        self.assertEqual((base, disk), ("Chrono Trigger", "(Disk 1 of 3)"))
+
+    def test_a_lone_number_without_a_word_or_total_is_not_a_disk_marker(self):
+        # 총 장수 없이 숫자 하나만 있으면 발매연도 등과 구별할 수 없다 - 디스크로 보지 않는다.
+        base, disk = strip_existing_title_affix("Some Game (1994)")
+        self.assertIsNone(disk)
+        self.assertEqual(base, "Some Game")   # 여전히 일반 괄호 장식으로는 떼어낸다
 
     def test_disk_marker_survives_alongside_region_affixes(self):
         base, disk = strip_existing_title_affix("[KR] Final Fantasy VII (Disc 1 of 3)_EU")
@@ -96,12 +110,17 @@ class ComputeNewTitleTests(unittest.TestCase):
         self.assertTrue(r["changed"])  # 장식은 뗐으므로 그 자체로 변경이다
         self.assertEqual(r["regionBucket"], "kr")
 
-    def test_unrecognized_region_only_strips_and_does_not_add_a_new_affix(self):
+    def test_unrecognized_region_falls_back_to_global_and_uses_its_setting(self):
         config = {"global": {"enabled": True, "mode": "prefix", "text": "WORLD"}}
         r = compute_new_title("Some Homebrew Game", "Brazil", config)
+        self.assertEqual(r["newTitle"], "WORLD_Some Homebrew Game")
+        self.assertTrue(r["changed"])
+        self.assertEqual(r["regionBucket"], "global")
+
+    def test_unrecognized_region_with_global_disabled_only_strips(self):
+        r = compute_new_title("[EU] Some Homebrew Game", "Brazil", DEFAULT_CONFIG)
         self.assertEqual(r["newTitle"], "Some Homebrew Game")
-        self.assertFalse(r["changed"])
-        self.assertIsNone(r["regionBucket"])
+        self.assertEqual(r["regionBucket"], "global")
 
     def test_full_pipeline_strip_then_reapply_with_disk_marker_preserved(self):
         config = normalize_config({"kr": {"enabled": True, "mode": "prefix", "text": "KR"}})

@@ -82,11 +82,11 @@ test.describe("Settings > Metadata & Media > Title Prefix/Postfix", () => {
 });
 
 test.describe("Gamelist 우클릭 - 선택한 게임에 적용", () => {
-  test("region이 안 맞으면 바뀔 게 없다고 알린다", async ({ page }) => {
+  test("바뀔 게 없으면 메뉴 항목 자체가 흐리게 나온다 - 눌러도 아무 일도 없다", async ({ page }) => {
     await rightClickRow(page, "Final Fantasy X");   // region JP, 아무 구역도 안 켜짐
-    await menuItem(page, "Title Prefix/Postfix 적용…").click();
-    await expect(page.locator(".toast-msg")).toContainText("바뀔 제목이 없습니다");
-    await expect(page.locator(".modal-title")).toHaveCount(0);
+    const item = menuItem(page, "Title Prefix/Postfix 적용…");
+    await expect(item).toBeDisabled();
+    await expect(item).toHaveAttribute("title", /바뀔 제목이 없습니다/);
   });
 
   test("미리보기에 예전/새 제목을 보여주고, 확인해야 Plan에 올라간다", async ({ page }) => {
@@ -138,6 +138,49 @@ test.describe("System 우클릭 - 전체 일괄 적용", () => {
 
     await modalButton(page, "Plan에 추가").click();
     await expect(page.locator(".toast-msg")).toContainText("1개를 Plan에 올렸습니다");
+  });
+
+  test("아무 구역도 안 켜져 있으면 System 메뉴 항목도 흐리게 나온다", async ({ page }) => {
+    await rightClickSystem(page, "PS2");
+    await expect(menuItem(page, "Title Prefix/Postfix 일괄 적용…")).toBeDisabled();
+  });
+
+  test("게임이 없는 System은 API를 부르지 않고 바로 흐리게 나온다", async ({ page }) => {
+    await configureRegion(page, "en", { mode: "prefix", text: "EN" });
+    await page.evaluate(() => {
+      window.__previewCalls = 0;
+      const original = window.api.titleAffixPreview;
+      window.api.titleAffixPreview = (...a) => { window.__previewCalls += 1; return original(...a); };
+    });
+    await rightClickSystem(page, "GBA");   // 목업에서 게임 0개
+    await expect(menuItem(page, "Title Prefix/Postfix 일괄 적용…")).toBeDisabled();
+    expect(await page.evaluate(() => window.__previewCalls)).toBe(0);
+  });
+});
+
+test.describe("region이 없는 게임 - 글로벌로 분류(사용자 결정)", () => {
+  // region을 안 채운 Collection에서 아무 설정도 안 먹히던 문제(실사용 피드백)를 고쳤다.
+  test("region이 빈 게임도 글로벌 설정이 켜져 있으면 바뀐다", async ({ page }) => {
+    await configureRegion(page, "global", { mode: "postfix", text: "WORLD" });
+    await rightClickRow(page, "Super Mario World");   // region ""
+    await menuItem(page, "Title Prefix/Postfix 적용…").click();
+    await expect(page.locator(".title-affix-new")).toHaveText("Super Mario World_WORLD");
+  });
+});
+
+test.describe("공유 계산 모듈(gui_web/title-affix.js)", () => {
+  // 실제 계산은 app/title_affix.py의 단위 테스트가 촘촘히 본다 - 여기서는 화면(목업,
+  // 메뉴 비활성화 판단)이 쓰는 JS 이식이 같은 결과를 내는지만 스팟 체크한다.
+  test("단어 없는 디스크 표시(2/2)를 지역 장식과 분리해서 보존한다", async ({ page }) => {
+    const r = await page.evaluate(() => window.RMSTitleAffix.compute(
+      "[EU] Chrono Trigger (2/2)", "Korea", { kr: { enabled: true, mode: "prefix", text: "KR" } }));
+    expect(r).toEqual({ oldTitle: "[EU] Chrono Trigger (2/2)", newTitle: "KR_Chrono Trigger (Disk 2 of 2)",
+      changed: true, regionBucket: "kr", diskMarker: "(Disk 2 of 2)" });
+  });
+
+  test("못 알아보는 region은 글로벌로 분류한다", async ({ page }) => {
+    const r = await page.evaluate(() => window.RMSTitleAffix.classifyRegion("Brazil"));
+    expect(r).toBe("global");
   });
 });
 

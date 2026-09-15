@@ -87,10 +87,10 @@ class TitleAffixPlanTests(unittest.TestCase):
         self.assertEqual(items["Chrono.iso"]["newTitle"], "JP_Chrono Trigger (Disc 1 of 2)")
         self.assertEqual(items["Chrono.iso"]["diskMarker"], "(Disc 1 of 2)")
 
-        # region이 없으면 분류가 안 되어(None) 장식을 붙이지 않는다 - 변경 없음.
+        # region이 없으면 글로벌로 분류되지만, 글로벌 설정이 꺼져 있으니 변경은 없다.
         self.assertEqual(items["Homebrew.iso"]["newTitle"], "Some Homebrew Game")
         self.assertFalse(items["Homebrew.iso"]["changed"])
-        self.assertIsNone(items["Homebrew.iso"]["regionBucket"])
+        self.assertEqual(items["Homebrew.iso"]["regionBucket"], "global")
 
         self.assertEqual(r["data"]["changed"], 3)
         # 미리보기는 아무것도 쓰지 않는다.
@@ -100,6 +100,18 @@ class TitleAffixPlanTests(unittest.TestCase):
         r = self.api.title_affix_preview(self.cid, rom_uids=[self.uid("FFX.iso")])
         self.assertTrue(r["ok"], r.get("error"))
         self.assertEqual([i["filename"] for i in r["data"]["items"]], ["FFX.iso"])
+
+    def test_global_setting_applies_to_a_game_with_no_region_at_all(self):
+        """실사용 피드백: region을 안 채운 Collection에서 설정한 Prefix/Postfix가 전혀
+        적용되지 않았다 - region이 없으면 글로벌로 분류돼야 글로벌 설정을 쓸 수 있다."""
+        self.assertTrue(self.api.save_app_settings({"titleAffix": {
+            "global": {"enabled": True, "mode": "postfix", "text": "WORLD"},
+        }})["ok"])
+        r = self.api.title_affix_preview(self.cid, rom_uids=[self.uid("Homebrew.iso")])
+        item = r["data"]["items"][0]
+        self.assertEqual(item["regionBucket"], "global")
+        self.assertEqual(item["newTitle"], "Some Homebrew Game_WORLD")
+        self.assertTrue(item["changed"])
 
     def test_missing_target_is_an_error_not_an_empty_success(self):
         self.assertFalse(self.api.title_affix_preview(self.cid, system="nonexistent")["ok"])

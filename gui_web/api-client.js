@@ -103,65 +103,9 @@
   const mockTitlePlanned = {};
 
   // ---------------------------------------------------------------- Title Prefix/Postfix
-  // app/title_affix.py를 JS로 옮긴 것 - 목업에서도 실제와 같은 결과를 보여주기 위해서다.
-  // 정확한 동작(엣지 케이스)은 Python 쪽 단위 테스트가 보장하고, 여기는 화면 흐름만 본다.
-  const TITLE_AFFIX_REGIONS = ["kr", "en", "jp", "eu", "global"];
-  const TITLE_AFFIX_KEYWORDS = {
-    kr: ["kr", "kor", "korea"], jp: ["jp", "jpn", "japan"], eu: ["eu", "eur", "europe", "uk", "gb"],
-    en: ["us", "usa", "na", "en", "eng", "english", "america"],
-    global: ["world", "wor", "glo", "global", "int", "intl", "international"],
-  };
-  const TITLE_AFFIX_DEFAULTS = {
-    kr: { enabled: false, mode: "prefix", text: "KR" }, en: { enabled: false, mode: "prefix", text: "EN" },
-    jp: { enabled: false, mode: "prefix", text: "JP" }, eu: { enabled: false, mode: "prefix", text: "EU" },
-    global: { enabled: false, mode: "prefix", text: "WORLD" },
-  };
-  function titleAffixClassifyRegion(region) {
-    const tokens = String(region || "").toLowerCase().match(/[a-z가-힣]+/g) || [];
-    for (const bucket of TITLE_AFFIX_REGIONS) {
-      if (tokens.some((t) => TITLE_AFFIX_KEYWORDS[bucket].includes(t))) return bucket;
-    }
-    return null;
-  }
-  function titleAffixExtractDisk(title) {
-    const m = title.match(/[([]\s*(dis[ck])\s*\.?\s*([0-9]+|[a-z])\s*(?:(?:of|\/)\s*([0-9]+|[a-z]))?\s*[)\]]/i);
-    if (!m) return [title, null];
-    const marker = `(${m[1][0].toUpperCase()}${m[1].slice(1).toLowerCase()} ${m[2].toUpperCase()}`
-      + `${m[3] ? ` of ${m[3].toUpperCase()}` : ""})`;
-    return [(title.slice(0, m.index) + " " + title.slice(m.index + m[0].length)).trim(), marker];
-  }
-  function titleAffixStripEdges(title) {
-    let text = title.trim();
-    for (let i = 0; i < 6; i += 1) {
-      let stripped = text;
-      [/^[\s_-]*[([{][^([){}\]]*[)\]}][\s_-]*/, /[\s_-]*[([{][^([){}\]]*[)\]}][\s_-]*$/,
-        /^\s*[A-Za-z0-9]+[_-]+\s*/, /\s*[_-]+[A-Za-z0-9]+\s*$/].forEach((re) => {
-        const candidate = stripped.replace(re, "").trim();
-        if (candidate) stripped = candidate;
-      });
-      if (stripped === text) break;
-      text = stripped;
-    }
-    return text || title.trim();
-  }
-  function titleAffixJoin(text, title, isPrefix) {
-    text = text.trim();
-    if (!text) return title;
-    const delim = "_-.~()[]{}".includes(isPrefix ? text[text.length - 1] : text[0]);
-    return isPrefix ? `${text}${delim ? "" : "_"}${title}` : `${title}${delim ? "" : "_"}${text}`;
-  }
-  function titleAffixCompute(oldTitle, region, config) {
-    oldTitle = oldTitle || "";
-    const [withoutDisk, diskMarker] = titleAffixExtractDisk(oldTitle);
-    const base = titleAffixStripEdges(withoutDisk);
-    const core = diskMarker ? `${base} ${diskMarker}` : base;
-    const bucket = titleAffixClassifyRegion(region);
-    const cfg = bucket ? { ...TITLE_AFFIX_DEFAULTS[bucket], ...(config && config[bucket]) } : null;
-    const newTitle = (cfg && cfg.enabled && cfg.text.trim())
-      ? (cfg.mode === "postfix" ? titleAffixJoin(cfg.text, core, false) : titleAffixJoin(cfg.text, core, true))
-      : core;
-    return { oldTitle, newTitle, changed: newTitle !== oldTitle, regionBucket: bucket, diskMarker };
-  }
+  // 실제 계산은 title-affix.js(index.html에서 이 파일보다 먼저 불러온다) 하나에만 있다 -
+  // 목업과 app.js(메뉴 활성/비활성 판단)가 같은 것을 쓴다.
+  const titleAffixCompute = (oldTitle, region, config) => window.RMSTitleAffix.compute(oldTitle, region, config);
   function titleAffixRows(romUids, system) {
     if (romUids && romUids.length) return romUids.map((uid) => mockRows.find((r) => r.romUid === uid)).filter(Boolean);
     if (system) return mockRows.filter((r) => r.system === system);
