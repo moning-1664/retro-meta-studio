@@ -708,7 +708,9 @@ body { font-size: var(--fs-body); }
    두께가 아니라 말줄임이 안 먹던 것이었다(.lc-text 참고). */
 .lrow {
   display: grid; align-items: center; padding: 0 8px; cursor: pointer;
-  background: var(--list-bg); border-bottom: 1px solid var(--list-row-border); color: var(--list-text);
+  background: var(--list-bg); color: var(--list-text);
+  /* 실선 대신 점선(사용자 요청) - 줄 사이가 실선보다 가볍게 나뉜다. */
+  border-bottom: 1px dotted var(--list-row-border);
 }
 .lrow:hover { background: var(--card2); }
 .lrow.selected { background: var(--list-selected); }
@@ -832,6 +834,12 @@ body { font-size: var(--fs-body); }
 .detail-topspace .icon-btn { padding: 3px; }
 .detail-preview-label { font-size: var(--fs-caption); color: var(--muted); }
 .detail-topspace .btn:hover { background: var(--card3); }
+/* 항상 우측 구석에 붙는다(실사용 피드백) - space-between은 왼쪽에 다른 버튼이
+   있을 때(Archive 탭의 "Collection으로 보내기" 등)만 이걸 오른쪽으로 밀어준다.
+   일반 Collection은 왼쪽 버튼이 없어져서(§4·§6, Archive로 버튼을 HERO로 옮김)
+   자식이 이것 하나뿐이 되었고, space-between은 자식이 하나면 시작 쪽(왼쪽)에
+   둔다 - margin-left: auto로 왼쪽에 뭐가 있든 없든 항상 오른쪽 끝에 붙게 한다. */
+.detail-preview-toggle { margin-left: auto; }
 /* 아이콘과 "미리보기" 글자 전체가 한 버튼이다 - 예전엔 아이콘만 눌렸다(사용자 요청). */
 .detail-preview-toggle { cursor: pointer; border-radius: var(--radius-xs); padding-right: 4px; }
 .detail-preview-toggle:hover .detail-preview-label { color: var(--text); }

@@ -47,6 +47,18 @@ test.describe("미리보기 토글 (Detail 패널 상단, 레이아웃 재검토
     await expect(page.locator("#detail-panel-inner")).toHaveCount(1);
   });
 
+  test("우측 구석에 붙는다(왼쪽에 다른 버튼이 없어도)", async ({ page }) => {
+    // 일반 Collection에서는 "Archive로" 버튼이 HERO로 옮겨가서(§4·§6) 이 줄에
+    // 왼쪽 버튼이 없다 - space-between은 자식이 하나면 왼쪽에 두므로,
+    // margin-left: auto로 항상 오른쪽 끝에 붙게 한다(실사용 피드백).
+    // 아이콘 버튼이 아니라 (아이콘+"미리보기" 글자) 전체 상자의 위치를 본다 -
+    // 안쪽 버튼만 보면 그 옆 라벨 글자만큼 왼쪽으로 치우쳐 보인다.
+    const bar = page.locator("#detail-top .detail-topspace");
+    const barBox = await bar.boundingBox();
+    const toggleBox = await page.locator("#detail-top .detail-preview-toggle").boundingBox();
+    expect(toggleBox.x + toggleBox.width).toBeGreaterThan(barBox.x + barBox.width - 20);
+  });
+
   test("끄고 켠 상태를 저장한다", async ({ page }) => {
     const saved = [];
     await page.exposeFunction("__saved", (s) => saved.push(s));

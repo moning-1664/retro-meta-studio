@@ -4,6 +4,12 @@ const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
+test("행 사이 구분선은 점선이다(사용자 요청)", async ({ page }) => {
+  const style = await page.locator(".lrow").first()
+    .evaluate((el) => getComputedStyle(el).borderBottomStyle);
+  expect(style).toBe("dotted");
+});
+
 test("행을 클릭하면 상세 패널이 그 게임으로 열린다", async ({ page }) => {
   await page.locator(".lrow", { hasText: "Final Fantasy X" }).click();
   const panel = page.locator("#detail-panel");
