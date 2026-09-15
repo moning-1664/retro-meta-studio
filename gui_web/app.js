@@ -3653,7 +3653,34 @@
             files.length > 1 ? `파일명 ${formatCount(files.length)}개를 복사했습니다.` : "파일명을 복사했습니다.") },
         "separator",
         { label: "삭제", icon: "trash", hint: "Del", danger: true, disabled: locked, onSelect: deleteSelection },
+        ...rowFolderItems(row, single),
       ]);
+  }
+
+  /** System 우클릭의 "폴더 열기"(System 전체)를 게임 한 개 단위로도 지원한다
+   * (실사용 피드백 §5). 여러 개를 고른 채로는 하나만 열 수 없으므로 안 보여준다.
+   * 그 게임에 없는 종류(ROM/Metadata/Media)는 회색으로 - 눌러서 "없다"는 안내를
+   * 받는 것보다 흐리게 보이는 편이 직관적이다(openSystemMenu와 같은 결정). */
+  function rowFolderItems(row, single) {
+    // Archive 항목은 이 Collection의 파일 배치(adapter.layout)를 따르지 않는다 -
+    // "폴더 열기"가 가리킬 자리 자체가 없다.
+    if (!single || isArchive()) return [];
+    return ["separator", { section: "폴더 열기" },
+      { label: "ROM 파일", icon: "folderOpen", disabled: !row.present,
+        title: row.present ? null : "ROM 파일이 없습니다.",
+        onSelect: () => openRowFolder(row, "rom") },
+      { label: "Metadata 파일", icon: "folderOpen", disabled: !row.hasMetadata,
+        title: row.hasMetadata ? null : "Metadata가 없습니다.",
+        onSelect: () => openRowFolder(row, "metadata") },
+      { label: "Media 파일", icon: "folderOpen", disabled: !row.hasMedia,
+        title: row.hasMedia ? null : "Media가 없습니다.",
+        onSelect: () => openRowFolder(row, "media") },
+    ];
+  }
+
+  async function openRowFolder(row, kind) {
+    const r = await api.openRowFolder(S.activeId, row.romUid, kind);
+    if (!r.ok) showToast(r.error, "error");
   }
 
   // ------------------------------------------------------------------

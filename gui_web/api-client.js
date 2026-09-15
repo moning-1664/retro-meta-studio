@@ -466,6 +466,13 @@
     },
     window_set_bounds: () => ok(true),
     open_system_folder: (id, system, kind) => ok({ path: `D:\\ES-DE\\${kind}\\${system}` }),
+    open_row_folder: (id, romUid, kind) => {
+      const row = mockRows.find((r) => r.romUid === romUid);
+      if (!row) return Promise.resolve({ ok: false, error: "항목을 찾을 수 없습니다." });
+      if (kind === "rom" && !row.present) return Promise.resolve({ ok: false, error: "ROM 파일이 없습니다." });
+      if (kind === "media" && !row.hasMedia) return Promise.resolve({ ok: false, error: "Media 파일이 없습니다." });
+      return ok({ path: `D:\\ES-DE\\${kind}\\${row.system}\\${row.file}` });
+    },
     orphan_metadata_preview: (id, system) => ok({
       system,
       items: mockRows.filter((r) => r.system === system && r.present === false)
@@ -704,6 +711,7 @@
     systemRemovalPreview: (id, system, force) => call("system_removal_preview", id, system, !!force),
     removeSystem: (id, system, force) => call("remove_system", id, system, !!force),
     openSystemFolder: (id, system, kind) => call("open_system_folder", id, system, kind),
+    openRowFolder: (id, romUid, kind) => call("open_row_folder", id, romUid, kind),
     orphanMetadataPreview: (id, system) => call("orphan_metadata_preview", id, system),
     mediaCleanupPreview: (id, system) => call("media_cleanup_preview", id, system),
     mediaCleanup: (id, system, mediaTypes) => call("media_cleanup", id, system, mediaTypes),

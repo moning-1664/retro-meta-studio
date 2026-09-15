@@ -130,17 +130,26 @@ def guarded(fn):
     return wrapper
 
 
-def _reveal_path(path):
-    """파일 탐색기로 폴더를 연다. 테스트는 이 함수를 바꿔 끼운다."""
+def _reveal_path(path, select=False):
+    """파일 탐색기로 연다. 테스트는 이 함수를 바꿔 끼운다.
+
+    `select=True`면 폴더를 열지 않고 **그 파일을 고른 채로** 탐색기를 연다(개별
+    게임의 ROM/Media 파일을 가리킬 때 - 폴더만 열면 수백 개 파일 중에서 다시
+    찾아야 한다). Linux는 탐색기마다 파일 선택 방법이 달라 통일된 방법이 없으므로
+    부모 폴더를 여는 것으로 대신한다.
+    """
     import os
     import subprocess
     import sys
     if sys.platform.startswith("win"):
-        os.startfile(path)  # noqa: S606 - 사용자가 고른 Collection 폴더다
+        if select:
+            subprocess.Popen(["explorer", f"/select,{path}"])  # noqa: S603,S607
+        else:
+            os.startfile(path)  # noqa: S606 - 사용자가 고른 Collection 폴더다
     elif sys.platform == "darwin":
-        subprocess.Popen(["open", path])
+        subprocess.Popen(["open", "-R", path] if select else ["open", path])
     else:
-        subprocess.Popen(["xdg-open", path])
+        subprocess.Popen(["xdg-open", str(Path(path).parent) if select else path])
 
 
 class Api:
@@ -643,6 +652,43 @@ class Api:
         if not path or not provider.exists(path):
             return err(f"폴더가 없습니다: {path}")
         _reveal_path(path)
+        return ok({"path": path})
+
+    @guarded
+    def open_row_folder(self, collection_id, rom_uid, kind):
+        """게임 한 개의 ROM/Metadata/Media를 파일 탐색기에서 **그 파일을 고른 채로** 연다
+        (실사용 피드백 §5 - "각 롬별로도 지원"). System 폴더 열기(open_system_folder)는
+        폴더까지만 열어서, System 안에 파일이 많으면 다시 찾아야 했다.
+
+        Metadata는 이 게임 하나만의 파일이 아니라 System이 공유하는 gamelist.xml이다 -
+        그래도 "이 게임의 데이터가 있는 곳"이므로 그 파일을 고른 채로 연다. Media는
+        종류가 여럿일 수 있어(cover/video/...) 있는 것 중 처음 것을 고른다.
+        """
+        collection, cache, provider, adapter = self._system_context(collection_id)
+        blocked = self._ensure_file_ops(collection)
+        if blocked:
+            return blocked
+        row = cache.get_row(int(rom_uid))
+        if row is None:
+            return err("항목을 찾을 수 없습니다.")
+        layout = adapter.layout(collection, row["system"])
+        if kind == "rom":
+            if not row["present"]:
+                return err("ROM 파일이 없습니다.")
+            path = str(Path(layout.rom_dir) / row["filename"])
+        elif kind == "metadata":
+            if not layout.metadata_file:
+                return err("Metadata 파일이 없습니다.")
+            path = layout.metadata_file
+        elif kind == "media":
+            if not row["media"]:
+                return err("Media 파일이 없습니다.")
+            path = row["media"][0]["rel_path"]
+        else:
+            return err(f"알 수 없는 종류입니다: {kind}")
+        if not path or not provider.exists(path):
+            return err(f"파일이 없습니다: {path}")
+        _reveal_path(path, select=True)
         return ok({"path": path})
 
     @guarded

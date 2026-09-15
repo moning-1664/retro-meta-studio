@@ -202,7 +202,10 @@ class MtpCollectionTests(unittest.TestCase):
         for result in (self.api.plan_delete(cid, [uid]),
                        self.api.orphan_metadata_preview(cid, "snes"),
                        self.api.media_cleanup(cid, "snes", ["covers"]),
-                       self.api.plan_storage_change(cid, "snes", "internal")):
+                       self.api.plan_storage_change(cid, "snes", "internal"),
+                       # mtp:// 경로는 탐색기가 열 수 있는 실제 경로가 아니다
+                       # (실사용 피드백 §5의 "폴더 열기"도 기기에서는 막혀야 한다).
+                       self.api.open_row_folder(cid, uid, "rom")):
             self.assertFalse(result["ok"])
             self.assertIn("ADB", result["error"])
 

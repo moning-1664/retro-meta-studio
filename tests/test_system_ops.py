@@ -166,6 +166,60 @@ class SystemOpsTests(unittest.TestCase):
             self.assertFalse(self.api.open_system_folder(self.cid, "nope", "rom")["ok"])
         reveal.assert_not_called()
 
+    # ------------------------------------------------------------ 게임 한 개씩 폴더 열기
+    # 실사용 피드백 §5 - "롬/메타데이터/미디어 디렉토리 이동(=탐색기로 열기)을 각
+    # 롬별로도 지원". System 폴더 열기와 다른 점은 **파일 자체를 고른 채로** 연다는
+    # 것이다(System 안에 파일이 많으면 폴더만 열어서는 다시 찾아야 한다).
+    def _uid(self, filename):
+        rows = self.api.list_rows(self.cid, limit=50)["data"]["rows"]
+        return next(r["romUid"] for r in rows if r["file"] == filename)
+
+    def test_rom_is_opened_selected_not_just_the_folder(self):
+        opened = []
+        with mock.patch.object(bridge_api, "_reveal_path", lambda p, select=False: opened.append((p, select))):
+            r = self.api.open_row_folder(self.cid, self._uid("FFX.iso"), "rom")
+        self.assertTrue(r["ok"], r.get("error"))
+        self.assertEqual(opened, [(str(self.root / "ps2" / "FFX.iso"), True)])
+
+    def test_metadata_opens_the_shared_gamelist_file_selected(self):
+        opened = []
+        with mock.patch.object(bridge_api, "_reveal_path", lambda p, select=False: opened.append((p, select))):
+            r = self.api.open_row_folder(self.cid, self._uid("FFX.iso"), "metadata")
+        self.assertTrue(r["ok"], r.get("error"))
+        self.assertEqual(opened, [(str(self.root / "gamelists" / "ps2" / "gamelist.xml"), True)])
+
+    def test_media_opens_one_of_its_files_selected(self):
+        opened = []
+        with mock.patch.object(bridge_api, "_reveal_path", lambda p, select=False: opened.append((p, select))):
+            r = self.api.open_row_folder(self.cid, self._uid("FFX.iso"), "media")
+        self.assertTrue(r["ok"], r.get("error"))
+        self.assertEqual(len(opened), 1)
+        self.assertTrue(opened[0][1], "select=True가 아니었다")
+        self.assertTrue(str(self.root / "downloaded_media" / "ps2") in opened[0][0])
+
+    def test_missing_rom_is_reported_not_opened(self):
+        """MGS2는 ROM이 있다 - 지워서 "없음" 상태를 만든다."""
+        (self.root / "ps2" / "MGS2.iso").unlink()
+        self.scan()
+        with mock.patch.object(bridge_api, "_reveal_path") as reveal:
+            r = self.api.open_row_folder(self.cid, self._uid("MGS2.iso"), "rom")
+        self.assertFalse(r["ok"])
+        self.assertIn("ROM 파일이 없습니다", r["error"])
+        reveal.assert_not_called()
+
+    def test_a_game_without_media_reports_that_not_a_crash(self):
+        with mock.patch.object(bridge_api, "_reveal_path") as reveal:
+            r = self.api.open_row_folder(self.cid, self._uid("MGS2.iso"), "media")
+        self.assertFalse(r["ok"])
+        self.assertIn("Media 파일이 없습니다", r["error"])
+        reveal.assert_not_called()
+
+    def test_unknown_kind_and_row_are_rejected(self):
+        with mock.patch.object(bridge_api, "_reveal_path") as reveal:
+            self.assertFalse(self.api.open_row_folder(self.cid, self._uid("FFX.iso"), "saves")["ok"])
+            self.assertFalse(self.api.open_row_folder(self.cid, 999999, "rom")["ok"])
+        reveal.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
