@@ -157,6 +157,19 @@
   /** System 아이콘. `onGeneric`은 전용 그림(PNG/SVG)이 하나도 없어서 범용
    * 카테고리 아이콘으로 떨어질 때만 불린다 - 그 사실을 알아야 하는 곳이 있다
    * (Chromium Hero는 그때 배경 그림을 아예 깔지 않는다). */
+  /** 아이콘 크기는 **네 단계뿐이다**(레이아웃 재검토).
+   *
+   * 예전에는 자리마다 9·11·12·13·14·15·16·17·20·22를 섞어 썼다. 한 줄에 선 두
+   * 아이콘의 크기가 1px씩 어긋나면 눈에 딱 집어 말하기는 어려워도 화면 전체가
+   * 정돈되지 않은 느낌을 준다(실사용 피드백 - "통일성과 안정감").
+   *
+   * - xs: 탭 닫기처럼 글자보다 작아야 하는 자리
+   * - sm: 버튼·칩 안에 글자와 나란히 서는 곁들이
+   * - md: 도구 버튼 하나가 통째로 아이콘일 때(툴바 기본)
+   * - lg: 비어 있음을 알리는 자리표시자처럼 혼자 크게 서는 것
+   */
+  const IC = { xs: 10, sm: 12, md: 14, lg: 18 };
+
   function systemIcon(name, size, onGeneric) {
     const px = size || 14;
     const key = String(name || "").toLowerCase();
@@ -813,9 +826,9 @@
       S.tabs.forEach((id) => {
         const collection = S.collections.find((c) => c.id === id);
         if (!collection) return;
-        const tab = h("div", { class: "ctab active detached" }, [icon("gamepad", 13),
+        const tab = h("div", { class: "ctab active detached" }, [icon("gamepad", IC.md),
           h("span", { class: "ctab-name" }, [collection.name])]);
-        const close = h("button", { class: "ctab-close", title: "창 닫기" }, [icon("x", 9)]);
+        const close = h("button", { class: "ctab-close", title: "창 닫기" }, [icon("x", IC.xs)]);
         close.addEventListener("click", async (e) => {
           e.stopPropagation();
           await flushPendingUiState();
@@ -830,7 +843,7 @@
     }
     const archiveTab = h("div", { class: "ctab archive" + (isArchive() ? " active" : ""),
       title: "여러 Collection에서 수집한 Metadata 보관소" }, [
-      icon("database", 13), h("span", { class: "ctab-name" }, ["Archive"]),
+      icon("database", IC.md), h("span", { class: "ctab-name" }, ["Archive"]),
     ]);
     archiveTab.addEventListener("click", () => selectTab(ARCHIVE_ID));
     bar.appendChild(archiveTab);
@@ -839,9 +852,9 @@
       const collection = S.collections.find((c) => c.id === id);
       if (!collection) return;
       const tab = h("div", { class: "ctab" + (id === S.activeId ? " active" : "") });
-      tab.appendChild(icon("gamepad", 13));
+      tab.appendChild(icon("gamepad", IC.md));
       tab.appendChild(h("span", { class: "ctab-name" }, [collection.name]));
-      const close = h("button", { class: "ctab-close", title: "닫기" }, [icon("x", 9)]);
+      const close = h("button", { class: "ctab-close", title: "닫기" }, [icon("x", IC.xs)]);
       close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(id); });
       tab.appendChild(close);
       tab.addEventListener("click", () => selectTab(id));
@@ -849,7 +862,7 @@
       bindTabDrag(tab, id);
       bar.appendChild(tab);
     });
-    const add = h("button", { class: "ctab-add", title: "Collection 추가" }, [icon("plus", 13)]);
+    const add = h("button", { class: "ctab-add", title: "Collection 추가" }, [icon("plus", IC.md)]);
     add.addEventListener("click", openAddCollection);
     bar.appendChild(add);
   }
@@ -1085,7 +1098,7 @@
       if (alsoName && !nameInput.value.trim()) {
         nameInput.value = String(r.data).split(/[\\/]/).filter(Boolean).pop() || "";
       }
-    } }, [icon("folderOpen", 12), h("span", {}, ["찾아보기"])]);
+    } }, [icon("folderOpen", IC.sm), h("span", {}, ["찾아보기"])]);
 
     const metaBrowse = browseInto(pathInput, "Metadata 폴더 선택", true);
     const romBrowse = browseInto(romInput, "ROM 폴더 선택", true);
@@ -1144,7 +1157,7 @@
       browsePath = "mtp://" + deviceSel.value;
       browserBox.hidden = false;
       renderBrowser();
-    } }, [icon("smartphone", 12), h("span", {}, ["기기에서 찾기"])]);
+    } }, [icon("smartphone", IC.sm), h("span", {}, ["기기에서 찾기"])]);
     const metaDeviceBrowse = deviceBrowse(pathInput);
     const romDeviceBrowse = deviceBrowse(romInput);
     metaDeviceBrowse.hidden = romDeviceBrowse.hidden = true;
@@ -1240,7 +1253,7 @@
     S.collections.forEach((c) => {
       const opened = S.tabs.includes(c.id);
       const row = h("button", { class: "picker-row" + (opened ? " disabled" : "") });
-      row.appendChild(icon("gamepad", 14));
+      row.appendChild(icon("gamepad", IC.md));
       row.appendChild(h("div", { class: "picker-main" }, [
         h("div", { class: "picker-name" }, [c.name]),
         h("div", { class: "picker-sub" }, [`${c.frontendLabel} · ${c.rootPath}`]),
@@ -1315,13 +1328,13 @@
   function navTop() {
     const top = h("div", { class: "nav-top" });
     top.appendChild(h("div", { class: "nav-app-title" }, [
-      icon("database", 16),
+      icon("database", IC.lg),
       h("div", { class: "nav-app-title-text" }, [
         h("div", { class: "nav-app-title-name" }, ["RetroMeta Studio"]),
         h("div", { class: "nav-app-title-sub" }, ["Frontend Metadata Editor"]),
       ]),
     ]));
-    const settings = h("button", { class: "icon-btn", title: "Settings" }, [icon("settings", 14)]);
+    const settings = h("button", { class: "icon-btn", title: "Settings" }, [icon("settings", IC.md)]);
     settings.addEventListener("click", () => openSettings());
     top.appendChild(settings);
     return top;
@@ -1334,7 +1347,7 @@
     const row = h("button", {
       class: "nav-dashboard" + (S.view === "dashboard" ? " active" : ""),
       title: S.view === "dashboard" ? "목록으로 돌아가기" : "Collection Dashboard",
-    }, [icon("dashboard", 14), h("span", {}, ["Dashboard"])]);
+    }, [icon("dashboard", IC.md), h("span", {}, ["Dashboard"])]);
     row.addEventListener("click", () => (S.view === "dashboard" ? showList() : showDashboard()));
     return row;
   }
@@ -1377,7 +1390,7 @@
     if (isArchive()) {
       const all = navRow("All", detail.totalGames, scope.kind === "all", () => setScope({ kind: "all" }));
       all.classList.add("nav-all");
-      all.insertBefore(icon("database", 13), all.firstChild);
+      all.insertBefore(icon("database", IC.md), all.firstChild);
       lens.appendChild(all);
       scroll.appendChild(h("div", { class: "nav-section" },
         [h("span", { class: "nav-section-label" }, ["SYSTEMS"])]));
@@ -1398,7 +1411,7 @@
         setScope({ kind: "all" });
       });
     allRow.classList.add("nav-all");
-    allRow.insertBefore(icon("layoutList", 13), allRow.firstChild);
+    allRow.insertBefore(icon("layoutList", IC.md), allRow.firstChild);
     lens.appendChild(allRow);
 
     // 즐겨찾기는 System을 가로지르는 관점이라 여기 있어야 한다 - Toolbar의 ☆
@@ -1408,7 +1421,7 @@
       setScope({ kind: "all" });
     });
     favRow.classList.add("nav-favorites");
-    favRow.insertBefore(icon("star", 13), favRow.firstChild);
+    favRow.insertBefore(icon("star", IC.md), favRow.firstChild);
     lens.appendChild(favRow);
 
     // **System 목록은 기본적으로 평평하다.**
@@ -1504,14 +1517,14 @@
         if (storage.kind === "external" && !isCompare() && S.adapterActions && S.adapterActions.length) {
           S.adapterActions.forEach((action) => {
             const xmlBtn = h("button", { class: "icon-btn", title: `${action.label} (External Storage 전체 기준)` },
-                             [icon("save", 11)]);
+                             [icon("save", IC.sm)]);
             xmlBtn.addEventListener("click", (e) => { e.stopPropagation(); runAdapterAction(action); });
             head.appendChild(xmlBtn);
           });
         }
         if (storage.kind === "external" && !isCompare()) {
           const gear = h("button", { class: "icon-btn storage-settings-btn", title: "Storage 설정 (이름·경로·Android Storage ID)" },
-                         [icon("settings", 11)]);
+                         [icon("settings", IC.sm)]);
           gear.addEventListener("click", (e) => { e.stopPropagation(); openStorageSettings(storage); });
           head.appendChild(gear);
         }
@@ -1543,7 +1556,7 @@
     // Add External Storage는 System이 아무리 늘어나도 밀려나면 안 되므로 스크롤
     // 밖(고정 영역)에 둔다.
     if (!isCompare()) {
-      const add = h("button", { class: "nav-action" }, [icon("plus", 12), h("span", {}, ["Add External Storage"])]);
+      const add = h("button", { class: "nav-action" }, [icon("plus", IC.sm), h("span", {}, ["Add External Storage"])]);
       add.addEventListener("click", openAddStorage);
       nav.appendChild(add);
       // gamelist 만들기는 Toolbar 아이콘(Collection 전체) + System/Storage 우클릭
@@ -1608,7 +1621,7 @@
     const browse = h("button", { class: "btn", onClick: async () => {
       const r = await api.pickFolder("External Storage 폴더");
       if (r.ok && r.data) pathInput.value = r.data;
-    } }, [icon("folderOpen", 12)]);
+    } }, [icon("folderOpen", IC.sm)]);
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "field-label" }, ["이름"]), labelInput,
       h("div", { class: "field-label" }, ["경로"]),
@@ -1849,7 +1862,7 @@
     const list = h("div", { class: "title-affix-list" });
     changed.slice(0, LIMIT).forEach((item) => list.appendChild(h("div", { class: "title-affix-row" }, [
       h("span", { class: "title-affix-old", title: item.oldTitle }, [item.oldTitle || "(제목 없음)"]),
-      icon("chevronRight", 11),
+      icon("chevronRight", IC.sm),
       h("span", { class: "title-affix-new", title: item.newTitle }, [item.newTitle]),
     ])));
     if (changed.length > LIMIT) {
@@ -2237,7 +2250,7 @@
     const browse = h("button", { class: "btn", onClick: async () => {
       const r = await api.pickFolder("External Storage 폴더");
       if (r.ok && r.data) root.value = r.data;
-    } }, [icon("folderOpen", 12)]);
+    } }, [icon("folderOpen", IC.sm)]);
     const body = h("div", { class: "modal-body storage-settings" }, [
       h("div", { class: "field-label" }, ["이름"]), label,
       h("div", { class: "field-label" }, ["이 PC에서의 경로"]), h("div", { class: "field-row" }, [root, browse]),
@@ -2311,7 +2324,7 @@
     // 아이콘 상자 대신 콘솔 포인트 색 바(사용자 결정) - System을 보고 있을 때만.
     compact.appendChild(systemEntry
       ? pointBar(systemEntry.system)
-      : h("div", { class: "cheader-icon" }, [icon("gamepad", 20)]));
+      : h("div", { class: "cheader-icon" }, [icon("gamepad", IC.lg)]));
 
     const main = h("div", { class: "cheader-main" });
     // "Collection 제목 (System)" - Collection 소속을 잃지 않으면서 지금 어느
@@ -2334,9 +2347,9 @@
       ? (systemEntry.missingMetadata || 0) : (detail.totalMissingMetadata || 0);
     const summary = h("div", { class: "cheader-stats" }, [
       h("span", { class: "cheader-stat", title: "ROM 항목 수" },
-        [icon("cartridge", 11), `${formatCount(romCount)} ROMs`]),
+        [icon("cartridge", IC.sm), `${formatCount(romCount)} ROMs`]),
       h("span", { class: "cheader-stat", title: "Metadata가 있는 항목 수" },
-        [icon("fileText", 11), `${formatCount(Math.max(0, romCount - missingMeta))} Metadata`]),
+        [icon("fileText", IC.sm), `${formatCount(Math.max(0, romCount - missingMeta))} Metadata`]),
     ]);
     detail.storages.forEach((storage) => {
       // Plan이 있으면 "Actual -> Plan"으로 보여준다(스펙 §19, §30).
@@ -2354,7 +2367,7 @@
     if (isArchive()) {
       // Archive에는 gamelist 만들기/Collection 가져오기/Expand가 의미 없다 -
       // 다시 스캔만 있으면 된다(Toolbar에 있던 것과 중복이라 그쪽은 없앴다).
-      const refresh = h("button", { class: "icon-btn", title: "다시 스캔" }, [icon("refresh", 13)]);
+      const refresh = h("button", { class: "icon-btn", title: "다시 스캔" }, [icon("refresh", IC.md)]);
       refresh.addEventListener("click", refreshActive);
       right.appendChild(refresh);
       compact.appendChild(right);
@@ -2368,18 +2381,18 @@
     if (!isCompare()) {
       const bootstrap = h("button", { class: "icon-btn", id: "make-gamelist-btn",
         title: "gamelist가 없는 System에 ROM 파일명만 담은 gamelist를 만듭니다." },
-        [icon("fileWarning", 13)]);
+        [icon("fileWarning", IC.md)]);
       bootstrap.addEventListener("click", () => openMetadataBootstrap(S.activeId));
       right.appendChild(bootstrap);
 
       const importBtn = h("button", { class: "icon-btn", title: "Collection 가져오기 (Import)" },
-        [icon("upload", 13)]);
+        [icon("upload", IC.md)]);
       importBtn.addEventListener("click", openAddCollection);
       right.appendChild(importBtn);
     }
 
     // 아이콘만 - 글자("Rescan")는 없앴다. 확장(v) 버튼과 같은 크기로 맞춘다.
-    const rescan = h("button", { class: "icon-btn", title: "다시 스캔" }, [icon("refresh", 13)]);
+    const rescan = h("button", { class: "icon-btn", title: "다시 스캔" }, [icon("refresh", IC.md)]);
     rescan.addEventListener("click", refreshActive);
     right.appendChild(rescan);
     const toggle = h("button", { class: "icon-btn", title: S.headerExpanded ? "접기" : "펼치기" },
@@ -2625,7 +2638,7 @@
       const value = e.target.value;
       timer = setTimeout(async () => { S.search = value; resetList(); await reloadList(); }, 180);
     });
-    bar.appendChild(h("div", { class: "search-box" }, [icon("search", 13), search]));
+    bar.appendChild(h("div", { class: "search-box" }, [icon("search", IC.md), search]));
 
     // 다시 스캔 / gamelist 만들기 / Collection 가져오기는 GameList 상단
     // chrome(Overview, renderHeader의 cheader-right)으로 옮겼다 - 여기 그대로
@@ -3106,7 +3119,7 @@
       if (cardObserver) cardObserver.observe(cover);
     } else {
       // Media가 없다고 이미 아는 카드는 아예 묻지 않는다.
-      cover.appendChild(icon("imageOff", 20));
+      cover.appendChild(icon("imageOff", IC.lg));
     }
     card.appendChild(cover);
     card.appendChild(h("div", { class: "preview-title truncate", title: row.title || row.file },
@@ -3791,7 +3804,7 @@
         h("div", { class: "detail-system" }, [systemIcon(d.system, 13), String(d.system).toUpperCase()]),
       ]),
     ]);
-    const close = h("button", { class: "icon-btn", title: "닫기 (Esc)" }, [icon("x", 13)]);
+    const close = h("button", { class: "icon-btn", title: "닫기 (Esc)" }, [icon("x", IC.md)]);
     close.addEventListener("click", closeDetail);
     header.appendChild(close);
     inner.appendChild(header);
@@ -3843,7 +3856,7 @@
 
     if (d.mediaDiff) {
       body.appendChild(h("div", { class: "cmp-media-note" }, [
-        icon("image", 12),
+        icon("image", IC.sm),
         h("span", {}, [`Media 구성이 다릅니다 - ${((d.left || {}).mediaTypes || []).join(", ") || "없음"}`
                        + ` \u2194 ${((d.right || {}).mediaTypes || []).join(", ") || "없음"}`]),
       ]));
@@ -4056,7 +4069,7 @@
       const ingest = h("button", { class: "btn compact", id: "archive-ingest-btn",
         "data-scope": scope.kind,
         title: `${scopeLabel}을 Archive에 수집합니다` },
-        [icon("database", 11), h("span", { class: "ingest-label" }, ["Archive로"])]);
+        [icon("database", IC.sm), h("span", { class: "ingest-label" }, ["Archive로"])]);
       ingest.addEventListener("click", ingestToArchive);
       bar.appendChild(ingest);
     }
@@ -4070,7 +4083,7 @@
     previewToggle.appendChild(h("button", {
       class: "icon-btn" + (S.previewOn ? " on" : ""),
       title: S.previewOn ? "미리보기 끄기" : "미리보기 켜기",
-    }, [icon("previewPane", 15)]));
+    }, [icon("previewPane", IC.md)]));
     previewToggle.appendChild(h("span", { class: "detail-preview-label" }, ["미리보기"]));
     previewToggle.addEventListener("click", () => {
       S.previewOn = !S.previewOn;
@@ -4105,7 +4118,7 @@
       // 패널이 늘 자리를 차지하므로 빈 칸을 그냥 두지 않는다.
       panel.appendChild(h("div", { id: "detail-panel-inner" }, [
         h("div", { class: "panel-empty-state" }, [
-          icon("gamepad", 22),
+          icon("gamepad", IC.lg),
           h("div", { class: "panel-empty-msg" }, ["게임을 선택하면 여기에 표시됩니다"]),
         ]),
       ]));
@@ -4125,7 +4138,7 @@
           h("button", {
             class: "icon-btn detail-copy", title: "파일명 복사",
             onClick: () => copyTextToClipboard(state.file, "파일명을 복사했습니다."),
-          }, [icon("copy", 11)]),
+          }, [icon("copy", IC.sm)]),
         ]),
         h("div", { class: "detail-system" }, [systemIcon(state.system, 13), String(state.system).toUpperCase()]),
       ]),
@@ -4143,7 +4156,7 @@
       const play = h("button", {
         class: "icon-btn detail-launch", title: blocked || "RetroArch로 실행 (행 더블클릭도 됩니다)",
         disabled: !!blocked,
-      }, [icon("play", 14)]);
+      }, [icon("play", IC.md)]);
       play.addEventListener("click", () => launchGame(target));
       header.appendChild(play);
 
@@ -4178,7 +4191,7 @@
       const footer = h("div", { class: "detail-footer" });
       const conflictInfo = !state.archive && currentSystemConflict(state.system);
       const save = h("button", { class: "btn primary w-full detail-save", disabled: !!conflictInfo },
-        [icon("save", 13), h("span", {}, [conflictInfo ? "쓰기 막힘 - Storage 충돌" : "저장 (Ctrl+S)"])]);
+        [icon("save", IC.md), h("span", {}, [conflictInfo ? "쓰기 막힘 - Storage 충돌" : "저장 (Ctrl+S)"])]);
       if (conflictInfo) save.title = "같은 System 폴더가 여러 Storage에 있습니다 - System 우클릭에서 한쪽을 지우거나 이름을 바꾸세요.";
       save.addEventListener("click", handleSaveDetail);
       footer.appendChild(save);
@@ -4211,7 +4224,7 @@
       cover.appendChild(img);
       loadMediaImage(img, "Covers", true);
     } else {
-      cover.appendChild(icon("image", 17));
+      cover.appendChild(icon("image", IC.lg));
     }
     // **표지는 크게, 요약은 그 옆에.** 아래 편집 폼과 값이 겹치지만, 편집하러
     // 들어오기 전에 "이 게임이 무엇인가"를 한눈에 보는 자리라 그대로 둔다(사용자
@@ -4231,11 +4244,11 @@
     const mediaCount = Object.keys(state.media || {}).length;
     main.appendChild(h("div", { class: "identity-facts" }, [
       h("span", { class: "identity-fact" + (state.present ? "" : " warn"), title: "ROM 파일" }, [
-        icon("cartridge", 11),
+        icon("cartridge", IC.sm),
         state.present ? formatBytes(state.size || 0) : "ROM 없음",
       ]),
       h("span", { class: "identity-fact" + (mediaCount ? "" : " warn"), title: "가지고 있는 media 종류" }, [
-        icon("image", 11), `Media ${formatCount(mediaCount)}`,
+        icon("image", IC.sm), `Media ${formatCount(mediaCount)}`,
       ]),
     ]));
 
@@ -4363,7 +4376,7 @@
       zone.addEventListener("click", () => openMediaLightbox(img, slot.label));
     } else {
       // "… 없음"을 열두 번 적으면 그것만 눈에 들어온다. 아이콘 하나로 족하다.
-      preview.appendChild(icon("imageOff", 16));
+      preview.appendChild(icon("imageOff", IC.lg));
     }
     zone.appendChild(preview);
     return zone;
@@ -4489,7 +4502,7 @@
     }, true);
 
     if (settings.videoMode === "manual") {
-      const btn = h("button", { class: "media-video-play", title: "영상 재생" }, [icon("play", 16)]);
+      const btn = h("button", { class: "media-video-play", title: "영상 재생" }, [icon("play", IC.lg)]);
       btn.addEventListener("click", (e) => { e.stopPropagation(); btn.remove(); current.playBtn = null; start(); });
       zone.appendChild(btn);
       current.playBtn = btn;
@@ -5003,7 +5016,7 @@
       const collection = S.collections.find((c) => c.id === id);
       if (!collection) return;
       const row = h("button", { class: "picker-row" }, [
-        icon("gamepad", 14),
+        icon("gamepad", IC.md),
         h("div", { class: "picker-main" }, [
           h("div", { class: "picker-name" }, [collection.name]),
           h("div", { class: "picker-sub truncate" }, [collection.rootPath]),
@@ -5049,7 +5062,7 @@
     const plan = S.plan;
 
     const left = h("div", { class: "sb-left" }, [
-      icon("layoutList", 12),
+      icon("layoutList", IC.sm),
       h("span", {}, [`Selected ${formatCount(S.selected.size)}`]),
     ]);
     if (plan && plan.total) {

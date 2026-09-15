@@ -175,7 +175,7 @@ body { font-size: var(--fs-body); }
 }
 .nav-eyebrow-label { flex: 1; }
 /* 빈 System 숨기기 - 켜져 있으면 글자색으로 상태를 알린다(아이콘도 눈/가린 눈으로 바뀐다). */
-.nav-eyebrow .icon-btn { padding: 2px; background: transparent; color: var(--muted); opacity: .8; }
+.nav-eyebrow .icon-btn { padding: 3px; background: transparent; color: var(--muted); opacity: .8; }
 .nav-eyebrow .icon-btn:hover { opacity: 1; }
 .nav-eyebrow .icon-btn.on { color: var(--list-text); opacity: 1; }
 .nav-empty { color: var(--muted); font-size: var(--fs-caption); padding: 12px 6px; }
@@ -246,7 +246,7 @@ body { font-size: var(--fs-body); }
   flex: 1; font-size: var(--fs-eyebrow); letter-spacing: .12em;
   color: var(--muted); text-transform: uppercase;
 }
-.nav-section .icon-btn { padding: 2px; background: transparent; color: var(--muted); opacity: .8; }
+.nav-section .icon-btn { padding: 3px; background: transparent; color: var(--muted); opacity: .8; }
 .nav-section .icon-btn:hover { opacity: 1; }
 .nav-section .icon-btn.on { color: var(--list-text); opacity: 1; }
 .nav-label, .nav-group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -346,8 +346,10 @@ body { font-size: var(--fs-body); }
 }
 .cheader-storage { white-space: nowrap; }
 /* **도구 버튼은 조용해야 한다.** 예전엔 크고 세로 한가운데 떠 있어서 제목보다
-   먼저 눈에 들어왔다(사용자 피드백). 작게 만들고 윗줄에 붙인다. */
-.cheader-right { display: flex; align-items: flex-start; gap: 3px; align-self: flex-start; margin-top: 1px; }
+   먼저 눈에 들어왔다(사용자 피드백).
+   작게 만들고 **아랫줄에 맞춘다** - 옆 Detail 상단 줄의 버튼도 같은 선에 서기
+   때문에, 두 영역이 나뉘어 있어도 버튼들이 한 줄로 읽힌다(사용자 결정). */
+.cheader-right { display: flex; align-items: flex-end; gap: 3px; align-self: flex-end; }
 .cheader-right .icon-btn { padding: 3px; background: transparent; border: 1px solid transparent; color: var(--muted); }
 .cheader-right .icon-btn:hover { background: var(--card2); color: var(--text); }
 .cheader-expanded {
@@ -407,6 +409,9 @@ body { font-size: var(--fs-body); }
 
 /* 버튼 - Stitch의 조금 더 작고 단단한 모양. */
 .btn { min-height: 26px; border-radius: 6px; }
+/* 촘촘한 띠 안의 버튼은 어디서나 같은 높이다 - 예전엔 Detail 상단에서만
+   22px이라 같은 .compact인데 자리마다 크기가 달랐다. */
+.btn.compact { min-height: 22px; padding: 3px 8px; gap: 5px; font-size: calc(10px * var(--font-scale)); }
 .btn.primary { background: var(--primary-bg); color: var(--primary-fg); }
 .btn.primary:hover { background: var(--primary-hover); }
 .btn.compact.primary { border: 1px solid var(--primary-bg); }
@@ -746,18 +751,17 @@ body { font-size: var(--fs-body); }
    재검토 §18). 왼쪽엔 Archive 이동 버튼, 오른쪽엔 Preview 토글. */
 .detail-topspace {
   height: var(--header-row-h); flex-shrink: 0; box-sizing: border-box;
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 0 9px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 8px;
+  /* 아래 여백은 .cheader의 padding-bottom과 같은 8px이다 - 그래야 이 줄의 버튼과
+     옆 Chromium의 도구 버튼이 정확히 같은 선에 선다. */
+  padding: 0 9px 8px; border-bottom: 1px solid var(--border);
   /* **Chromium과 같은 바탕이다.** 다른 색이면 한 줄인데도 두 덩어리로 끊겨 보인다
      (사용자 피드백 - "크로미움이랑 뚝 떨어져 맥이 끊긴다"). */
   background: var(--chrome);
 }
 /* 툴바의 기능 버튼으로 보이게 작게(사용자 결정 - 예전엔 강조 버튼처럼 컸다). */
-.detail-topspace .btn {
-  min-height: 22px; padding: 3px 8px; gap: 5px;
-  background: var(--card2); border: 1px solid transparent; font-size: calc(10px * var(--font-scale));
-}
-.detail-topspace .icon-btn { padding: 4px; }
+.detail-topspace .btn { background: var(--card2); border: 1px solid transparent; }
+.detail-topspace .icon-btn { padding: 3px; }
 .detail-preview-label { font-size: var(--fs-caption); color: var(--muted); }
 .detail-topspace .btn:hover { background: var(--card3); }
 /* 아이콘과 "미리보기" 글자 전체가 한 버튼이다 - 예전엔 아이콘만 눌렸다(사용자 요청). */
@@ -770,7 +774,7 @@ body { font-size: var(--fs-body); }
   background: var(--chrome); height: calc(var(--toolbar-h) + var(--head-h)); box-sizing: border-box;
   padding: 6px 10px; border-bottom: 1px solid var(--border);
 }
-.detail-header .icon-btn { padding: 4px; }
+.detail-header .icon-btn { padding: 3px; }
 .detail-eyebrow { color: var(--accent); letter-spacing: .85px; }
 /* 탭 줄 - 바탕과 선택 안 된 탭은 신규색(흐린 글자), 선택된 탭은 아래 내용 카드와 같은 색으로 이어진다. */
 .detail-tabs { background: var(--chrome-sub); border-bottom: 1px solid var(--border); padding-top: 5px; }

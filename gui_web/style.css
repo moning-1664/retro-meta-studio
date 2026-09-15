@@ -354,7 +354,8 @@ html[data-theme="light"] .raster-icon-pair img.for-dark { display: none; }
 .detail-header { display: flex; align-items: center; gap: 6px; padding: 10px 10px 4px; flex-shrink: 0; }
 .detail-eyebrow { font-size: var(--fs-eyebrow); font-weight: 700; letter-spacing: .1em; color: var(--accent); }
 .detail-filename { font-size: var(--fs-body); font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
-.icon-btn { padding: 5px; border-radius: var(--radius-xs); color: var(--muted); background: var(--card2); }
+/* 패딩도 두 단계뿐이다 - 독립 버튼은 4px, 촘촘한 띠 안에서는 3px(.dense). */
+.icon-btn { padding: 4px; border-radius: var(--radius-xs); color: var(--muted); background: var(--card2); }
 .icon-btn-danger:hover { color: var(--danger); }
 
 /* Detail Header 우측의 Preview 토글(레이아웃 재검토 §19) - 아이콘만 클릭
@@ -364,7 +365,10 @@ html[data-theme="light"] .raster-icon-pair img.for-dark { display: none; }
 
 .detail-tabs { display: flex; gap: 3px; padding: 0 10px; flex-shrink: 0; }
 .detail-tab { font-size: var(--fs-caption); font-weight: 500; padding: 5px 10px; border-radius: var(--radius-xs) var(--radius-xs) 0 0; color: var(--muted); }
-.detail-tab.active { background: var(--card2); color: var(--text); }
+/* 고른 탭에 언더바를 둔다(사용자 결정). 상단 Collection 탭이 이미 같은 방식
+   (막대 하나로 고른 것을 말한다)이라, 두 탭 줄이 같은 언어를 쓰게 된다.
+   바탕색은 그대로 둔다 - 본문과 같은 색이라 탭이 본문으로 이어져 보인다. */
+.detail-tab.active { background: var(--card2); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
 
 /* [BUG FIX] 반드시 flex:1 + min-height:0 + overflow-y:auto 여야 내용이 넘칠 때 이 영역만
    스크롤되고, 헤더/탭/저장버튼(footer)은 항상 화면에 고정되어 보인다. 이전엔 이 체인이
