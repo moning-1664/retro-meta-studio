@@ -34,8 +34,8 @@ import file_ops
 from adapters import get_adapter
 from adapters.base import GameEntry
 from app.model.plan import (
-    OP_ADD, OP_DELETE, OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE, RESOLVE_SKIP,
-    STATUS_APPLIED, STATUS_FAILED, STATUS_PARTIAL,
+    OP_ADD, OP_DELETE, OP_METADATA_EDIT, OP_STORAGE_CHANGE, OP_TITLE_EDIT,
+    RESOLVE_OVERWRITE, RESOLVE_SKIP, STATUS_APPLIED, STATUS_FAILED, STATUS_PARTIAL,
 )
 from app.plan.builder import ACTION_CONFLICT, ACTION_IDENTICAL, classify_destination
 from utils import normalize_title
@@ -57,7 +57,8 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
     adds = [e for e in runnable if e.op == OP_ADD]
     deletes = [e for e in runnable if e.op == OP_DELETE]
     moves = [e for e in runnable if e.op == OP_STORAGE_CHANGE]
-    retitles = [e for e in runnable if e.op == OP_TITLE_EDIT]
+    # 제목 편집과 기기 Collection의 메타데이터 편집은 쓰는 방식이 같다(System 단위 묶음 쓰기).
+    retitles = [e for e in runnable if e.op in (OP_TITLE_EDIT, OP_METADATA_EDIT)]
 
     # Storage 이동은 **옮길 ROM 수만큼** 걸음을 잡는다(§ MOVE_PROGRESS_STEPS). System
     # 하나를 한 걸음으로 두면 수십 GB를 옮기는 내내 진행률이 멈춰 있다.
@@ -485,8 +486,21 @@ def _apply_delete(entry, collection, adapter, cache, provider, errors):
 # ----------------------------------------------------------------------
 # TITLE EDIT (Title Prefix/Postfix 일괄 적용, 사용자 결정)
 # ----------------------------------------------------------------------
+def _merged_fields(entry, row) -> dict:
+    """이 항목이 실제로 쓸 필드. 제목 편집은 name 하나만, 기기 편집은 payload 전체다."""
+    if entry.op == OP_METADATA_EDIT:
+        return dict(entry.payload or row["fields"])
+    return {**row["fields"], "name": entry.new_title}
+
+
+def _frontend_raw(entry, row):
+    """Frontend 고유 값(ES-DE의 <favorite> 등). 편집이 직접 바꾼 경우에만 새 값을 쓴다."""
+    saved = (entry.source or {}).get("frontendRaw")
+    return row["frontend_raw"] if saved is None else saved
+
+
 def _apply_title_edits(entries, collection, adapter, cache, errors, step):
-    """제목 일괄 변경을 System 단위로 한 번에 쓴다.
+    """제목·메타데이터 편집을 System 단위로 한 번에 쓴다.
 
     ADD의 `_write_metadata`와 같은 이유(계약 1) - 항목마다 gamelist.xml을 다시 읽고
     쓰면 O(n^2)다. 수백 개를 한 번에 바꾸는 것이 바로 이 기능의 존재 이유이므로,
@@ -510,9 +524,9 @@ def _apply_title_edits(entries, collection, adapter, cache, errors, step):
                 step(entry.filename)
                 continue
             rows_by_key[entry.key] = row
-            merged = {**row["fields"], "name": entry.new_title}
+            merged = _merged_fields(entry, row)
             write_entries.append(GameEntry(filename=row["filename"], fields=merged,
-                                           frontend_raw=row["frontend_raw"]))
+                                           frontend_raw=_frontend_raw(entry, row)))
 
         if not write_entries:
             continue
@@ -531,9 +545,12 @@ def _apply_title_edits(entries, collection, adapter, cache, errors, step):
             row = rows_by_key.get(entry.key)
             if row is None:
                 continue
-            merged = {**row["fields"], "name": entry.new_title}
-            cache.update_metadata(row["rom_uid"], merged, title=entry.new_title,
-                                  title_norm=normalize_title(entry.new_title))
+            merged = _merged_fields(entry, row)
+            title = (merged.get("name") or "").strip() or Path(row["filename"]).stem
+            raw = _frontend_raw(entry, row)
+            cache.update_metadata(row["rom_uid"], merged, title=title,
+                                  title_norm=normalize_title(title),
+                                  frontend_raw=None if entry.op == OP_TITLE_EDIT else raw)
             entry.status = STATUS_APPLIED
             step(entry.filename)
 

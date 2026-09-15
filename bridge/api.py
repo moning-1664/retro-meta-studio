@@ -363,6 +363,10 @@ class Api:
             "arch": collection.arch,
             "rootPath": collection.root_path,
             "systemCount": len(collection.systems),
+            # 화면이 기기 Collection을 다르게 그려야 하는 두 가지.
+            # isDevice: 편집이 Plan을 거친다. metadataOnly: ROM이 없는 것이 정상이다.
+            "isDevice": collection.is_device,
+            "metadataOnly": collection.metadata_only,
         }
 
     # ------------------------------------------------------------------
@@ -594,6 +598,11 @@ class Api:
         collection, cache, _provider, _adapter = self._system_context(collection_id)
         if not any(entry.system == system for entry in collection.systems):
             return err(f"System을 찾을 수 없습니다: {system}")
+        # Metadata 전용 Collection에서는 ROM이 없는 것이 정상이다 - 여기서 목록을
+        # 내주면 멀쩡한 메타데이터 전부가 "정리 대상"으로 보인다.
+        blocked = self._ensure_file_ops(collection)
+        if blocked:
+            return blocked
         rows = cache.query_rows(systems=[system], present=False, order="title")
         return ok({"system": system, "items": [
             {"romUid": r["rom_uid"], "filename": r["filename"], "title": r["title"]} for r in rows]})
@@ -622,7 +631,7 @@ class Api:
         collection, cache, provider, _adapter = self._system_context(collection_id)
         if not any(entry.system == system for entry in collection.systems):
             return err(f"System을 찾을 수 없습니다: {system}")
-        blocked = self._ensure_writable(collection, [system])
+        blocked = self._ensure_file_ops(collection) or self._ensure_writable(collection, [system])
         if blocked:
             return blocked
         result = media_cleanup.cleanup_media(cache, provider, self.workspace, collection_id,
@@ -648,6 +657,19 @@ class Api:
             return None
         return err(f"{', '.join(h.upper() for h in hit)} System 폴더가 여러 Storage에 함께 있어 쓰기가 막혀 "
                    "있습니다. System 우클릭에서 한쪽 폴더를 지우거나 이름을 바꾸면 풀립니다.")
+
+    @staticmethod
+    def _ensure_file_ops(collection):
+        """파일을 옮기고 지우는 작업을 할 수 있는 Collection인가.
+
+        MTP로 연결한 기기는 Metadata 전용이다(사용자 결정) - 대량 전송은 MTP로
+        감당할 수 없어서 ADB 모드를 따로 두기로 했다. 막히면 화면에 그대로 보여줄
+        err를, 괜찮으면 None을 돌려준다.
+        """
+        if collection is not None and collection.is_device:
+            return err("기기 Collection은 Metadata만 다룹니다. 파일 복사·이동·삭제는 "
+                       "ADB 모드에서 지원할 예정입니다.")
+        return None
 
     def _drop_plan_entries(self, collection_id, system):
         plan = self._plans.get(collection_id)
@@ -856,10 +878,12 @@ class Api:
 
     def _thumbnail_key(self, path, max_size):
         try:
-            stat = Path(path).stat()
-        except OSError:
+            stat = storage.for_path(path).stat(path)
+        except Exception:
             return None
-        return (str(path), stat.st_size, stat.st_mtime_ns, max_size)
+        if stat is None:
+            return None
+        return (str(path), stat.size, stat.mtime_ns, max_size)
 
     def _thumbnail_cache_get(self, path, max_size):
         key = self._thumbnail_key(path, max_size)
@@ -879,17 +903,24 @@ class Api:
 
     @staticmethod
     def _encode_image_uncached(path, max_size=None):
-        path = Path(path)
-        if not path.exists():
-            return None
-        suffix = path.suffix.lower()
+        """이미지 한 장을 data URL로 만든다.
+
+        **바이트는 Provider를 통해서만 읽는다.** 로컬에서는 결과가 같지만, MTP
+        기기 Collection에서는 `Path.read_bytes()`가 아예 동작하지 않는다 - 커버를
+        "선택한 항목부터" 한 장씩 읽어 오는 것이 기기에서 그림이 보이는 유일한
+        길이다(사용자 결정).
+        """
+        suffix = Path(path).suffix.lower()
         if suffix in (".mp4", ".avi"):
             return None
         try:
+            data = storage.for_path(path).read_bytes(path)
+            if data is None:
+                return None
             if max_size:
                 from PIL import Image
                 import io
-                with Image.open(path) as image:
+                with Image.open(io.BytesIO(data)) as image:
                     image.thumbnail((max_size, max_size))
                     buffer = io.BytesIO()
                     # WebP는 같은 화질에서 JPEG보다 작다. 브릿지로 넘어가는 base64
@@ -897,7 +928,7 @@ class Api:
                     image.convert("RGB").save(buffer, format="WEBP", quality=82, method=4)
                     payload, mime = buffer.getvalue(), "image/webp"
             else:
-                payload = path.read_bytes()
+                payload = data
                 mime = {"png": "image/png", "webp": "image/webp"}.get(suffix.lstrip("."), "image/jpeg")
         except Exception:
             # 깨진 이미지 하나가 상세 패널 전체를 막으면 안 된다.
@@ -914,6 +945,11 @@ class Api:
         Plan을 거치지 않는다(D1) - Plan은 저장 용량이 변하는 작업만 담는다. 대신
         Adapter에 이 항목 하나만 넘기므로 gamelist.xml의 다른 항목과 우리가
         해석하지 않는 요소는 그대로 남는다.
+
+        **기기(MTP) Collection만 예외로 Plan을 거친다(사용자 결정).** MTP에는
+        덮어쓰기가 없어서 한 글자 고칠 때마다 gamelist 전체를 지우고 다시 만든다 -
+        편집을 모아서 Apply 한 번에 쓰는 편이 안전하고 빠르다. 자세한 이유는
+        app/model/collection.py의 `Collection.is_device` 참고.
         """
         from adapters.base import GameEntry
 
@@ -933,6 +969,12 @@ class Api:
             return blocked
 
         merged = {**row["fields"], **{k: v for k, v in (fields or {}).items()}}
+        if collection.is_device:
+            entry = builder.plan_metadata_edit(self._plan(collection_id), cache, int(rom_uid),
+                                               fields or {}, frontend_raw=frontend_raw)
+            title = (entry.payload.get("name") or "").strip() or Path(row["filename"]).stem
+            return ok({"title": title, "planned": True})
+
         # frontend_raw는 보통 읽은 그대로 다시 쓴다. 즐겨찾기처럼 사용자가 직접 바꾸는
         # Frontend 고유 값일 때만 새 것이 들어온다.
         raw = row["frontend_raw"] if frontend_raw is None else frontend_raw
@@ -1023,8 +1065,9 @@ class Api:
     @guarded
     def plan_delete(self, collection_id, rom_uids):
         collection, cache, provider = self._plan_context(collection_id)
-        blocked = self._ensure_writable(collection, [(cache.get_row(int(uid)) or {}).get("system")
-                                                     for uid in rom_uids or []])
+        blocked = self._ensure_file_ops(collection) or self._ensure_writable(
+            collection, [(cache.get_row(int(uid)) or {}).get("system")
+                         for uid in rom_uids or []])
         if blocked:
             return blocked
         result = builder.plan_delete(self._plan(collection_id), collection, cache, rom_uids,
@@ -1034,7 +1077,7 @@ class Api:
     @guarded
     def plan_storage_change(self, collection_id, system, storage_to):
         collection, cache, _ = self._plan_context(collection_id)
-        blocked = self._ensure_writable(collection, [system])
+        blocked = self._ensure_file_ops(collection) or self._ensure_writable(collection, [system])
         if blocked:
             return blocked
         result = builder.plan_storage_change(self._plan(collection_id), collection, cache,
@@ -1117,7 +1160,8 @@ class Api:
         descriptor, items = clipboard.read_items(self.registry)
         if not items:
             return err("붙여넣을 항목이 없습니다.")
-        blocked = self._ensure_writable(collection, [item.get("system") for item in items])
+        blocked = self._ensure_file_ops(collection) or self._ensure_writable(
+            collection, [item.get("system") for item in items])
         if blocked:
             return blocked
         policy = self._transfer_policy()

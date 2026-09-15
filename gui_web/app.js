@@ -1416,6 +1416,10 @@
   async function openSystemMenu(sys, storages, event) {
     const titleAffixDisabled = !sys.count || !(await titleAffixHasChangesForSystem(sys.system));
     const current = storages.find((s) => s.id === sys.storageId);
+    // 기기(MTP) Collection은 Metadata 전용이다 - 파일을 옮기고 지우는 항목은 눌러도
+    // 안 되는 대신 아예 비활성으로 보여준다(사용자 결정: "적용할 게 없으면 못 고르게").
+    const deviceOnly = !!(activeDetail() && activeDetail().isDevice);
+    const deviceTip = "기기 Collection은 Metadata만 다룹니다. 파일 작업은 ADB 모드에서 지원할 예정입니다.";
     const items = [];
     if (sys.conflict && sys.conflict.length) {
       items.push({ section: "충돌 해결 - 쓰기 막힘" });
@@ -1427,7 +1431,7 @@
       });
       items.push("separator");
     }
-    const others = storages.filter((s) => s.id !== sys.storageId);
+    const others = deviceOnly ? [] : storages.filter((s) => s.id !== sys.storageId);
     if (others.length) {
       items.push({ section: "Storage 옮기기" });
       others.forEach((target) => items.push({
@@ -1437,7 +1441,8 @@
       }));
       items.push("separator");
     }
-    items.push({ label: "System 이름 바꾸기…", icon: "tag", disabled: !!(sys.conflict && sys.conflict.length),
+    items.push({ label: "System 이름 바꾸기…", icon: "tag",
+      disabled: deviceOnly || !!(sys.conflict && sys.conflict.length),
       title: "ROM·gamelist·media 폴더 이름을 함께 바꿉니다.",
       onSelect: () => openRenameSystemFolder(sys, { storageId: sys.storageId, label: current ? current.label : sys.storageId, path: null }) });
     items.push({ label: "gamelist 만들기", icon: "fileWarning",
@@ -1449,12 +1454,12 @@
         : "이 System 전체 제목에서 기존 장식을 떼고, Settings에 설정한 지역별 표시를 다시 붙입니다.",
       onSelect: () => openTitleAffixDialog({ system: sys.system, label: sys.system.toUpperCase() }) });
     items.push("separator", {
-      label: "ROM 없는 항목 정리", icon: "eraser",
-      title: "Metadata/Media는 있는데 ROM 파일이 없는 항목을 찾아 지웁니다.",
+      label: "ROM 없는 항목 정리", icon: "eraser", disabled: deviceOnly,
+      title: deviceOnly ? deviceTip : "Metadata/Media는 있는데 ROM 파일이 없는 항목을 찾아 지웁니다.",
       onSelect: () => confirmOrphanCleanup(sys),
     }, {
-      label: "System 전체 미디어 정리", icon: "imageOff",
-      title: "Cover/Screenshot/Video 등 media 종류를 골라 이 System 전체에서 지웁니다.",
+      label: "System 전체 미디어 정리", icon: "imageOff", disabled: deviceOnly,
+      title: deviceOnly ? deviceTip : "Cover/Screenshot/Video 등 media 종류를 골라 이 System 전체에서 지웁니다.",
       onSelect: () => confirmMediaCleanup(sys),
     });
     // 폴더 경로는 백엔드(Adapter layout)가 정한다 - Storage 배치와 System별 경로 지정을 따른다.
@@ -1463,8 +1468,8 @@
       items.push({ label, icon: "folderOpen", onSelect: () => openSystemFolder(sys.system, kind) }));
     // 메뉴 최하단, 빨간색(사용자 결정). 누르면 경고 + "확인하였습니다" 체크 + 확인으로 한 번 더 묻는다.
     items.push("separator", {
-      label: "전체 삭제", icon: "trash", danger: true,
-      title: "이 System의 ROM·Metadata·Media를 디스크에서 지우고 목록에서 뺍니다.",
+      label: "전체 삭제", icon: "trash", danger: true, disabled: deviceOnly,
+      title: deviceOnly ? deviceTip : "이 System의 ROM·Metadata·Media를 디스크에서 지우고 목록에서 뺍니다.",
       onSelect: () => confirmRemoveSystem(sys),
     });
     showContextMenu(menuPoint(event), sys.system.toUpperCase(),
@@ -2658,11 +2663,16 @@
     const mark = marks.rows[`${row.system}|${row.file}`];
     if (mark === "+") return h("span", { class: "status-mark add", title: "추가 예정" }, ["+"]);
     if (mark === "-") return h("span", { class: "status-mark del", title: "삭제 예정" }, ["−"]);
-    if (mark === "✎") return h("span", { class: "status-mark edit", title: "제목 변경 예정" }, ["✎"]);
+    if (mark === "✎") return h("span", { class: "status-mark edit", title: "편집 예정 (Apply해야 반영)" }, ["✎"]);
     if ((marks.systems || []).includes(row.system)) {
       return h("span", { class: "status-mark warn", title: "Storage 이동 예정" }, ["△"]);
     }
-    if (!row.present) return h("span", { class: "status-mark warn", title: "ROM 파일 없음 (metadata만 존재)" }, ["△"]);
+    // Metadata 전용 Collection(ROM 폴더를 주지 않은 기기)에서는 ROM이 없는 것이
+    // 정상이다 - 모든 줄에 경고를 칠하면 아무 뜻도 없는 경고가 된다.
+    const metaOnly = !!(activeDetail() && activeDetail().metadataOnly);
+    if (!row.present && !metaOnly) {
+      return h("span", { class: "status-mark warn", title: "ROM 파일 없음 (metadata만 존재)" }, ["△"]);
+    }
     if (!row.hasMetadata) return h("span", { class: "status-mark muted", title: "Metadata 없음" }, ["·"]);
     if (!row.hasMedia) return h("span", { class: "status-mark muted", title: "Media 없음" }, ["·"]);
     return h("span", { class: "status-mark ok", title: "정상" }, [""]);
@@ -2915,7 +2925,8 @@
     const cells = {};
     cells.no = h("div", { class: "lc lc-no" }, [truncSpan(String(index + 1))]);
     // ROM 파일이 실제로 있으면 파일명을 제목과 같은 색으로, 없으면(메타데이터만) 흐리게.
-    const missingRom = row.present === false;
+    // Metadata 전용 Collection에서는 ROM이 없는 것이 정상이라 흐리게 하지 않는다.
+    const missingRom = row.present === false && !(activeDetail() && activeDetail().metadataOnly);
     cells.file = h("div", {
       class: "lc lc-file " + (missingRom ? "rom-missing" : "rom-present"),
       title: missingRom ? `${row.file} - ROM 파일 없음` : row.file,
@@ -4570,7 +4581,7 @@
     const body = h("div", { class: "modal-body" });
     body.appendChild(h("div", { class: "modal-text" }, [
       `추가 ${formatCount(S.plan.added)} · 삭제 ${formatCount(S.plan.deleted)} · 이동 ${formatCount(S.plan.moved)}`
-      + ` · 제목 변경 ${formatCount(S.plan.retitled || 0)}`,
+      + ` · 편집 ${formatCount((S.plan.retitled || 0) + (S.plan.edited || 0))}`,
     ]));
     (report.capacity || []).forEach((c) => {
       const row = h("div", { class: "health-row" + (c.over ? " over" : "") }, [

@@ -78,6 +78,31 @@ class Collection:
     systems: list[SystemEntry] = field(default_factory=list)
     ui_state: dict = field(default_factory=dict)
 
+    @property
+    def is_device(self) -> bool:
+        """MTP로 연결한 안드로이드 기기인가(사용자 결정).
+
+        기기 Collection은 두 가지가 다르다.
+        - 파일 작업(복사/이동/삭제)을 하지 않는다 - MTP는 Metadata 전용이다.
+        - **메타데이터 편집도 Plan을 거친다.** 즉시 쓰기(D1)는 로컬 디스크를 가정한
+          규칙인데, MTP는 덮어쓰기가 없어서 한 글자 고칠 때마다 gamelist 전체를 지우고
+          다시 만든다 - 편집을 모아서 Apply 한 번에 쓰는 편이 안전하고 빠르다.
+        """
+        from storage.mtp import is_mtp_path
+
+        return is_mtp_path(self.root_path)
+
+    @property
+    def metadata_only(self) -> bool:
+        """ROM 폴더 없이 Metadata만 다루는 Collection인가.
+
+        기기 Collection에서 ROM 폴더를 주지 않으면(기본값) 모든 항목이
+        `present=False`가 된다. 로컬에서라면 "ROM이 사라졌다"는 경고지만 여기서는
+        **정상 상태**다 - 경고로 칠하거나 "ROM 없는 항목 정리"의 대상으로 삼으면
+        멀쩡한 메타데이터를 지우게 된다.
+        """
+        return self.is_device and not any(s.rom_path for s in self.systems)
+
     def storage(self, storage_id: str) -> StorageLocation | None:
         return next((s for s in self.storages if s.storage_id == storage_id), None)
 

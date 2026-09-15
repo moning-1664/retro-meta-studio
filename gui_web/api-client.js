@@ -198,7 +198,7 @@
       retitledKeys.forEach((key) => { rows[key] = "✎"; });
       return ok({
         total: Object.keys(mockPendingMoves).length + mockFailedEntries.length + retitledKeys.length,
-        added: 0, deleted: 0, moved: Object.keys(mockPendingMoves).length, retitled: retitledKeys.length,
+        added: 0, deleted: 0, moved: Object.keys(mockPendingMoves).length, retitled: retitledKeys.length, edited: 0,
         addedBytes: 0, deletedBytes: 0,
         delta: {}, marks: { rows, systems: Object.keys(mockPendingMoves) },
         capacity: mockDetail.storages.map((s) => ({

@@ -20,8 +20,8 @@ from pathlib import Path
 from adapters import get_adapter
 from app.model.collection import STORAGE_INTERNAL
 from app.model.plan import (
-    OP_ADD, OP_DELETE, OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE, RESOLVE_SKIP,
-    STATUS_CONFLICT, STATUS_PENDING, PlanEntry,
+    OP_ADD, OP_DELETE, OP_METADATA_EDIT, OP_STORAGE_CHANGE, OP_TITLE_EDIT,
+    RESOLVE_OVERWRITE, RESOLVE_SKIP, STATUS_CONFLICT, STATUS_PENDING, PlanEntry,
 )
 
 
@@ -395,6 +395,30 @@ def plan_storage_change(plan, collection, cache, system, storage_to):
                       physical_delta={storage_from: -rom_bytes, storage_to: rom_bytes})
     plan.add(entry)
     return {"system": system, "from": storage_from, "to": storage_to, "bytes": rom_bytes}
+
+
+def plan_metadata_edit(plan, cache, rom_uid, fields, frontend_raw=None) -> PlanEntry:
+    """기기(MTP) Collection의 편집을 Plan에 올린다(사용자 결정 - app/model/plan.py 머리말).
+
+    **payload에는 늘 "그 게임의 전체 필드"를 넣는다.** 같은 게임을 두 번 고치면 Plan
+    항목이 교체되는데(같은 key), 바뀐 필드만 들고 있으면 먼저 고친 값이 사라진다.
+    그래서 이미 올라와 있는 항목이 있으면 그 payload를 바탕으로 합친다.
+    """
+    row = cache.get_row(int(rom_uid))
+    if row is None:
+        raise PlanBuildError("항목을 찾을 수 없습니다.")
+
+    key = f"{OP_METADATA_EDIT}|{row['system']}|{row['filename']}"
+    pending = plan.get(key)
+    base = (pending.payload if pending is not None else None) or row["fields"]
+    raw = frontend_raw
+    if raw is None and pending is not None:
+        raw = (pending.source or {}).get("frontendRaw")
+
+    entry = PlanEntry(op=OP_METADATA_EDIT, system=row["system"], filename=row["filename"],
+                      rom_uid=int(rom_uid), payload={**base, **(fields or {})},
+                      source={"frontendRaw": raw} if raw is not None else None)
+    return plan.add(entry)
 
 
 def plan_title_edit(plan, cache, changes) -> dict:

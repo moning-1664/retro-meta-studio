@@ -404,6 +404,8 @@ def build_mtp_device(*, with_roms=True) -> "FakeMtpBackend":
     backend.put(f"{root}/ES-DE/gamelists/snes/gamelist.xml",
                 mtp_gamelist([("SMW.sfc", "Super Mario World")]))
     backend.mkdir(f"{root}/ES-DE/downloaded_media/ps2/covers")
+    # 커버 한 장. 기기에서 그림을 읽어 오는 경로(Provider 경유)를 검증하기 위한 것이다.
+    backend.put(f"{root}/ES-DE/downloaded_media/ps2/covers/FFX (U).png", b"c" * 32)
     if with_roms:
         backend.put(f"{root}/ROMs/ps2/FFX (U).iso", b"r" * 2048)
         backend.put(f"{root}/ROMs/ps2/MGS2 (E).iso", b"r" * 1024)

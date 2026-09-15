@@ -17,7 +17,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from adapters import get_adapter
-from app.model.plan import OP_ADD, OP_DELETE, OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE
+from app.model.plan import (
+    OP_ADD, OP_DELETE, OP_METADATA_EDIT, OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE)
 from app.plan.builder import snapshot_matches, unapproved_overwrites
 
 
@@ -38,6 +39,8 @@ def validate(plan, collection, cache, provider) -> dict:
             _validate_storage_change(entry, collection, adapter)
         elif entry.op == OP_TITLE_EDIT:
             _validate_title_edit(entry, cache)
+        elif entry.op == OP_METADATA_EDIT:
+            _validate_metadata_edit(entry, cache)
         if entry.status == "invalid":
             problems.append({"key": entry.key, "filename": entry.filename or entry.system,
                              "error": entry.error})
@@ -231,6 +234,22 @@ def _validate_title_edit(entry, cache):
     if row["title"] != entry.old_title:
         entry.status = "invalid"
         entry.error = "제목이 그 사이 다른 방법으로 바뀌었습니다. 다시 확인해주세요."
+
+
+def _validate_metadata_edit(entry, cache):
+    """기기 편집은 그 항목이 아직 있는지만 본다.
+
+    제목 편집과 달리 "그 사이 바뀌었는지"는 보지 않는다 - 기기 Collection에서는 편집이
+    전부 이 경로로만 들어오므로, 다른 경로가 몰래 바꿔 놓을 일이 없다.
+    """
+    if entry.rom_uid is None:
+        entry.status, entry.error = "invalid", "항목을 찾을 수 없습니다."
+        return
+    row = cache.get_row(entry.rom_uid) or cache.get_row_by_filename(entry.system, entry.filename)
+    if row is None:
+        entry.status, entry.error = "invalid", "항목이 이미 사라졌습니다."
+        return
+    entry.rom_uid = row["rom_uid"]
 
 
 def check_capacity(plan, collection, cache, provider) -> list[dict]:

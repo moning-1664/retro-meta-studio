@@ -206,8 +206,8 @@ test.describe("Apply로 실제 반영", () => {
     await expect(row.locator(".status-mark.edit")).toBeVisible();
 
     await page.locator("#filter-bar .plan-actions .seg-btn", { hasText: "Apply" }).click();
-    // Apply는 항상 확인 대화상자를 먼저 보여준다(추가/삭제/이동/제목 변경 요약).
-    await expect(page.locator(".modal-text")).toContainText("제목 변경 1");
+    // Apply는 항상 확인 대화상자를 먼저 보여준다(추가/삭제/이동/편집 요약).
+    await expect(page.locator(".modal-text")).toContainText("편집 1");
     await page.locator(".modal-actions .btn.primary").click();
 
     await expect(page.locator(".lrow", { hasText: "KR_Final Fantasy X" })).toBeVisible();

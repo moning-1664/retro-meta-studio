@@ -132,23 +132,79 @@ class MtpCollectionTests(unittest.TestCase):
         self.assertEqual([c["capacityBytes"] for c in capacity], [64 * 1024 ** 3])
 
     # ------------------------------------------------------------------
-    def test_editing_a_title_writes_back_to_the_device(self):
+    def test_editing_a_title_goes_into_the_plan_first(self):
+        """기기 Collection의 편집은 Plan을 거친다(사용자 결정) - Apply해야 기기에 쓴다."""
         cid = self.create()
         uid = self.rows(cid)["SMW.sfc"]["romUid"]
         r = self.api.save_fields(cid, uid, {"name": "슈퍼 마리오 월드"})
         self.assertTrue(r["ok"], r.get("error"))
+        self.assertTrue(r["data"]["planned"])
 
+        state = self.api.plan_state(cid)["data"]
+        self.assertEqual(state["edited"], 1)
+        self.assertEqual(state["delta"], {})   # 용량은 바뀌지 않는다
+        names = [g.findtext("name") for g in self.device_xml("snes").findall("game")]
+        self.assertEqual(names, ["Super Mario World"])   # 아직 기기는 그대로다
+
+        wait_job(self.api, self.api.start_apply(cid)["data"]["jobId"])
         names = [g.findtext("name") for g in self.device_xml("snes").findall("game")]
         self.assertIn("슈퍼 마리오 월드", names)
+
+    def test_two_edits_to_one_game_keep_both(self):
+        """한 항목을 두 번 고쳐도 Plan 엔트리는 하나 - 먼저 고친 값이 사라지면 안 된다."""
+        cid = self.create()
+        uid = self.rows(cid)["SMW.sfc"]["romUid"]
+        self.api.save_fields(cid, uid, {"name": "슈퍼 마리오 월드"})
+        self.api.save_fields(cid, uid, {"desc": "마리오가 공룡을 탄다"})
+        self.assertEqual(self.api.plan_state(cid)["data"]["edited"], 1)
+
+        wait_job(self.api, self.api.start_apply(cid)["data"]["jobId"])
+        game = self.device_xml("snes").find("game")
+        self.assertEqual(game.findtext("name"), "슈퍼 마리오 월드")
+        self.assertEqual(game.findtext("desc"), "마리오가 공룡을 탄다")
+
+    def test_a_cover_is_read_from_the_device_one_at_a_time(self):
+        """커버는 선택한 항목부터 한 장씩 읽는다(사용자 결정) - 목록 전체를 미리 받지 않는다.
+
+        `Path.read_bytes()`로는 기기 파일을 못 읽으므로 Provider를 거치는지 확인한다.
+        """
+        cid = self.create()
+        uid = self.rows(cid)["FFX (U).iso"]["romUid"]
+        r = self.api.get_media_image(cid, uid, "Covers")
+        self.assertTrue(r["ok"], r.get("error"))
+        self.assertTrue((r["data"] or "").startswith("data:image/png;base64,"))
 
     def test_a_write_failure_leaves_the_device_gamelist_intact(self):
         """MTP는 지우고 새로 만드는 수밖에 없다 - 실패하면 원본이 남아 있어야 한다."""
         cid = self.create()
         uid = self.rows(cid)["SMW.sfc"]["romUid"]
-        self.backend.fail_next_creates = 1
         self.api.save_fields(cid, uid, {"name": "안 써져야 한다"})
+        self.backend.fail_next_creates = 1
+        wait_job(self.api, self.api.start_apply(cid)["data"]["jobId"])
         names = [g.findtext("name") for g in self.device_xml("snes").findall("game")]
         self.assertEqual(names, ["Super Mario World"])
+
+    # ------------------------------------------------------------------
+    def test_a_metadata_only_collection_says_so(self):
+        """ROM 폴더를 안 준 기기는 Metadata 전용 - 화면이 경고 대신 정상으로 그린다."""
+        detail = self.api.collection_detail(self.create())["data"]
+        self.assertTrue(detail["isDevice"])
+        self.assertTrue(detail["metadataOnly"])
+
+        with_roms = self.api.collection_detail(self.create(rom_path=ROMS))["data"]
+        self.assertTrue(with_roms["isDevice"])
+        self.assertFalse(with_roms["metadataOnly"])   # ROM을 읽을 수 있으면 전용이 아니다
+
+    def test_file_operations_are_refused_with_a_reason(self):
+        """MTP로는 대량 전송을 감당할 수 없다 - 막되 이유를 말해 준다(ADB 모드는 나중에)."""
+        cid = self.create()
+        uid = self.rows(cid)["SMW.sfc"]["romUid"]
+        for result in (self.api.plan_delete(cid, [uid]),
+                       self.api.orphan_metadata_preview(cid, "snes"),
+                       self.api.media_cleanup(cid, "snes", ["covers"]),
+                       self.api.plan_storage_change(cid, "snes", "internal")):
+            self.assertFalse(result["ok"])
+            self.assertIn("ADB", result["error"])
 
     def test_generating_a_gamelist_creates_the_file_on_the_device(self):
         backend = build_mtp_device(with_roms=True)
