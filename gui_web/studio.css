@@ -693,6 +693,17 @@ body { font-size: var(--fs-body); }
 .plan-actions .seg-btn { padding: 3px 9px; font-size: var(--fs-caption); color: var(--text); }
 .plan-actions .seg-btn + .seg-btn { border-left: 1px solid var(--border); }
 
+/* Collection 추가의 "이 PC / Android(MTP)" - **이건 탭이지 버튼 둘이 아니다**
+   (실사용 피드백: "버튼 크기도 안맞고 글씨가 너무 크다"). 폭을 동률로 나누고
+   Detail 탭과 같은 언더바로 고른 쪽을 말한다 - 라벨 길이가 달라도 같은 무게로
+   보여야 "이 둘 중 하나"라는 관계가 한눈에 들어온다. */
+#add-source { display: flex; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; }
+#add-source .seg-btn {
+  flex: 1; justify-content: center; gap: 6px; padding: 7px 8px;
+  background: transparent; font-size: var(--fs-body);
+}
+#add-source .seg-btn.on { background: var(--card2); box-shadow: inset 0 -2px 0 var(--accent); }
+
 /* Archive에 수집 버튼 - scopeLabel이 System 이름/선택 개수에 따라 들쭉날쭉하다.
    옆의 Plan 버튼들이 밀리지 않도록 폭을 고정한다. 전체 문구는 title 툴팁으로 남는다. */
 #archive-ingest-btn { max-width: 170px; flex-shrink: 1; min-width: 0; }

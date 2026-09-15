@@ -25,19 +25,20 @@ test("기본은 이 PC - 기기 항목은 숨어 있다", async ({ page }) => {
 
 test("기기를 고르면 기기 목록이 뜨고 ES-DE 폴더를 자동으로 찾는다", async ({ page }) => {
   await openAddDialog(page);
-  await page.click("#add-source .seg-btn:has-text('안드로이드')");
+  await page.click("#add-source .seg-btn:has-text('MTP')");
   await expect(page.locator("#add-device")).toBeVisible();
   await expect(page.locator("#add-device option")).toHaveText(["Galaxy Test"]);
   await expect(page.locator("#add-metadata-path")).toHaveValue(`${DEVICE_ROOT}/Internal shared storage/ES-DE`);
   // 자동으로 찾았다는 사실과, 다르면 어떻게 하는지를 같이 말해 준다.
-  await expect(page.locator(".field-hint")).toContainText("기기에서 찾기");
+  await expect(page.locator(".field-hint")).toContainText("찾아보기");
 });
 
 test("기기 안을 한 단계씩 열어 보고 폴더를 고른다", async ({ page }) => {
   await openAddDialog(page);
-  await page.click("#add-source .seg-btn:has-text('안드로이드')");
+  await page.click("#add-source .seg-btn:has-text('MTP')");
   // ROM 폴더는 선택 사항이다 - 넣으면 ROM 파일까지 확인한다(읽기는 전송이 아니다).
-  await page.locator("#add-rom-path").locator("xpath=..").getByText("기기에서 찾기").click();
+  // 찾아보기 버튼은 PC/Android 하나뿐이다 - 저장 위치는 위 탭에서 이미 골랐다.
+  await page.locator("#add-rom-path").locator("xpath=..").getByText("찾아보기").click();
   await expect(page.locator("#mtp-browser")).toBeVisible();
   await page.click("#mtp-browser .picker-row:has-text('Internal shared storage')");
   await page.click("#mtp-browser .picker-row:has-text('ROMs')");
@@ -48,10 +49,20 @@ test("기기 안을 한 단계씩 열어 보고 폴더를 고른다", async ({ p
 
 test("위로 올라가면 한 단계 위 폴더가 보인다", async ({ page }) => {
   await openAddDialog(page);
-  await page.click("#add-source .seg-btn:has-text('안드로이드')");
-  await page.locator("#add-metadata-path").locator("xpath=..").getByText("기기에서 찾기").click();
+  await page.click("#add-source .seg-btn:has-text('MTP')");
+  await page.locator("#add-metadata-path").locator("xpath=..").getByText("찾아보기").click();
   await page.click("#mtp-browser .picker-row:has-text('Internal shared storage')");
   await expect(page.locator("#mtp-browser .picker-row:has-text('ES-DE')")).toBeVisible();
   await page.click("#mtp-browser .picker-row:has-text('위로')");
   await expect(page.locator("#mtp-browser .picker-row:has-text('SD card')")).toBeVisible();
+});
+
+test("찾아보기 버튼은 PC/Android 저장 위치마다 하나뿐이다", async ({ page }) => {
+  // 예전엔 "찾아보기"와 "기기에서 찾기"가 나란히 있었다 - 저장 위치를 이미 탭에서
+  // 골랐으니 같은 일을 하는 버튼 두 개였다(실사용 피드백).
+  await openAddDialog(page);
+  const romRow = page.locator("#add-rom-path").locator("xpath=..");
+  await expect(romRow.getByRole("button")).toHaveCount(1);
+  await page.click("#add-source .seg-btn:has-text('MTP')");
+  await expect(romRow.getByRole("button")).toHaveCount(1);
 });

@@ -1073,37 +1073,64 @@
                                    placeholder: "폴더를 선택하세요 (선택)" });
     const romInput = h("input", { class: "field-input", id: "add-rom-path",
                                   placeholder: "폴더를 선택하세요 (선택)" });
+    // **Architecture는 묻지 않는다.** ES-DE Adapter를 포함해 어떤 Frontend도 이
+    // 값으로 동작을 바꾸지 않는다(esde_platform()이 쓰는 것은 target/os뿐이다) -
+    // 사용자가 기기 아키텍처를 몰라서 "Unknown"으로 넘겨도 되는데, 넘기는 값이
+    // 아무 데도 안 쓰인다면 애초에 묻지 않는 것이 맞다(실사용 피드백).
+    // Target은 다르다 - esde_platform()이 이 값으로 custom_systems XML의 System
+    // 정의(windows/android/linux 템플릿)와 경로 표기를 고른다. 그래서 이것만 남긴다.
     const targetSel = h("select", { class: "field-input" }, [
       h("option", { value: "" }, ["Unknown"]),
       h("option", { value: "windows" }, ["Windows"]),
       h("option", { value: "android" }, ["Android"]),
       h("option", { value: "linux" }, ["Linux"]),
     ]);
-    const archSel = h("select", { class: "field-input" }, [
-      h("option", { value: "" }, ["Unknown"]),
-      h("option", { value: "x64" }, ["x64"]),
-      h("option", { value: "arm64" }, ["ARM64"]),
-      h("option", { value: "arm32" }, ["ARM32"]),
-    ]);
     const frontendSel = h("select", { class: "field-input", id: "add-frontend" },
       frontends.map((f) => h("option", { value: f.id }, [f.label])));
 
     const pathLabel = h("div", { class: "field-label" }, ["ROM 디렉토리"]);
     const romLabel = h("div", { class: "field-label" }, ["ROM 디렉토리"]);
+    const extRomInput = h("input", { class: "field-input", id: "add-ext-rom-path",
+                                     placeholder: "폴더를 선택하세요 (선택)" });
+    const extRomLabel = h("div", { class: "field-label" }, [
+      "External ROM 디렉토리 ", h("span", { class: "field-optional" }, ["(선택)"]),
+    ]);
 
-    const browseInto = (input, title, alsoName) => h("button", { class: "btn", onClick: async () => {
-      const r = await api.pickFolder(title);
-      if (!r.ok || !r.data) return;
-      input.value = r.data;
-      if (alsoName && !nameInput.value.trim()) {
-        nameInput.value = String(r.data).split(/[\\/]/).filter(Boolean).pop() || "";
-      }
-    } }, [icon("folderOpen", IC.sm), h("span", {}, ["찾아보기"])]);
+    // **버튼 하나가 "찾아보기"를 맡는다.** PC/Android는 이미 위 탭에서 고른
+    // 뒤라(sourceSeg), 그 아래 필드마다 "찾아보기"와 "기기에서 찾기"를 나란히
+    // 두는 것은 같은 일을 하는 버튼 두 개를 보여주는 것과 같았다(실사용 피드백) -
+    // source가 local이면 OS 폴더 선택창을, device면 MTP 폴더 탐색기를 연다.
+    function browseButton(input, title, alsoName) {
+      const btn = h("button", { class: "btn" }, [icon("folderOpen", IC.sm), h("span", {}, ["찾아보기"])]);
+      btn.addEventListener("click", async () => {
+        if (source === "device") {
+          if (!deviceSel.value) { showToast("먼저 기기를 고르세요.", "warning"); return; }
+          browseTarget = input;
+          browsePath = "mtp://" + deviceSel.value;
+          browserBox.hidden = false;
+          renderBrowser();
+          return;
+        }
+        const r = await api.pickFolder(title);
+        if (!r.ok || !r.data) return;
+        input.value = r.data;
+        if (alsoName && !nameInput.value.trim()) {
+          nameInput.value = String(r.data).split(/[\\/]/).filter(Boolean).pop() || "";
+        }
+      });
+      return btn;
+    }
 
-    const metaBrowse = browseInto(pathInput, "Metadata 폴더 선택", true);
-    const romBrowse = browseInto(romInput, "ROM 폴더 선택", true);
+    const metaBrowse = browseButton(pathInput, "Metadata 폴더 선택", true);
+    const romBrowse = browseButton(romInput, "ROM 폴더 선택", true);
+    const extRomBrowse = browseButton(extRomInput, "External ROM 폴더 선택", false);
     const metaRow = h("div", { class: "field-row" }, [pathInput, metaBrowse]);
     const romRow = h("div", { class: "field-row" }, [romInput, romBrowse]);
+    // External ROM은 **로컬 PC일 때만 있다.** MTP 경로를 일반 Collection의
+    // External Storage로 섞으면 그 경로를 로컬 Provider가 읽으려다 조용히 빈
+    // 목록만 돌려주므로(storage.for_path가 종류로 갈리고, add_external_storage가
+    // 종류 다른 저장소를 거절한다 - bridge/api.py) source가 device일 때는 숨긴다.
+    const extRomRow = h("div", { class: "field-row" }, [extRomInput, extRomBrowse]);
 
     // --- 안드로이드 기기(MTP) -----------------------------------------
     // **저장 위치를 먼저 고른다**(사용자 결정). 기기는 폴더 선택 대화상자로 고를 수
@@ -1151,19 +1178,6 @@
         } }, ["이 폴더 선택"]));
     }
 
-    const deviceBrowse = (input) => h("button", { class: "btn", onClick: () => {
-      if (!deviceSel.value) { showToast("먼저 기기를 고르세요.", "warning"); return; }
-      browseTarget = input;
-      browsePath = "mtp://" + deviceSel.value;
-      browserBox.hidden = false;
-      renderBrowser();
-    } }, [icon("smartphone", IC.sm), h("span", {}, ["기기에서 찾기"])]);
-    const metaDeviceBrowse = deviceBrowse(pathInput);
-    const romDeviceBrowse = deviceBrowse(romInput);
-    metaDeviceBrowse.hidden = romDeviceBrowse.hidden = true;
-    metaRow.appendChild(metaDeviceBrowse);
-    romRow.appendChild(romDeviceBrowse);
-
     async function autoFindEsde() {
       const r = await api.mtpFindEsde(deviceSel.value);
       if (!r.ok) return;
@@ -1172,8 +1186,8 @@
       const device = (S.mtpDevices || []).find((d) => d.key === deviceSel.value);
       if (device && !nameInput.value.trim()) nameInput.value = device.name;
       deviceNote.textContent = found
-        ? "ES-DE 폴더를 찾았습니다. 다르면 '기기에서 찾기'로 고르세요."
-        : "ES-DE 폴더를 못 찾았습니다. '기기에서 찾기'로 직접 고르세요.";
+        ? "ES-DE 폴더를 찾았습니다. 다르면 '찾아보기'로 고르세요."
+        : "ES-DE 폴더를 못 찾았습니다. '찾아보기'로 직접 고르세요.";
     }
 
     async function loadDevices() {
@@ -1191,6 +1205,10 @@
 
     const sourceSeg = h("div", { class: "seg", id: "add-source" });
     let source = "local";
+    // **탭이다 - 버튼이 아니다**(실사용 피드백). 둘 중 하나를 고르는 것이지 각각
+    // 독립된 동작을 거는 것이 아니므로, Detail 패널 탭과 같은 언더바 방식을 쓰고
+    // 폭을 동률로 맞춘다(.source-tabs, studio.css) - 라벨 길이가 서로 달라도
+    // 같은 무게로 보여야 "둘 중 하나"라는 게 한눈에 들어온다.
     const sourceBtn = (value, label, iconName) => {
       const btn = h("button", { class: "seg-btn" + (value === source ? " on" : ""),
                                 "data-source": value }, [icon(iconName, 12), h("span", {}, [label])]);
@@ -1198,19 +1216,20 @@
       return btn;
     };
     sourceSeg.appendChild(sourceBtn("local", "이 PC", "hardDrive"));
-    sourceSeg.appendChild(sourceBtn("device", "안드로이드 기기 (MTP)", "smartphone"));
+    sourceSeg.appendChild(sourceBtn("device", "Android (MTP)", "smartphone"));
 
     function syncSource() {
       const device = source === "device";
       sourceSeg.querySelectorAll(".seg-btn").forEach((btn) =>
         btn.classList.toggle("on", btn.dataset.source === source));
       deviceRow.hidden = !device;
-      metaBrowse.hidden = romBrowse.hidden = device;
-      metaDeviceBrowse.hidden = romDeviceBrowse.hidden = !device;
       if (!device) browserBox.hidden = true;
       romInput.placeholder = device
         ? "ROM 폴더 (선택 - 넣으면 ROM 파일도 확인합니다)"
         : "폴더를 선택하세요 (선택)";
+      // External Storage는 로컬 파일시스템 개념이다 - MTP 경로를 여기 섞으면
+      // add_external_storage가 거절한다(종류가 다른 저장소, bridge/api.py).
+      extRomLabel.hidden = extRomRow.hidden = device;
       if (device) {
         targetSel.value = "android";
         if (!S.mtpDevices) loadDevices();
@@ -1237,10 +1256,7 @@
     syncSource();
 
     const advancedBody = h("div", {}, [
-      h("div", { class: "field-grid two" }, [
-        h("div", {}, [h("div", { class: "field-label" }, ["Target"]), targetSel]),
-        h("div", {}, [h("div", { class: "field-label" }, ["Architecture"]), archSel]),
-      ]),
+      h("div", { class: "field-label" }, ["Target"]), targetSel,
     ]);
     const advanced = h("details", { class: "add-collection-advanced" }, [
       h("summary", {}, ["고급"]),
@@ -1276,6 +1292,7 @@
       h("div", { class: "field-label" }, ["Frontend"]), frontendSel,
       pathLabel, metaRow,
       romLabel, romRow,
+      extRomLabel, extRomRow,
       browserBox,
       h("div", { class: "field-label" }, ["이름"]), nameInput,
       advanced,
@@ -1287,6 +1304,7 @@
       h("button", { class: "btn primary", id: "add-collection-submit", onClick: async () => {
         const metaPath = pathInput.value.trim();
         const romPath = romRow.hidden ? "" : romInput.value.trim();
+        const extRomPath = extRomRow.hidden ? "" : extRomInput.value.trim();
         // 둘 다 선택 사항이다. Metadata만 있어도, ROM만 있어도 정상적인 Collection이다
         // - 스크래핑을 한 번도 안 한 컬렉션이 후자의 모습이다. 유효하지 않은 것은
         // 둘 다 비었을 때뿐이다.
@@ -1301,10 +1319,18 @@
         const device = source === "device"
           ? (S.mtpDevices || []).find((d) => d.key === deviceSel.value) : null;
         const r = await api.createCollection(name, frontendSel.value, metaPath || null,
-                                             targetSel.value || null, archSel.value || null,
+                                             targetSel.value || null, null,
                                              romPath || null, "", device ? device.name : null);
         if (!r.ok) { showToast(r.error, "error"); return; }
         await loadCollections();
+        // External ROM 디렉토리를 함께 넣었으면 만들자마자 Storage로 붙인다 - 안 그러면
+        // 사용자가 이 경로를 여기서 이미 알려 줬는데도 Navigator에서 "Add External
+        // Storage"를 다시 눌러 똑같은 경로를 한 번 더 찾아야 했다(실사용 피드백).
+        if (extRomPath) {
+          const ext = await api.addExternalStorage(r.data.id, "External ROMs", extRomPath);
+          if (ext.ok) await api.attachStorageSystems(r.data.id, ext.data);
+          else showToast(`External ROM 디렉토리는 추가하지 못했습니다: ${ext.error}`, "warning");
+        }
         // 메타데이터가 없다는 이유로 여기서 gamelist 생성 여부를 묻지 않는다.
         //
         // ROM만 있는 Collection은 **그 자체로 정상**이다. 만들자마자 "메타데이터가

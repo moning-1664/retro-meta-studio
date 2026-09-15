@@ -393,6 +393,8 @@ html[data-theme="light"] .raster-icon-pair img.for-dark { display: none; }
 .identity-fact.warn { color: var(--warning); }
 
 .field-label { font-size: var(--fs-eyebrow); text-transform: uppercase; letter-spacing: .03em; color: var(--muted); margin-bottom: 3px; display: flex; align-items: center; gap: 4px; }
+/* "(선택)" 같은 부기 - 라벨 본문보다 한 단 더 낮은 무게로, 대문자/자간은 따라가지 않는다. */
+.field-optional { text-transform: none; letter-spacing: normal; opacity: .7; }
 .field-input {
   width: 100%; border-radius: var(--radius-xs); padding: 4px 7px; font-size: var(--fs-body); outline: none;
   background: var(--card3); border: 1px solid var(--border); color: var(--text);
