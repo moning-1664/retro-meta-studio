@@ -360,11 +360,16 @@ test.describe("Media 확대(lightbox)", () => {
 });
 
 test.describe("Description", () => {
-  test("기본 높이가 열 줄쯤이다", async ({ page }) => {
-    // 남는 공간을 전부 흡수하면 설명이 긴 게임에서 아래 필드가 화면 밖으로 밀린다.
+  test("12줄에서 멈추고 늘어나지 않는다(실사용 피드백)", async ({ page }) => {
+    // 예전엔 flex:1 1 auto라 남는 세로 공간을 전부 흡수해서, 창을 늘릴수록
+    // 한없이 길어졌다 - 지금은 12줄 고정이고 그 남는 공간은 패널이 넉넉히 클
+    // 때만 Screenshot/media 정보(.detail-extra-media)가 대신 쓴다.
     await openFirstGame(page);
-    const rows = await page.locator(".detail-body-desc-wrap textarea").getAttribute("rows");
-    expect(Number(rows)).toBe(10);
+    const textarea = page.locator(".detail-body-desc-wrap textarea");
+    await expect(textarea).toHaveAttribute("rows", "12");
+    const flexGrow = await page.locator(".detail-body-desc-wrap")
+      .evaluate((el) => getComputedStyle(el).flexGrow);
+    expect(flexGrow).toBe("0");
   });
 });
 

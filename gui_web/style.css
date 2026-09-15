@@ -346,7 +346,15 @@ html[data-theme="light"] .raster-icon-pair img.for-dark { display: none; }
 #detail-panel.open { width: var(--panel-pref); min-width: var(--panel-min); max-width: var(--panel-max); border-color: var(--border); }
 /* 실제 콘텐츠는 이 고정폭 안쪽 래퍼에 그려서, width가 0→pref로 전환되는 동안 텍스트가
    중간에 어색하게 줄바꿈되지 않고 폭이 잘리기만 하도록(overflow:hidden) 한다. */
-#detail-panel-inner { width: var(--panel-pref); min-width: var(--panel-min); height: 100%; display: flex; flex-direction: column; }
+#detail-panel-inner {
+  width: var(--panel-pref); min-width: var(--panel-min); height: 100%; display: flex; flex-direction: column;
+  /* 패널이 넉넉히 크면(사용자 결정 - 850px) 추가 정보를 보여준다
+     (.detail-extra-media, .media-tab-identity) - JS로 높이를 재고 클래스를
+     토글할 필요 없이 컨테이너 쿼리 하나로 처리한다. width/height 둘 다 이미
+     위에서 명시적으로 정해지므로(고정폭 + 100%) container-type: size가 걸어도
+     레이아웃이 무너지지 않는다. */
+  container-type: size; container-name: detail;
+}
 /* [신규] 미리보기는 켜져 있는데 아직 아무 것도 선택 안 했을 때 - 빈 패널 대신 안내 */
 .panel-empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--muted); padding: 20px; text-align: center; }
 .panel-empty-state svg { opacity: .45; }
@@ -375,8 +383,30 @@ html[data-theme="light"] .raster-icon-pair img.for-dark { display: none; }
    깨져서 실제 Windows 실행 시 상단 버튼이 잘려 보이고 전체가 스크롤되는 문제가 있었다. */
 .detail-body { flex: 1 1 0%; min-height: 0; overflow-y: auto; padding: 8px 10px 10px; background: var(--card2); display: flex; flex-direction: column; }
 .detail-body-fixed { flex-shrink: 0; }
-.detail-body-desc-wrap { flex: 1 1 auto; min-height: 70px; display: flex; flex-direction: column; margin-bottom: 8px; }
-.detail-body-desc-wrap textarea.field-input { flex: 1 1 auto; min-height: 70px; resize: none; }
+/* **12줄에서 멈춘다** - 예전엔 flex:1 1 auto라 남는 세로 공간을 전부 먹어서,
+   창을 늘릴수록 Description만 한없이 길어졌다(실사용 피드백). 고정 크기로
+   바꾸고 넘치면 안에서만 스크롤한다 - 그렇게 비워진 공간을 아래 추가 정보
+   (.detail-extra-media)가 넉넉한 화면에서만 대신 쓴다. */
+.detail-body-desc-wrap { flex: 0 0 auto; display: flex; flex-direction: column; margin-bottom: 8px; }
+.detail-body-desc-wrap textarea.field-input { resize: none; }
+/* 패널이 넉넉히 크면(사용자 결정 - 850px) 나타나는 추가 정보. 기본은 숨긴다 -
+   비좁은 화면에서까지 욱여넣으면 그 공간을 원래 쓰던 필드들이 밀려난다. */
+.detail-extra-media, .media-tab-identity { display: none; }
+@container detail (min-height: 850px) {
+  .detail-extra-media, .media-tab-identity { display: block; }
+}
+.detail-extra-screenshot {
+  width: 160px; height: 90px; border-radius: var(--radius-xs); overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--list-border); color: var(--muted); margin-bottom: 8px;
+}
+.detail-extra-screenshot img { width: 100%; height: 100%; object-fit: cover; }
+.media-tab-identity { margin-bottom: 10px; }
+.media-tab-title { font-size: var(--fs-body); font-weight: 650; }
+.media-tab-desc {
+  font-size: var(--fs-caption); color: var(--muted); margin-top: 3px; line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
 /* [신규] Metadata 탭 상단 identity 요약 카드 (대표 이미지 + 핵심 필드 6개) */
 .identity-card { display: flex; gap: 10px; border-radius: var(--radius-sm); padding: 8px; margin-bottom: 10px; background: var(--card3); border: 1px solid var(--border); }
 .identity-cover { flex-shrink: 0; width: 92px; height: 124px; border-radius: var(--radius-xs); overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--list-border); color: var(--muted); }

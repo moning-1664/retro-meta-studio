@@ -4530,12 +4530,13 @@
     topFixed.appendChild(nameInput);
     body.appendChild(topFixed);
 
-    // Description은 **10줄쯤을 기본으로 두고 넘치면 안에서 스크롤한다.**
-    // 남는 세로 공간을 전부 흡수하게 두면 설명이 긴 게임에서 아래 필드들이 화면
-    // 밖으로 밀려나, 장르 하나 고치려고 스크롤을 내려야 한다.
+    // Description은 **12줄에서 멈춘다**(실사용 피드백 - 예전엔 남는 세로 공간을
+    // 전부 흡수해서 창을 늘릴수록 한없이 길어졌다). 12줄보다 길면 안에서
+    // 스크롤한다. rows 속성 그대로가 그 12줄 높이를 정한다 - CSS가 더 이상
+    // flex:1로 늘리지 않는다(style.css의 .detail-body-desc-wrap 참고).
     const descWrap = h("div", { class: "detail-body-desc-wrap" });
     descWrap.appendChild(h("div", { class: "field-label" }, ["Description"]));
-    const desc = h("textarea", { class: "field-input", rows: 10 });
+    const desc = h("textarea", { class: "field-input", rows: 12 });
     desc.value = value("desc");
     fieldRefs.desc = desc;
     descWrap.appendChild(desc);
@@ -4552,6 +4553,23 @@
     fieldGrid.appendChild(fieldGroup("users", "Players", "players", value("players")));
     bottom.appendChild(fieldGrid);
     body.appendChild(bottom);
+
+    // Description을 12줄로 멈춘 만큼 남는 세로 공간을, 패널이 넉넉히 클 때만
+    // (컨테이너 쿼리, 850px) Screenshot과 나머지 media 유무로 채운다(실사용
+    // 피드백) - 비좁은 화면에서는 style.css가 이 블록 자체를 숨긴다.
+    const extra = h("div", { class: "detail-body-fixed detail-extra-media" });
+    extra.appendChild(h("div", { class: "field-label" }, ["Screenshot"]));
+    const shot = h("div", { class: "detail-extra-screenshot" });
+    if (state.media && state.media.Screenshots) {
+      const img = h("img", { alt: "Screenshot" });
+      shot.appendChild(img);
+      loadMediaImage(img, "Screenshots", true);
+    } else {
+      shot.appendChild(icon("image", IC.lg));
+    }
+    extra.appendChild(shot);
+    extra.appendChild(mediaFlagRow(state.media || {}));
+    body.appendChild(extra);
   }
 
   async function loadMediaImage(img, label, thumbnail) {
@@ -4781,7 +4799,17 @@
 
   function renderMediaTab(body) {
     body.classList.add("media-tab-body");
-    const media = S.detailState.media || {};
+    const state = S.detailState;
+    const media = state.media || {};
+
+    // 패널이 넉넉히 클 때만(컨테이너 쿼리, 850px) 맨 위에 Title/Description을
+    // 보여준다(실사용 피드백 - "타이틀 description 순으로"). 읽기 전용이다 -
+    // 편집은 Metadata 탭에서만 한다(같은 값을 두 곳에서 고치게 하지 않는다).
+    const fields = state.fields || {};
+    body.appendChild(h("div", { class: "media-tab-identity" }, [
+      h("div", { class: "media-tab-title truncate" }, [fields.name || state.file || "(제목 없음)"]),
+      h("div", { class: "media-tab-desc" }, [fields.desc || "설명 없음"]),
+    ]));
 
     const hero = h("div", { class: "media-hero" });
     hero.appendChild(mediaTile(MEDIA_HERO, media, "cover"));
