@@ -188,7 +188,15 @@ class Plan:
         failed = [e for e in self._entries.values()
                   if e.status in (STATUS_FAILED, STATUS_PARTIAL)]
         return {
+            # total은 **Plan에 뭔가 올라와 있는가**를 말한다 - Cancel은 충돌뿐인
+            # Plan도 버릴 수 있어야 하므로 이 수를 쓴다.
             "total": len(self._entries),
+            # runnable은 **지금 Apply를 누르면 실제로 처리될 수**다. 해결 안 된 충돌과
+            # invalid는 apply_plan이 건너뛰므로(runnable 필터) 여기서도 뺀다. 예전에는
+            # Apply 버튼이 total을 그대로 보여줘서, 충돌 3개가 섞인 12개 Plan이
+            # "Apply (12)"라고 말하고 9개만 처리했다.
+            "runnable": len([e for e in self._entries.values()
+                             if not e.blocked and e.status != STATUS_INVALID]),
             "added": len(added), "deleted": len(deleted), "moved": len(moved),
             "retitled": len(retitled), "edited": len(edited),
             "addedBytes": sum(e.estimated_bytes for e in added),
