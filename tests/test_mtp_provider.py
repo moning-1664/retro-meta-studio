@@ -8,109 +8,12 @@
 import unittest
 
 import storage
-from storage.mtp import (
-    MtpBackend, MtpDeviceInfo, MtpError, MtpObject, MtpProvider,
-    is_mtp_path, join_path, set_provider, split_path,
-)
+from storage.mtp import MtpError, MtpProvider, is_mtp_path, join_path, set_provider, split_path
+from tests.fixtures import FakeMtpBackend
 
 
-class FakeBackend(MtpBackend):
-    """메모리 트리. node = {"id", "name", "is_dir", "data"|"children"}"""
-
-    def __init__(self):
-        self.tree = {
-            "id": "DEVICE", "name": "", "is_dir": True, "children": {
-                "Internal shared storage": {
-                    "id": "s1", "name": "Internal shared storage", "is_dir": True, "children": {
-                        "ES-DE": {"id": "o1", "name": "ES-DE", "is_dir": True, "children": {
-                            "gamelists": {"id": "o2", "name": "gamelists", "is_dir": True, "children": {
-                                "ps2": {"id": "o3", "name": "ps2", "is_dir": True, "children": {
-                                    "gamelist.xml": {"id": "o4", "name": "gamelist.xml",
-                                                     "is_dir": False, "data": b"<gameList/>"},
-                                }},
-                            }},
-                        }},
-                    },
-                },
-                "SD card": {"id": "s2", "name": "SD card", "is_dir": True, "children": {}},
-            },
-        }
-        self.reads = 0
-        self.children_calls = 0
-        #: 앞으로 올 create() 호출 중 몇 번을 실패시킬지. 1이면 "새로 쓰기만 실패"(되돌리기는
-        #: 성공), 2면 "되돌리기까지 실패"를 만든다.
-        self.fail_next_creates = 0
-        self._next_id = 100
-
-    # --- 헬퍼 -----------------------------------------------------------
-    def _find(self, node, object_id):
-        if node.get("id") == object_id:
-            return node
-        for child in node.get("children", {}).values():
-            found = self._find(child, object_id)
-            if found:
-                return found
-        return None
-
-    def _node(self, object_id):
-        node = self._find(self.tree, object_id if object_id is not None else "DEVICE")
-        if node is None:
-            raise MtpError(f"없는 객체: {object_id}")
-        return node
-
-    # --- MtpBackend -----------------------------------------------------
-    def devices(self):
-        return [MtpDeviceInfo(key="R58N30ABCDE", name="Galaxy Test", device_id="\\\\?\\usb#vid")]
-
-    def children(self, device_key, object_id):
-        self.children_calls += 1
-        node = self._node(object_id)
-        return [MtpObject(object_id=c["id"], name=c["name"], is_dir=c["is_dir"],
-                          size=len(c.get("data", b"")), mtime_ns=0)
-                for c in node.get("children", {}).values()]
-
-    def read(self, device_key, object_id):
-        self.reads += 1
-        return self._node(object_id)["data"]
-
-    def create(self, device_key, parent_id, name, data):
-        if self.fail_next_creates > 0:
-            self.fail_next_creates -= 1
-            raise MtpError("기기 쓰기 실패")
-        parent = self._node(parent_id)
-        self._next_id += 1
-        new_id = f"n{self._next_id}"
-        parent.setdefault("children", {})[name] = {
-            "id": new_id, "name": name, "is_dir": False, "data": data}
-        return new_id
-
-    def create_folder(self, device_key, parent_id, name):
-        parent = self._node(parent_id)
-        self._next_id += 1
-        new_id = f"d{self._next_id}"
-        parent.setdefault("children", {})[name] = {
-            "id": new_id, "name": name, "is_dir": True, "children": {}}
-        return new_id
-
-    def delete(self, device_key, object_id):
-        node = self._node(object_id)
-        parent = self._parent_of(self.tree, object_id)
-        del parent["children"][node["name"]]
-
-    def _parent_of(self, node, object_id):
-        for child in node.get("children", {}).values():
-            if child["id"] == object_id:
-                return node
-            found = self._parent_of(child, object_id)
-            if found:
-                return found
-        return None
-
-    def storage_info(self, device_key, object_id):
-        return (64 * 1024 ** 3, 20 * 1024 ** 3) if object_id == "s1" else (None, None)
-
-
-GAMELIST = "mtp://R58N30ABCDE/Internal shared storage/ES-DE/gamelists/ps2/gamelist.xml"
+GAMELIST_REL = "Internal shared storage/ES-DE/gamelists/ps2/gamelist.xml"
+GAMELIST = "mtp://R58N30ABCDE/" + GAMELIST_REL
 
 
 class PathTests(unittest.TestCase):
@@ -138,7 +41,8 @@ class PathTests(unittest.TestCase):
 
 class ProviderTests(unittest.TestCase):
     def setUp(self):
-        self.backend = FakeBackend()
+        self.backend = FakeMtpBackend()
+        self.backend.put(GAMELIST_REL, b"<gameList/>")
         self.provider = MtpProvider(self.backend)
 
     def test_exists_and_stat_walk_the_device_tree(self):
@@ -229,7 +133,9 @@ class RoutingTests(unittest.TestCase):
     """`storage.for_path()`가 유일한 분기점이다 - MTP 경로면 이 Provider가 와야 한다."""
 
     def setUp(self):
-        self.provider = MtpProvider(FakeBackend())
+        backend = FakeMtpBackend()
+        backend.put(GAMELIST_REL, b"<gameList/>")
+        self.provider = MtpProvider(backend)
         set_provider(self.provider)
         self.addCleanup(set_provider, None)
 

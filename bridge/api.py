@@ -184,7 +184,7 @@ class Api:
 
     @guarded
     def create_collection(self, name, frontend, root_path=None, target=None, arch=None,
-                          rom_path=None, media_path=None):
+                          rom_path=None, media_path=None, storage_label=None):
         """`root_path`는 메타데이터가 있는 곳, `rom_path`는 ROM이 있는 곳이다.
 
         ES-DE는 이 둘을 떼어 놓는 것이 기본이라 하나만 받으면 반쪽짜리 Collection만
@@ -192,10 +192,85 @@ class Api:
         ROM만 가지고 있고, 그것도 정상적인 Collection이다. 유효하지 않은 것은 둘 다
         비어 있을 때뿐이며, 그 판단은 Workspace가 한다.
         """
+        extra = {}
+        if storage_label:
+            # 기기 Collection은 Storage 이름이 "Internal"이면 어느 기기인지 알 수 없다.
+            extra["internal_label"] = str(storage_label)
         collection = self.workspace.create_collection(
             name, frontend, root_path, target=target or None, arch=arch or None,
-            rom_path=rom_path or None, media_path=media_path or None)
+            rom_path=rom_path or None, media_path=media_path or None, **extra)
         return ok(self._collection_summary(collection))
+
+    # ------------------------------------------------------------------
+    # MTP 기기 (storage/mtp.py) - Metadata(gamelist) 전용 연결
+    # ------------------------------------------------------------------
+    #: ES-DE 폴더를 찾을 때 기기를 얼마나 깊이 훑을지. MTP는 폴더 하나 여는 것도 비싸서
+    #: 기기 전체를 뒤지면 몇 분씩 걸린다 - 안드로이드 ES-DE는 저장소 바로 아래
+    #: (`/storage/emulated/0/ES-DE`)에 있으므로 두 단계면 충분하다.
+    MTP_SEARCH_DEPTH = 2
+
+    @guarded
+    def mtp_devices(self):
+        """연결된 안드로이드 기기 목록.
+
+        **기기가 없는 것과 못 읽는 것을 구분해서 돌려준다** - 빈 목록만 주면 화면이
+        "USB를 꽂으라는 건지, 뭔가 잘못된 건지"를 말해줄 수 없다.
+        """
+        from storage import mtp
+
+        try:
+            devices = mtp.provider().devices()
+        except mtp.MtpError as e:
+            return ok({"devices": [], "reason": str(e)})
+        return ok({"devices": [{"key": d.key, "name": d.name, "path": mtp.join_path(d.key, [])}
+                               for d in devices], "reason": None})
+
+    @guarded
+    def mtp_browse(self, path):
+        """기기 폴더 한 단계(폴더만). `path`가 기기 루트면 저장소 목록이 나온다."""
+        from storage import mtp
+
+        if not mtp.is_mtp_path(path):
+            return err("MTP 경로가 아닙니다.")
+        device_key, segments = mtp.split_path(path)
+        entries = [e for e in mtp.provider().scandir(path) if e.is_dir]
+        return ok({
+            "path": mtp.join_path(device_key, segments),
+            "parent": mtp.join_path(device_key, segments[:-1]) if segments else None,
+            "entries": sorted(({"name": e.name, "path": e.path} for e in entries),
+                              key=lambda e: e["name"].lower()),
+        })
+
+    @guarded
+    def mtp_find_esde(self, device_key):
+        """기기에서 ES-DE 폴더(`gamelists`를 품은 폴더)와 ROM 폴더 후보를 찾는다.
+
+        얕게만 훑는다(MTP_SEARCH_DEPTH) - 못 찾으면 화면에서 직접 고르면 된다.
+        """
+        from storage import mtp
+
+        provider = mtp.provider()
+        found: list[dict] = []
+        roms: list[str] = []
+
+        def walk(segments, depth):
+            if depth > self.MTP_SEARCH_DEPTH or len(found) >= 4:
+                return
+            for entry in provider.scandir(mtp.join_path(device_key, segments)):
+                if not entry.is_dir:
+                    continue
+                here = [*segments, entry.name]
+                if provider.exists(mtp.join_path(device_key, [*here, "gamelists"])):
+                    found.append({"path": mtp.join_path(device_key, here), "name": entry.name})
+                elif entry.name.lower() in ("roms", "rom"):
+                    roms.append(mtp.join_path(device_key, here))
+                walk(here, depth + 1)
+
+        try:
+            walk([], 0)
+        except mtp.MtpError as e:
+            return err(e)
+        return ok({"esde": found, "roms": roms})
 
     @guarded
     def rename_collection(self, collection_id, name):

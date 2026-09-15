@@ -1,0 +1,169 @@
+"""MTP 기기를 Collection으로 - 기기 탐색, 만들기, 스캔, 편집.
+
+기기 없이 검증한다(tests/fixtures.py의 가짜 MTP backend). 여기서 확인하는 것은
+**"기기를 꽂았을 때 앱이 하는 일 전부"** 다 - COM 호출만 실제 기기를 필요로 한다.
+"""
+
+import unittest
+import xml.etree.ElementTree as ET
+
+from bridge.api import Api
+from tests.fixtures import build_mtp_device, mtp_gamelist, temp_root, use_fake_mtp, wait_job
+
+DEVICE = "R58N30ABCDE"
+ESDE = f"mtp://{DEVICE}/Internal shared storage/ES-DE"
+ROMS = f"mtp://{DEVICE}/Internal shared storage/ROMs"
+
+
+class MtpDiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = temp_root("rms_mtp_discovery_")
+        self.backend = use_fake_mtp(self)
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+
+    def test_lists_connected_devices(self):
+        r = self.api.mtp_devices()
+        self.assertTrue(r["ok"], r.get("error"))
+        self.assertEqual(r["data"]["devices"],
+                         [{"key": DEVICE, "name": "Galaxy Test", "path": f"mtp://{DEVICE}"}])
+        self.assertIsNone(r["data"]["reason"])
+
+    def test_browse_walks_the_device_one_level_at_a_time(self):
+        root = self.api.mtp_browse(f"mtp://{DEVICE}")["data"]
+        self.assertEqual([e["name"] for e in root["entries"]], ["Internal shared storage", "SD card"])
+        self.assertIsNone(root["parent"])   # 기기 루트 위로는 못 간다
+
+        inside = self.api.mtp_browse(root["entries"][0]["path"])["data"]
+        self.assertEqual([e["name"] for e in inside["entries"]], ["ES-DE", "ROMs"])
+        self.assertEqual(inside["parent"], f"mtp://{DEVICE}")
+
+    def test_browse_shows_folders_only(self):
+        gamelists = self.api.mtp_browse(f"{ESDE}/gamelists/ps2")["data"]
+        self.assertEqual(gamelists["entries"], [])   # gamelist.xml은 파일이라 안 보인다
+
+    def test_browse_rejects_a_non_device_path(self):
+        self.assertFalse(self.api.mtp_browse("D:\\ES-DE")["ok"])
+
+    def test_finds_the_esde_folder_and_rom_candidates(self):
+        r = self.api.mtp_find_esde(DEVICE)
+        self.assertTrue(r["ok"], r.get("error"))
+        self.assertEqual([e["path"] for e in r["data"]["esde"]], [ESDE])
+        self.assertEqual(r["data"]["roms"], [ROMS])
+
+    def test_reports_why_the_list_is_empty_instead_of_just_showing_nothing(self):
+        """comtypes가 없거나 기기가 잠겨 있으면 이유를 함께 준다 - 화면이 안내할 수 있어야 한다."""
+        from storage import mtp
+
+        class Broken:
+            def devices(self):
+                raise mtp.MtpError("기기가 응답하지 않습니다.")
+
+        mtp.set_provider(mtp.MtpProvider(Broken()))
+        r = self.api.mtp_devices()
+        self.assertTrue(r["ok"])          # 오류가 아니라 "이유가 있는 빈 목록"이다
+        self.assertEqual(r["data"]["devices"], [])
+        self.assertIn("응답하지 않습니다", r["data"]["reason"])
+
+
+class MtpCollectionTests(unittest.TestCase):
+    """기기의 ES-DE 폴더를 Collection으로 열고 실제로 읽고 쓴다."""
+
+    def setUp(self):
+        self.dir = temp_root("rms_mtp_collection_")
+        self.backend = use_fake_mtp(self)
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+
+    def create(self, **kwargs):
+        r = self.api.create_collection("Galaxy", "es-de", ESDE, "android", **kwargs)
+        self.assertTrue(r["ok"], r.get("error"))
+        cid = r["data"]["id"]
+        wait_job(self.api, self.api.start_scan(cid)["data"]["jobId"])
+        return cid
+
+    def rows(self, cid, **kwargs):
+        return {r["file"]: r for r in self.api.list_rows(cid, limit=50, **kwargs)["data"]["rows"]}
+
+    def device_xml(self, system):
+        from storage.mtp import MtpProvider
+
+        data = MtpProvider(self.backend).read_bytes(f"{ESDE}/gamelists/{system}/gamelist.xml")
+        return ET.fromstring(data)
+
+    # ------------------------------------------------------------------
+    def test_creates_a_collection_from_the_device_gamelists(self):
+        cid = self.create()
+        detail = self.api.collection_detail(cid)["data"]
+        self.assertEqual(sorted(s["system"] for s in detail["systems"]), ["ps2", "snes"])
+        self.assertEqual(detail["rootPath"], ESDE)
+
+    def test_scan_reads_titles_from_the_device_without_any_local_file(self):
+        cid = self.create()
+        rows = self.rows(cid)
+        self.assertEqual(rows["FFX (U).iso"]["title"], "Final Fantasy X")
+        self.assertEqual(rows["SMW.sfc"]["title"], "Super Mario World")
+        # ROM 폴더를 안 줬으므로 ROM 파일은 없는 것으로 본다(Metadata 전용).
+        self.assertFalse(rows["FFX (U).iso"]["present"])
+
+    def test_rom_listing_is_opt_in_via_the_rom_folder(self):
+        """읽기만 하는 것은 전송이 아니라서 가능하다 - 폴더를 주면 ROM을 확인한다(사용자 결정)."""
+        cid = self.create(rom_path=ROMS)
+        rows = self.rows(cid)
+        self.assertTrue(rows["FFX (U).iso"]["present"])
+        self.assertEqual(rows["FFX (U).iso"]["size"], 2048)
+
+    def test_a_device_without_roms_still_opens_as_a_metadata_collection(self):
+        from storage.mtp import MtpProvider, set_provider
+
+        set_provider(MtpProvider(build_mtp_device(with_roms=False)))
+        cid = self.create()
+        self.assertEqual(len(self.rows(cid)), 3)
+
+    def test_the_storage_is_named_after_the_device_not_Internal(self):
+        r = self.api.create_collection("Galaxy", "es-de", ESDE, "android", storage_label="Galaxy Test")
+        detail = self.api.collection_detail(r["data"]["id"])["data"]
+        self.assertEqual(detail["storages"][0]["label"], "Galaxy Test")
+
+    def test_capacity_is_unknown_and_that_is_not_an_error(self):
+        """용량을 못 읽는 저장소는 Capacity Check를 건너뛴다(스펙 §5)."""
+        cid = self.create()
+        capacity = self.api.plan_state(cid)["data"]["capacity"]
+        self.assertEqual([c["capacityBytes"] for c in capacity], [64 * 1024 ** 3])
+
+    # ------------------------------------------------------------------
+    def test_editing_a_title_writes_back_to_the_device(self):
+        cid = self.create()
+        uid = self.rows(cid)["SMW.sfc"]["romUid"]
+        r = self.api.save_fields(cid, uid, {"name": "슈퍼 마리오 월드"})
+        self.assertTrue(r["ok"], r.get("error"))
+
+        names = [g.findtext("name") for g in self.device_xml("snes").findall("game")]
+        self.assertIn("슈퍼 마리오 월드", names)
+
+    def test_a_write_failure_leaves_the_device_gamelist_intact(self):
+        """MTP는 지우고 새로 만드는 수밖에 없다 - 실패하면 원본이 남아 있어야 한다."""
+        cid = self.create()
+        uid = self.rows(cid)["SMW.sfc"]["romUid"]
+        self.backend.fail_next_creates = 1
+        self.api.save_fields(cid, uid, {"name": "안 써져야 한다"})
+        names = [g.findtext("name") for g in self.device_xml("snes").findall("game")]
+        self.assertEqual(names, ["Super Mario World"])
+
+    def test_generating_a_gamelist_creates_the_file_on_the_device(self):
+        backend = build_mtp_device(with_roms=True)
+        # gamelist가 없는 System을 하나 만든다 - ROM만 있는 상태.
+        backend.put("Internal shared storage/ROMs/gba/Zelda (U).gba", b"z" * 128)
+        from storage.mtp import MtpProvider, set_provider
+        set_provider(MtpProvider(backend))
+
+        cid = self.create(rom_path=ROMS)
+        r = self.api.generate_metadata(cid, ["gba"])
+        self.assertTrue(r["ok"], r.get("error"))
+        created = MtpProvider(backend).read_bytes(f"{ESDE}/gamelists/gba/gamelist.xml")
+        self.assertIsNotNone(created)
+        self.assertIn(b"Zelda", created)
+
+
+if __name__ == "__main__":
+    unittest.main()
