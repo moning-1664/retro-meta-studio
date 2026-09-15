@@ -1415,8 +1415,9 @@ button.sb-badge { cursor: pointer; }
 .lc-file.rom-present { color: var(--list-text); }
 .lc-file.rom-missing { color: var(--list-faint, var(--list-muted)); }
 
-/* Detail 파일명 - 글자로 골라 복사할 수 있고, 옆 버튼으로 한 번에 복사한다. */
-.detail-filename-row { display: flex; align-items: center; gap: 4px; min-width: 0; margin-top: 1px; }
-.detail-filename-row .detail-filename { flex: 1; min-width: 0; margin-top: 0; user-select: text; cursor: text; }
+/* Detail 파일명 - 글자로 골라 복사할 수 있고, Play 옆 버튼으로 한 번에 복사한다
+   (실사용 피드백 §6 - 예전엔 이 버튼이 파일명 글자 바로 뒤에 있어서 파일명이
+   길면 말줄임과 겹쳤다). */
+.detail-filename { user-select: text; cursor: text; }
 .detail-copy { flex: none; padding: 3px; background: transparent; opacity: .7; }
 .detail-copy:hover { opacity: 1; }

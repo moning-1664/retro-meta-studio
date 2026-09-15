@@ -4387,25 +4387,38 @@
     const inner = h("div", { id: "detail-panel-inner" });
     panel.appendChild(inner);
 
-    const header = h("div", { class: "detail-header" }, [
-      h("div", { style: { minWidth: "0", flex: "1" } }, [
-        h("div", { class: "detail-eyebrow" }, ["METADATA"]),
-        h("div", { class: "detail-filename-row" }, [
-          h("div", { class: "detail-filename", title: state.file }, [state.file]),
-          h("button", {
-            class: "icon-btn detail-copy", title: "파일명 복사",
-            onClick: () => copyTextToClipboard(state.file, "파일명을 복사했습니다."),
-          }, [icon("copy", IC.sm)]),
-        ]),
-        h("div", { class: "detail-system" }, [systemIcon(state.system, 13), String(state.system).toUpperCase()]),
-      ]),
-    ]);
+    // **순서: Favorite, 제목, 파일명 복사, Play**(실사용 피드백 §6).
+    //
+    // Favorite는 제목 왼쪽으로 - 게임을 훑어보며 즐겨찾기를 표시할 때 가장 먼저
+    // 눈에 들어오는 자리다. 파일명 복사는 예전에 파일명 글자 바로 뒤에 붙어 있어서,
+    // 파일명이 길면 버튼이 밀려나거나 말줄임(...)과 겹쳐 보였다 - Play 옆(맨
+    // 오른쪽 고정 자리)으로 옮기고, 파일명 자리는 항상 같은 폭을 갖고 넘치면
+    // 말줄임으로 잘라 보여준다(.detail-filename의 text-overflow는 그대로 둔다).
+    const header = h("div", { class: "detail-header" });
+    if (!state.archive) {
+      const star = h("button", {
+        class: "icon-btn fav-btn" + (state.favorite ? " on" : ""),
+        title: state.favorite ? "즐겨찾기 해제" : "즐겨찾기",
+      }, [state.favorite ? "★" : "☆"]);
+      star.addEventListener("click", () => toggleFavoriteFromDetail(star));
+      header.appendChild(star);
+    }
+
+    header.appendChild(h("div", { style: { minWidth: "0", flex: "1" } }, [
+      h("div", { class: "detail-eyebrow" }, ["METADATA"]),
+      h("div", { class: "detail-filename", title: state.file }, [state.file]),
+      h("div", { class: "detail-system" }, [systemIcon(state.system, 13), String(state.system).toUpperCase()]),
+    ]));
+
+    // 파일명 복사는 Archive 항목에도 있다(예전부터 그랬다) - Play/Favorite만
+    // 실행 개념이 있는 일반 Collection 전용이다.
+    const copyBtn = h("button", {
+      class: "icon-btn detail-copy", title: "파일명 복사",
+      onClick: () => copyTextToClipboard(state.file, "파일명을 복사했습니다."),
+    }, [icon("copy", IC.sm)]);
+    header.appendChild(copyBtn);
 
     if (!state.archive) {
-      // Play/Favorite는 게임을 보고 있을 때 바로 손이 가는 자리에 있어야
-      // 한다(레이아웃 재검토 §20). Preview는 더 이상 여기 없다 -
-      // .detail-topspace로 옮겼다.
-      //
       // 실행은 아직 연결되지 않았다. **버튼을 없애는 대신 못 한다고 말한다** -
       // 사라진 기능은 언제 돌아오는지 알 수 없지만, 눌러서 안내를 받으면 안다.
       const target = { romUid: state.romUid, system: state.system, file: state.file, present: state.present };
@@ -4416,13 +4429,6 @@
       }, [icon("play", IC.md)]);
       play.addEventListener("click", () => launchGame(target));
       header.appendChild(play);
-
-      const star = h("button", {
-        class: "icon-btn fav-btn" + (state.favorite ? " on" : ""),
-        title: state.favorite ? "즐겨찾기 해제" : "즐겨찾기",
-      }, [state.favorite ? "★" : "☆"]);
-      star.addEventListener("click", () => toggleFavoriteFromDetail(star));
-      header.appendChild(star);
     }
     inner.appendChild(header);
 

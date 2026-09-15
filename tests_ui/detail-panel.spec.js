@@ -89,6 +89,29 @@ test.describe("Favorite / Play", () => {
     await expect(page.locator("#detail-panel .detail-launch")).toBeDisabled();
     await expect(page.locator("#detail-panel .detail-launch")).toHaveAttribute("title", /RetroArch/);
   });
+
+  // 실사용 피드백 §6 - 순서는 Favorite(왼쪽), 제목, 파일명 복사, Play(맨 오른쪽)다.
+  // 예전엔 복사 버튼이 파일명 글자 바로 뒤에 있어서 파일명이 길면 말줄임과 겹쳤다.
+  test("순서는 Favorite, 제목, 파일명 복사, Play다", async ({ page }) => {
+    await openFirstGame(page);
+    const header = page.locator("#detail-panel .detail-header");
+    const classes = await header.evaluate((el) => [...el.children].map((c) => c.className));
+    const favIndex = classes.findIndex((c) => c.includes("fav-btn"));
+    const copyIndex = classes.findIndex((c) => c.includes("detail-copy"));
+    const playIndex = classes.findIndex((c) => c.includes("detail-launch"));
+    expect(favIndex).toBe(0);
+    expect(copyIndex).toBeLessThan(playIndex);
+    expect(playIndex).toBe(classes.length - 1);
+  });
+
+  test("파일명 복사 버튼은 Play 옆에 있다(파일명 글자에 붙어 있지 않다)", async ({ page }) => {
+    await openFirstGame(page);
+    // 파일명 자신의 다음 형제가 더 이상 복사 버튼이 아니다 - system 줄이다.
+    const next = await page.locator("#detail-panel .detail-filename")
+      .evaluate((el) => el.nextElementSibling.className);
+    expect(next).not.toContain("detail-copy");
+    expect(next).toContain("detail-system");
+  });
 });
 
 test.describe("Detail Header - 닫기 버튼 없음 (레이아웃 재검토 §19-20)", () => {
