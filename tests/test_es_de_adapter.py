@@ -155,6 +155,69 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(result["scanned"], 1)
         self.assertIn("NEW.iso", {r["filename"] for r in self.cache.query_rows()})
 
+    # --- 앱 밖에서 파일이 바뀐 경우 (검증 리스트 #11) ----------------------
+    # 사용자는 앱을 켜 둔 채 Explorer나 ES-DE에서 파일을 만진다. 그때마다 스캔이
+    # **그 변화를 실제로 알아채는지**를 종류별로 본다 - 지문이 디렉터리 내용에서
+    # 나오므로 이론상 다 잡히지만, "이론상"과 "확인했다"는 다르다.
+
+    def test_a_rom_deleted_outside_the_app_triggers_a_rescan(self):
+        self.scan()
+        (self.root / "ps2" / "MGS2.iso").unlink()
+        result = self.scan()
+        self.assertEqual(result["scanned"], 1, "ROM이 사라졌는데 건너뛰었다")
+        rows = {r["filename"]: r for r in self.cache.query_rows()}
+        # gamelist에는 남아 있으므로 항목 자체는 있고, 실물만 없는 상태가 된다.
+        self.assertEqual(rows["MGS2.iso"]["present"], 0)
+
+    def test_a_rom_renamed_outside_the_app_triggers_a_rescan(self):
+        self.scan()
+        (self.root / "ps2" / "MGS2.iso").rename(self.root / "ps2" / "MGS2_US.iso")
+        result = self.scan()
+        self.assertEqual(result["scanned"], 1, "이름이 바뀌었는데 건너뛰었다")
+        names = {r["filename"] for r in self.cache.query_rows()}
+        self.assertIn("MGS2_US.iso", names)
+
+    def test_a_gamelist_edited_outside_the_app_triggers_a_rescan(self):
+        self.scan()
+        meta = self.root / "gamelists" / "ps2" / "gamelist.xml"
+        meta.write_text(meta.read_text(encoding="utf-8").replace(
+            "Metal Gear Solid 2", "Metal Gear Solid 2: Sons of Liberty"), encoding="utf-8")
+        result = self.scan()
+        self.assertEqual(result["scanned"], 1, "gamelist가 바뀌었는데 건너뛰었다")
+        titles = {r["title"] for r in self.cache.query_rows()}
+        self.assertIn("Metal Gear Solid 2: Sons of Liberty", titles)
+
+    def test_media_deleted_outside_the_app_triggers_a_rescan(self):
+        self.scan()
+        before = {s["system"]: s for s in self.cache.system_stats()}["ps2"]["media_bytes"]
+        for cover in (self.root / "downloaded_media" / "ps2" / "covers").iterdir():
+            cover.unlink()
+        result = self.scan()
+        self.assertEqual(result["scanned"], 1, "media가 사라졌는데 건너뛰었다")
+        after = {s["system"]: s for s in self.cache.system_stats()}["ps2"]["media_bytes"]
+        self.assertLess(after, before, "지워진 media가 용량에 그대로 남았다")
+
+    def test_a_scan_killed_before_it_finishes_is_redone_next_time(self):
+        """작업 도중 강제 종료 (검증 리스트 #14).
+
+        스캔은 행을 먼저 쓰고 **지문을 마지막에** 쓴다. 그 사이에 앱이 죽으면 행은
+        반쯤 갱신됐는데 지문은 옛것이거나 없다 - 다음 실행이 "안 바뀌었네"라며
+        건너뛰면 Cache와 실제 파일이 영영 어긋난 채로 남는다. 순서가 반대였다면
+        정확히 그 일이 벌어진다.
+        """
+        self.scan()
+        (self.root / "ps2" / "NEW.iso").write_bytes(b"n" * 5)
+
+        original = self.cache.set_system_sig
+        self.cache.set_system_sig = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("죽었다"))
+        with self.assertRaises(RuntimeError):
+            self.scan()
+        self.cache.set_system_sig = original
+
+        result = self.scan()
+        self.assertEqual(result["scanned"], 1, "덜 끝난 스캔을 끝난 것으로 보고 건너뛰었다")
+        self.assertIn("NEW.iso", {r["filename"] for r in self.cache.query_rows()})
+
     def test_partial_media_scan_does_not_satisfy_a_later_full_scan(self):
         """커버만 인덱싱한 캐시를 '이미 다 됐다'고 재사용하면 비디오를 영영 못 본다."""
         self.scan(media_types=["covers"])
