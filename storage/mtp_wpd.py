@@ -1,0 +1,463 @@
+"""
+storage/mtp_wpd.py
+===================
+`storage/mtp.py`의 MtpBackend를 Windows WPD(Windows Portable Devices) COM으로 구현한다.
+
+**이 파일만 기기가 있어야 검증할 수 있다.** 그래서 COM 호출을 여기 한 곳에 가두고
+나머지(경로 해석·안전한 쓰기·캐시)는 전부 `tests/test_mtp_provider.py`가 가짜
+backend로 검증한다. 여기가 틀리면 고칠 곳도 여기 하나다.
+
+확인 방법(기기를 USB로 연결하고 화면 잠금을 풀어 둔 상태에서):
+
+    python -m storage.mtp_wpd                     # 연결된 기기 목록
+    python -m storage.mtp_wpd "mtp://<키>/Internal shared storage/ES-DE/gamelists"
+
+## 알아 둘 것
+
+- **MTP에는 덮어쓰기가 없다.** 지우고 새로 만드는 것만 된다 - 안전장치(원본 백업 후
+  복구)는 상위(MtpProvider.write_bytes)에 있다.
+- **object_id는 세션 안에서만 유효하다.** USB를 다시 꽂으면 전부 바뀐다.
+- **COM은 아파트(apartment)에 묶인다.** 작업이 워커 스레드에서 돌기 때문에, 모든 호출을
+  여기서 만든 전용 스레드 하나로 몰아 직렬화한다 - 안 그러면 스레드마다 CoInitialize를
+  해야 하고 인터페이스 포인터를 넘길 수 없다.
+"""
+
+from __future__ import annotations
+
+import queue
+import re
+import threading
+
+from storage.mtp import MtpBackend, MtpDeviceInfo, MtpError, MtpObject
+
+# ----------------------------------------------------------------------
+# WPD 상수 - 타입 라이브러리에 없고 헤더에만 있는 값이라 직접 적는다.
+# ----------------------------------------------------------------------
+_FMT_OBJECT = "{EF6B490D-5CD8-437A-AFFC-DA8B60EE4A3C}"    # WPD_OBJECT_PROPERTIES_V1
+_FMT_STORAGE = "{01A3057A-74D6-4E80-BEA7-DC4C212CE50A}"   # WPD_STORAGE_OBJECT_PROPERTIES_V1
+_FMT_DEVICE = "{26D4979A-E643-4626-9E2B-736DC0C92FDC}"    # WPD_DEVICE_PROPERTIES_V1
+_FMT_CLIENT = "{204D9F0C-2292-4080-9F42-40664E70F859}"    # WPD_CLIENT_INFORMATION_PROPERTIES_V1
+_FMT_RESOURCE = "{E81E79BE-34F0-41BF-B53F-F1A06AE87842}"  # WPD_RESOURCE_ATTRIBUTES / DEFAULT
+
+_PID_OBJECT_PARENT_ID = 3
+_PID_OBJECT_NAME = 4
+_PID_OBJECT_FORMAT = 6
+_PID_OBJECT_CONTENT_TYPE = 7
+_PID_OBJECT_SIZE = 11
+_PID_OBJECT_ORIGINAL_FILE_NAME = 12
+_PID_STORAGE_CAPACITY = 4
+_PID_STORAGE_FREE = 5
+_PID_DEVICE_SERIAL = 9
+_PID_CLIENT_NAME = 2
+
+_CONTENT_FOLDER = "{27E2E392-A111-48E0-AB0C-E17705A05F85}"
+_CONTENT_FUNCTIONAL = "{99ED0160-17FF-4C44-9D98-1D7A6F941921}"
+_FORMAT_UNSPECIFIED = "{30000000-AE6C-4804-98BA-C57B46965FE7}"
+
+_DEVICE_OBJECT_ID = "DEVICE"
+_STGM_READ = 0
+_STGM_WRITE = 0x00000001
+_DELETE_NO_RECURSION = 0
+_CHUNK = 256 * 1024
+
+
+#: 기기 한 번 호출에 허용하는 시간. MTP는 기기가 잠들거나 케이블이 흔들리면 **응답
+#: 없이 멈춘다** - 기다리는 쪽을 막아 두면 앱 전체가 굳는다. gamelist 하나를 읽고
+#: 쓰는 데 이보다 오래 걸릴 일은 없다.
+_CALL_TIMEOUT = 120.0
+
+
+def _coinitialize():
+    import comtypes
+    comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+
+
+class _ComThread:
+    """COM 호출을 전용 스레드 하나로 직렬화한다(아파트 문제를 피하는 가장 단순한 방법).
+
+    **이 스레드가 죽어도 부르는 쪽은 멈추지 않아야 한다.** 초기화(comtypes import,
+    CoInitialize)가 실패하면 그 사실을 기억해 두고 이후 호출을 즉시 거절한다 - 그러지
+    않으면 comtypes가 없는 환경에서 첫 호출이 영원히 기다린다(실제로 그렇게 멈췄다).
+    """
+
+    def __init__(self, initialize=None):
+        #: 테스트가 COM 대신 다른 초기화를 끼울 수 있게 열어 둔다(기기도 comtypes도 없이
+        #: "초기화 실패"와 "응답 없음"을 재현하기 위해서다).
+        self._initialize = initialize or _coinitialize
+        self._jobs: queue.Queue = queue.Queue()
+        self._ready = threading.Event()
+        self._start_error: Exception | None = None
+        self._thread = threading.Thread(target=self._loop, name="mtp-com", daemon=True)
+        self._thread.start()
+
+    def _loop(self):
+        try:
+            self._initialize()
+        except Exception as e:  # noqa: BLE001
+            self._start_error = e
+            self._ready.set()
+            return
+        self._ready.set()
+        while True:
+            func, done, box = self._jobs.get()
+            try:
+                box.append(("ok", func()))
+            except Exception as e:  # noqa: BLE001 - 호출한 스레드로 그대로 옮겨 준다
+                box.append(("error", e))
+            finally:
+                done.set()
+
+    def run(self, func, timeout=_CALL_TIMEOUT):
+        self._ready.wait(10)
+        if self._start_error is not None:
+            raise MtpError(
+                "MTP 연결에는 comtypes가 필요합니다. `pip install comtypes` 후 다시 시도해주세요."
+            ) from self._start_error
+        done, box = threading.Event(), []
+        self._jobs.put((func, done, box))
+        if not done.wait(timeout):
+            raise MtpError(
+                "기기가 응답하지 않습니다. 화면 잠금을 풀고 USB 연결을 '파일 전송(MTP)'으로 "
+                "둔 뒤 다시 시도해주세요.")
+        kind, value = box[0]
+        if kind == "error":
+            raise value
+        return value
+
+
+def _require_comtypes():
+    try:
+        import comtypes  # noqa: F401
+        import comtypes.client  # noqa: F401
+    except ImportError as e:
+        raise MtpError(
+            "MTP 연결에는 comtypes가 필요합니다. `pip install comtypes` 후 다시 시도해주세요."
+        ) from e
+
+
+class WpdBackend(MtpBackend):
+    def __init__(self):
+        self._com = _ComThread()
+        self._api = None            # portabledeviceapi 타입 라이브러리 모듈
+        self._types = None          # portabledevicetypes 모듈
+        self._key_type = None       # PROPERTYKEY 구조체 타입(생성된 이름이 버전마다 다르다)
+        self._device_ids: dict[str, str] = {}    # 기기키 -> WPD device id
+        self._opened: dict[str, object] = {}     # WPD device id -> IPortableDevice
+
+    # --- COM 준비 --------------------------------------------------------
+    def _load(self):
+        if self._api is not None:
+            return
+        _require_comtypes()
+        import comtypes.client
+
+        try:
+            self._api = comtypes.client.GetModule("portabledeviceapi.dll")
+            self._types = comtypes.client.GetModule("portabledevicetypes.dll")
+        except Exception as e:  # noqa: BLE001
+            raise MtpError(f"Windows Portable Devices를 불러오지 못했습니다: {e}") from e
+
+        for name in ("_tagpropertykey", "tagPROPERTYKEY", "PROPERTYKEY", "_PROPERTYKEY"):
+            self._key_type = getattr(self._types, name, None) or getattr(self._api, name, None)
+            if self._key_type is not None:
+                break
+        if self._key_type is None:
+            raise MtpError("WPD PROPERTYKEY 타입을 찾지 못했습니다(Windows 버전 확인 필요).")
+
+    def _key(self, fmtid: str, pid: int):
+        import comtypes
+        key = self._key_type()
+        key.fmtid = comtypes.GUID(fmtid)
+        key.pid = pid
+        return key
+
+    def _values(self):
+        import comtypes.client
+        return comtypes.client.CreateObject(
+            self._types.PortableDeviceValues, interface=self._api.IPortableDeviceValues)
+
+    def _client_info(self):
+        values = self._values()
+        values.SetStringValue(self._key(_FMT_CLIENT, _PID_CLIENT_NAME), "RetroMeta Studio")
+        return values
+
+    def _device(self, device_key: str):
+        """기기키로 열린 IPortableDevice를 얻는다. 필요하면 목록을 다시 훑는다."""
+        device_id = self._device_ids.get(device_key)
+        if device_id is None:
+            self._scan_devices()
+            device_id = self._device_ids.get(device_key)
+        if device_id is None:
+            raise MtpError(f"연결된 기기를 찾지 못했습니다: {device_key}")
+        opened = self._opened.get(device_id)
+        if opened is None:
+            import comtypes.client
+            opened = comtypes.client.CreateObject(
+                self._api.PortableDevice, interface=self._api.IPortableDevice)
+            try:
+                opened.Open(device_id, self._client_info())
+            except Exception as e:  # noqa: BLE001
+                raise MtpError(
+                    f"기기를 열지 못했습니다({device_key}). 화면 잠금을 풀고 USB 연결을 "
+                    f"'파일 전송(MTP)'으로 두었는지 확인해주세요: {e}") from e
+            self._opened[device_id] = opened
+        return opened
+
+    def _scan_devices(self) -> list[MtpDeviceInfo]:
+        import ctypes
+        import comtypes.client
+
+        self._load()
+        manager = comtypes.client.CreateObject(
+            self._api.PortableDeviceManager, interface=self._api.IPortableDeviceManager)
+        count = ctypes.c_ulong(0)
+        manager.GetDevices(None, ctypes.byref(count))
+        if count.value == 0:
+            self._device_ids = {}
+            return []
+        ids = (ctypes.c_wchar_p * count.value)()
+        manager.GetDevices(ids, ctypes.byref(count))
+
+        found = []
+        self._device_ids = {}
+        for device_id in list(ids)[:count.value]:
+            if not device_id:
+                continue
+            name = self._friendly_name(manager, device_id)
+            key = self._device_key(device_id, name)
+            self._device_ids[key] = device_id
+            found.append(MtpDeviceInfo(key=key, name=name, device_id=device_id))
+        return found
+
+    @staticmethod
+    def _friendly_name(manager, device_id) -> str:
+        import ctypes
+        length = ctypes.c_ulong(0)
+        try:
+            manager.GetDeviceFriendlyName(device_id, None, ctypes.byref(length))
+            buffer = ctypes.create_unicode_buffer(length.value)
+            manager.GetDeviceFriendlyName(device_id, buffer, ctypes.byref(length))
+            if buffer.value:
+                return buffer.value
+        except Exception:  # noqa: BLE001 - 이름은 없어도 되는 값이다
+            pass
+        return "Android Device"
+
+    def _device_key(self, device_id: str, name: str) -> str:
+        """경로에 쓸 기기 키. 일련번호를 쓰고, 못 읽으면 이름 + ID 해시로 대신한다.
+
+        WPD 기기 ID(`\\\\?\\usb#vid_...`)를 그대로 쓸 수 없다 - 경로에 못 쓰는 문자가
+        섞여 있고 포트를 바꿔 꽂으면 달라진다.
+        """
+        serial = None
+        try:
+            import comtypes.client
+            device = comtypes.client.CreateObject(
+                self._api.PortableDevice, interface=self._api.IPortableDevice)
+            device.Open(device_id, self._client_info())
+            properties = device.Content().Properties()
+            keys = comtypes.client.CreateObject(
+                self._types.PortableDeviceKeyCollection,
+                interface=self._api.IPortableDeviceKeyCollection)
+            keys.Add(self._key(_FMT_DEVICE, _PID_DEVICE_SERIAL))
+            values = properties.GetValues(_DEVICE_OBJECT_ID, keys)
+            serial = values.GetStringValue(self._key(_FMT_DEVICE, _PID_DEVICE_SERIAL))
+            self._opened[device_id] = device
+        except Exception:  # noqa: BLE001 - 일련번호를 안 주는 기기가 있다
+            serial = None
+        raw = serial or f"{name}-{abs(hash(device_id)) % 10 ** 8}"
+        return re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-") or "device"
+
+    # --- 객체 읽기 -------------------------------------------------------
+    def _object_values(self, device, object_id):
+        import comtypes.client
+        properties = device.Content().Properties()
+        keys = comtypes.client.CreateObject(
+            self._types.PortableDeviceKeyCollection,
+            interface=self._api.IPortableDeviceKeyCollection)
+        for fmtid, pid in ((_FMT_OBJECT, _PID_OBJECT_NAME),
+                           (_FMT_OBJECT, _PID_OBJECT_ORIGINAL_FILE_NAME),
+                           (_FMT_OBJECT, _PID_OBJECT_CONTENT_TYPE),
+                           (_FMT_OBJECT, _PID_OBJECT_SIZE)):
+            keys.Add(self._key(fmtid, pid))
+        return properties.GetValues(object_id, keys)
+
+    def _describe(self, device, object_id) -> MtpObject:
+        values = self._object_values(device, object_id)
+        name = self._string(values, _FMT_OBJECT, _PID_OBJECT_ORIGINAL_FILE_NAME) \
+            or self._string(values, _FMT_OBJECT, _PID_OBJECT_NAME) or object_id
+        content_type = ""
+        try:
+            guid = values.GetGuidValue(self._key(_FMT_OBJECT, _PID_OBJECT_CONTENT_TYPE))
+            content_type = f"{{{str(guid).strip('{}').upper()}}}"
+        except Exception:  # noqa: BLE001
+            content_type = ""
+        size = 0
+        try:
+            size = int(values.GetUnsignedLargeIntegerValue(self._key(_FMT_OBJECT, _PID_OBJECT_SIZE)))
+        except Exception:  # noqa: BLE001 - 폴더는 크기가 없다
+            size = 0
+        is_dir = content_type in (_CONTENT_FOLDER.upper(), _CONTENT_FUNCTIONAL.upper())
+        # 수정 시각은 기기마다 형식이 제각각이라 읽지 않는다 - 0이면 상위가 "바뀐 것으로
+        # 보고 다시 읽기"를 택하므로(스캔 시그니처) 안전한 쪽이다.
+        return MtpObject(object_id=object_id, name=name, is_dir=is_dir, size=size, mtime_ns=0)
+
+    def _string(self, values, fmtid, pid):
+        """문자열 속성 하나. 기기가 그 속성을 안 주면 None - 예외를 밖으로 내지 않는다."""
+        try:
+            return values.GetStringValue(self._key(fmtid, pid)) or None
+        except Exception:  # noqa: BLE001
+            return None
+
+    # --- MtpBackend ------------------------------------------------------
+    def devices(self) -> list[MtpDeviceInfo]:
+        return self._com.run(self._scan_devices)
+
+    def children(self, device_key, object_id):
+        def work():
+            self._load()
+            device = self._device(device_key)
+            content = device.Content()
+            parent = object_id if object_id is not None else _DEVICE_OBJECT_ID
+            try:
+                enumerator = content.EnumObjects(0, parent, None)
+            except Exception as e:  # noqa: BLE001
+                raise MtpError(f"목록을 읽지 못했습니다: {e}") from e
+            out = []
+            while True:
+                ids, fetched = enumerator.Next(32)
+                if not fetched:
+                    break
+                for child_id in list(ids)[:fetched]:
+                    try:
+                        out.append(self._describe(device, child_id))
+                    except Exception:  # noqa: BLE001 - 하나가 이상해도 목록 전체를 버리지 않는다
+                        continue
+            return out
+        return self._com.run(work)
+
+    def read(self, device_key, object_id) -> bytes:
+        def work():
+            import ctypes
+            self._load()
+            device = self._device(device_key)
+            stream, _optimal = device.Content().Transfer().GetStream(
+                object_id, self._key(_FMT_RESOURCE, 0), _STGM_READ, ctypes.pointer(ctypes.c_ulong(0)))
+            chunks = []
+            while True:
+                data = stream.RemoteRead(_CHUNK)
+                payload = bytes(data[0])[:data[1]] if isinstance(data, tuple) else bytes(data)
+                if not payload:
+                    break
+                chunks.append(payload)
+            return b"".join(chunks)
+        return self._com.run(work)
+
+    def create(self, device_key, parent_id, name, data: bytes) -> str:
+        def work():
+            import ctypes
+            import comtypes
+            self._load()
+            device = self._device(device_key)
+            values = self._values()
+            values.SetStringValue(self._key(_FMT_OBJECT, _PID_OBJECT_PARENT_ID),
+                                  parent_id or _DEVICE_OBJECT_ID)
+            values.SetStringValue(self._key(_FMT_OBJECT, _PID_OBJECT_NAME), name)
+            values.SetStringValue(self._key(_FMT_OBJECT, _PID_OBJECT_ORIGINAL_FILE_NAME), name)
+            values.SetUnsignedLargeIntegerValue(self._key(_FMT_OBJECT, _PID_OBJECT_SIZE), len(data))
+            values.SetGuidValue(self._key(_FMT_OBJECT, _PID_OBJECT_FORMAT),
+                                comtypes.GUID(_FORMAT_UNSPECIFIED))
+            optimal = ctypes.c_ulong(0)
+            stream, _cookie = device.Content().Transfer().CreateObjectWithPropertiesAndData(
+                values, ctypes.pointer(optimal), None)
+            view = memoryview(data)
+            for start in range(0, len(data), _CHUNK):
+                stream.RemoteWrite(view[start:start + _CHUNK].tobytes(), min(_CHUNK, len(data) - start))
+            stream.Commit(0)
+            return name
+        return self._com.run(work)
+
+    def create_folder(self, device_key, parent_id, name) -> str:
+        def work():
+            import comtypes
+            self._load()
+            device = self._device(device_key)
+            values = self._values()
+            values.SetStringValue(self._key(_FMT_OBJECT, _PID_OBJECT_PARENT_ID),
+                                  parent_id or _DEVICE_OBJECT_ID)
+            values.SetStringValue(self._key(_FMT_OBJECT, _PID_OBJECT_NAME), name)
+            values.SetStringValue(self._key(_FMT_OBJECT, _PID_OBJECT_ORIGINAL_FILE_NAME), name)
+            values.SetGuidValue(self._key(_FMT_OBJECT, _PID_OBJECT_CONTENT_TYPE),
+                                comtypes.GUID(_CONTENT_FOLDER))
+            return device.Content().CreateObjectWithPropertiesOnly(values, None)
+        return self._com.run(work)
+
+    def delete(self, device_key, object_id) -> None:
+        def work():
+            import comtypes.client
+            self._load()
+            device = self._device(device_key)
+            ids = comtypes.client.CreateObject(
+                self._types.PortableDevicePropVariantCollection,
+                interface=self._api.IPortableDevicePropVariantCollection)
+            variant = self._types.tag_inner_PROPVARIANT() if hasattr(self._types, "tag_inner_PROPVARIANT") else None
+            if variant is None:
+                raise MtpError("이 Windows에서는 삭제에 필요한 타입을 찾지 못했습니다.")
+            variant.vt = 31   # VT_LPWSTR
+            variant.data.pwszVal = object_id
+            ids.Add(variant)
+            device.Content().Delete(_DELETE_NO_RECURSION, ids, None)
+        return self._com.run(work)
+
+    def storage_info(self, device_key, object_id):
+        def work():
+            import comtypes.client
+            self._load()
+            device = self._device(device_key)
+            properties = device.Content().Properties()
+            keys = comtypes.client.CreateObject(
+                self._types.PortableDeviceKeyCollection,
+                interface=self._api.IPortableDeviceKeyCollection)
+            keys.Add(self._key(_FMT_STORAGE, _PID_STORAGE_CAPACITY))
+            keys.Add(self._key(_FMT_STORAGE, _PID_STORAGE_FREE))
+            try:
+                values = properties.GetValues(object_id, keys)
+                capacity = int(values.GetUnsignedLargeIntegerValue(
+                    self._key(_FMT_STORAGE, _PID_STORAGE_CAPACITY)))
+                free = int(values.GetUnsignedLargeIntegerValue(
+                    self._key(_FMT_STORAGE, _PID_STORAGE_FREE)))
+                return (capacity, free)
+            except Exception:  # noqa: BLE001 - 용량은 Unknown이어도 된다(스펙 §5)
+                return (None, None)
+        return self._com.run(work)
+
+
+def _self_check(argv):
+    """`python -m storage.mtp_wpd [경로]` - 기기가 있어야 의미가 있는 확인용."""
+    from storage.mtp import MtpProvider, join_path
+
+    backend = WpdBackend()
+    devices = backend.devices()
+    if not devices:
+        print("연결된 MTP 기기가 없습니다. USB를 '파일 전송(MTP)'으로 두고 화면 잠금을 풀어주세요.")
+        return 1
+    print("연결된 기기:")
+    for device in devices:
+        print(f"  키={device.key}  이름={device.name}")
+        print(f"     (WPD id: {device.device_id})")
+
+    provider = MtpProvider(backend)
+    path = argv[1] if len(argv) > 1 else join_path(devices[0].key, [])
+    print(f"\n{path} 목록:")
+    entries = provider.scandir(path)
+    if not entries:
+        print("  (비어 있거나 읽지 못했습니다)")
+    for entry in entries:
+        kind = "폴더" if entry.is_dir else f"{entry.size:,} bytes"
+        print(f"  {entry.name}  [{kind}]")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(_self_check(sys.argv))

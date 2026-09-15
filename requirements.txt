@@ -5,3 +5,6 @@ Pillow>=10.0
 matplotlib>=3.8
 # 신규 웹 기반 GUI (main_gui.py)용 - Windows에서는 내장 WebView2 사용
 pywebview>=5.0
+
+# MTP(안드로이드 기기) 연결 - Windows Portable Devices COM 호출용(storage/mtp_wpd.py)
+comtypes>=1.2
