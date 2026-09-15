@@ -1355,16 +1355,32 @@
       nav.appendChild(navDashboardRow());
       return;
     }
-    // System 제목 띠는 스크롤 영역 밖(바로 위)에 둔다 - Toolbar와 같은 높이의 고정 띠다.
-    const eyebrow = h("div", { class: "nav-eyebrow" }, [h("span", { class: "nav-eyebrow-label" }, ["SYSTEMS"])]);
+    // **All / Favorites는 System이 아니다.** 예전에는 셋을 한 목록에 섞어 놓아서
+    // "All"이 System 이름들 사이에 낀 또 하나의 System처럼 보였다(사용자 피드백).
+    //
+    // 순서가 이렇게 정해진 이유가 있다. 맨 위 띠(.nav-eyebrow)는 **Toolbar와 아래
+    // 선을 맞춰야 하는 고정 높이 띠**라(레이아웃 재검토 §18, tests_ui/layout-bands),
+    // 그 위에는 아무것도 못 끼운다. 그래서 띠는 Navigator 전체를 가리키는 이름을
+    // 갖고, 그 아래에 관점(All/Favorites)과 플랫폼 목록(SYSTEMS)이 차례로 온다.
+    const eyebrow = h("div", { class: "nav-eyebrow" }, [h("span", { class: "nav-eyebrow-label" }, ["NAVIGATOR"])]);
     nav.insertBefore(eyebrow, scroll);
+    // 관점 칸. 스크롤되지 않는다 - System이 아무리 많아도 늘 같은 자리에 있다.
+    const lens = h("div", { class: "nav-lens" });
+    nav.insertBefore(lens, scroll);
+    // SYSTEMS 머리는 스크롤 안에 있다 - Storage 그룹(INTERNAL/EXTERNAL) 머리와 같은 층이다.
+    const systemsHead = h("div", { class: "nav-section" }, [
+      h("span", { class: "nav-section-label" }, ["SYSTEMS"]),
+    ]);
+    scroll.appendChild(systemsHead);
 
     const scope = activeScope();
     if (isArchive()) {
       const all = navRow("All", detail.totalGames, scope.kind === "all", () => setScope({ kind: "all" }));
       all.classList.add("nav-all");
       all.insertBefore(icon("database", 13), all.firstChild);
-      scroll.appendChild(all);
+      lens.appendChild(all);
+      scroll.appendChild(h("div", { class: "nav-section" },
+        [h("span", { class: "nav-section-label" }, ["SYSTEMS"])]));
       (detail.archiveSystems || []).forEach((sys) => {
         const row = navRow(sys.system.toUpperCase(), sys.count,
           scope.kind === "system" && scope.id === sys.system,
@@ -1376,10 +1392,24 @@
       nav.appendChild(navDashboardRow());
       return;
     }
-    const allRow = navRow("All", detail.totalGames, scope.kind === "all", () => setScope({ kind: "all" }));
+    const allRow = navRow("All Games", detail.totalGames,
+      scope.kind === "all" && !S.favoritesOnly, () => {
+        S.favoritesOnly = false;
+        setScope({ kind: "all" });
+      });
     allRow.classList.add("nav-all");
     allRow.insertBefore(icon("layoutList", 13), allRow.firstChild);
-    scroll.appendChild(allRow);
+    lens.appendChild(allRow);
+
+    // 즐겨찾기는 System을 가로지르는 관점이라 여기 있어야 한다 - Toolbar의 ☆
+    // 토글과 같은 값(S.favoritesOnly)을 바꾼다. 두 곳이 서로 다른 상태를 갖지 않는다.
+    const favRow = navRow("Favorites", null, !!S.favoritesOnly, () => {
+      S.favoritesOnly = true;
+      setScope({ kind: "all" });
+    });
+    favRow.classList.add("nav-favorites");
+    favRow.insertBefore(icon("star", 13), favRow.firstChild);
+    lens.appendChild(favRow);
 
     // **System 목록은 기본적으로 평평하다.**
     //
@@ -1415,7 +1445,8 @@
       "aria-pressed": hideEmpty ? "true" : "false",
     }, [icon(hideEmpty ? "eyeOff" : "eye", 12)]);
     hideToggle.addEventListener("click", () => updateSettings("navigation", { hideEmptySystems: !hideEmpty }));
-    eyebrow.appendChild(hideToggle);
+    // 이 토글이 거는 것은 System 목록이라 SYSTEMS 머리에 둔다(사용자 결정).
+    systemsHead.appendChild(hideToggle);
 
     function renderSystemRow(sys) {
       const row = navRow(sys.system.toUpperCase(), sys.count,
@@ -1522,9 +1553,11 @@
   }
 
   function navRow(label, count, active, onClick) {
+    // count가 null이면 숫자 칸을 비운다 - Favorites처럼 목록을 다 읽기 전에는
+    // 개수를 알 수 없는 줄이 "0"으로 보이면 안 된다.
     const row = h("div", { class: "nav-row" + (active ? " active" : "") }, [
       h("span", { class: "nav-label" }, [label]),
-      h("span", { class: "nav-count" }, [formatCount(count)]),
+      h("span", { class: "nav-count" }, [count == null ? "" : formatCount(count)]),
     ]);
     row.addEventListener("click", onClick);
     return row;
@@ -2660,11 +2693,9 @@
       const scope = archiveScope();
       const label = archiveScopeLabel(scope);
       ingest.dataset.scope = scope.kind;
+      // **라벨은 안 바꾼다.** 범위 이름을 버튼에 쓰면 고를 때마다 폭이 출렁인다 -
+      // 대상은 툴팁으로만 말한다(renderDetailTopSpace의 같은 결정).
       ingest.title = `${label}을 Archive에 수집합니다`;
-      // 버튼 안에는 span이 둘이다(아이콘 span이 먼저, 글자 span이 나중) - 그냥
-      // "span"으로 고르면 **아이콘 span을 잡아 아이콘을 글자로 덮어썼다.**
-      const text = ingest.querySelector(".ingest-label");
-      if (text) text.textContent = `수집 · ${label}`;
     }
     // Archive 탭의 "Collection으로 보내기"도 Detail 패널 상단에 있다 - 선택이
     // 바뀔 때마다 renderDetailPanel()을 통째로 다시 그리진 않으므로(Metadata
@@ -4018,10 +4049,14 @@
     } else {
       const scope = archiveScope();
       const scopeLabel = archiveScopeLabel(scope);
+      // **라벨을 범위 이름으로 만들지 않는다.** `수집 · NEOGEO 전체`처럼 쓰면
+      // System을 바꿀 때마다 버튼 폭이 출렁이고(일관성이 없다), 무엇을 하는
+      // 버튼인지도 "수집"이라는 말만으로는 잘 읽히지 않았다(사용자 피드백).
+      // 라벨은 하는 일로 고정하고, 대상 범위는 툴팁에서 말한다.
       const ingest = h("button", { class: "btn compact", id: "archive-ingest-btn",
         "data-scope": scope.kind,
         title: `${scopeLabel}을 Archive에 수집합니다` },
-        [icon("database", 11), h("span", { class: "ingest-label truncate" }, [`수집 · ${scopeLabel}`])]);
+        [icon("database", 11), h("span", { class: "ingest-label" }, ["Archive로"])]);
       ingest.addEventListener("click", ingestToArchive);
       bar.appendChild(ingest);
     }
@@ -4178,22 +4213,23 @@
     } else {
       cover.appendChild(icon("image", 17));
     }
-    // **요약 카드에 편집 필드를 다시 보여주지 않는다.**
-    //
-    // 예전에는 Genre/Release/Players/Region/Developer/Publisher 여섯 개를 읽기
-    // 전용으로 늘어놓았는데, 바로 아래 편집 폼에 **같은 여섯 개가 입력칸으로** 또
-    // 있었다. 한 화면에서 같은 값을 두 번 읽는 셈이라 자리만 먹고, 편집한 값과
-    // 카드의 값이 잠깐 어긋나 보이기도 했다.
-    //
-    // 대신 여기에는 폼에 없는 것만 둔다 - 표지, 제목, 그리고 ROM/Media의 실물 상태.
+    // **표지는 크게, 요약은 그 옆에.** 아래 편집 폼과 값이 겹치지만, 편집하러
+    // 들어오기 전에 "이 게임이 무엇인가"를 한눈에 보는 자리라 그대로 둔다(사용자
+    // 결정 - 한 번 없애 봤더니 게임을 알아보기 어려워졌다).
     const main = h("div", { class: "identity-main" });
-    main.appendChild(h("div", { class: "field-label" }, ["Title"]));
-    const nameInput = h("input", { class: "field-input title-input", value: value("name") });
-    fieldRefs.name = nameInput;
-    main.appendChild(nameInput);
+    const grid = h("div", { class: "identity-grid" });
+    [["Genre", "genre"], ["Release", "releasedate"], ["Players", "players"],
+     ["Region", "region"], ["Developer", "developer"], ["Publisher", "publisher"]].forEach(([label, key]) => {
+      grid.appendChild(h("div", { class: "identity-field" }, [
+        h("div", { class: "identity-field-label" }, [label]),
+        h("div", { class: "identity-field-value truncate" }, [value(key) || "-"]),
+      ]));
+    });
+    main.appendChild(grid);
 
+    // 폼에 없는 것 - ROM과 Media의 실물 상태. 요약 맨 아래 한 줄로만 둔다.
     const mediaCount = Object.keys(state.media || {}).length;
-    const facts = h("div", { class: "identity-facts" }, [
+    main.appendChild(h("div", { class: "identity-facts" }, [
       h("span", { class: "identity-fact" + (state.present ? "" : " warn"), title: "ROM 파일" }, [
         icon("cartridge", 11),
         state.present ? formatBytes(state.size || 0) : "ROM 없음",
@@ -4201,12 +4237,16 @@
       h("span", { class: "identity-fact" + (mediaCount ? "" : " warn"), title: "가지고 있는 media 종류" }, [
         icon("image", 11), `Media ${formatCount(mediaCount)}`,
       ]),
-    ]);
-    main.appendChild(facts);
+    ]));
 
     card.appendChild(cover);
     card.appendChild(main);
     topFixed.appendChild(card);
+
+    topFixed.appendChild(h("div", { class: "field-label" }, ["Title"]));
+    const nameInput = h("input", { class: "field-input title-input", value: value("name") });
+    fieldRefs.name = nameInput;
+    topFixed.appendChild(nameInput);
     body.appendChild(topFixed);
 
     // Description은 **10줄쯤을 기본으로 두고 넘치면 안에서 스크롤한다.**
@@ -4329,7 +4369,15 @@
     return zone;
   }
 
-  /** 그림 없이 있고 없고만 말하는 줄. `v Video   x Manual` 처럼 보인다. */
+  //: 그림으로 보여줄 수 없는 media의 아이콘. 영상은 재생, 설명서는 문서다.
+  const MEDIA_FLAG_ICONS = { Videos: "play", Manuals: "fileText", FanArt: "image" };
+
+  /** 그림 없이 있고 없고만 말하는 줄.
+   *
+   * 예전에는 `v` / `x` 글자를 그대로 찍었는데, 두 글자가 서로 닮아서 멀리서는
+   * 구분이 안 되고 투박했다(사용자 피드백). 지금은 media 종류를 뜻하는 아이콘을
+   * 칩 안에 넣고, **있으면 또렷하게 없으면 흐리게** 한다 - 글자를 읽지 않아도
+   * 밝기만으로 갈린다. */
   function mediaFlagRow(media) {
     const row = h("div", { class: "media-flags" });
     MEDIA_FLAGS.forEach((slot) => {
@@ -4338,7 +4386,7 @@
         class: "media-flag-item" + (has ? " on" : ""),
         title: `${slot.label}${has ? " 있음" : " 없음"}`,
       }, [
-        h("span", { class: "media-flag" }, [has ? "v" : "x"]),
+        icon(MEDIA_FLAG_ICONS[slot.key] || "image", 11),
         h("span", { class: "media-flag-label" }, [slot.label]),
       ]));
     });

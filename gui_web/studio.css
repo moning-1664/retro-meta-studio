@@ -236,6 +236,19 @@ body { font-size: var(--fs-body); }
   background: var(--list-selected); color: var(--text); box-shadow: inset 2px 0 0 var(--nav-active-bar);
 }
 .nav-all { font-weight: 600; }
+/* All / Favorites 칸 - System 목록과 다른 칸이라 스크롤하지 않고 늘 보인다. */
+.nav-lens { flex: 0 0 auto; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.nav-favorites { font-weight: 600; }
+.nav-favorites.active, .nav-favorites:hover { color: var(--accent-gold); }
+/* 스크롤 안의 구역 머리 - Storage 그룹 머리(.nav-group-head)와 같은 무게다. */
+.nav-section { display: flex; align-items: center; gap: 6px; padding: 7px 8px 3px; }
+.nav-section-label {
+  flex: 1; font-size: var(--fs-eyebrow); letter-spacing: .12em;
+  color: var(--muted); text-transform: uppercase;
+}
+.nav-section .icon-btn { padding: 2px; background: transparent; color: var(--muted); opacity: .8; }
+.nav-section .icon-btn:hover { opacity: 1; }
+.nav-section .icon-btn.on { color: var(--list-text); opacity: 1; }
 .nav-label, .nav-group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-group-name { font-size: var(--fs-eyebrow); letter-spacing: .8px; color: var(--muted); }
 .nav-count { font-size: calc(9px * var(--font-scale)); font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -332,8 +345,11 @@ body { font-size: var(--fs-body); }
   font-size: calc(9px * var(--font-scale)); color: var(--muted); font-variant-numeric: tabular-nums;
 }
 .cheader-storage { white-space: nowrap; }
-.cheader-right { display: flex; align-items: center; gap: 5px; }
-.cheader-right .icon-btn { padding: 4px; background: var(--chrome); border: 1px solid transparent; }
+/* **도구 버튼은 조용해야 한다.** 예전엔 크고 세로 한가운데 떠 있어서 제목보다
+   먼저 눈에 들어왔다(사용자 피드백). 작게 만들고 윗줄에 붙인다. */
+.cheader-right { display: flex; align-items: flex-start; gap: 3px; align-self: flex-start; margin-top: 1px; }
+.cheader-right .icon-btn { padding: 3px; background: transparent; border: 1px solid transparent; color: var(--muted); }
+.cheader-right .icon-btn:hover { background: var(--card2); color: var(--text); }
 .cheader-expanded {
   position: relative; padding: 8px 13px;
   border-bottom: 1px solid var(--border);
@@ -480,14 +496,21 @@ body { font-size: var(--fs-body); }
   display: flex; align-items: center; gap: 10px; flex-shrink: 0;
   padding: 4px 2px; color: var(--list-muted); font-size: var(--fs-caption);
 }
-.media-flag-item { display: flex; align-items: center; gap: 5px; }
+.media-flag-item {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px; border-radius: var(--radius-pill);
+  background: var(--card2); border: 1px solid var(--border);
+  color: var(--muted); opacity: .55;
+}
+.media-flag-item svg { flex: none; }
 .media-flag {
   font-weight: 700; font-size: 12px; line-height: 1;
   min-width: 17px; height: 17px;
   display: flex; align-items: center; justify-content: center;
   border: 1px solid currentColor; border-radius: 3px;
 }
-.media-flag-item.on { color: var(--success); }
+/* 있으면 또렷하게, 없으면 흐리게 - 밝기만으로 갈린다. */
+.media-flag-item.on { opacity: 1; color: var(--success); border-color: color-mix(in srgb, var(--success) 45%, var(--border)); }
 .media-flag-item.on .media-flag-label { color: var(--text); }
 
 
@@ -725,6 +748,9 @@ body { font-size: var(--fs-body); }
   height: var(--header-row-h); flex-shrink: 0; box-sizing: border-box;
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 0 9px; border-bottom: 1px solid var(--border);
+  /* **Chromium과 같은 바탕이다.** 다른 색이면 한 줄인데도 두 덩어리로 끊겨 보인다
+     (사용자 피드백 - "크로미움이랑 뚝 떨어져 맥이 끊긴다"). */
+  background: var(--chrome);
 }
 /* 툴바의 기능 버튼으로 보이게 작게(사용자 결정 - 예전엔 강조 버튼처럼 컸다). */
 .detail-topspace .btn {

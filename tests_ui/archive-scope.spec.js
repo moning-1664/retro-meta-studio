@@ -54,39 +54,41 @@ test("게임 선택이 System 선택을 이긴다", async ({ page }) => {
   expect(page.__scopes[0].kind).toBe("selected");
 });
 
+// 버튼 글자는 하는 일로 고정되어 있고(폭이 출렁이면 안 된다), **대상은 툴팁이
+// 말한다.** 그래서 여기서 보는 것은 title 속성이다.
 test.describe("버튼이 대상을 미리 말해 준다", () => {
   test("기본은 Collection 전체", async ({ page }) => {
-    await expect(ingestButton(page)).toContainText("Collection 전체");
+    await expect(ingestButton(page)).toHaveAttribute("title", /Collection 전체/);
   });
 
   test("System을 고르면 그 System을 가리킨다", async ({ page }) => {
     await page.locator(".nav-system", { hasText: "PS2" }).click();
-    await expect(ingestButton(page)).toContainText("PS2 전체");
+    await expect(ingestButton(page)).toHaveAttribute("title", /PS2 전체/);
   });
 
   test("게임을 고르면 그 개수를 가리킨다", async ({ page }) => {
     await page.locator(".lrow").first().click();
-    await expect(ingestButton(page)).toContainText("선택한 1개");
+    await expect(ingestButton(page)).toHaveAttribute("title", /선택한 1개/);
   });
 
   test("버튼이 말한 것과 실제로 보낸 것이 같다", async ({ page }) => {
     await page.locator(".nav-system", { hasText: "PS2" }).click();
-    await expect(ingestButton(page)).toContainText("PS2 전체");
+    await expect(ingestButton(page)).toHaveAttribute("title", /PS2 전체/);
     await ingestButton(page).click();
     await expect.poll(() => page.__scopes.length).toBe(1);
     expect(page.__scopes[0].system).toBe("ps2");
   });
 
-  test("대상이 바뀌어도 아이콘은 그대로다", async ({ page }) => {
-    // 버그: 안에 span이 둘이라(아이콘 span이 먼저) querySelector("span")으로
-    // 고르면 아이콘 span을 잡아 글자로 덮어썼다 - 아이콘이 사라지고 글자가
-    // 두 번 나왔다. 이제는 .ingest-label로 정확히 짚는다.
+  test("대상이 바뀌어도 버튼 모습은 그대로고, 대상은 툴팁이 말한다", async ({ page }) => {
+    // 라벨에 범위 이름을 넣으면 고를 때마다 버튼 폭이 출렁인다(사용자 피드백).
+    // 라벨은 하는 일로 고정하고 대상은 툴팁에서만 바뀐다.
+    const before = await ingestButton(page).boundingBox();
     await page.locator(".lrow").first().click();
-    await expect(ingestButton(page)).toContainText("선택한 1개");
+    await expect(ingestButton(page)).toHaveAttribute("title", /선택한 1개/);
+    await expect(ingestButton(page).locator(".ingest-label")).toHaveText("Archive로");
+    expect((await ingestButton(page).boundingBox()).width).toBe(before.width);
     const icHtml = await ingestButton(page).locator(".ic").innerHTML();
     expect(icHtml).toContain("<svg");
-    // 글자가 아이콘 span에도 새어 들어가지 않았다 - 라벨 span에만 있다.
-    await expect(ingestButton(page).locator(".ingest-label")).toHaveText(/선택한 1개/);
   });
 });
 

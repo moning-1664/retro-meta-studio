@@ -87,7 +87,7 @@ test.describe("버튼 크기", () => {
 
   test("Archive 수집 버튼은 짧은 문구의 작은 버튼이고, 전체 설명은 툴팁에 있다", async ({ page }) => {
     const btn = page.locator("#archive-ingest-btn");
-    await expect(btn.locator(".ingest-label")).toHaveText(/^수집 · /);
+    await expect(btn.locator(".ingest-label")).toHaveText("Archive로");
     await expect(btn).toHaveAttribute("title", /Archive에 수집합니다/);
     const box = await btn.boundingBox();
     expect(box.height).toBeLessThanOrEqual(24);

@@ -252,16 +252,18 @@ test.describe("Media 격자", () => {
     // 차지할 만큼 자주 보는 것이 아니다(사용자 결정).
     await openMedia(page);
     const video = page.locator(".media-flag-item", { hasText: "Video" });
-    await expect(video.locator(".media-flag")).toHaveText("v");
     await expect(video).toHaveClass(/on/);
+    // `v` / `x` 글자는 둘이 닮아서 멀리서 구분이 안 됐다(사용자 피드백) - 지금은
+    // media 종류를 뜻하는 아이콘 칩이고, 있고 없고는 밝기로 갈린다.
+    await expect(video.locator("svg")).toHaveCount(1);
   });
 
-  test("없으면 x로 말한다", async ({ page }) => {
+  test("없으면 흐리게 남는다", async ({ page }) => {
     await openMedia(page);
     await page.locator(".lrow").nth(2).locator(".lc-file").click();
     await page.locator(".detail-tab", { hasText: "Media" }).click();
-    const marks = await page.locator(".media-flag").allTextContents();
-    expect(marks.every((m) => m === "x")).toBe(true);
+    // 칸은 그대로 있고(자리가 흔들리지 않는다) 켜진 것만 없다.
+    await expect(page.locator(".media-flag-item")).toHaveCount(3);
     await expect(page.locator(".media-flag-item.on")).toHaveCount(0);
   });
 });
