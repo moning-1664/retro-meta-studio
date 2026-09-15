@@ -347,10 +347,40 @@ body { font-size: var(--fs-body); }
 .cheader-sub { font-size: calc(9px * var(--font-scale)); color: var(--muted); display: flex; gap: 6px; }
 .cheader-sub .dot { opacity: .5; }
 .cheader-stats {
-  display: flex; gap: 12px; margin-top: 3px;
+  display: flex; align-items: center; gap: 10px; margin-top: 3px;
   font-size: calc(9px * var(--font-scale)); color: var(--muted); font-variant-numeric: tabular-nums;
 }
-.cheader-storage { white-space: nowrap; }
+.cheader-stat-group { display: flex; gap: 12px; }
+/* 숫자 자리를 고정한다(실사용 피드백 §4 - "10000단위라고 가정하고 거리를 둔다") -
+   ROM/Metadata 개수가 몇 자리든 뒤의 | 구분선이 밀리지 않는다. */
+.cheader-stat-num { display: inline-block; min-width: 4.2ch; text-align: right; }
+.cheader-stats-divider { color: var(--border); font-weight: 300; user-select: none; }
+/* Storage 뱃지 - 목표 대비 그래프(.cheader-storage-track/.fill)를 글자 줄 바로
+   아래에 겹쳐 그린다. **자리를 차지하지 않는 절대 위치라 띠 높이가 늘지 않는다**
+   (--header-row-h는 절대 안 바뀐다는 계약, layout-bands.spec.js). */
+.cheader-storage {
+  position: relative; white-space: nowrap;
+  /* 천 단위 GB + 경고 아이콘 자리까지 고정한다(실사용 피드백) - Internal/External
+     용량이 몇 자리든, 경고가 뜨든 안 뜨든 뱃지 폭이 흔들리지 않는다. */
+  min-width: 13ch;
+}
+.cheader-storage-warn {
+  display: inline-flex; width: 11px; margin-left: 2px; vertical-align: -1px;
+  opacity: 0; color: var(--danger);
+}
+.cheader-storage-warn.on { opacity: 1; }
+.cheader-storage-track {
+  position: absolute; left: 0; bottom: -4px; width: 100%; height: 2px;
+  border-radius: var(--radius-pill); background: var(--card3); overflow: hidden;
+}
+.cheader-storage-fill { display: block; height: 100%; background: var(--info); transition: width .2s ease-out; }
+/* 파랑(여유) > 녹색 > 노랑 > 주황 > 빨강(목표 넘어감) - capacityLevel()이 고른다. */
+.cheader-storage.level-blue .cheader-storage-fill { background: var(--info); }
+.cheader-storage.level-green .cheader-storage-fill { background: var(--success); }
+.cheader-storage.level-yellow .cheader-storage-fill { background: var(--warning); }
+.cheader-storage.level-orange .cheader-storage-fill { background: var(--gauge-orange); }
+.cheader-storage.level-over .cheader-storage-fill { background: var(--danger); }
+.cheader-storage.level-over { color: var(--danger); font-weight: 600; }
 /* **도구 버튼은 조용해야 한다.** 예전엔 크고 세로 한가운데 떠 있어서 제목보다
    먼저 눈에 들어왔다(사용자 피드백).
    작게 만들고 **아랫줄에 맞춘다** - 옆 Detail 상단 줄의 버튼도 같은 선에 서기
@@ -383,6 +413,12 @@ body { font-size: var(--fs-body); }
 .storage-box-title { font-size: var(--fs-eyebrow); letter-spacing: .8px; color: var(--muted); margin-bottom: 3px; }
 .storage-bar { height: 4px; border-radius: var(--radius-pill); background: var(--card3); margin-top: 5px; overflow: hidden; }
 .storage-bar-fill { height: 100%; background: var(--accent); }
+/* HERO 배지(.cheader-storage)와 같은 5단계 색 - capacityLevel(), app.js §4. */
+.storage-bar.level-blue .storage-bar-fill { background: var(--info); }
+.storage-bar.level-green .storage-bar-fill { background: var(--success); }
+.storage-bar.level-yellow .storage-bar-fill { background: var(--warning); }
+.storage-bar.level-orange .storage-bar-fill { background: var(--gauge-orange); }
+.storage-bar.level-over .storage-bar-fill { background: var(--danger); }
 .storage-box .health-row { padding: 1px 0; }
 .health-row {
   display: flex; justify-content: space-between; gap: 10px;
@@ -949,7 +985,9 @@ body { font-size: var(--fs-body); }
 
 .sb-add { color: var(--info); font-variant-numeric: tabular-nums; }
 .sb-del { color: var(--danger); font-variant-numeric: tabular-nums; }
-.sb-storage.over, .cheader-storage.over { color: var(--danger); font-weight: 600; }
+/* .cheader-storage.over는 §4에서 .plan-over로 이름이 바뀌었다 - Dashboard 목표
+   초과(.level-over)와 겹칠 수 있는 별개의 경고라서 클래스를 나눴다. */
+.sb-storage.over, .cheader-storage.plan-over { color: var(--danger); font-weight: 600; }
 .health-row.over span:last-child { color: var(--danger); font-weight: 600; }
 
 /* 충돌 / 실패 배지 */

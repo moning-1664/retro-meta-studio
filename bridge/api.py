@@ -1411,6 +1411,18 @@ class Api:
         })
 
     @guarded
+    def archive_uids(self, systems=None):
+        """지금 필터(System)에 맞는 Archive 항목 전체의 romIdentityId.
+
+        HERO의 "메타데이터 가져오기"가 쓴다(§4) - Archive에서 이 Collection으로
+        당겨올 대상을 정할 때, 화면에 보이는 첫 페이지(archive_rows의 limit=200)만
+        가져오면 Archive가 그보다 크면 뒷부분이 조용히 빠진다. list_rows(limit=None)은
+        LIMIT 절 자체를 안 붙이므로 전부 온다.
+        """
+        rows = self.archive.list_rows(systems=systems or None, limit=None)
+        return ok([r["rom_identity_id"] for r in rows])
+
+    @guarded
     def archive_systems(self):
         return ok(self.archive.systems())
 

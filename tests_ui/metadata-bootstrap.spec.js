@@ -7,10 +7,16 @@
 //      무언가 잘못한 것처럼 느낀다.
 //   2. ROM 폴더를 따로 지정한 System 때문에, 정상적인 ES-DE 폴더에서도 이 창이 떴다.
 //
-// 그래서 자동으로 묻지 않고, Toolbar의 명시적인 버튼으로 옮겼다(Collection 전체
-// 대상 - System/Storage 하나로 좁힌 버전은 Navigator의 우클릭 메뉴에 있다).
+// [§4 개정] Collection 전체를 한 번에 대상으로 하는 HERO 아이콘은 없앴다(실사용
+// 피드백 - "gamelist 만들기 아이콘은 없앤다") - Storage 그룹 우클릭으로 그 그룹의
+// System들을 한 번에 만드는 길은 남아 있다. 아래 테스트는 그 길로 다시 부른다.
 const { test, expect } = require("@playwright/test");
 const { openApp, modalButton } = require("./_helpers");
+
+// mock의 metadata_status가 missing으로 주는 것은 snes/gba뿐이고, 그 둘은 기본
+// fixture에서 INTERNAL Storage에 있다 - 그 그룹 머리를 우클릭한다.
+const openViaInternalGroup = (page) =>
+  page.locator(".nav-group-head", { hasText: "INTERNAL" }).click({ button: "right" });
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
@@ -41,13 +47,13 @@ test("추가하는 것만으로는 gamelist를 만들지 않는다", async ({ pa
   expect(generated).toBe(0);
 });
 
-test("Toolbar 버튼으로 직접 부를 수 있다", async ({ page }) => {
-  await page.locator("#make-gamelist-btn").click();
+test("Storage 그룹 우클릭으로 직접 부를 수 있다", async ({ page }) => {
+  await openViaInternalGroup(page);
   await expect(page.locator(".modal-title")).toHaveText("gamelist 만들기");
 });
 
 test("무엇을 하는지와 무엇을 하지 않는지 함께 알린다", async ({ page }) => {
-  await page.locator("#make-gamelist-btn").click();
+  await openViaInternalGroup(page);
   const hints = page.locator(".modal-hint");
   // 파일명만 넣는다는 것과, 추측해서 채우지 않는다는 것 둘 다 말해야 한다.
   await expect(hints.first()).toContainText("파일명");
@@ -64,7 +70,7 @@ test("'나중에'를 고르면 아무것도 만들지 않는다", async ({ page 
     window.api.generateMetadata = (...args) => { window.__countGenerate(); return original(...args); };
   });
 
-  await page.locator("#make-gamelist-btn").click();
+  await openViaInternalGroup(page);
   await modalButton(page, "나중에").click();
 
   await expect(page.locator(".modal-title")).toHaveCount(0);
@@ -72,7 +78,7 @@ test("'나중에'를 고르면 아무것도 만들지 않는다", async ({ page 
 });
 
 test("'gamelist 만들기'를 고르면 만들고 결과를 알려준다", async ({ page }) => {
-  await page.locator("#make-gamelist-btn").click();
+  await openViaInternalGroup(page);
   await modalButton(page, "gamelist 만들기").click();
 
   await expect(page.locator("#toast")).toContainText("gamelist를 만들었습니다");

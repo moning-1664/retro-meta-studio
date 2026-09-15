@@ -377,6 +377,10 @@
     // 동안만 기억한다(서버에 저장하지 않는다) - 접힘은 지금 화면을 정리해 두는
     // 용도지 Collection의 영구 설정이 아니다.
     navCollapsed: new Set(),
+    // Dashboard에서 정한 Storage별 목표 용량 - {storageId: bytes}. HERO의 용량
+    // 그래프도 같은 값을 쓴다(실사용 피드백 §4) - Dashboard를 열지 않아도 목표
+    // 대비 상태를 봐야 하므로, ui_state에서 읽어 여기 함께 둔다.
+    dashboardTargets: {},
     // Shift+Click 범위 선택의 기준점. 마지막으로 "그냥 누른" 행이다.
     selectAnchor: null,
     previewOn: true,
@@ -458,6 +462,7 @@
     // 언제나 List로 시작했다 - "재시작하면 Card가 한참 뒤에 나온다"의 정체는 사실
     // "Card 상태가 저장되지 않았다"였다.
     if (r.data.viewMode === "card" || r.data.viewMode === "list") S.viewMode = r.data.viewMode;
+    S.dashboardTargets = { ...(r.data.dashboardTargets || {}) };
   }
 
   let uiStateTimer = null;
@@ -2413,6 +2418,19 @@
   // ------------------------------------------------------------------
   // Collection 헤더
   // ------------------------------------------------------------------
+  /** 목표 대비 사용량 5단계(실사용 피드백 §4) - 파랑(여유) > 녹색 > 노랑 > 주황 >
+   * 빨강(목표 넘어감). Dashboard의 3단계(.dsb-meter: ok/warn/over)보다 세밀하게
+   * 나눈다 - HERO는 항상 보이는 자리라, 목표에 다가가는 낌새를 Dashboard를 열기
+   * 전에 미리 알아채야 한다는 게 이 자리의 존재 이유다. */
+  function capacityLevel(ratio) {
+    if (ratio == null) return "none";
+    if (ratio > 1) return "over";
+    if (ratio >= 0.9) return "orange";
+    if (ratio >= 0.75) return "yellow";
+    if (ratio >= 0.5) return "green";
+    return "blue";
+  }
+
   function renderHeader() {
     const host = $("collection-header");
     clear(host);
@@ -2456,24 +2474,72 @@
     // 숫자만 나열하면 무엇의 수인지 매번 읽어야 한다 - 앞에 작은 아이콘을 두면
     // 모양만으로 구분된다(사용자 결정). Metadata는 "전체 - 빠진 수"로 계산해서
     // 목록에 뜨는 수와 항상 아귀가 맞는다.
+    //
+    // **두 칸으로 나눈다.** ROM/Metadata는 지금 보는 System(또는 Collection
+    // 전체)의 숫자고, Internal/External은 Collection 전체의 Storage 용량이다 -
+    // 서로 다른 단위인데 한 줄에 섞여 있으면 숫자가 바뀔 때마다 그 사이 |
+    // 구분선까지 밀렸다 당겼다 했다(실사용 피드백). 각 자리 폭을 고정해서
+    // 숫자가 몇 자리든 |가 항상 같은 자리에 있게 한다.
     const romCount = systemEntry ? systemEntry.count : detail.totalGames;
     const missingMeta = systemEntry
       ? (systemEntry.missingMetadata || 0) : (detail.totalMissingMetadata || 0);
     const summary = h("div", { class: "cheader-stats" }, [
-      h("span", { class: "cheader-stat", title: "ROM 항목 수" },
-        [icon("cartridge", IC.sm), `${formatCount(romCount)} ROMs`]),
-      h("span", { class: "cheader-stat", title: "Metadata가 있는 항목 수" },
-        [icon("fileText", IC.sm), `${formatCount(Math.max(0, romCount - missingMeta))} Metadata`]),
+      h("div", { class: "cheader-stat-group" }, [
+        h("span", { class: "cheader-stat", title: "ROM 항목 수" }, [
+          icon("cartridge", IC.sm),
+          h("span", { class: "cheader-stat-num" }, [formatCount(romCount)]), " ROMs",
+        ]),
+        h("span", { class: "cheader-stat", title: "Metadata가 있는 항목 수" }, [
+          icon("fileText", IC.sm),
+          h("span", { class: "cheader-stat-num" }, [formatCount(Math.max(0, romCount - missingMeta))]), " Metadata",
+        ]),
+      ]),
     ]);
-    detail.storages.forEach((storage) => {
-      // Plan이 있으면 "Actual -> Plan"으로 보여준다(스펙 §19, §30).
-      const capacity = planCapacity(storage.id);
-      const changed = capacity && capacity.deltaBytes;
-      summary.appendChild(h("span", { class: "cheader-storage" + (capacity && capacity.over ? " over" : "") }, [
-        `${storage.label} ${formatBytes(storage.actualBytes)}`,
-        changed ? ` → ${formatBytes(capacity.planBytes)}` : "",
-      ]));
-    });
+    if (detail.storages.length) {
+      summary.appendChild(h("span", { class: "cheader-stats-divider", "aria-hidden": "true" }, ["|"]));
+      const storageGroup = h("div", { class: "cheader-stat-group storages" });
+      detail.storages.forEach((storage) => {
+        // Plan이 있으면 "Actual -> Plan"으로 보여준다(스펙 §19, §30) - Dashboard
+        // 목표(다음 줄)와는 다른 얘기다. 이건 "지금 계산해 둔 변경을 Apply하면
+        // 얼마가 되는가"고, 목표는 "얼마까지 채워도 되는가"다.
+        const capacity = planCapacity(storage.id);
+        const changed = capacity && capacity.deltaBytes;
+        // **목표는 Dashboard가 정한 값이다.** 없으면(아직 목표를 안 정했으면)
+        // 그래프는 무채색이고 경고도 없다 - 정하지 않은 목표를 "넘었다"고 말할
+        // 수는 없다.
+        const target = S.dashboardTargets[storage.id] || null;
+        const ratio = target ? storage.actualBytes / target : null;
+        const level = capacityLevel(ratio);
+        // 두 가지 "초과"는 서로 다른 얘기다. planOver는 지금 Plan대로 Apply하면
+        // 실제 디스크 용량(storage.capacityBytes)을 넘는다는 뜻이고(예전부터 있던
+        // 경고), targetOver는 Dashboard에서 정한 목표를 이미 넘었다는 뜻이다(§4
+        // 신규). 하나만 있어도 경고 아이콘을 보여준다.
+        const planOver = !!(capacity && capacity.over);
+        const targetOver = level === "over";
+        const fillPct = ratio != null ? `${Math.min(100, Math.max(0, ratio * 100))}%` : "0%";
+        const badge = h("span", {
+          class: `cheader-storage level-${level}` + (planOver ? " plan-over" : ""),
+          title: (planOver ? "Apply하면 디스크 용량을 넘습니다. " : "")
+            + (target
+              ? `${storage.label} · 목표 ${formatBytes(target)} 중 ${formatBytes(storage.actualBytes)} 사용 (${Math.round(ratio * 100)}%)`
+              : `${storage.label} · 목표를 정하지 않았습니다 (Dashboard에서 정할 수 있습니다)`),
+        }, [
+          `${storage.label} ${formatBytes(storage.actualBytes)}`,
+          changed ? ` → ${formatBytes(capacity.planBytes)}` : "",
+          // 경고 아이콘 자리는 **항상 차지한다**(보이지 않아도) - 넘었다 안 넘었다에
+          // 따라 자리가 생겼다 없어지면 그 옆 뱃지가 매번 밀린다.
+          h("span", { class: "cheader-storage-warn" + (targetOver || planOver ? " on" : "") },
+            [(targetOver || planOver) ? icon("triangleAlert", IC.xs) : null]),
+          // 목표 대비 그래프 - 띠 높이는 절대 안 늘어난다(header-row-h). 자리를
+          // 차지하지 않는 절대 위치로 글자 줄 바로 밑(패딩 안)에 겹쳐 그린다.
+          target ? h("span", { class: "cheader-storage-track" }, [
+            h("span", { class: "cheader-storage-fill", style: { width: fillPct } }),
+          ]) : null,
+        ]);
+        storageGroup.appendChild(badge);
+      });
+      summary.appendChild(storageGroup);
+    }
     main.appendChild(summary);
     compact.appendChild(main);
 
@@ -2489,19 +2555,21 @@
       return;
     }
 
-    // gamelist 만들기 / Collection 가져오기는 Toolbar에 있었는데 여기로
-    // 옮겼다(레이아웃 재검토 - GameList 상단 chrome에 모으는 게 자연스럽다는
-    // 실사용 피드백). 순서: gamelist 생성, Collection 가져오기, 새로고침, 확장.
+    // **순서: 메타데이터 보내기, 메타데이터 가져오기, 새로고침, 확장**(실사용 피드백).
+    // gamelist 만들기 아이콘은 없앴다 - Storage 그룹 우클릭(부분)과 System 우클릭
+    // 메뉴로도 만들 수 있어, Collection 전체 한 번에 만드는 자리는 여기 하나뿐이었다.
+    // "Collection 가져오기(Import)"였던 자리는 그 새 Collection 여는 기능(탭 바의
+    // "+"와 중복이었다)이 아니라, **이 Collection의 metadata를 Archive와 주고받는
+    // 것**으로 바꿨다 - Detail 패널에 있던 "Archive로" 버튼(§6)이 여기로 옮겨 왔다.
     if (!isCompare()) {
-      const bootstrap = h("button", { class: "icon-btn", id: "make-gamelist-btn",
-        title: "gamelist가 없는 System에 ROM 파일명만 담은 gamelist를 만듭니다." },
-        [icon("fileWarning", IC.md)]);
-      bootstrap.addEventListener("click", () => openMetadataBootstrap(S.activeId));
-      right.appendChild(bootstrap);
-
-      const importBtn = h("button", { class: "icon-btn", title: "Collection 가져오기 (Import)" },
+      const send = h("button", { class: "icon-btn", title: "메타데이터 보내기 (Archive로)" },
         [icon("upload", IC.md)]);
-      importBtn.addEventListener("click", openAddCollection);
+      send.addEventListener("click", (e) => openMetaTargetMenu(e, "send"));
+      right.appendChild(send);
+
+      const importBtn = h("button", { class: "icon-btn", title: "메타데이터 가져오기 (Archive에서)" },
+        [icon("download", IC.md)]);
+      importBtn.addEventListener("click", (e) => openMetaTargetMenu(e, "import"));
       right.appendChild(importBtn);
     }
 
@@ -2566,15 +2634,24 @@
     detail.storages.forEach((storage) => {
       const box = h("div", { class: "storage-box" });
       box.appendChild(h("div", { class: "storage-box-title" }, [storage.label.toUpperCase()]));
-      const unknown = storage.capacityBytes == null;
-      [["Capacity", unknown ? "Unknown" : formatBytes(storage.capacityBytes)],
+      // **목표를 정했으면 "Capacity" 자리는 전체 하드 용량이 아니라 목표를
+      // 보여준다**(실사용 피드백 §4) - 사용자가 실제로 재고 싶은 것은 "이 디스크가
+      // 몇 GB냐"가 아니라 "내가 정한 한도까지 얼마나 남았냐"다. 목표를 안 정했으면
+      // 예전처럼 디스크 전체 용량이다.
+      const target = S.dashboardTargets[storage.id] || null;
+      const basis = target || storage.capacityBytes;
+      const unknown = basis == null;
+      [[target ? "Target" : "Capacity", unknown ? "Unknown" : formatBytes(basis)],
        ["Actual", formatBytes(storage.actualBytes)],
        ["Free", storage.freeBytes == null ? "Unknown" : formatBytes(storage.freeBytes)]].forEach(([l, v]) => {
         box.appendChild(h("div", { class: "health-row" }, [h("span", {}, [l]), h("span", {}, [v])]));
       });
-      if (!unknown && storage.capacityBytes > 0) {
-        const used = Math.min(100, (storage.actualBytes / storage.capacityBytes) * 100);
-        box.appendChild(h("div", { class: "storage-bar" }, [
+      if (!unknown && basis > 0) {
+        const ratio = storage.actualBytes / basis;
+        const used = Math.min(100, ratio * 100);
+        // 같은 5단계 색(파랑>녹색>노랑>주황>빨강)을 여기서도 쓴다 - HERO의 그래프와
+        // 다른 색을 쓰면 같은 값인데 두 곳이 다른 말을 하는 것처럼 보인다.
+        box.appendChild(h("div", { class: `storage-bar level-${capacityLevel(ratio)}` }, [
           h("div", { class: "storage-bar-fill", style: { width: used.toFixed(1) + "%" } })]));
       }
       panel.appendChild(box);
@@ -2839,16 +2916,11 @@
    * 선택 때문에 달라지는 것은 수집 대상 표시뿐이다(Delete는 상시 버튼이 없다).
    */
   function updateSelectionDependentActions() {
-    const ingest = $("archive-ingest-btn");
-    if (ingest) {
-      const scope = archiveScope();
-      const label = archiveScopeLabel(scope);
-      ingest.dataset.scope = scope.kind;
-      // **라벨은 안 바꾼다.** 범위 이름을 버튼에 쓰면 고를 때마다 폭이 출렁인다 -
-      // 대상은 툴팁으로만 말한다(renderDetailTopSpace의 같은 결정).
-      ingest.title = `${label}을 Archive에 수집합니다`;
-    }
-    // Archive 탭의 "Collection으로 보내기"도 Detail 패널 상단에 있다 - 선택이
+    // "Archive로"는 HERO의 메타데이터 보내기 아이콘으로 옮겨갔다(§4, §6) - 그
+    // 버튼은 누를 때마다 scope를 새로 계산하는 플로팅 메뉴라서(openMetaTargetMenu),
+    // 여기서 선택이 바뀔 때마다 따로 패치해 둘 상태가 없다.
+    //
+    // Archive 탭의 "Collection으로 보내기"는 여전히 Detail 패널 상단에 있다 - 선택이
     // 바뀔 때마다 renderDetailPanel()을 통째로 다시 그리진 않으므로(Metadata
     // 입력 중 커서가 날아간다) 여기서 같이 패치한다.
     const send = $("archive-send-btn");
@@ -4209,20 +4281,10 @@
       // onclick으로 통일한다.
       if (S.selected.size && targets.length) send.onclick = openSendToCollection;
       bar.appendChild(send);
-    } else {
-      const scope = archiveScope();
-      const scopeLabel = archiveScopeLabel(scope);
-      // **라벨을 범위 이름으로 만들지 않는다.** `수집 · NEOGEO 전체`처럼 쓰면
-      // System을 바꿀 때마다 버튼 폭이 출렁이고(일관성이 없다), 무엇을 하는
-      // 버튼인지도 "수집"이라는 말만으로는 잘 읽히지 않았다(사용자 피드백).
-      // 라벨은 하는 일로 고정하고, 대상 범위는 툴팁에서 말한다.
-      const ingest = h("button", { class: "btn compact", id: "archive-ingest-btn",
-        "data-scope": scope.kind,
-        title: `${scopeLabel}을 Archive에 수집합니다` },
-        [icon("database", IC.sm), h("span", { class: "ingest-label" }, ["Archive로"])]);
-      ingest.addEventListener("click", ingestToArchive);
-      bar.appendChild(ingest);
     }
+    // "Archive로" 버튼은 여기 있었다. 무엇을 하는 버튼인지 이름만 봐서는 잘 안
+    // 읽혔고(실사용 피드백), HERO로 옮겨 아이콘 하나(메타데이터 보내기)로 만들었다
+    // - openMetaTargetMenu, renderHeader 참고.
 
     // 아이콘과 "미리보기" 글자를 합친 전체가 누르는 자리다(사용자 요청). 클릭은
     // 이 바깥 상자 하나에만 건다 - 안쪽 아이콘 버튼에도 걸면 한 번 눌러 두 번 토글된다.
@@ -5164,6 +5226,53 @@
               `변경 없음 ${formatCount(d.unchanged)}개`);
   }
 
+  /** HERO "메타데이터 가져오기"(§4) - Archive에서 이 Collection으로 당겨온다.
+   * `sendToCollection`(Archive 탭 안에서 선택 항목을 보낸다)의 반대 방향이다 -
+   * 여기서는 선택이 아니라 지금 보고 있는 범위(System/전체)가 대상을 정한다. */
+  async function importFromArchive() {
+    const scope = activeScope();
+    const systems = scope.kind === "system" ? [scope.id] : null;
+    const label = systems ? `${String(scope.id).toUpperCase()} 전체` : "Collection 전체";
+    const uidsR = await api.archiveUids(systems);
+    if (!uidsR.ok) { showToast(uidsR.error, "error"); return; }
+    if (!uidsR.data.length) { showToast(`${label}에 해당하는 Archive 항목이 없습니다.`, "warning"); return; }
+    const r = await api.archiveToCollection(S.activeId, uidsR.data);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    const d = r.data;
+    let message = `${label} — Metadata 반영 ${formatCount(d.updated)}개`;
+    if (d.planned) message += ` · Plan에 추가 ${formatCount(d.planned)}개`;
+    if (d.conflicts) message += ` · 충돌 ${formatCount(d.conflicts)}개`;
+    if ((d.skipped || []).length) message += ` · 원본 없어 제외 ${formatCount(d.skipped.length)}개`;
+    showToast(message, d.planned || d.conflicts ? "warning" : "info");
+    await ensureDetail(S.activeId);
+    resetList();
+    renderAll();
+    await reloadList();
+  }
+
+  /** "메타데이터 보내기"/"가져오기"의 우클릭 스타일 플로팅 메뉴(사용자 결정) -
+   * 항상 맨 위는 Archive다. **지금은 Archive가 유일한 대상이다** - Collection끼리
+   * 직접 주고받는 것은 이 Collection이 가진 항목과 상대 Collection의 항목을
+   * 매칭·충돌 판정하는 별도 로직이 필요해서(Archive를 매개로 하지 않는 경로),
+   * 여기서 함께 만들지 않았다. 필요해지면 이 items 배열에 항목만 더하면 된다.
+   */
+  function openMetaTargetMenu(event, direction) {
+    const send = direction === "send";
+    // 보내기는 선택이 있으면 선택을, 없으면 지금 보는 System/전체를 대상으로 한다
+    // (예전 Detail 패널의 "Archive로" 버튼과 같은 규칙 - archiveScope() 참고).
+    // 가져오기는 선택이라는 개념이 없다(Archive 쪽 항목을 고르는 것이 아니라
+    // 이 Collection에 이미 있는 범위를 기준으로 당겨오므로) - Navigator scope만 쓴다.
+    const scope = activeScope();
+    const scopeLabel = send ? archiveScopeLabel(archiveScope())
+      : (scope.kind === "system" ? `${String(scope.id).toUpperCase()} 전체` : "Collection 전체");
+    const items = [{
+      label: "Archive", icon: "database",
+      title: send ? `${scopeLabel}을 Archive로 보냅니다` : "Archive에서 이 Collection으로 가져옵니다",
+      onSelect: send ? ingestToArchive : importFromArchive,
+    }];
+    showContextMenu(menuPoint(event), send ? "메타데이터 보내기" : "메타데이터 가져오기", `${scopeLabel} 기준`, items);
+  }
+
   function openSendToCollection() {
     const targets = S.tabs.filter((t) => t !== ARCHIVE_ID);
     const list = h("div", { class: "picker-list" });
@@ -5357,6 +5466,10 @@
         targets[storageId] = bytes;
         // 목표 용량은 그 Collection의 화면 상태로 기억한다(Storage 구성이 Collection마다 다르다).
         api.saveUiState(id, { dashboardTargets: { ...targets } });
+        // HERO도 같은 값을 쓴다(§4) - Dashboard에서 바꾸는 순간 HERO의 그래프도
+        // 바로 따라가야, "Dashboard에서는 바뀌었는데 옆에서 보면 그대로다"가 안 생긴다.
+        S.dashboardTargets = { ...targets };
+        if (id === S.activeId) renderHeader();
       },
       onValidate: () => api.validateCollection(id),
       onOpenSystem: (system) => setScope({ kind: "system", id: system }),

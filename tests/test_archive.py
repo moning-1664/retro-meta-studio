@@ -63,6 +63,23 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(row["desc"], "A role-playing game.")
         self.assertEqual(row["genre"], "RPG")
 
+    def test_archive_uids_returns_everything_not_just_a_page(self):
+        """HERO의 "메타데이터 가져오기"가 쓴다(§4) - 화면 목록의 첫 페이지(limit=200)만
+        가져오면 Archive가 그보다 크면 뒤가 조용히 빠진다."""
+        self.api.archive_ingest(self.src)
+        rows = self.api.archive_rows()["data"]["rows"]
+        uids = self.api.archive_uids()["data"]
+        self.assertEqual(sorted(uids), sorted(r["romIdentityId"] for r in rows))
+
+    def test_archive_uids_can_be_filtered_by_system(self):
+        self.api.archive_ingest(self.src)
+        all_uids = set(self.api.archive_uids()["data"])
+        ps2_uids = set(self.api.archive_uids(systems=["ps2"])["data"])
+        self.assertTrue(ps2_uids)
+        self.assertTrue(ps2_uids.issubset(all_uids))
+        # snes 등 ps2가 아닌 System은 빠진다 - build_esde_tree의 3개는 전부 ps2다.
+        self.assertEqual(ps2_uids, all_uids)
+
     def test_ingest_records_source_collection_id(self):
         result = self.api.archive_ingest(self.src)["data"]
         self.assertEqual(result["ingested"], 3)

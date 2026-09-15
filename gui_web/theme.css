@@ -26,6 +26,9 @@
   --warning: #e6b84b;
   --danger: #ef6b78;
   --info: #4aaeea;
+  /* HERO 용량 그래프의 5단계 중 "주황"만 새로 필요했다 - blue=info, green=success,
+     yellow=warning, red=danger는 이미 있다(capacityLevel(), app.js §4). */
+  --gauge-orange: #e28c3c;
 
   /* 콘솔 4색 - 테마마다 강조를 어디에 쓰는지가 다르다. */
   --accent-red: #ef6b78;

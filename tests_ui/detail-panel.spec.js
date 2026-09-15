@@ -112,8 +112,10 @@ test.describe("Detail 상단 빈 공간 (레이아웃 재검토 §18-19)", () =>
     expect(Math.abs(filterBarTop - detailHeaderTop)).toBeLessThan(2);
   });
 
-  test("게임을 고르기 전에도 Archive 이동 버튼과 Preview 토글이 보인다", async ({ page }) => {
-    await expect(page.locator("#detail-top #archive-ingest-btn")).toBeVisible();
+  test("게임을 고르기 전에도 메타데이터 보내기(HERO)와 Preview 토글이 보인다", async ({ page }) => {
+    // "Archive로"는 이제 Detail이 아니라 HERO에 있다(§4·§6) - Detail의 선택
+    // 상태와 무관하게 항상 그 자리에 있어야 한다.
+    await expect(page.locator("#collection-header .icon-btn[title*='메타데이터 보내기']")).toBeVisible();
     await expect(page.locator("#detail-top .detail-preview-label")).toHaveText("미리보기");
   });
 

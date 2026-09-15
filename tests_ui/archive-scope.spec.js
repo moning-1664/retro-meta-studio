@@ -6,6 +6,11 @@
 //
 // 여기서는 **화면이 실제로 무엇을 보냈는지**를 가로채서 확인한다. 토스트 문구만
 // 보면 "전체 수집 완료"라고 적혀 있어도 그것이 맞는 말인지 알 수 없다.
+//
+// [§4 개정] "Archive로" 버튼은 Detail 패널에서 HERO로 옮겨갔다(메타데이터 보내기
+// 아이콘) - 누르면 우클릭 스타일 플로팅 메뉴가 뜨고, 거기서 "Archive"를 고른다.
+// 대상 범위는 예전처럼 버튼 자체의 title이 아니라 그 메뉴의 부제(.ctx-sub)와
+// Archive 항목의 title이 말한다.
 const { test, expect } = require("@playwright/test");
 const { openApp } = require("./_helpers");
 
@@ -22,24 +27,27 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-const ingestButton = (page) => page.locator("#archive-ingest-btn");
+const sendIcon = (page) => page.locator("#collection-header .cheader-right .icon-btn[title*='메타데이터 보내기']");
+const openSendMenu = async (page) => { await sendIcon(page).click(); };
+const archiveMenuItem = (page) => page.locator(".ctx-menu .ctx-item", { hasText: "Archive" });
+const ingestViaMenu = async (page) => { await openSendMenu(page); await archiveMenuItem(page).click(); };
 
 test("아무것도 고르지 않았으면 Collection 전체다", async ({ page }) => {
-  await ingestButton(page).click();
+  await ingestViaMenu(page);
   await expect.poll(() => page.__scopes.length).toBe(1);
   expect(page.__scopes[0]).toEqual({ kind: "all" });
 });
 
 test("Navigation에서 System을 고르면 그 System만 보낸다", async ({ page }) => {
   await page.locator(".nav-system", { hasText: "PS2" }).click();
-  await ingestButton(page).click();
+  await ingestViaMenu(page);
   await expect.poll(() => page.__scopes.length).toBe(1);
   expect(page.__scopes[0]).toEqual({ kind: "system", system: "ps2" });
 });
 
 test("게임을 고르면 그 게임만 보낸다", async ({ page }) => {
   await page.locator(".lrow").first().click();
-  await ingestButton(page).click();
+  await ingestViaMenu(page);
   await expect.poll(() => page.__scopes.length).toBe(1);
   expect(page.__scopes[0].kind).toBe("selected");
   expect(page.__scopes[0].romUids).toHaveLength(1);
@@ -49,46 +57,49 @@ test("게임 선택이 System 선택을 이긴다", async ({ page }) => {
   // 사용자가 마지막에 한 행동이 가장 구체적인 의도다.
   await page.locator(".nav-system", { hasText: "PS2" }).click();
   await page.locator(".lrow").first().click();
-  await ingestButton(page).click();
+  await ingestViaMenu(page);
   await expect.poll(() => page.__scopes.length).toBe(1);
   expect(page.__scopes[0].kind).toBe("selected");
 });
 
-// 버튼 글자는 하는 일로 고정되어 있고(폭이 출렁이면 안 된다), **대상은 툴팁이
-// 말한다.** 그래서 여기서 보는 것은 title 속성이다.
-test.describe("버튼이 대상을 미리 말해 준다", () => {
+// 아이콘 자체는 어떤 상황에서도 그대로다(글자도 폭도 없다) - **대상은 메뉴를 열어야
+// 보인다.** 메뉴의 부제와 Archive 항목의 title이 그 역할을 한다.
+test.describe("메뉴가 대상을 말해 준다", () => {
   test("기본은 Collection 전체", async ({ page }) => {
-    await expect(ingestButton(page)).toHaveAttribute("title", /Collection 전체/);
+    await openSendMenu(page);
+    await expect(page.locator(".ctx-sub")).toContainText("Collection 전체");
   });
 
   test("System을 고르면 그 System을 가리킨다", async ({ page }) => {
     await page.locator(".nav-system", { hasText: "PS2" }).click();
-    await expect(ingestButton(page)).toHaveAttribute("title", /PS2 전체/);
+    await openSendMenu(page);
+    await expect(page.locator(".ctx-sub")).toContainText("PS2 전체");
   });
 
   test("게임을 고르면 그 개수를 가리킨다", async ({ page }) => {
     await page.locator(".lrow").first().click();
-    await expect(ingestButton(page)).toHaveAttribute("title", /선택한 1개/);
+    await openSendMenu(page);
+    await expect(page.locator(".ctx-sub")).toContainText("선택한 1개");
   });
 
-  test("버튼이 말한 것과 실제로 보낸 것이 같다", async ({ page }) => {
+  test("메뉴가 말한 것과 실제로 보낸 것이 같다", async ({ page }) => {
     await page.locator(".nav-system", { hasText: "PS2" }).click();
-    await expect(ingestButton(page)).toHaveAttribute("title", /PS2 전체/);
-    await ingestButton(page).click();
+    await openSendMenu(page);
+    await expect(page.locator(".ctx-sub")).toContainText("PS2 전체");
+    await archiveMenuItem(page).click();
     await expect.poll(() => page.__scopes.length).toBe(1);
     expect(page.__scopes[0].system).toBe("ps2");
   });
 
-  test("대상이 바뀌어도 버튼 모습은 그대로고, 대상은 툴팁이 말한다", async ({ page }) => {
-    // 라벨에 범위 이름을 넣으면 고를 때마다 버튼 폭이 출렁인다(사용자 피드백).
-    // 라벨은 하는 일로 고정하고 대상은 툴팁에서만 바뀐다.
-    const before = await ingestButton(page).boundingBox();
+  test("선택이 바뀌어도 아이콘 자체(모습·위치)는 그대로다", async ({ page }) => {
+    // 라벨에 범위 이름을 넣으면 고를 때마다 버튼 폭이 출렁인다(사용자 피드백) -
+    // 지금은 아이콘 하나뿐이라 그 문제 자체가 없다. 그래도 선택에 따라 다시
+    // 그려지며 흔들리지 않는지는 확인해 둔다.
+    const before = await sendIcon(page).boundingBox();
     await page.locator(".lrow").first().click();
-    await expect(ingestButton(page)).toHaveAttribute("title", /선택한 1개/);
-    await expect(ingestButton(page).locator(".ingest-label")).toHaveText("Archive로");
-    expect((await ingestButton(page).boundingBox()).width).toBe(before.width);
-    const icHtml = await ingestButton(page).locator(".ic").innerHTML();
-    expect(icHtml).toContain("<svg");
+    expect((await sendIcon(page).boundingBox()).width).toBe(before.width);
+    const icHtml = await sendIcon(page).locator(".icon").innerHTML();
+    expect(icHtml).toContain("<path");
   });
 });
 
@@ -100,6 +111,6 @@ test("수집 중에는 진행 상황이 보인다", async ({ page }) => {
     const original = window.api.jobProgress;
     window.api.jobProgress = (jobId) => { window.__sawProgress(); return original(jobId); };
   });
-  await ingestButton(page).click();
+  await ingestViaMenu(page);
   await expect.poll(() => sawProgress).toBe(true);
 });
