@@ -9,26 +9,45 @@ from app.title_affix import (
 
 
 class RegionClassifyTests(unittest.TestCase):
-    def test_common_notations_map_to_the_right_bucket(self):
+    """구역은 **파일명의 지역 태그**로 정한다(사용자 결정) - gamelist의 region 필드가 아니다."""
+
+    def test_bracket_tags_in_the_filename(self):
         cases = {
-            "USA": "en", "US": "en", "usa": "en", "English": "en", "America": "en",
-            "Japan": "jp", "JP": "jp", "jpn": "jp",
-            "Europe": "eu", "EU": "eu", "UK": "eu", "GB": "eu",
-            "Korea": "kr", "KR": "kr", "kor": "kr",
-            "World": "global", "Wor": "global", "International": "global",
+            "Game (K).iso": "kr", "Game (KR).iso": "kr", "Game [Kor].zip": "kr", "Game (Korea).iso": "kr",
+            "Game (U).iso": "en", "Game (USA).iso": "en", "Game [us].bin": "en",
+            "Game (J).iso": "jp", "Game (Japan).iso": "jp",
+            "Game (E).iso": "eu", "Game (Europe).iso": "eu", "Game [PAL].iso": "eu",
+            "Game (W).iso": "global", "Game (World).iso": "global", "Game (Global).iso": "global",
         }
-        for region, expected in cases.items():
-            self.assertEqual(classify_region(region), expected, region)
+        for filename, expected in cases.items():
+            self.assertEqual(classify_region(filename), expected, filename)
 
-    def test_unrecognized_or_empty_region_falls_back_to_global(self):
-        # region을 안 채운 Collection이 흔하다 - 그런 경우도 글로벌 설정은 적용돼야 한다.
-        for region in (None, "", "  ", "Brazil", "???"):
-            self.assertEqual(classify_region(region), "global")
+    def test_delimiter_attached_tags_in_the_filename(self):
+        self.assertEqual(classify_region("Game_k.gba"), "kr")
+        self.assertEqual(classify_region("Game-kr.gba"), "kr")
+        self.assertEqual(classify_region("global_Game.bin"), "global")
+        self.assertEqual(classify_region("Game_usa_v2.iso"), "en")
 
-    def test_multi_token_region_prefers_the_bucket_that_comes_first_in_priority_order(self):
-        # kr, en, jp, eu 순으로 먼저 매치되는 쪽이 이긴다(글로벌은 나머지 전부의 기본값).
-        self.assertEqual(classify_region("USA, Europe"), "en")
-        self.assertEqual(classify_region("Europe, Japan"), "jp")
+    def test_no_tag_is_unclassified(self):
+        # 미분류는 자동 적용 대상에서 빠진다 - 아무 구역으로도 단정하지 않는다.
+        for filename in (None, "", "Chrono Trigger.sfc", "SMW.sfc", "Final Fantasy X.iso"):
+            self.assertIsNone(classify_region(filename))
+
+    def test_words_inside_the_title_are_not_mistaken_for_tags(self):
+        # 공백으로 띄운 평범한 단어는 태그가 아니다 - 괄호나 _ - 로 붙어야 인정한다.
+        self.assertIsNone(classify_region("Global Defense.iso"))
+        self.assertIsNone(classify_region("Europe Simulator.iso"))
+
+    def test_disk_and_revision_brackets_are_not_region_tags(self):
+        self.assertIsNone(classify_region("Chrono Trigger (Disc 1).iso"))
+        self.assertIsNone(classify_region("Chrono Trigger (2/2).iso"))
+        self.assertIsNone(classify_region("Game (Rev A).iso"))
+        self.assertIsNone(classify_region("Game (1994).iso"))
+
+    def test_multiple_tags_prefer_the_bucket_that_comes_first_in_priority_order(self):
+        # kr, en, jp, eu, global 순으로 먼저 매치되는 쪽이 이긴다.
+        self.assertEqual(classify_region("Game (USA) (Europe).iso"), "en")
+        self.assertEqual(classify_region("Game (Europe) (Japan).iso"), "jp")
 
 
 class StripExistingAffixTests(unittest.TestCase):
@@ -85,58 +104,61 @@ class JoinTests(unittest.TestCase):
     """텍스트가 괄호/구분자로 이미 묶여 있지 않으면 언더바를 자동으로 끼운다(사용자 결정)."""
 
     def test_bare_text_gets_an_underscore_at_the_join(self):
-        r = compute_new_title("Final Fantasy X", "USA", {"en": {"enabled": True, "mode": "prefix", "text": "EN"}})
+        r = compute_new_title("Final Fantasy X", "FFX (USA).iso", {"en": {"enabled": True, "mode": "prefix", "text": "EN"}})
         self.assertEqual(r["newTitle"], "EN_Final Fantasy X")
-        r = compute_new_title("Final Fantasy X", "USA", {"en": {"enabled": True, "mode": "postfix", "text": "EN"}})
+        r = compute_new_title("Final Fantasy X", "FFX (USA).iso", {"en": {"enabled": True, "mode": "postfix", "text": "EN"}})
         self.assertEqual(r["newTitle"], "Final Fantasy X_EN")
 
     def test_bracket_wrapped_text_needs_no_extra_separator(self):
-        r = compute_new_title("Final Fantasy X", "USA", {"en": {"enabled": True, "mode": "prefix", "text": "[EN]"}})
+        r = compute_new_title("Final Fantasy X", "FFX (USA).iso", {"en": {"enabled": True, "mode": "prefix", "text": "[EN]"}})
         self.assertEqual(r["newTitle"], "[EN]Final Fantasy X")
-        r = compute_new_title("Final Fantasy X", "USA", {"en": {"enabled": True, "mode": "postfix", "text": "(EN)"}})
+        r = compute_new_title("Final Fantasy X", "FFX (USA).iso", {"en": {"enabled": True, "mode": "postfix", "text": "(EN)"}})
         self.assertEqual(r["newTitle"], "Final Fantasy X(EN)")
 
     def test_text_already_ending_or_starting_with_a_delimiter_needs_no_extra_underscore(self):
-        r = compute_new_title("Final Fantasy X", "USA", {"en": {"enabled": True, "mode": "prefix", "text": "EN-"}})
+        r = compute_new_title("Final Fantasy X", "FFX (USA).iso", {"en": {"enabled": True, "mode": "prefix", "text": "EN-"}})
         self.assertEqual(r["newTitle"], "EN-Final Fantasy X")
-        r = compute_new_title("Final Fantasy X", "USA", {"en": {"enabled": True, "mode": "postfix", "text": "-EN"}})
+        r = compute_new_title("Final Fantasy X", "FFX (USA).iso", {"en": {"enabled": True, "mode": "postfix", "text": "-EN"}})
         self.assertEqual(r["newTitle"], "Final Fantasy X-EN")
 
 
 class ComputeNewTitleTests(unittest.TestCase):
     def test_disabled_region_leaves_the_stripped_title_unchanged(self):
-        r = compute_new_title("[KR] Final Fantasy X", "Korea", DEFAULT_CONFIG)
+        r = compute_new_title("[KR] Final Fantasy X", "FFX (K).iso", DEFAULT_CONFIG)
         self.assertEqual(r["newTitle"], "Final Fantasy X")
         self.assertTrue(r["changed"])  # 장식은 뗐으므로 그 자체로 변경이다
         self.assertEqual(r["regionBucket"], "kr")
 
-    def test_unrecognized_region_falls_back_to_global_and_uses_its_setting(self):
-        config = {"global": {"enabled": True, "mode": "prefix", "text": "WORLD"}}
-        r = compute_new_title("Some Homebrew Game", "Brazil", config)
-        self.assertEqual(r["newTitle"], "WORLD_Some Homebrew Game")
-        self.assertTrue(r["changed"])
-        self.assertEqual(r["regionBucket"], "global")
+    def test_untagged_filename_is_left_completely_alone(self):
+        """미분류는 장식을 떼지도, 붙이지도 않는다(사용자 결정 - 자동 적용 대상에서 제외)."""
+        config = normalize_config({"global": {"enabled": True, "mode": "prefix", "text": "WORLD"}})
+        r = compute_new_title("[EU] Some Homebrew Game", "Homebrew.iso", config)
+        self.assertEqual(r["newTitle"], "[EU] Some Homebrew Game")   # 기존 장식도 그대로 둔다
+        self.assertFalse(r["changed"])
+        self.assertIsNone(r["regionBucket"])
 
-    def test_unrecognized_region_with_global_disabled_only_strips(self):
-        r = compute_new_title("[EU] Some Homebrew Game", "Brazil", DEFAULT_CONFIG)
-        self.assertEqual(r["newTitle"], "Some Homebrew Game")
+    def test_global_tag_in_the_filename_uses_the_global_setting(self):
+        # 사용자 피드백: 글로벌은 파일명에 global이라고 따로 붙어 나온다.
+        config = normalize_config({"global": {"enabled": True, "mode": "prefix", "text": "WORLD"}})
+        r = compute_new_title("Some Game", "global_Some Game.iso", config)
+        self.assertEqual(r["newTitle"], "WORLD_Some Game")
         self.assertEqual(r["regionBucket"], "global")
 
     def test_full_pipeline_strip_then_reapply_with_disk_marker_preserved(self):
         config = normalize_config({"kr": {"enabled": True, "mode": "prefix", "text": "KR"}})
-        r = compute_new_title("[EU] Final Fantasy VII (Disc 2 of 3)", "Korea", config)
+        r = compute_new_title("[EU] Final Fantasy VII (Disc 2 of 3)", "FF7 (K) (Disc 2 of 3).iso", config)
         self.assertEqual(r["newTitle"], "KR_Final Fantasy VII (Disc 2 of 3)")
         self.assertEqual(r["diskMarker"], "(Disc 2 of 3)")
 
     def test_already_correctly_decorated_title_is_reported_unchanged(self):
         config = normalize_config({"kr": {"enabled": True, "mode": "prefix", "text": "KR"}})
-        r = compute_new_title("KR_Final Fantasy X", "Korea", config)
+        r = compute_new_title("KR_Final Fantasy X", "FFX [Kor].iso", config)
         self.assertEqual(r["newTitle"], "KR_Final Fantasy X")
         self.assertFalse(r["changed"])
 
     def test_postfix_mode(self):
         config = normalize_config({"jp": {"enabled": True, "mode": "postfix", "text": "JP"}})
-        r = compute_new_title("Dragon Quest", "Japan", config)
+        r = compute_new_title("Dragon Quest", "DQ (J).sfc", config)
         self.assertEqual(r["newTitle"], "Dragon Quest_JP")
 
 

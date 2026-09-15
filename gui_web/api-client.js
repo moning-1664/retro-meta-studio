@@ -105,7 +105,15 @@
   // ---------------------------------------------------------------- Title Prefix/Postfix
   // 실제 계산은 title-affix.js(index.html에서 이 파일보다 먼저 불러온다) 하나에만 있다 -
   // 목업과 app.js(메뉴 활성/비활성 판단)가 같은 것을 쓴다.
-  const titleAffixCompute = (oldTitle, region, config) => window.RMSTitleAffix.compute(oldTitle, region, config);
+  //
+  //: 구역은 **파일명의 지역 태그**로 정한다. 목업 기본 파일명에는 태그가 없으므로(다른
+  //: 테스트가 그 이름을 그대로 참조한다), 태그가 필요한 테스트는 페이지를 열기 전에
+  //: window.__RMS_MOCK_FILES = { 1: "FFX (K).iso" }처럼 romUid별로 채운다
+  //: (__RMS_MOCK_CONFLICTS와 같은 방식).
+  const mockFiles = (typeof window !== "undefined" && window.__RMS_MOCK_FILES) || {};
+  const mockFileOf = (row) => mockFiles[row.romUid] || row.file;
+  const titleAffixCompute = (oldTitle, filename, config) =>
+    window.RMSTitleAffix.compute(oldTitle, filename, config);
   function titleAffixRows(romUids, system) {
     if (romUids && romUids.length) return romUids.map((uid) => mockRows.find((r) => r.romUid === uid)).filter(Boolean);
     if (system) return mockRows.filter((r) => r.system === system);
@@ -207,7 +215,7 @@
       if (!rows.length) return Promise.resolve({ ok: false, error: "대상을 찾을 수 없습니다." });
       const config = mockAppSettings.titleAffix || {};
       const items = rows.map((r) => ({ romUid: r.romUid, system: r.system, filename: r.file,
-        ...titleAffixCompute(r.title, r.region, config) }));
+        ...titleAffixCompute(r.title, mockFileOf(r), config) }));
       return ok({ items, changed: items.filter((i) => i.changed).length });
     },
     plan_title_edit: (id, romUids, system) => {
@@ -216,7 +224,7 @@
       const config = mockAppSettings.titleAffix || {};
       let added = 0;
       rows.forEach((r) => {
-        const result = titleAffixCompute(r.title, r.region, config);
+        const result = titleAffixCompute(r.title, mockFileOf(r), config);
         const key = `${r.system}|${r.file}`;
         if (result.changed) { mockTitlePlanned[key] = result.newTitle; added += 1; }
         else delete mockTitlePlanned[key];

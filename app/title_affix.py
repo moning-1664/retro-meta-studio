@@ -11,11 +11,11 @@ Title Prefix/Postfix - 지역별로 제목 앞뒤에 표시를 자동으로 붙�
 2. **디스크 표시는 따로 인식해서 보존한다.** `(Disk 1 of 3)`, `(Disc 2)`처럼 여러 장으로
    나뉜 게임의 디스크 번호는 지역 장식이 아니다 - 1번에서 함께 지워지지 않도록 먼저
    빼내 기억해 두고, 새 제목을 만들 때 정해진 자리(제목 바로 뒤)에 다시 넣는다.
-3. **region 필드로 지역을 분류하고, 설정에 따라 새 장식을 붙인다.** gamelist의
-   `region` 값(자유 텍스트라 "USA", "jp", "Europe" 등 표기가 제각각이다)을 5개 구역
-   중 하나로 묶어서 본다. 한국/영어권/일본/유럽 중 어디에도 안 걸리면(빈 값이거나
-   못 알아보는 표기 포함) **글로벌로 본다** - region을 안 채운 Collection이 흔한데,
-   그런 경우까지 전부 "모른다"고 건너뛰면 글로벌 설정이 있으나 마나 하다.
+3. **파일명에 붙은 지역 태그로 분류하고, 설정에 따라 새 장식을 붙인다.** `(KR)`,
+   `[Kor]`, `_k`, `(USA)`, `global`처럼 ROM 파일명에 접두/접미로 붙은 표시를 읽는다
+   (사용자 결정). gamelist의 `region` 필드가 아니다 - 그 필드는 비어 있는 Collection이
+   흔해서 기준으로 쓸 수 없다. 태그가 없으면 **미분류**이고, 미분류는 아무것도 하지
+   않는다 - 장식을 떼지도, 붙이지도 않는다(자동 적용 대상에서 제외).
 
 실제 파일에 쓰는 것은 이 모듈의 일이 아니다. 여기서는 문자열만 계산하고, 저장은
 `app/plan/builder.py`(Plan에 올리기)와 `app/plan/applier.py`(Apply 때 실제로 쓰기)가 한다 -
@@ -34,31 +34,41 @@ REGION_LABELS = {
     "kr": "한국(KR)", "en": "영어권(EN)", "jp": "일본(JP)", "eu": "유럽(EU)", "global": "글로벌",
 }
 
-#: gamelist의 `region` 값(자유 텍스트)에서 자주 보는 표기 -> 4개 구역(글로벌은 명시적
-#: 매칭이 아니라 기본값이라 여기 없다). 토큰 단위로 맞춘다(공백/쉼표/슬래시로 쪼갠 조각) -
-#: "us"처럼 짧은 표기가 다른 단어 안에서 우연히 걸리는 일을 피하기 위해서다. 앞에 있는
-#: 구역이 우선한다(예: "USA, Europe"는 en으로).
+#: 파일명의 지역 태그에서 자주 보는 표기 -> 5개 구역. No-Intro/GoodTools의 한 글자
+#: 표기((K), (U), (J), (E), (W))부터 풀네임까지 받는다. 앞에 있는 구역이 우선한다.
 _REGION_KEYWORDS: dict[str, set[str]] = {
-    "kr": {"kr", "kor", "korea", "한국"},
-    "jp": {"jp", "jpn", "japan", "일본"},
-    "eu": {"eu", "eur", "europe", "uk", "gb"},
-    "en": {"us", "usa", "na", "en", "eng", "english", "america"},
+    "kr": {"k", "kr", "kor", "korea", "korean"},
+    "en": {"u", "us", "usa", "na", "en", "eng", "english", "america"},
+    "jp": {"j", "jp", "jpn", "jap", "japan"},
+    "eu": {"e", "eu", "eur", "europe", "pal", "uk", "gb"},
+    "global": {"w", "world", "global", "int", "intl", "international"},
 }
-_TOKEN_RE = re.compile(r"[A-Za-z가-힣]+")
+
+#: 괄호/대괄호로 감싼 태그 - `(KR)`, `[Kor]`, `(USA)`. 안이 전부 글자일 때만 인정하므로
+#: `(Disc 1)`, `(2/2)`, `(Rev A)`, `(En,Fr,De)` 같은 것은 지역 태그로 오인하지 않는다.
+_TAG_BRACKET_RE = re.compile(r"[\(\[]\s*([A-Za-z]{1,12})\s*[\)\]]")
+#: 구분자로 붙인 태그 - `Game_k`, `Game-kr`, `global_Game`. **공백은 구분자로 치지
+#: 않는다** - 공백까지 받으면 제목 속 평범한 단어("Global Defense"의 Global)가 걸린다.
+_TAG_DELIMITED_RE = re.compile(r"(?:^|[_\-])([A-Za-z]{1,12})(?=[_\-]|$)")
 
 
-def classify_region(region: str | None) -> str:
-    """region 필드 값을 5개 구역 중 하나로 묶는다.
+def classify_region(filename: str | None) -> str | None:
+    """**파일명**에 붙은 지역 태그로 5개 구역 중 하나를 고른다(사용자 결정).
 
-    한국/영어권/일본/유럽 중 어디에도 안 걸리면 **글로벌**로 본다 - "World" 같은 글로벌
-    표기는 물론이고, region을 안 채운 빈 값이나 못 알아보는 표기도 전부 여기 포함된다.
-    region을 안 채운 Collection에서도 글로벌 설정만은 쓸 수 있어야 한다(사용자 결정).
+    `Final Fantasy X (KR).iso`, `Zelda [Kor].zip`, `Game_k.gba`, `global_Game.bin`처럼
+    접두/접미로 붙은 표시를 읽는다. gamelist의 `region` 필드는 보지 않는다 - 비어 있는
+    Collection이 흔해서 기준이 되지 못한다.
+
+    태그가 없으면 **None(미분류)** 이다 - 미분류는 자동 적용 대상에서 통째로 빠진다.
     """
-    tokens = [t.lower() for t in _TOKEN_RE.findall(str(region or ""))]
-    for bucket in ("kr", "en", "jp", "eu"):
-        if any(t in _REGION_KEYWORDS[bucket] for t in tokens):
+    stem = str(filename or "")
+    stem = stem[:stem.rfind(".")] if "." in stem else stem
+    tokens = {t.lower() for t in _TAG_BRACKET_RE.findall(stem)}
+    tokens.update(t.lower() for t in _TAG_DELIMITED_RE.findall(stem))
+    for bucket in REGIONS:
+        if tokens & _REGION_KEYWORDS[bucket]:
             return bucket
-    return "global"
+    return None
 
 
 # ----------------------------------------------------------------------
@@ -191,14 +201,19 @@ def normalize_config(config: dict | None) -> dict:
     return out
 
 
-def compute_new_title(current_title: str, region: str | None, config: dict | None) -> dict:
-    """이 게임에 실제로 적용될 새 제목을 계산한다.
+def compute_new_title(current_title: str, filename: str | None, config: dict | None) -> dict:
+    """이 게임에 실제로 적용될 새 제목을 계산한다. 구역은 **파일명**으로 정한다.
 
     반환: {"oldTitle", "newTitle", "changed", "regionBucket", "diskMarker"}
     """
     current_title = current_title or ""
+    bucket = classify_region(filename)
+    if bucket is None:
+        # 미분류 - 장식을 떼지도, 붙이지도 않는다(사용자 결정: 자동 적용 대상에서 제외).
+        return {"oldTitle": current_title, "newTitle": current_title, "changed": False,
+                "regionBucket": None, "diskMarker": None}
+
     base, disk_marker = strip_existing_title_affix(current_title)
-    bucket = classify_region(region)
     core = f"{base} {disk_marker}" if disk_marker else base
 
     cfg = normalize_config(config)[bucket]
@@ -215,13 +230,13 @@ def compute_new_title(current_title: str, region: str | None, config: dict | Non
 def preview_titles(rows: list[dict], config: dict | None) -> list[dict]:
     """여러 게임에 대해 한 번에 계산한다(미리보기 화면과 Plan에 올리기가 함께 쓴다).
 
-    `rows`는 각 게임의 `{"rom_uid", "system", "filename", "title", "region"}` - Cache의
+    `rows`는 각 게임의 `{"rom_uid", "system", "filename", "title"}` - Cache의
     `get_row()`/`query_rows()`가 그대로 주는 모양(snake_case)과 맞춘다 - 호출부(bridge)가
     다시 이름을 바꿔 넘길 필요가 없게 하기 위해서다.
     """
     config = normalize_config(config)
     out = []
     for row in rows:
-        result = compute_new_title(row.get("title") or "", row.get("region"), config)
+        result = compute_new_title(row.get("title") or "", row.get("filename"), config)
         out.append({"romUid": row["rom_uid"], "system": row["system"], "filename": row["filename"], **result})
     return out

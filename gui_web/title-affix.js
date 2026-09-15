@@ -12,10 +12,13 @@
 (function () {
   "use strict";
 
-  const REGIONS = ["kr", "en", "jp", "eu"];   // global은 명시 매칭이 아니라 기본값이라 뺀다
+  const REGIONS = ["kr", "en", "jp", "eu", "global"];
   const KEYWORDS = {
-    kr: ["kr", "kor", "korea"], jp: ["jp", "jpn", "japan"], eu: ["eu", "eur", "europe", "uk", "gb"],
-    en: ["us", "usa", "na", "en", "eng", "english", "america"],
+    kr: ["k", "kr", "kor", "korea", "korean"],
+    en: ["u", "us", "usa", "na", "en", "eng", "english", "america"],
+    jp: ["j", "jp", "jpn", "jap", "japan"],
+    eu: ["e", "eu", "eur", "europe", "pal", "uk", "gb"],
+    global: ["w", "world", "global", "int", "intl", "international"],
   };
   const DEFAULTS = {
     kr: { enabled: false, mode: "prefix", text: "KR" }, en: { enabled: false, mode: "prefix", text: "EN" },
@@ -23,15 +26,23 @@
     global: { enabled: false, mode: "prefix", text: "WORLD" },
   };
 
-  /** region 필드 값을 5개 구역 중 하나로. 한/영/일/유럽 중 어디에도 안 걸리면(빈 값,
-   * "World" 같은 글로벌 표기, 못 알아보는 표기 전부) 글로벌로 본다 - region을 안 채운
-   * Collection에서도 글로벌 설정은 써야 한다(사용자 결정). */
-  function classifyRegion(region) {
-    const tokens = String(region || "").toLowerCase().match(/[a-z가-힣]+/g) || [];
+  //: 괄호/대괄호 태그 - `(KR)`, `[Kor]`. 안이 전부 글자일 때만 인정한다((Disc 1), (Rev A) 제외).
+  const TAG_BRACKET_RE = /[([]\s*([A-Za-z]{1,12})\s*[)\]]/g;
+  //: 구분자로 붙인 태그 - `Game_k`, `global_Game`. 공백은 구분자로 치지 않는다.
+  const TAG_DELIMITED_RE = /(?:^|[_-])([A-Za-z]{1,12})(?=[_-]|$)/g;
+
+  /** **파일명**의 지역 태그로 5개 구역 중 하나를 고른다(사용자 결정). 태그가 없으면
+   * null(미분류)이고, 미분류는 자동 적용 대상에서 빠진다. */
+  function classifyRegion(filename) {
+    let stem = String(filename || "");
+    if (stem.includes(".")) stem = stem.slice(0, stem.lastIndexOf("."));
+    const tokens = new Set();
+    for (const m of stem.matchAll(TAG_BRACKET_RE)) tokens.add(m[1].toLowerCase());
+    for (const m of stem.matchAll(TAG_DELIMITED_RE)) tokens.add(m[1].toLowerCase());
     for (const bucket of REGIONS) {
-      if (tokens.some((t) => KEYWORDS[bucket].includes(t))) return bucket;
+      if (KEYWORDS[bucket].some((k) => tokens.has(k))) return bucket;
     }
-    return "global";
+    return null;
   }
 
   //: 단어(Disk/Disc)가 있으면 총 장수 없이 번호 하나만 있어도("Disc A") 인정한다.
@@ -80,13 +91,17 @@
   }
 
   /** {oldTitle,newTitle,changed,regionBucket,diskMarker} - app/title_affix.py의
-   * compute_new_title()과 같은 계산이다. */
-  function compute(oldTitle, region, config) {
+   * compute_new_title()과 같은 계산이다. 구역은 **파일명**으로 정한다. */
+  function compute(oldTitle, filename, config) {
     oldTitle = oldTitle || "";
+    const bucket = classifyRegion(filename);
+    // 미분류는 장식을 떼지도, 붙이지도 않는다(사용자 결정: 자동 적용 대상에서 제외).
+    if (!bucket) {
+      return { oldTitle, newTitle: oldTitle, changed: false, regionBucket: null, diskMarker: null };
+    }
     const [withoutDisk, diskMarker] = extractDisk(oldTitle);
     const base = stripEdges(withoutDisk);
     const core = diskMarker ? `${base} ${diskMarker}` : base;
-    const bucket = classifyRegion(region);
     const cfg = { ...DEFAULTS[bucket], ...(config && config[bucket]) };
     const newTitle = (cfg.enabled && cfg.text.trim())
       ? joinAffix(cfg.text, core, cfg.mode !== "postfix")

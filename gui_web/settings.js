@@ -240,8 +240,10 @@
         add(row("media.overwrite", "Media overwrite", soonSelect([["ask", "Always ask"], ["replace", "Replace"], ["keep", "Keep existing"]]), null, true));
         add(h("div", { class: "stg-subsection-title" }, ["Title Prefix/Postfix"]));
         add(h("div", { class: "stg-help" }, [
-          "실행하면 먼저 제목 양 끝의 기존 장식을 떼고(디스크 표시는 보존), 이 게임의 지역에 맞는 "
-          + "구역이 켜져 있으면 아래 텍스트를 다시 붙입니다. Gamelist나 System 우클릭 메뉴에서 실행합니다.",
+          "구역은 ROM 파일명의 지역 태그로 정합니다 - (KR), [Kor], _k, (USA), global 같은 표시입니다. "
+          + "해당 구역이 켜져 있으면 제목 양 끝의 기존 장식을 떼고(디스크 표시는 보존) 아래 텍스트를 "
+          + "다시 붙입니다. 태그가 없는 파일은 미분류라 건드리지 않습니다. "
+          + "실행은 Gamelist나 System 우클릭 메뉴에서 합니다.",
         ]));
         add(titleAffixEditor(s));
       } else if (key === "transfer") {
