@@ -32,6 +32,14 @@
       storageId: "internal", hasMetadata: false, hasMedia: false, present: true,
       desc: "", region: "", rating: "", genre: "", favorite: false },
   ];
+  // 우선 정렬(rom/metadata/media) - 있음(0)이 없음(1)보다 먼저 오게 안정 정렬한다.
+  // 실제 SQL 정렬 규칙(2차 기준까지)은 Python 쪽 테스트가 본다 - 여기서는 화면이
+  // 값을 제대로 실어 보내는지만 확인할 수 있으면 된다.
+  const applyMockPriority = (rows, priority) => {
+    const key = { rom: "present", metadata: "hasMetadata", media: "hasMedia" }[priority];
+    if (!key) return rows;
+    return [...rows].sort((a, b) => (a[key] ? 0 : 1) - (b[key] ? 0 : 1));
+  };
   //: RetroArch 설정(목업). 실제 값은 registry의 Settings > emulator에 있다.
   const mockRetroarch = { retroarchPath: "", coresDir: "", systemCores: {}, gameCores: {} };
   const MOCK_CORES = ["fbneo_libretro.dll", "mgba_libretro.dll", "pcsx2_libretro.dll", "snes9x_libretro.dll"];
@@ -103,7 +111,11 @@
   const mockFavorites = {};
   const mockUiState = {};
   // Settings 화면 값(앱 전역). 실제로는 registry의 app_settings에 들어간다.
-  const mockAppSettings = {};
+  // window.__RMS_MOCK_APP_SETTINGS = { navigation: { defaultSortPriority: "media" } }로
+  // 페이지를 열기 전에 채우면(__RMS_MOCK_CONFLICTS와 같은 방식) 앱이 그 값으로 시작한다 -
+  // "Settings의 기본값이 실제로 적용되는가"를 테스트할 때 쓴다.
+  const mockAppSettings = (typeof window !== "undefined" && window.__RMS_MOCK_APP_SETTINGS)
+    ? JSON.parse(JSON.stringify(window.__RMS_MOCK_APP_SETTINGS)) : {};
   // Plan에 올라간 Title Prefix/Postfix 변경(목업 전용) - 실제로는 Python Plan이 들고 있다.
   const mockTitlePlanned = {};
 
@@ -149,14 +161,19 @@
     collection_detail: () => ok(mockDetailView()),
     open_collection: () => ok(mockDetailView()),
     close_collection: () => ok(true),
-    list_rows: (id, systems) => {
-      const rows = systems && systems.length ? mockRows.filter((r) => systems.includes(r.system)) : mockRows;
+    list_rows: (id, systems, storageIds, search, order, descending, limit, offset, favoritesOnly, priority) => {
+      let rows = systems && systems.length ? mockRows.filter((r) => systems.includes(r.system)) : mockRows;
+      rows = applyMockPriority(rows, priority);
       return ok({ rows, total: rows.length, offset: 0 });
     },
-    list_uids: (id, systems) => ok((systems && systems.length
-      ? mockRows.filter((r) => systems.includes(r.system)) : mockRows).map((r) => r.romUid)),
-    find_row_index: (id, prefix, after, systems) => {
-      const rows = systems && systems.length ? mockRows.filter((r) => systems.includes(r.system)) : mockRows;
+    list_uids: (id, systems, storageIds, search, order, descending, favoritesOnly, priority) => {
+      let rows = systems && systems.length ? mockRows.filter((r) => systems.includes(r.system)) : mockRows;
+      rows = applyMockPriority(rows, priority);
+      return ok(rows.map((r) => r.romUid));
+    },
+    find_row_index: (id, prefix, after, systems, storageIds, search, order, descending, favoritesOnly, priority) => {
+      let rows = systems && systems.length ? mockRows.filter((r) => systems.includes(r.system)) : mockRows;
+      rows = applyMockPriority(rows, priority);
       const needle = String(prefix || "").toLowerCase();
       for (let k = 1; k <= rows.length; k += 1) {
         const i = (Math.max(-1, after) + k) % rows.length;
@@ -693,13 +710,14 @@
 
     listRows: (id, q) => call("list_rows", id, q.systems || null, q.storageIds || null,
                               q.search || null, q.order || "title", !!q.descending,
-                              q.limit || 200, q.offset || 0, !!q.favoritesOnly),
+                              q.limit || 200, q.offset || 0, !!q.favoritesOnly, q.priority || null),
     // 목록 전체 기준 동작(Ctrl+A, 영문키 점프). 인자 순서는 listRows와 같다.
     listUids: (id, q) => call("list_uids", id, q.systems || null, q.storageIds || null,
-                              q.search || null, q.order || "title", !!q.descending, !!q.favoritesOnly),
+                              q.search || null, q.order || "title", !!q.descending, !!q.favoritesOnly,
+                              q.priority || null),
     findRowIndex: (id, q, prefix, after) => call("find_row_index", id, prefix, after,
                               q.systems || null, q.storageIds || null, q.search || null,
-                              q.order || "title", !!q.descending, !!q.favoritesOnly),
+                              q.order || "title", !!q.descending, !!q.favoritesOnly, q.priority || null),
     setFavorite: (id, romUid, on) => call("set_favorite", id, romUid, !!on),
     dashboardStats: (id) => call("dashboard_stats", id),
     validateCollection: (id) => call("validate_collection", id),

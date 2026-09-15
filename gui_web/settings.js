@@ -219,6 +219,16 @@
           toggle(s.navigation && s.navigation.hideEmptySystems,
             (v) => ctx.update("navigation", { hideEmptySystems: v })),
           "좌측 SYSTEMS 목록에서 게임이 없는 System을 숨깁니다. SYSTEMS 제목 옆 눈 아이콘으로도 바꿀 수 있습니다."));
+        // 우선 정렬(실사용 피드백) - 예전 상태 필터는 실제로 아무것도 걸러내지
+        // 못했다. 그 자리를 "ROM/Metadata/Media가 있는 항목을 먼저 보여주는"
+        // 1차 정렬로 바꾸면서, Collection을 새로 열 때 기본으로 쓸 값도 여기서
+        // 정할 수 있게 했다 - Toolbar에서 그때그때 바꾼 값은 이 기본값과 별개다.
+        add(row("navigation.defaultSortPriority", "Default sort priority",
+          select(s.navigation && s.navigation.defaultSortPriority || "none", [
+            ["none", "구분 없음"], ["rom", "ROM 우선"],
+            ["metadata", "메타데이터 우선"], ["media", "미디어 우선"],
+          ], (v) => ctx.update("navigation", { defaultSortPriority: v })),
+          "Collection을 새로 열 때 목록의 기본 우선 정렬입니다. Toolbar에서 그때그때 바꿀 수 있습니다."));
         add(h("div", { class: "stg-info" }, ["ROM / Metadata / Media 경로는 Collection 탭의 우클릭 메뉴에서 관리합니다."]));
       } else if (key === "metadata") {
         add(...section("Metadata & Media", "목록 표시와 Metadata/Media의 기본 처리 정책입니다."));

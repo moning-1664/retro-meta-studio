@@ -822,28 +822,30 @@ class Api:
     @guarded
     def list_rows(self, collection_id, systems=None, storage_ids=None, search=None,
                   order="title", descending=False, limit=200, offset=0,
-                  favorites_only=False):
+                  favorites_only=False, priority=None):
         """가상 스크롤이 요청한 구간만 돌려준다. 정렬/필터/검색은 전부 SQL이 처리한다."""
         cache = self.workspace.open(collection_id)
         query = {"systems": systems or None, "storage_ids": storage_ids or None,
                  "search": search or None, "favorites_only": bool(favorites_only)}
         rows = cache.query_rows(**query, order=order, descending=bool(descending),
-                                limit=int(limit), offset=int(offset))
+                                limit=int(limit), offset=int(offset), priority=priority or None)
         return ok({"rows": [self._row_summary(r) for r in rows],
                    "total": cache.count_rows(**query), "offset": int(offset)})
 
     @guarded
     def list_uids(self, collection_id, systems=None, storage_ids=None, search=None,
-                  order="title", descending=False, favorites_only=False):
+                  order="title", descending=False, favorites_only=False, priority=None):
         """지금 목록 전체의 rom_uid(필터·정렬 그대로). Ctrl+A가 쓴다."""
         cache = self.workspace.open(collection_id)
         return ok(cache.query_uids(systems=systems or None, storage_ids=storage_ids or None,
                                    search=search or None, order=order,
-                                   descending=bool(descending), favorites_only=bool(favorites_only)))
+                                   descending=bool(descending), favorites_only=bool(favorites_only),
+                                   priority=priority or None))
 
     @guarded
     def find_row_index(self, collection_id, prefix, after=-1, systems=None, storage_ids=None,
-                       search=None, order="title", descending=False, favorites_only=False):
+                       search=None, order="title", descending=False, favorites_only=False,
+                       priority=None):
         """영문키 점프: `after` 다음 줄부터 파일명이 `prefix`로 시작하는 줄의 위치(없으면 -1).
 
         가상 스크롤이라 화면에 그려진 행만 뒤지면 목록 뒤쪽으로 갈 수 없다 - 그래서
@@ -852,7 +854,7 @@ class Api:
         return ok(cache.index_of_prefix(prefix, int(after), systems=systems or None,
                                         storage_ids=storage_ids or None, search=search or None,
                                         order=order, descending=bool(descending),
-                                        favorites_only=bool(favorites_only)))
+                                        favorites_only=bool(favorites_only), priority=priority or None))
 
     @staticmethod
     def _row_summary(row):

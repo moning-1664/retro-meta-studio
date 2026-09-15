@@ -432,7 +432,8 @@ body { font-size: var(--fs-body); }
   padding: 4px 12px; border-bottom: 1px solid var(--border); background: var(--chrome);
 }
 .search-box {
-  display: flex; align-items: center; gap: 6px; flex: 0 1 200px;  /* 검색만 넓게 차지하지 않게 */
+  /* 200px -> 240px(실사용 피드백 - "search는 지금보다 20% 더 길게"). */
+  display: flex; align-items: center; gap: 6px; flex: 0 1 240px;
   padding: 3px 8px; background: var(--card);
   border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--muted);
 }

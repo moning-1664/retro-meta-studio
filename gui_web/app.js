@@ -307,7 +307,7 @@
   // ------------------------------------------------------------------
   const DEFAULT_SETTINGS = {
     appearance: { theme: "stitch", density: "compact", scale: 100, previewDefault: true },
-    navigation: { hideEmptySystems: false },
+    navigation: { hideEmptySystems: false, defaultSortPriority: "none" },
     gamelist: { order: [], hidden: [] },
     collections: { order: [] },
     transfer: { includeRom: true, includeMedia: true, conflict: "ask",
@@ -370,7 +370,11 @@
     descending: false,
     favoritesOnly: false,
     viewMode: "list",          // "list" | "card"
-    statusFilter: "all",       // all | metadata | media | missing
+    // 우선 정렬 - null(구분 없음) | rom | metadata | media. 예전 상태 필터
+    // (all/metadata/media/missing)는 currentQuery()가 값을 읽지 않아 실제로는
+    // 아무것도 걸러내지 못했다(실사용 피드백) - 지금은 목록을 걸러내지 않고
+    // "있는 항목을 먼저 보여주는" 1차 정렬로 동작한다.
+    sortPriority: null,
     // 컬럼 폭은 사용자가 맞춰 놓는 것이라 Collection별로 기억한다(`ui_state`).
     colWidths: { ...DEFAULT_COL_WIDTHS },
     // Navigator에서 접어 둔 Storage 그룹 - `${collectionId}:${storageId}`. 세션
@@ -431,7 +435,7 @@
     const scope = activeScope();
     const query = {
       search: S.search, order: S.order, descending: S.descending,
-      favoritesOnly: !!S.favoritesOnly,
+      favoritesOnly: !!S.favoritesOnly, priority: S.sortPriority || null,
     };
     if (scope.kind === "system") query.systems = [scope.id];
     else if (scope.kind === "storage") query.storageIds = [scope.id];
@@ -455,6 +459,10 @@
     if (!r.ok || !r.data) return;
     if (r.data.colWidths) S.colWidths = { ...DEFAULT_COL_WIDTHS, ...r.data.colWidths };
     if (r.data.sort) { S.order = r.data.sort.key || S.order; S.descending = !!r.data.sort.desc; }
+    // 우선 정렬은 Collection별로 기억해 두지 않는다 - Toolbar에서 그때그때
+    // 바꾸는 값이고, 새로 열 때는 항상 Settings의 기본값에서 다시 시작한다.
+    const defaultPriority = S.settings.navigation.defaultSortPriority || "none";
+    S.sortPriority = defaultPriority === "none" ? null : defaultPriority;
     // 한 번도 끄고 켠 적 없는 Collection은 Settings의 "Preview by default"를 따른다.
     S.previewOn = typeof r.data.previewOn === "boolean"
       ? r.data.previewOn : S.settings.appearance.previewDefault !== false;
@@ -2812,22 +2820,7 @@
     // 있고 지금 System은 Header에 크게 나오므로, 같은 것을 고르는 두 번째
     // 컨트롤을 둘 이유가 없었다.
 
-    const statusSel = h("select", { class: "mini-select", title: "상태 필터" }, [
-      h("option", { value: "all" }, ["모든 상태"]),
-      h("option", { value: "metadata" }, ["메타데이터 없음"]),
-      h("option", { value: "media" }, ["미디어 없음"]),
-      h("option", { value: "missing" }, ["ROM 없음"]),
-    ]);
-    statusSel.value = S.statusFilter;
-    statusSel.addEventListener("change", async (e) => {
-      S.statusFilter = e.target.value;
-      resetList();
-      await reloadList();
-    });
-    bar.appendChild(statusSel);
-
-    // 정렬 셀렉트는 두지 않는다 - 목록 머리글(#list-head)이 Card 보기에서도
-    // 그대로 보이고 클릭도 되므로(실사용 확인) 따로 둘 이유가 없다.
+    // **순서: LIST/CARD, Favorite, 우선정렬, Search**(실사용 피드백).
     const fav = h("button", {
       class: "icon-btn" + (S.favoritesOnly ? " on" : ""),
       title: S.favoritesOnly ? "전체 보기" : "즐겨찾기만 보기",
@@ -2839,6 +2832,31 @@
       await reloadList();
     });
     bar.appendChild(fav);
+
+    // **예전 "상태 필터"는 실제로 아무것도 걸러내지 못했다** - currentQuery()가
+    // 그 값을 끝내 읽지 않아서, 셀렉트를 바꿔도 목록은 그대로였다(실사용 피드백).
+    // 그 자리를 필터가 아니라 **1차 정렬 기준**으로 바꿨다 - "있는 항목"이
+    // "없는 항목"보다 먼저 오고, 그 안에서는 기존 정렬(제목/파일명 등)이 그대로
+    // 2차 기준이다. "구분 없음"은 예전과 똑같이 동작한다(1차 기준이 없을 뿐).
+    // Archive는 present/hasMetadata가 항상 참이라(§37) 이 정렬이 뜻이 없어 뺀다.
+    if (!isArchive()) {
+      const prioritySel = h("select", { class: "mini-select", title: "우선 정렬" }, [
+        h("option", { value: "" }, ["구분 없음"]),
+        h("option", { value: "rom" }, ["ROM 우선"]),
+        h("option", { value: "metadata" }, ["메타데이터 우선"]),
+        h("option", { value: "media" }, ["미디어 우선"]),
+      ]);
+      prioritySel.value = S.sortPriority || "";
+      prioritySel.addEventListener("change", async (e) => {
+        S.sortPriority = e.target.value || null;
+        resetList();
+        await reloadList();
+      });
+      bar.appendChild(prioritySel);
+    }
+
+    // 정렬 셀렉트는 따로 두지 않는다 - 목록 머리글(#list-head)이 Card 보기에서도
+    // 그대로 보이고 클릭도 되므로(실사용 확인) 따로 둘 이유가 없다.
 
     const search = h("input", { class: "search-input", placeholder: "Search...", value: S.search });
     let timer = null;
