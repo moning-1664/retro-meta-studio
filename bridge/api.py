@@ -484,6 +484,21 @@ class Api:
         collection = self.registry.get_collection(collection_id)
         if collection is None:
             return err("Collection을 찾을 수 없습니다.")
+
+        # **검사 전에 Cache를 맞춘다.** 이 리포트는 두 곳에서 나온다 - 깨진 XML이나
+        # 없는 ROM 같은 것은 파일을 그 자리에서 읽어 알아내지만, Complete/Missing
+        # Description 같은 집계는 Cache(=지난 스캔의 기억)에서 온다. 맞춰 두지 않으면
+        # 한 리포트 안에서 절반은 지금 상태, 절반은 지난번 상태가 되어 사용자가
+        # 어느 쪽을 믿어야 할지 알 수 없다(실제로 앱 밖에서 설명을 채운 뒤 검사하면
+        # "Missing Description 2"가 그대로 남았다).
+        #
+        # 스캔은 지문으로 걸러지므로 바뀐 게 없으면 거의 공짜다 - 바뀐 게 있다면
+        # 그 재스캔이야말로 정확한 숫자를 내는 데 꼭 필요한 일이다.
+        try:
+            self.workspace.scan(collection_id)
+        except Exception:  # noqa: BLE001 - 스캔이 실패해도 파일 검사는 해 준다
+            pass
+
         cache = self.workspace.open(collection_id)
         provider = self.workspace.provider_for(collection)
         return ok(dashboard.validate_collection(collection, get_adapter(collection.frontend), cache, provider))
@@ -531,6 +546,18 @@ class Api:
 
     @guarded
     def add_external_storage(self, collection_id, label, root_path):
+        # **한 Collection은 한 종류의 저장소만 쓴다.** Provider는 Collection의
+        # root_path 하나로 정해지므로(workspace.provider_for), 다른 종류의 경로를
+        # Storage로 붙이면 그 경로를 엉뚱한 Provider가 읽는다. 로컬 Provider에게
+        # `mtp://...`를 읽히면 **오류도 없이 빈 목록**이 와서, 사용자에게는 System이
+        # 그냥 비어 보인다 - 왜 비었는지 알 길이 없는 것이 가장 나쁘다.
+        from storage import mtp
+
+        collection = self.registry.get_collection(collection_id)
+        if collection is not None and \
+                mtp.is_mtp_path(root_path) != mtp.is_mtp_path(collection.root_path):
+            return err("기기(MTP) 저장소와 일반 저장소는 한 Collection에 함께 둘 수 없습니다. "
+                       "기기는 별도 Collection으로 열어주세요.")
         storage_id = self._next_storage_id(collection_id)
         self.registry.add_storage(collection_id, storage_id, kind="external",
                                   label=label or "External", root_path=root_path)
