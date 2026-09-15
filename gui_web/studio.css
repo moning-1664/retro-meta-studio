@@ -1247,6 +1247,11 @@ button.sb-badge { cursor: pointer; }
 .dsb-card.dsb-wide { grid-column: 1 / -1; }
 .dsb-card-title { font-size: var(--fs-eyebrow); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
 .dsb-empty, .dsb-muted { color: var(--muted); font-size: var(--fs-caption); }
+/* Storage usage - Internal/External을 한 막대에 섞지 않는다(실사용 피드백 §3).
+   Storage target 카드의 머리와 같은 모양(이름 + Internal/External 표)을 써서
+   두 카드가 같은 단위로 읽힌다는 것을 보여준다. */
+.dsb-usage-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.dsb-usage-sep { margin: 14px 0 12px; border-top: 1px solid var(--border); }
 /* 전체 대비 비율 막대 - 조각 사이는 선이 아니라 배경색 2px 틈으로 가른다. */
 .dsb-stack { display: flex; gap: 2px; height: 18px; }
 .dsb-seg { min-width: 3px; flex-basis: 0; }
@@ -1277,13 +1282,19 @@ button.sb-badge { cursor: pointer; }
 .dsb-target-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .dsb-target-name { font-weight: 650; }
 .dsb-target-kind { font-size: var(--fs-eyebrow); color: var(--muted); }
-.dsb-target-controls { margin-left: auto; display: flex; align-items: center; gap: 3px; }
+/* 값을 만지는 자리는 슬라이더 옆 하나뿐이다(실사용 피드백 §3) - 굴리기(슬라이더)·
+   미세 조정(▲▼)·직접 입력(타이핑)이 전부 같은 칸에 모여 있어야, 어느 쪽을 써도
+   "지금 이 숫자를 바꾸고 있다"는 게 헷갈리지 않는다. */
+.dsb-target-controls { flex: none; display: flex; align-items: center; gap: 3px; }
 .dsb-target-input {
   width: 84px; height: 24px; padding: 2px 7px; text-align: right; font-family: inherit;
   font-size: var(--fs-caption); font-variant-numeric: tabular-nums; color: var(--text);
   background: var(--card2); border: 1px solid var(--border); border-radius: 5px; outline: none;
+  transition: color .12s, border-color .12s;
 }
 .dsb-target-input:focus { border-color: var(--accent); }
+/* 슬라이더가 프리셋에 딱 붙으면 입력칸도 같이 강조한다 - 둘이 하나의 값이라는 것을 보여준다. */
+.dsb-target-input.snapped { color: var(--accent); font-weight: 650; border-color: var(--accent); }
 .dsb-spins { display: flex; flex-direction: column; }
 .dsb-spin {
   width: 18px; height: 12px; padding: 0; font-size: 7px; line-height: 10px;
@@ -1306,11 +1317,6 @@ button.sb-badge { cursor: pointer; }
 .dsb-tick::before { content: ""; display: block; width: 1px; height: 4px; margin: 0 auto 1px; background: var(--border); }
 .dsb-tick.on { color: var(--accent); font-weight: 650; }
 .dsb-tick.on::before { width: 2px; height: 5px; background: var(--accent); }
-.dsb-slider-value {
-  flex: none; width: 52px; padding-top: 1px; text-align: right; font-variant-numeric: tabular-nums;
-  color: var(--muted); font-size: var(--fs-caption); transition: color .12s;
-}
-.dsb-slider-value.snapped { color: var(--accent); font-weight: 650; }
 .dsb-target-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 5px; font-size: var(--fs-caption); }
 .dsb-bar + .dsb-bar { margin-top: 9px; }
 .dsb-bar-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 4px; font-size: var(--fs-caption); }
