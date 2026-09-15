@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import queue
 import re
+import sys
 import threading
 
 from storage.mtp import MtpBackend, MtpDeviceInfo, MtpError, MtpObject
@@ -201,6 +202,18 @@ class WpdBackend(MtpBackend):
             return
         _require_comtypes()
         import comtypes.client
+
+        # **패키징된 exe에서는 디스크에 캐시하지 않는다.** comtypes.client.GetModule은
+        # 처음 부를 때 Windows 타입 라이브러리를 파이썬 래퍼 코드로 변환해 comtypes
+        # 설치 폴더 밑(comtypes/gen)에 .py로 캐시해 둔다 - 다음 실행에서 다시 만들지
+        # 않으려는 최적화다. 소스로 돌릴 때는 그 폴더가 진짜 site-packages라 문제
+        # 없지만, PyInstaller onefile exe는 매번 새 임시 폴더에 풀리므로 캐시가 어차피
+        # 안 남고, 일부 환경(백신이 임시 폴더 쓰기를 막는 경우)에서는 그 쓰기
+        # 시도 자체가 실패해 "Windows Portable Devices를 불러오지 못했습니다"로
+        # 보인다. gen_dir을 None으로 두면 디스크에 쓰지 않고 메모리에서만 코드를
+        # 생성한다 - 매번 새로 만드느라 조금 느리지만(수십 ms) 확실하다.
+        if getattr(sys, "frozen", False):
+            comtypes.client.gen_dir = None
 
         try:
             self._api = comtypes.client.GetModule("portabledeviceapi.dll")
