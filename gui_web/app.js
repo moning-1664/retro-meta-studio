@@ -982,7 +982,7 @@
       h("option", { value: "arm64" }, ["ARM64"]),
       h("option", { value: "arm32" }, ["ARM32"]),
     ]);
-    const frontendSel = h("select", { class: "field-input" },
+    const frontendSel = h("select", { class: "field-input", id: "add-frontend" },
       frontends.map((f) => h("option", { value: f.id }, [f.label])));
 
     const pathLabel = h("div", { class: "field-label" }, ["ROM 디렉토리"]);
@@ -997,10 +997,122 @@
       }
     } }, [icon("folderOpen", 12), h("span", {}, ["찾아보기"])]);
 
-    const metaRow = h("div", { class: "field-row" },
-                      [pathInput, browseInto(pathInput, "Metadata 폴더 선택", true)]);
-    const romRow = h("div", { class: "field-row" },
-                     [romInput, browseInto(romInput, "ROM 폴더 선택", true)]);
+    const metaBrowse = browseInto(pathInput, "Metadata 폴더 선택", true);
+    const romBrowse = browseInto(romInput, "ROM 폴더 선택", true);
+    const metaRow = h("div", { class: "field-row" }, [pathInput, metaBrowse]);
+    const romRow = h("div", { class: "field-row" }, [romInput, romBrowse]);
+
+    // --- 안드로이드 기기(MTP) -----------------------------------------
+    // **저장 위치를 먼저 고른다**(사용자 결정). 기기는 폴더 선택 대화상자로 고를 수
+    // 없어서(MTP에는 드라이브 문자가 없다) 여기서 기기를 고르고 폴더를 한 단계씩
+    // 열어 본다. 기기 Collection은 Metadata 전용이라 ROM 폴더는 선택 사항이다 -
+    // 넣으면 ROM이 "있는 것"으로 보이고, 안 넣으면 gamelist만 다룬다.
+    const deviceSel = h("select", { class: "field-input", id: "add-device" });
+    const deviceNote = h("div", { class: "field-hint" }, [""]);
+    const deviceRow = h("div", { class: "field-block", hidden: true }, [
+      h("div", { class: "field-label" }, ["기기"]), deviceSel, deviceNote,
+    ]);
+    const browserList = h("div", { class: "picker-list", id: "mtp-browser" });
+    const browserBox = h("div", { class: "field-block", hidden: true }, [browserList]);
+    let browseTarget = null, browsePath = null;
+
+    function rowButton(name, sub, iconName, onClick) {
+      const row = h("button", { class: "picker-row", title: sub });
+      row.appendChild(icon(iconName, 14));
+      row.appendChild(h("div", { class: "picker-main" }, [h("div", { class: "picker-name" }, [name])]));
+      row.addEventListener("click", onClick);
+      return row;
+    }
+
+    async function renderBrowser() {
+      browserList.replaceChildren();
+      const r = await api.mtpBrowse(browsePath);
+      if (!r.ok) { browserList.appendChild(h("div", { class: "empty-msg" }, [r.error])); return; }
+      const data = r.data;
+      browserList.appendChild(h("div", { class: "picker-sub" }, [browsePath]));
+      if (data.parent) {
+        browserList.appendChild(rowButton("위로", data.parent, "cornerUpLeft", () => {
+          browsePath = data.parent; renderBrowser();
+        }));
+      }
+      (data.entries || []).forEach((entry) => browserList.appendChild(
+        rowButton(entry.name, entry.path, "folderOpen", () => { browsePath = entry.path; renderBrowser(); })));
+      browserList.appendChild(h("button", { class: "btn primary", id: "mtp-pick-here",
+        onClick: () => {
+          browseTarget.value = browsePath;
+          if (browseTarget === pathInput && !nameInput.value.trim()) {
+            const device = (S.mtpDevices || []).find((d) => d.key === deviceSel.value);
+            nameInput.value = device ? device.name : "";
+          }
+          browserBox.hidden = true;
+        } }, ["이 폴더 선택"]));
+    }
+
+    const deviceBrowse = (input) => h("button", { class: "btn", onClick: () => {
+      if (!deviceSel.value) { showToast("먼저 기기를 고르세요.", "warning"); return; }
+      browseTarget = input;
+      browsePath = "mtp://" + deviceSel.value;
+      browserBox.hidden = false;
+      renderBrowser();
+    } }, [icon("smartphone", 12), h("span", {}, ["기기에서 찾기"])]);
+    const metaDeviceBrowse = deviceBrowse(pathInput);
+    const romDeviceBrowse = deviceBrowse(romInput);
+    metaDeviceBrowse.hidden = romDeviceBrowse.hidden = true;
+    metaRow.appendChild(metaDeviceBrowse);
+    romRow.appendChild(romDeviceBrowse);
+
+    async function autoFindEsde() {
+      const r = await api.mtpFindEsde(deviceSel.value);
+      if (!r.ok) return;
+      const found = (r.data.esde || [])[0];
+      if (found) pathInput.value = found.path;
+      const device = (S.mtpDevices || []).find((d) => d.key === deviceSel.value);
+      if (device && !nameInput.value.trim()) nameInput.value = device.name;
+      deviceNote.textContent = found
+        ? "ES-DE 폴더를 찾았습니다. 다르면 '기기에서 찾기'로 고르세요."
+        : "ES-DE 폴더를 못 찾았습니다. '기기에서 찾기'로 직접 고르세요.";
+    }
+
+    async function loadDevices() {
+      const r = await api.mtpDevices();
+      const data = r.ok ? r.data : { devices: [], reason: r.error };
+      S.mtpDevices = data.devices || [];
+      deviceSel.replaceChildren(...S.mtpDevices.map((d) => h("option", { value: d.key }, [d.name])));
+      // 기기가 없으면 이유를 함께 보여준다 - 빈 목록만 보이면 무엇을 해야 할지 모른다.
+      deviceNote.textContent = S.mtpDevices.length
+        ? "기기의 ES-DE 폴더를 자동으로 찾습니다."
+        : (data.reason || "연결된 기기가 없습니다. USB를 파일 전송(MTP) 모드로 두고 기기 화면에서 허용을 눌러주세요.");
+      if (S.mtpDevices.length) await autoFindEsde();
+    }
+    deviceSel.addEventListener("change", autoFindEsde);
+
+    const sourceSeg = h("div", { class: "seg", id: "add-source" });
+    let source = "local";
+    const sourceBtn = (value, label, iconName) => {
+      const btn = h("button", { class: "seg-btn" + (value === source ? " on" : ""),
+                                "data-source": value }, [icon(iconName, 12), h("span", {}, [label])]);
+      btn.addEventListener("click", () => { source = value; syncSource(); });
+      return btn;
+    };
+    sourceSeg.appendChild(sourceBtn("local", "이 PC", "hardDrive"));
+    sourceSeg.appendChild(sourceBtn("device", "안드로이드 기기 (MTP)", "smartphone"));
+
+    function syncSource() {
+      const device = source === "device";
+      sourceSeg.querySelectorAll(".seg-btn").forEach((btn) =>
+        btn.classList.toggle("on", btn.dataset.source === source));
+      deviceRow.hidden = !device;
+      metaBrowse.hidden = romBrowse.hidden = device;
+      metaDeviceBrowse.hidden = romDeviceBrowse.hidden = !device;
+      if (!device) browserBox.hidden = true;
+      romInput.placeholder = device
+        ? "ROM 폴더 (선택 - 넣으면 ROM 파일도 확인합니다)"
+        : "폴더를 선택하세요 (선택)";
+      if (device) {
+        targetSel.value = "android";
+        if (!S.mtpDevices) loadDevices();
+      }
+    }
 
     // 긴 설명을 필드 아래 줄줄이 적지 않는다 - hover하면 뜨는 title 툴팁 하나로
     // 충분하다. 항상 보이는 문장이 아니라 필요할 때만 보이는 문장으로 정책을 맞춘다.
@@ -1019,6 +1131,7 @@
     }
     frontendSel.addEventListener("change", syncFrontend);
     syncFrontend();
+    syncSource();
 
     const advancedBody = h("div", {}, [
       h("div", { class: "field-grid two" }, [
@@ -1055,9 +1168,12 @@
     ]);
 
     const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "field-label" }, ["저장 위치"]), sourceSeg,
+      deviceRow,
       h("div", { class: "field-label" }, ["Frontend"]), frontendSel,
       pathLabel, metaRow,
       romLabel, romRow,
+      browserBox,
       h("div", { class: "field-label" }, ["이름"]), nameInput,
       advanced,
       history,
@@ -1078,9 +1194,12 @@
         const name = nameInput.value.trim() ||
           String(metaPath || romPath).split(/[\\/]/).filter(Boolean).pop() || "Collection";
         closeModal();
+        // 기기 Collection의 Storage는 "Internal"이 아니라 기기 이름으로 보여야 한다.
+        const device = source === "device"
+          ? (S.mtpDevices || []).find((d) => d.key === deviceSel.value) : null;
         const r = await api.createCollection(name, frontendSel.value, metaPath || null,
                                              targetSel.value || null, archSel.value || null,
-                                             romPath || null, "");
+                                             romPath || null, "", device ? device.name : null);
         if (!r.ok) { showToast(r.error, "error"); return; }
         await loadCollections();
         // 메타데이터가 없다는 이유로 여기서 gamelist 생성 여부를 묻지 않는다.

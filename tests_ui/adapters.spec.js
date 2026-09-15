@@ -10,7 +10,7 @@ test.beforeEach(async ({ page }) => { await openApp(page); });
 test("새 Collection에서 네 가지 Frontend를 모두 고를 수 있다", async ({ page }) => {
   await page.locator(".ctab-add").click();
 
-  const frontendSelect = page.locator(".modal-body select").first();
+  const frontendSelect = page.locator("#add-frontend");
   await expect(frontendSelect.locator("option")).toHaveText([
     "ES-DE", "Pegasus", "LaunchBox", "EmulationStation",
   ]);
@@ -18,7 +18,7 @@ test("새 Collection에서 네 가지 Frontend를 모두 고를 수 있다", asy
 
 test("고른 Frontend가 새 Collection에 그대로 반영된다", async ({ page }) => {
   await page.locator(".ctab-add").click();
-  await page.locator(".modal-body select").first().selectOption("pegasus");
+  await page.locator("#add-frontend").selectOption("pegasus");
   await page.locator(".modal-body input[placeholder='예: Android ES-DE']").fill("펠가수스");
   await page.locator(".modal-body .btn", { hasText: "찾아보기" }).first().click();
   await modalButton(page, "Add").click();

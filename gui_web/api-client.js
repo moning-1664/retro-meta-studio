@@ -344,6 +344,28 @@
     // 지나간다 (tests/test_wiring.py::test_mock_covers_every_call이 누락을 감시한다).
     // 그래서 ok(true)로 때우지 않고 목업 배열을 실제로 고친다 - 그래야 "이름을 바꾸면
     // 탭 제목도 바뀐다" 같은 것을 GUI 테스트가 확인할 수 있다.
+    // MTP 목업 - 기기 하나가 꽂혀 있고 ES-DE가 깔려 있다고 본다.
+    mtp_devices: () => ok({
+      devices: [{ key: "R58N30ABCDE", name: "Galaxy Test", path: "mtp://R58N30ABCDE" }],
+      reason: null,
+    }),
+    mtp_browse: (path) => {
+      const base = "mtp://R58N30ABCDE";
+      const tree = {
+        [base]: ["Internal shared storage", "SD card"],
+        [`${base}/Internal shared storage`]: ["ES-DE", "ROMs"],
+        [`${base}/Internal shared storage/ROMs`]: ["ps2", "snes"],
+        [`${base}/Internal shared storage/ES-DE`]: ["gamelists", "downloaded_media"],
+      };
+      const names = tree[path] || [];
+      const parent = path === base ? null : path.slice(0, path.lastIndexOf("/"));
+      return ok({ path, parent, entries: names.map((n) => ({ name: n, path: `${path}/${n}` })) });
+    },
+    mtp_find_esde: () => ok({
+      esde: [{ path: "mtp://R58N30ABCDE/Internal shared storage/ES-DE", label: "ES-DE" }],
+      roms: ["mtp://R58N30ABCDE/Internal shared storage/ROMs"],
+    }),
+
     create_collection: (name, frontend, rootPath, target, arch) => {
       const created = {
         id: "c" + (mockCollections.length + 1), name, frontend: frontend || "es-de",
@@ -632,9 +654,14 @@
     __setMockFailedEntries: (entries) => { mockFailedEntries = entries || []; },
 
     listCollections: () => call("list_collections"),
-    createCollection: (name, frontend, rootPath, target, arch, romPath, mediaPath) =>
+    createCollection: (name, frontend, rootPath, target, arch, romPath, mediaPath, storageLabel) =>
       call("create_collection", name, frontend, rootPath, target, arch,
-           romPath || null, mediaPath || null),
+           romPath || null, mediaPath || null, storageLabel || null),
+
+    // MTP(안드로이드 기기). 기기를 고르고, 폴더를 한 단계씩 열어 보고, ES-DE를 찾는다.
+    mtpDevices: () => call("mtp_devices"),
+    mtpBrowse: (path) => call("mtp_browse", path),
+    mtpFindEsde: (deviceKey) => call("mtp_find_esde", deviceKey),
     renameCollection: (id, name) => call("rename_collection", id, name),
     updateCollectionTarget: (id, target, arch, os) => call("update_collection_target", id, target, arch, os),
     deleteCollection: (id) => call("delete_collection", id),

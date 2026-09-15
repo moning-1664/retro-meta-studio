@@ -756,6 +756,12 @@ body { font-size: var(--fs-body); }
 .field-row { display: flex; gap: 6px; align-items: center; }
 .field-row .field-input { flex: 1; }
 .field-grid.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* 대화상자 안의 한 묶음(라벨+입력+설명). hidden으로 통째로 접는다. */
+.field-block { display: flex; flex-direction: column; gap: 4px; }
+/* display:flex가 hidden 속성을 덮어쓴다 - 접으라고 했으면 접혀야 한다. */
+.field-block[hidden] { display: none; }
+.field-hint { color: var(--muted); font-size: var(--fs-caption); line-height: 1.4; }
+
 
 .picker-list { display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; }
 .picker-row {
