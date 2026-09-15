@@ -10,6 +10,12 @@ Plan - 실제 파일을 바꾸기 전에 계산해두는 변경 집합.
 편집은 저장 즉시 파일에 기록되고 Plan을 거치지 않는다. 덕분에 Plan의 의미가 화면의
 `Actual -> Plan` 용량 표시와 정확히 일치한다.
 
+**단 하나의 예외가 TITLE_EDIT(Title Prefix/Postfix 일괄 적용, 사용자 결정)다.** 한
+번에 여러 게임의 제목을 규칙에 따라 고쳐 쓰는 위험한 일괄 작업이라, 개별 편집과 달리
+미리보기 → Plan → Apply를 거친다. 용량은 바뀌지 않으므로(estimated_bytes,
+physical_delta 모두 비워 둔다) 화면의 용량 표시(D1의 존재 이유)는 그대로 정확하다 -
+이 예외가 D1을 무너뜨리지 않는다.
+
 용량 재계산은 O(1)이다. 엔트리를 넣고 뺄 때마다 Storage별 누적 델타를 갱신할 뿐,
 Collection 전체를 다시 훑지 않는다. 수천 개를 한 번에 붙여넣는 시나리오(스펙 §88
 Scenario 6)에서 이 차이가 체감 속도를 좌우한다.
@@ -22,10 +28,11 @@ from dataclasses import dataclass, field
 OP_ADD = "add"                        # 다른 Collection/Archive에서 가져오기
 OP_DELETE = "delete"                  # 이 Collection에서 제거
 OP_STORAGE_CHANGE = "storage_change"  # System을 다른 Storage로 이동
+OP_TITLE_EDIT = "title_edit"          # Title Prefix/Postfix 일괄 적용
 
 #: Gamelist Status 영역에 쓰는 기호(스펙 §24). 작고 명확하게만 표시하고
 #: 제목이나 설명 전체를 색칠하지 않는다.
-MARKS = {OP_ADD: "+", OP_DELETE: "-", OP_STORAGE_CHANGE: "△"}
+MARKS = {OP_ADD: "+", OP_DELETE: "-", OP_STORAGE_CHANGE: "△", OP_TITLE_EDIT: "✎"}
 
 
 #: 충돌 해결 방식. 미해결(None) 상태에서는 Apply가 그 항목을 건드리지 않는다.
@@ -66,6 +73,10 @@ class PlanEntry:
     payload: dict | None = None
     status: str = STATUS_PENDING
     error: str | None = None
+    #: TITLE_EDIT 전용 - Plan을 만든 시점의 제목과 새로 쓸 제목. old_title은 Apply 직전
+    #: 재검증(그 사이 다른 경로로 제목이 바뀌었는지)과 화면 미리보기 표시에 쓴다.
+    old_title: str | None = None
+    new_title: str | None = None
 
     @property
     def key(self) -> str:
@@ -164,12 +175,14 @@ class Plan:
         added = [e for e in self._entries.values() if e.op == OP_ADD]
         deleted = [e for e in self._entries.values() if e.op == OP_DELETE]
         moved = [e for e in self._entries.values() if e.op == OP_STORAGE_CHANGE]
+        retitled = [e for e in self._entries.values() if e.op == OP_TITLE_EDIT]
         blocked = [e for e in self._entries.values() if e.blocked]
         failed = [e for e in self._entries.values()
                   if e.status in (STATUS_FAILED, STATUS_PARTIAL)]
         return {
             "total": len(self._entries),
             "added": len(added), "deleted": len(deleted), "moved": len(moved),
+            "retitled": len(retitled),
             "addedBytes": sum(e.estimated_bytes for e in added),
             "deletedBytes": sum(e.estimated_bytes for e in deleted),
             "delta": self.delta(),

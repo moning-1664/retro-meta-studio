@@ -30,8 +30,9 @@ from app import dashboard
 from app import media_cleanup
 from app import system_ops
 from app import storage_layout
+from app import title_affix
 from app.launch import retroarch
-from app.model.plan import OP_STORAGE_CHANGE, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan
+from app.model.plan import OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan
 from app.plan import builder, clipboard
 from app.plan.applier import apply_plan
 from app.plan.validator import check_capacity, validate
@@ -907,13 +908,16 @@ class Api:
 
     @staticmethod
     def _entry_summary(entry):
-        return {
+        summary = {
             "key": entry.key, "op": entry.op, "system": entry.system,
             "filename": entry.filename or entry.system,
             "status": entry.status, "error": entry.error,
             "resolution": entry.resolution,
             "conflicts": entry.conflicts,
         }
+        if entry.op == OP_TITLE_EDIT:
+            summary["oldTitle"], summary["newTitle"] = entry.old_title, entry.new_title
+        return summary
 
     @guarded
     def plan_resolve_conflict(self, collection_id, key, resolution):
@@ -960,6 +964,51 @@ class Api:
             return blocked
         result = builder.plan_storage_change(self._plan(collection_id), collection, cache,
                                              system, storage_to)
+        return ok(result)
+
+    # ------------------------------------------------------------------
+    # Title Prefix/Postfix (app/title_affix.py) - Plan을 거치는 예외(D1, app/model/plan.py)
+    # ------------------------------------------------------------------
+    def _title_affix_config(self):
+        stored = (self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {}).get("titleAffix") or {}
+        return title_affix.normalize_config(stored)
+
+    def _title_affix_rows(self, cache, rom_uids=None, system=None):
+        """대상 행. `rom_uids`가 있으면 Gamelist에서 고른 항목들, 없으면 System 전체다."""
+        if rom_uids:
+            rows = (cache.get_row(int(uid)) for uid in rom_uids)
+            return [row for row in rows if row is not None]
+        if system:
+            return cache.query_rows(systems=[system], order="title")
+        return []
+
+    @guarded
+    def title_affix_preview(self, collection_id, rom_uids=None, system=None):
+        """이 게임들에 실제로 적용될 새 제목 미리보기(Gamelist 우클릭 - 선택 항목,
+        System 우클릭 - 그 System 전체 중 하나를 넘긴다). 아직 아무것도 바꾸지 않는다."""
+        collection, cache, _provider = self._plan_context(collection_id)
+        rows = self._title_affix_rows(cache, rom_uids, system)
+        if not rows:
+            return err("대상을 찾을 수 없습니다.")
+        changes = title_affix.preview_titles(rows, self._title_affix_config())
+        return ok({"items": changes, "changed": sum(1 for c in changes if c["changed"])})
+
+    @guarded
+    def plan_title_edit(self, collection_id, rom_uids=None, system=None):
+        """미리보기에서 확인한 대로 Plan에 올린다. 실제 파일은 Apply를 눌러야 바뀐다(사용자 결정).
+
+        미리보기와 똑같은 대상 선택을 다시 받아 서버에서 새로 계산한다 - 클라이언트가
+        준 결과를 그대로 믿지 않는다(다른 Plan 만들기 메서드들과 같은 태도).
+        """
+        collection, cache, _provider = self._plan_context(collection_id)
+        rows = self._title_affix_rows(cache, rom_uids, system)
+        if not rows:
+            return err("대상을 찾을 수 없습니다.")
+        blocked = self._ensure_writable(collection, sorted({row["system"] for row in rows}))
+        if blocked:
+            return blocked
+        changes = title_affix.preview_titles(rows, self._title_affix_config())
+        result = builder.plan_title_edit(self._plan(collection_id), cache, changes)
         return ok(result)
 
     @guarded

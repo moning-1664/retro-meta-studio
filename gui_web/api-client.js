@@ -86,6 +86,7 @@
   }
 
   let mockLastIngest = {};
+  let mockLastApply = {};
   // Storage 이동을 Plan에 올렸을 때 Navigator가 미리 보여줄 수 있는지 테스트하기
   // 위한 상태(실사용 피드백: 드래그해도 화면이 그대로면 "안 먹었다"처럼 보였다).
   const mockPendingMoves = {};
@@ -98,6 +99,74 @@
   const mockUiState = {};
   // Settings 화면 값(앱 전역). 실제로는 registry의 app_settings에 들어간다.
   const mockAppSettings = {};
+  // Plan에 올라간 Title Prefix/Postfix 변경(목업 전용) - 실제로는 Python Plan이 들고 있다.
+  const mockTitlePlanned = {};
+
+  // ---------------------------------------------------------------- Title Prefix/Postfix
+  // app/title_affix.py를 JS로 옮긴 것 - 목업에서도 실제와 같은 결과를 보여주기 위해서다.
+  // 정확한 동작(엣지 케이스)은 Python 쪽 단위 테스트가 보장하고, 여기는 화면 흐름만 본다.
+  const TITLE_AFFIX_REGIONS = ["kr", "en", "jp", "eu", "global"];
+  const TITLE_AFFIX_KEYWORDS = {
+    kr: ["kr", "kor", "korea"], jp: ["jp", "jpn", "japan"], eu: ["eu", "eur", "europe", "uk", "gb"],
+    en: ["us", "usa", "na", "en", "eng", "english", "america"],
+    global: ["world", "wor", "glo", "global", "int", "intl", "international"],
+  };
+  const TITLE_AFFIX_DEFAULTS = {
+    kr: { enabled: false, mode: "prefix", text: "KR" }, en: { enabled: false, mode: "prefix", text: "EN" },
+    jp: { enabled: false, mode: "prefix", text: "JP" }, eu: { enabled: false, mode: "prefix", text: "EU" },
+    global: { enabled: false, mode: "prefix", text: "WORLD" },
+  };
+  function titleAffixClassifyRegion(region) {
+    const tokens = String(region || "").toLowerCase().match(/[a-z가-힣]+/g) || [];
+    for (const bucket of TITLE_AFFIX_REGIONS) {
+      if (tokens.some((t) => TITLE_AFFIX_KEYWORDS[bucket].includes(t))) return bucket;
+    }
+    return null;
+  }
+  function titleAffixExtractDisk(title) {
+    const m = title.match(/[([]\s*(dis[ck])\s*\.?\s*([0-9]+|[a-z])\s*(?:(?:of|\/)\s*([0-9]+|[a-z]))?\s*[)\]]/i);
+    if (!m) return [title, null];
+    const marker = `(${m[1][0].toUpperCase()}${m[1].slice(1).toLowerCase()} ${m[2].toUpperCase()}`
+      + `${m[3] ? ` of ${m[3].toUpperCase()}` : ""})`;
+    return [(title.slice(0, m.index) + " " + title.slice(m.index + m[0].length)).trim(), marker];
+  }
+  function titleAffixStripEdges(title) {
+    let text = title.trim();
+    for (let i = 0; i < 6; i += 1) {
+      let stripped = text;
+      [/^[\s_-]*[([{][^([){}\]]*[)\]}][\s_-]*/, /[\s_-]*[([{][^([){}\]]*[)\]}][\s_-]*$/,
+        /^\s*[A-Za-z0-9]+[_-]+\s*/, /\s*[_-]+[A-Za-z0-9]+\s*$/].forEach((re) => {
+        const candidate = stripped.replace(re, "").trim();
+        if (candidate) stripped = candidate;
+      });
+      if (stripped === text) break;
+      text = stripped;
+    }
+    return text || title.trim();
+  }
+  function titleAffixJoin(text, title, isPrefix) {
+    text = text.trim();
+    if (!text) return title;
+    const delim = "_-.~()[]{}".includes(isPrefix ? text[text.length - 1] : text[0]);
+    return isPrefix ? `${text}${delim ? "" : "_"}${title}` : `${title}${delim ? "" : "_"}${text}`;
+  }
+  function titleAffixCompute(oldTitle, region, config) {
+    oldTitle = oldTitle || "";
+    const [withoutDisk, diskMarker] = titleAffixExtractDisk(oldTitle);
+    const base = titleAffixStripEdges(withoutDisk);
+    const core = diskMarker ? `${base} ${diskMarker}` : base;
+    const bucket = titleAffixClassifyRegion(region);
+    const cfg = bucket ? { ...TITLE_AFFIX_DEFAULTS[bucket], ...(config && config[bucket]) } : null;
+    const newTitle = (cfg && cfg.enabled && cfg.text.trim())
+      ? (cfg.mode === "postfix" ? titleAffixJoin(cfg.text, core, false) : titleAffixJoin(cfg.text, core, true))
+      : core;
+    return { oldTitle, newTitle, changed: newTitle !== oldTitle, regionBucket: bucket, diskMarker };
+  }
+  function titleAffixRows(romUids, system) {
+    if (romUids && romUids.length) return romUids.map((uid) => mockRows.find((r) => r.romUid === uid)).filter(Boolean);
+    if (system) return mockRows.filter((r) => r.system === system);
+    return [];
+  }
 
   const mockCompare = { on: false, takenAt: 0 };
   const mockCompareRows = [
@@ -171,19 +240,45 @@
     adapter_actions: () => ok([{ id: "esde-custom-systems", label: "ES-DE XML 생성" }]),
     run_adapter_action: () => ok({ path: "D:\\ES-DE\\custom_systems\\es_systems.xml", platform: "windows",
                                   systems: ["ps2"], written: true, needsDeviceId: [], noTemplate: [], kept: [] }),
-    plan_state: () => ok({
-                          total: Object.keys(mockPendingMoves).length + mockFailedEntries.length,
-                          added: 0, deleted: 0, moved: Object.keys(mockPendingMoves).length,
-                          addedBytes: 0, deletedBytes: 0,
-                          delta: {}, marks: { rows: {}, systems: Object.keys(mockPendingMoves) },
-                          capacity: mockDetail.storages.map((s) => ({
-                            storageId: s.id, label: s.label, actualBytes: s.actualBytes,
-                            planBytes: s.actualBytes, deltaBytes: 0,
-                            capacityBytes: s.capacityBytes, freeBytes: s.freeBytes,
-                            over: false, overBytes: 0 })),
-                          conflictEntries: [], failedEntries: mockFailedEntries,
-                          failed: mockFailedEntries.length, clipboard: null,
-                          pendingMoves: { ...mockPendingMoves } }),
+    plan_state: () => {
+      const retitledKeys = Object.keys(mockTitlePlanned);
+      const rows = {};
+      retitledKeys.forEach((key) => { rows[key] = "✎"; });
+      return ok({
+        total: Object.keys(mockPendingMoves).length + mockFailedEntries.length + retitledKeys.length,
+        added: 0, deleted: 0, moved: Object.keys(mockPendingMoves).length, retitled: retitledKeys.length,
+        addedBytes: 0, deletedBytes: 0,
+        delta: {}, marks: { rows, systems: Object.keys(mockPendingMoves) },
+        capacity: mockDetail.storages.map((s) => ({
+          storageId: s.id, label: s.label, actualBytes: s.actualBytes,
+          planBytes: s.actualBytes, deltaBytes: 0,
+          capacityBytes: s.capacityBytes, freeBytes: s.freeBytes,
+          over: false, overBytes: 0 })),
+        conflictEntries: [], failedEntries: mockFailedEntries,
+        failed: mockFailedEntries.length, clipboard: null,
+        pendingMoves: { ...mockPendingMoves } });
+    },
+    title_affix_preview: (id, romUids, system) => {
+      const rows = titleAffixRows(romUids, system);
+      if (!rows.length) return Promise.resolve({ ok: false, error: "대상을 찾을 수 없습니다." });
+      const config = mockAppSettings.titleAffix || {};
+      const items = rows.map((r) => ({ romUid: r.romUid, system: r.system, filename: r.file,
+        ...titleAffixCompute(r.title, r.region, config) }));
+      return ok({ items, changed: items.filter((i) => i.changed).length });
+    },
+    plan_title_edit: (id, romUids, system) => {
+      const rows = titleAffixRows(romUids, system);
+      if (!rows.length) return Promise.resolve({ ok: false, error: "대상을 찾을 수 없습니다." });
+      const config = mockAppSettings.titleAffix || {};
+      let added = 0;
+      rows.forEach((r) => {
+        const result = titleAffixCompute(r.title, r.region, config);
+        const key = `${r.system}|${r.file}`;
+        if (result.changed) { mockTitlePlanned[key] = result.newTitle; added += 1; }
+        else delete mockTitlePlanned[key];
+      });
+      return ok({ added });
+    },
     start_archive_ingest: (id, scope) => {
       const count = mockIngestCount(scope);
       mockLastIngest = { ingested: count, revised: count, unchanged: 0,
@@ -215,13 +310,27 @@
     copy_selection: () => ok({ count: 1, bytes: 0 }),
     paste: () => ok({ added: 1, skipped: [] }),
     validate_plan: () => ok({ ok: true, entries: [], capacity: [], blocked: false }),
-    start_apply: () => ok({ jobId: "mock-job" }),
+    start_apply: () => {
+      // Plan에 올라간 제목 변경을 실제로 반영한다 - Storage 이동 등 다른 종류는
+      // 아직 목업에서 흉내 내지 않지만(기존 동작), Title Prefix/Postfix는 화면에서
+      // Apply 결과(새 제목이 목록에 보이는지)를 확인할 수 있어야 의미가 있다.
+      const applied = Object.keys(mockTitlePlanned).length;
+      Object.entries(mockTitlePlanned).forEach(([key, newTitle]) => {
+        const [system, file] = key.split("|");
+        const row = mockRows.find((r) => r.system === system && r.file === file);
+        if (row) row.title = newTitle;
+        delete mockTitlePlanned[key];
+      });
+      mockLastApply = { applied, failed: 0, partial: 0, skipped: 0, systems: [] };
+      return ok({ jobId: "mock-job" });
+    },
     start_scan: () => ok({ jobId: "mock-job" }),
     get_job_progress: (jobId) => ok({
       current: 1, total: 1, label: "완료", done: true, error: null,
-      // Archive 수집은 결과의 개수를 화면이 그대로 읽는다. 빈 객체를 주면 목업에서만
-      // "undefined개 수집"이 뜬다.
-      result: jobId === "mock-archive-ingest" ? { ...mockLastIngest } : {},
+      // Archive 수집/Apply는 결과의 개수를 화면이 그대로 읽는다. 빈 객체를 주면
+      // 목업에서만 "undefined개 수집/적용"이 뜬다.
+      result: jobId === "mock-archive-ingest" ? { ...mockLastIngest }
+        : jobId === "mock-job" ? { ...mockLastApply } : {},
     }),
     cancel_job: () => ok(true),
     pick_folder: () => ok("D:\\ES-DE"),
@@ -622,6 +731,8 @@
     planState: (id) => call("plan_state", id),
     planDelete: (id, romUids) => call("plan_delete", id, romUids),
     planStorageChange: (id, system, storageId) => call("plan_storage_change", id, system, storageId),
+    titleAffixPreview: (id, romUids, system) => call("title_affix_preview", id, romUids, system),
+    planTitleEdit: (id, romUids, system) => call("plan_title_edit", id, romUids, system),
     planRemoveEntry: (id, key) => call("plan_remove_entry", id, key),
     planResolveConflict: (id, key, resolution) => call("plan_resolve_conflict", id, key, resolution),
     planResolveAllConflicts: (id, resolution) => call("plan_resolve_all_conflicts", id, resolution),

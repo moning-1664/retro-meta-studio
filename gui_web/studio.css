@@ -196,6 +196,20 @@ body { font-size: var(--fs-body); }
 }
 .sysdel-kept { margin-top: 8px; color: var(--muted); }
 
+/* Title Prefix/Postfix 미리보기 - 예전 제목 -> 새 제목. */
+.title-affix-list {
+  margin-top: 8px; max-height: 260px; overflow: auto; padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel);
+}
+.title-affix-row {
+  display: flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 0;
+  font-size: var(--fs-caption); border-bottom: 1px solid var(--list-row-border);
+}
+.title-affix-row:last-child { border-bottom: 0; }
+.title-affix-row .ic { flex: none; color: var(--muted); }
+.title-affix-old { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.title-affix-new { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+
 /* System 전체 미디어 정리 - Cover/Screenshot/Video 등 타입을 체크박스로 고른다. */
 .media-clean-list { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
 .media-clean-row {
@@ -528,6 +542,19 @@ body { font-size: var(--fs-body); }
 .stg-unmatched-check:disabled { cursor: not-allowed; }
 .stg-unmatched-checks:has(.stg-unmatched-check:disabled) { opacity: .5; }
 
+/* Settings > Metadata & Media > Title Prefix/Postfix - 구역(한/영/일/유럽/글로벌)마다
+   켜짐·Prefix/Postfix·텍스트 한 줄. */
+.stg-title-affix { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 10px; }
+.stg-title-affix-row {
+  display: flex; align-items: center; gap: 10px; padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel);
+}
+.stg-title-affix-row.off { opacity: .6; }
+.stg-title-affix-label { flex: 0 0 84px; font-size: var(--fs-body); }
+.stg-title-affix-row .stg-control { min-width: 0; }
+.stg-title-affix-row select.stg-control { flex: 0 0 132px; }
+.stg-title-affix-text { flex: 1; width: auto; min-width: 0; }
+
 #list-scroll { flex: 1; overflow: auto; position: relative; background: var(--list-bg); }
 /* 폭은 app.js가 컬럼 합으로 정한다 - 가로로 넘칠 것이 있어야 가로 스크롤이 생긴다. */
 #list-spacer { width: 1px; }
@@ -814,6 +841,7 @@ body { font-size: var(--fs-body); }
 /* 상태 기호는 작게만. 제목/설명 전체를 색칠하지 않는다(스펙 §24). */
 .status-mark.add { color: var(--info); font-weight: 700; }
 .status-mark.del { color: var(--danger); font-weight: 700; }
+.status-mark.edit { color: var(--accent); font-weight: 700; }
 
 .sb-add { color: var(--info); font-variant-numeric: tabular-nums; }
 .sb-del { color: var(--danger); font-variant-numeric: tabular-nums; }

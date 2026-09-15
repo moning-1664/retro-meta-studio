@@ -211,6 +211,15 @@
                 unmatchedRomMode: "skip", unmatchedRomMetadata: true, unmatchedRomMedia: true, unmatchedRomVideo: true },
     //: Media 탭의 영상(사용자 결정: 소리 켬, 반복 켬, 5초 뒤 자동 재생 - 전부 Settings에서 바꾼다).
     media: { videoMode: "auto", videoDelay: 3, videoSound: true, videoLoop: true },
+    //: Title Prefix/Postfix - 지역별로 제목에 붙일 표시(app/title_affix.py와 같은 기본값).
+    //: 기본은 전부 꺼져 있다 - 사용자가 명시적으로 켜야 제목이 바뀐다.
+    titleAffix: {
+      kr: { enabled: false, mode: "prefix", text: "KR" },
+      en: { enabled: false, mode: "prefix", text: "EN" },
+      jp: { enabled: false, mode: "prefix", text: "JP" },
+      eu: { enabled: false, mode: "prefix", text: "EU" },
+      global: { enabled: false, mode: "prefix", text: "WORLD" },
+    },
   };
   const APPEARANCE_CACHE_KEY = "rms.appearance";
 
@@ -1425,6 +1434,9 @@
     items.push({ label: "gamelist 만들기", icon: "fileWarning",
       title: "이 System에 gamelist가 없으면 ROM 파일명만 담아 만듭니다.",
       onSelect: () => openMetadataBootstrap(S.activeId, [sys.system]) });
+    items.push({ label: "Title Prefix/Postfix 일괄 적용…", icon: "tag",
+      title: "이 System 전체 제목에서 기존 장식을 떼고, Settings에 설정한 지역별 표시를 다시 붙입니다.",
+      onSelect: () => openTitleAffixDialog({ system: sys.system, label: sys.system.toUpperCase() }) });
     items.push("separator", {
       label: "ROM 없는 항목 정리", icon: "eraser",
       title: "Metadata/Media는 있는데 ROM 파일이 없는 항목을 찾아 지웁니다.",
@@ -1554,6 +1566,56 @@
     showModal(`${name} - 미디어 정리`, body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       confirmBtn,
+    ]);
+  }
+
+  /** Title Prefix/Postfix 일괄 적용(사용자 결정) - Gamelist에서 고른 항목(target.romUids) 또는
+   * System 전체(target.system) 중 하나를 받는다. 미리보기를 보여주고 확인해야 Plan에 올라간다 -
+   * System 전체 적용은 "일괄 적용 여부를 확인한 후" 반영해야 한다는 요구가 이 확인 창이다.
+   *
+   * 실제 파일은 여기서 바뀌지 않는다 - Plan에 올린 뒤 Apply를 눌러야 반영된다(다른 텍스트 편집과
+   * 달리 이 기능만 Plan을 거친다, app/model/plan.py의 OP_TITLE_EDIT 참고). */
+  async function openTitleAffixDialog(target) {
+    const collectionId = S.activeId;
+    const preview = await api.titleAffixPreview(collectionId, target.romUids || null, target.system || null);
+    if (!preview.ok) { showToast(preview.error, "error"); return; }
+    const items = preview.data.items;
+    const changed = items.filter((i) => i.changed);
+    if (!changed.length) {
+      showToast("바뀔 제목이 없습니다 - Settings > Metadata & Media에서 Title Prefix/Postfix 설정을 확인하세요.",
+        "warning");
+      return;
+    }
+
+    const LIMIT = 50;
+    const list = h("div", { class: "title-affix-list" });
+    changed.slice(0, LIMIT).forEach((item) => list.appendChild(h("div", { class: "title-affix-row" }, [
+      h("span", { class: "title-affix-old", title: item.oldTitle }, [item.oldTitle || "(제목 없음)"]),
+      icon("chevronRight", 11),
+      h("span", { class: "title-affix-new", title: item.newTitle }, [item.newTitle]),
+    ])));
+    if (changed.length > LIMIT) {
+      list.appendChild(h("div", { class: "sysdel-file" }, [`… 외 ${formatCount(changed.length - LIMIT)}개`]));
+    }
+
+    const unchanged = items.length - changed.length;
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "modal-text" }, [
+        `${target.label} - 제목 ${formatCount(changed.length)}개가 바뀝니다`
+        + (unchanged ? ` (변경 없음 ${formatCount(unchanged)}개 제외)` : "") + ". "
+        + "Plan에 추가한 뒤 목록 위 Apply를 눌러야 실제 파일에 반영됩니다.",
+      ]),
+      list,
+    ]);
+    showModal("Title Prefix/Postfix", body, [
+      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+      h("button", { class: "btn primary", onClick: async () => {
+        closeModal();
+        const r = await api.planTitleEdit(collectionId, target.romUids || null, target.system || null);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        if (collectionId === S.activeId) await refreshPlan();
+        showToast(`제목 ${formatCount(r.data.added)}개를 Plan에 올렸습니다. Apply를 누르면 반영됩니다.`);
+      } }, ["Plan에 추가"]),
     ]);
   }
 
@@ -2585,6 +2647,7 @@
     const mark = marks.rows[`${row.system}|${row.file}`];
     if (mark === "+") return h("span", { class: "status-mark add", title: "추가 예정" }, ["+"]);
     if (mark === "-") return h("span", { class: "status-mark del", title: "삭제 예정" }, ["−"]);
+    if (mark === "✎") return h("span", { class: "status-mark edit", title: "제목 변경 예정" }, ["✎"]);
     if ((marks.systems || []).includes(row.system)) {
       return h("span", { class: "status-mark warn", title: "Storage 이동 예정" }, ["△"]);
     }
@@ -3012,6 +3075,11 @@
           onSelect: () => launchGame(row) },
         { label: "RetroArch Core 선택", icon: "settings", disabled: !single || !!launchBlockReason(row),
           onSelect: () => openCoreDialog(row) },
+        "separator",
+        { label: single ? "Title Prefix/Postfix 적용…" : `Title Prefix/Postfix 적용… (${formatCount(count)}개)`,
+          icon: "tag", disabled: isArchive() || locked,
+          onSelect: () => openTitleAffixDialog({ romUids: [...S.selected],
+            label: single ? (row.title || row.file) : `선택한 ${formatCount(count)}개` }) },
         "separator",
         { label: "복사", icon: "copy", hint: "Ctrl+C", disabled: isArchive() || locked, onSelect: copySelectedRows },
         { label: "붙여넣기", icon: "upload", hint: "Ctrl+V", disabled: isArchive() || locked, onSelect: pasteClipboard },
@@ -4480,7 +4548,8 @@
 
     const body = h("div", { class: "modal-body" });
     body.appendChild(h("div", { class: "modal-text" }, [
-      `추가 ${formatCount(S.plan.added)} · 삭제 ${formatCount(S.plan.deleted)} · 이동 ${formatCount(S.plan.moved)}`,
+      `추가 ${formatCount(S.plan.added)} · 삭제 ${formatCount(S.plan.deleted)} · 이동 ${formatCount(S.plan.moved)}`
+      + ` · 제목 변경 ${formatCount(S.plan.retitled || 0)}`,
     ]));
     (report.capacity || []).forEach((c) => {
       const row = h("div", { class: "health-row" + (c.over ? " over" : "") }, [

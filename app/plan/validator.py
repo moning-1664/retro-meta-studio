@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from adapters import get_adapter
-from app.model.plan import OP_ADD, OP_DELETE, OP_STORAGE_CHANGE, RESOLVE_OVERWRITE
+from app.model.plan import OP_ADD, OP_DELETE, OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE
 from app.plan.builder import snapshot_matches, unapproved_overwrites
 
 
@@ -36,6 +36,8 @@ def validate(plan, collection, cache, provider) -> dict:
             _validate_delete(entry, collection, cache, provider, adapter)
         elif entry.op == OP_STORAGE_CHANGE:
             _validate_storage_change(entry, collection, adapter)
+        elif entry.op == OP_TITLE_EDIT:
+            _validate_title_edit(entry, cache)
         if entry.status == "invalid":
             problems.append({"key": entry.key, "filename": entry.filename or entry.system,
                              "error": entry.error})
@@ -206,6 +208,29 @@ def _validate_storage_change(entry, collection, adapter):
     if old_layout.rom_dir == new_layout.rom_dir:
         entry.status, entry.error = "invalid", (
             "대상 Storage의 ROM 경로가 현재 경로와 같습니다 - Storage 설정을 확인하세요.")
+
+
+def _validate_title_edit(entry, cache):
+    """Plan을 만든 뒤 다른 경로(save_fields 등)로 제목이 바뀌었으면 되짚어 준다.
+
+    확인 없이 그대로 덮어쓰면, 사용자가 이 기능을 쓰기 직전에 손으로 고친 제목이
+    조용히 사라진다 - 되돌릴 수 없는 일괄 작업이라 ADD/DELETE와 같은 수준으로 본다.
+    """
+    if entry.rom_uid is None:
+        entry.status, entry.error = "invalid", "항목을 찾을 수 없습니다."
+        return
+    row = cache.get_row(entry.rom_uid)
+    if row is None:
+        # rom_uid가 stale할 수 있다(_validate_delete와 같은 이유 - 부분 Apply 뒤
+        # 그 System만 다시 스캔되면 uid가 새로 매겨진다).
+        row = cache.get_row_by_filename(entry.system, entry.filename)
+        if row is None:
+            entry.status, entry.error = "invalid", "항목이 이미 사라졌습니다."
+            return
+        entry.rom_uid = row["rom_uid"]
+    if row["title"] != entry.old_title:
+        entry.status = "invalid"
+        entry.error = "제목이 그 사이 다른 방법으로 바뀌었습니다. 다시 확인해주세요."
 
 
 def check_capacity(plan, collection, cache, provider) -> list[dict]:

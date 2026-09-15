@@ -20,7 +20,7 @@ from pathlib import Path
 from adapters import get_adapter
 from app.model.collection import STORAGE_INTERNAL
 from app.model.plan import (
-    OP_ADD, OP_DELETE, OP_STORAGE_CHANGE, RESOLVE_OVERWRITE, RESOLVE_SKIP,
+    OP_ADD, OP_DELETE, OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE, RESOLVE_SKIP,
     STATUS_CONFLICT, STATUS_PENDING, PlanEntry,
 )
 
@@ -395,3 +395,30 @@ def plan_storage_change(plan, collection, cache, system, storage_to):
                       physical_delta={storage_from: -rom_bytes, storage_to: rom_bytes})
     plan.add(entry)
     return {"system": system, "from": storage_from, "to": storage_to, "bytes": rom_bytes}
+
+
+def plan_title_edit(plan, cache, changes) -> dict:
+    """제목을 새 값으로 바꿀 예정으로 올린다(Title Prefix/Postfix, 사용자 결정 - Plan을
+    거치는 유일한 텍스트 편집. `app/model/plan.py`의 Plan 머리말 참고).
+
+    changes: `app/title_affix.py`의 `preview_titles()`가 돌려준 것과 같은 모양
+    (`[{"romUid","system","filename","oldTitle","newTitle",...}, ...]`) - 실제 값
+    계산은 호출부(bridge)가 그 모듈로 미리 해서 넘긴다. 여기서는 Plan에 올리는 것만
+    한다 - 같은 계산을 두 곳에 두면 언젠가 갈라진다.
+
+    바뀌지 않는 항목(oldTitle == newTitle)은 올리지 않는다 - "아무 일도 일어나지
+    않을 항목"이 Plan에 있으면 사용자가 실제로 몇 개나 바뀌는지 헷갈린다.
+    """
+    added = []
+    for change in changes:
+        if change.get("newTitle") == change.get("oldTitle"):
+            continue
+        rom_uid = int(change["romUid"])
+        row = cache.get_row(rom_uid)
+        if row is None:
+            continue  # 그 사이 사라진 항목 - 조용히 건너뛴다(다른 붙여넣기와 같은 태도, D3)
+        entry = PlanEntry(op=OP_TITLE_EDIT, system=row["system"], filename=row["filename"],
+                          rom_uid=rom_uid, old_title=change["oldTitle"], new_title=change["newTitle"])
+        plan.add(entry)
+        added.append(entry)
+    return {"added": len(added)}

@@ -108,6 +108,48 @@
     const soonSelect = (options) => select(options[0][0], options, null, true);
     const soonToggle = (checked) => toggle(checked, null, true);
 
+    /** Title Prefix/Postfix - 5개 구역(한국/영어권/일본/유럽/글로벌) 줄마다 켜짐 여부·
+     * Prefix/Postfix·붙일 텍스트를 정한다(app/title_affix.py의 DEFAULT_CONFIG와 같은 구역).
+     *
+     * `ctx.update()`는 패널을 다시 그리지 않으므로(unmatchedRomPolicy와 같은 사정), 한 구역
+     * 안에서 여러 필드를 잇달아 바꿔도 항상 최신 값을 함께 보내도록 `state`에 누적해 둔다 -
+     * 안 그러면 나중에 바꾼 필드가 먼저 바꾼 필드를 예전 값으로 되돌려 보낸다("titleAffix"
+     * 섹션도 한 단계 깊이까지만 병합되므로, 이 구역 하나는 항상 통째로 보내야 한다).
+     */
+    function titleAffixEditor(s) {
+      const REGIONS = [["kr", "한국(KR)"], ["en", "영어권(EN)"], ["jp", "일본(JP)"],
+                       ["eu", "유럽(EU)"], ["global", "글로벌"]];
+      const wrap = h("div", { class: "stg-title-affix", "data-key": "titleAffix" });
+      REGIONS.forEach(([bucket, label]) => {
+        let state = { ...s.titleAffix[bucket] };
+        const commit = (patch) => {
+          state = { ...state, ...patch };
+          ctx.update("titleAffix", { [bucket]: state });
+        };
+        const textInput = h("input", {
+          class: "stg-control stg-text stg-title-affix-text", value: state.text,
+          placeholder: "예: KR", disabled: !state.enabled,
+        });
+        textInput.addEventListener("change", () => commit({ text: textInput.value }));
+        const modeSelect = select(state.mode,
+          [["prefix", "제목 앞에 (Prefix)"], ["postfix", "제목 뒤에 (Postfix)"]],
+          (v) => commit({ mode: v }), !state.enabled);
+        const rowEl = h("div", { class: "stg-title-affix-row" + (state.enabled ? "" : " off") }, [
+          toggle(state.enabled, (v) => {
+            commit({ enabled: v });
+            modeSelect.disabled = !v;
+            textInput.disabled = !v;
+            rowEl.classList.toggle("off", !v);
+          }),
+          h("span", { class: "stg-title-affix-label" }, [label]),
+          modeSelect,
+          textInput,
+        ]);
+        wrap.appendChild(rowEl);
+      });
+      return wrap;
+    }
+
     /** ROM 미매칭 정책 - 원본에 ROM 파일이 없는 항목(Archive처럼 메타데이터만 있는 항목)을
      * 붙여넣을 때 무엇을 할지. 라디오 두 개 + Metadata/Media/Video 체크박스 세 개가
      * 하나의 값(transfer.unmatchedRom*)을 공유한다 - bridge/api.py의 _transfer_policy와
@@ -196,6 +238,12 @@
         add(row("media.videoSound", "소리", toggle(m.videoSound, (v) => ctx.update("media", { videoSound: v }))));
         add(row("media.videoLoop", "반복 재생", toggle(m.videoLoop, (v) => ctx.update("media", { videoLoop: v }))));
         add(row("media.overwrite", "Media overwrite", soonSelect([["ask", "Always ask"], ["replace", "Replace"], ["keep", "Keep existing"]]), null, true));
+        add(h("div", { class: "stg-subsection-title" }, ["Title Prefix/Postfix"]));
+        add(h("div", { class: "stg-help" }, [
+          "실행하면 먼저 제목 양 끝의 기존 장식을 떼고(디스크 표시는 보존), 이 게임의 지역에 맞는 "
+          + "구역이 켜져 있으면 아래 텍스트를 다시 붙입니다. Gamelist나 System 우클릭 메뉴에서 실행합니다.",
+        ]));
+        add(titleAffixEditor(s));
       } else if (key === "transfer") {
         add(...section("Import / Export", "파일과 Metadata/Media를 옮길 때의 기본값입니다."));
         // 붙여넣기(bridge paste)가 이 값을 읽는다. 기본값은 예전 동작 그대로다.
