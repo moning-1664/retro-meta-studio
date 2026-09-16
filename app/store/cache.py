@@ -346,7 +346,13 @@ class CacheStore:
                f" json_extract(m.fields_json,'$.desc') AS desc_text,"
                f" json_extract(m.fields_json,'$.region') AS region,"
                f" json_extract(m.fields_json,'$.genre') AS genre,"
-               f" json_extract(m.fields_json,'$.rating') AS rating"
+               f" json_extract(m.fields_json,'$.rating') AS rating,"
+               # Gamelist Status 아이콘(실사용 피드백 - "롬/미디어/Description/Cover
+               # 아이콘을 독립적으로") 중 Cover만 has_media로는 못 가린다 - has_media는
+               # "media가 하나라도 있는가"라 스크린샷만 있어도 켜진다. covers 타입만
+               # 따로 있는지는 media 테이블을 직접 봐야 한다.
+               f" EXISTS(SELECT 1 FROM media mc WHERE mc.rom_uid = r.rom_uid"
+               f" AND mc.media_type = 'covers') AS has_cover"
                f" FROM roms r LEFT JOIN metadata m ON m.rom_uid = r.rom_uid{where}"
                f" ORDER BY {self._order_sql(order, descending, priority)}")
         if limit is not None:

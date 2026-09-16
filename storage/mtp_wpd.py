@@ -25,12 +25,15 @@ backend로 검증한다. 여기가 틀리면 고칠 곳도 여기 하나다.
 from __future__ import annotations
 
 import hashlib
+import logging
 import queue
 import re
 import sys
 import threading
 
 from storage.mtp import MtpBackend, MtpDeviceInfo, MtpError, MtpObject
+
+log = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------
 # WPD 상수 - 타입 라이브러리에 없고 헤더에만 있는 값이라 직접 적는다.
@@ -169,6 +172,11 @@ def _require_comtypes():
         import comtypes  # noqa: F401
         import comtypes.client  # noqa: F401
     except ImportError as e:
+        # 빌드된 exe에서 이 길로 오면 대개 "comtypes가 안 깔렸다"가 아니라
+        # **번들에서 빠졌다**는 뜻이다(build_web.bat의 --hidden-import 참고) -
+        # 화면 안내와 다른 진짜 원인을 로그에는 남겨 둔다.
+        log.warning("comtypes를 불러오지 못했습니다(frozen=%s): %s",
+                    getattr(sys, "frozen", False), e)
         raise MtpError(
             "MTP 연결에는 comtypes가 필요합니다. `pip install comtypes` 후 다시 시도해주세요."
         ) from e
@@ -219,7 +227,9 @@ class WpdBackend(MtpBackend):
             self._api = comtypes.client.GetModule("portabledeviceapi.dll")
             self._types = comtypes.client.GetModule("portabledevicetypes.dll")
         except Exception as e:  # noqa: BLE001
+            log.exception("WPD 타입 라이브러리 적재 실패(frozen=%s)", getattr(sys, "frozen", False))
             raise MtpError(f"Windows Portable Devices를 불러오지 못했습니다: {e}") from e
+        log.info("WPD 타입 라이브러리 적재 완료")
 
         for name in ("_tagpropertykey", "tagPROPERTYKEY", "PROPERTYKEY", "_PROPERTYKEY"):
             self._key_type = getattr(self._types, name, None) or getattr(self._api, name, None)
@@ -276,6 +286,10 @@ class WpdBackend(MtpBackend):
             self._api.PortableDeviceManager, interface=self._api.IPortableDeviceManager)
         count = ctypes.c_ulong(0)
         manager.GetDevices(None, ctypes.byref(count))
+        # Windows가 몇 대로 보는지를 그대로 남긴다 - 탐색기에 기기가 보이는데
+        # 여기서 0이면 MTP(미디어 장치)가 아니라 다른 모드로 붙어 있다는 뜻이다
+        # (충전 전용/사진 전송(PTP) 등). 그 구분을 로그 없이는 할 수 없다.
+        log.info("WPD 기기 열거: %d대", count.value)
         if count.value == 0:
             self._device_ids = {}
             return []
@@ -290,6 +304,7 @@ class WpdBackend(MtpBackend):
             name = self._friendly_name(manager, device_id)
             key = self._device_key(device_id, name)
             self._device_ids[key] = device_id
+            log.info("WPD 기기: name=%s key=%s id=%s", name, key, device_id)
             found.append(MtpDeviceInfo(key=key, name=name, device_id=device_id))
         return found
 

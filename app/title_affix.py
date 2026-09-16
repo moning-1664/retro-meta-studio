@@ -160,18 +160,22 @@ _DELIM_CHARS = set("_-.~()[]{}")
 
 
 def _join_prefix(text: str, title: str) -> str:
-    text = text.strip()
-    if not text:
+    """`text` 앞뒤 공백은 지우지 않는다 - 예전엔 `strip()`으로 지웠는데, 그러면
+    사용자가 `" (KR)"`처럼 일부러 넣은 공백까지 사라져 `"Title(KR)"`처럼 붙어버렸다
+    (실사용 피드백: "띄어쓰기를 넣고 싶어도 적용이 안된다"). 자동 구분자(`_`)는
+    `text`가 이미 구분자나 공백으로 끝날 때만 생략한다 - 그래야 사용자가 직접 넣은
+    공백이 곧 구분자 역할을 한다.
+    """
+    if not text.strip():
         return title
-    sep = "" if text[-1] in _DELIM_CHARS else "_"
+    sep = "" if (text[-1] in _DELIM_CHARS or text[-1].isspace()) else "_"
     return f"{text}{sep}{title}"
 
 
 def _join_postfix(title: str, text: str) -> str:
-    text = text.strip()
-    if not text:
+    if not text.strip():
         return title
-    sep = "" if text[0] in _DELIM_CHARS else "_"
+    sep = "" if (text[0] in _DELIM_CHARS or text[0].isspace()) else "_"
     return f"{title}{sep}{text}"
 
 

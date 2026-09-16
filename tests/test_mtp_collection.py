@@ -65,6 +65,36 @@ class MtpDiscoveryTests(unittest.TestCase):
         self.assertEqual(r["data"]["devices"], [])
         self.assertIn("응답하지 않습니다", r["data"]["reason"])
 
+    def test_an_unexpected_error_is_not_swallowed_into_a_silent_empty_list(self):
+        """MtpError가 아닌 예외도 이유를 남긴다.
+
+        예전에는 `except mtp.MtpError`만 있어서, COM이 던지는 다른 예외는 @guarded가
+        받아 "ok=False"로 바뀌고 화면에는 그냥 빈 목록이 됐다 - 사용자에게는
+        "눌러도 아무것도 없다"로만 보인다(실사용 피드백).
+        """
+        from storage import mtp
+
+        class Exploding:
+            def devices(self):
+                raise OSError("COM이 응답하지 않습니다")
+
+        mtp.set_provider(mtp.MtpProvider(Exploding()))
+        r = self.api.mtp_devices()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["data"]["devices"], [])
+        self.assertIn("오류", r["data"]["reason"])
+
+    def test_device_lookup_is_written_to_the_log(self):
+        """기기 목록이 비었을 때 원인을 나중에라도 볼 수 있어야 한다(실사용 피드백 -
+        "로그 자체가 남은 게 없다"). 요청과 결과가 모두 기록된다."""
+        import logging
+
+        with self.assertLogs("bridge.api", level=logging.INFO) as captured:
+            self.api.mtp_devices()
+        joined = "\n".join(captured.output)
+        self.assertIn("MTP 기기 목록 요청", joined)
+        self.assertIn("MTP 기기 목록 결과: 1개", joined)
+
 
 class MtpCollectionTests(unittest.TestCase):
     """기기의 ES-DE 폴더를 Collection으로 열고 실제로 읽고 쓴다."""

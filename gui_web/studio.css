@@ -147,31 +147,41 @@ body { font-size: var(--fs-body); }
   margin: 0 -7px; padding: 0 10px;
   border-bottom: 1px solid var(--border);
 }
-/* Settings만 오른쪽 아래 고정(실사용 피드백) - 다른 조용한 도구 버튼(HERO의
-   메타데이터 보내기/가져오기 등)과 같은 줄에 서 보이도록. */
-.nav-top .icon-btn { align-self: flex-end; padding: 3px; }
-.nav-app-title { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; color: var(--app-title-fg); }
-.nav-app-title-text { min-width: 0; }
+.nav-app-title { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; color: var(--app-title-fg); }
+/* 사용자가 만든 카트리지 그림(라벨 안에 안드로메다 은하) - tools/make_branding.py.
+   두 줄짜리 제목과 같은 높이에 맞춘다. */
+.nav-app-icon { flex: none; height: calc(44px * var(--font-scale)); width: auto; }
+/* 제목은 글자가 아니라 그림이다 - 대문자 R/M/S와 i의 꼭지에 색이 들어가고 1px
+   외곽선이 둘러져 있어서 밝은 테마에서도 배경에 묻히지 않는다.
+   **원본 크기(138px)로 그린다** - 픽셀 아트는 정수배가 아닌 확대에서 계단이
+   흐려지므로, CSS가 늘리지 않게 그림을 쓸 크기에 맞춰 만들어 둔다. */
 .nav-app-title-name {
-  /* 11.5px -> 13px(실사용 피드백 - "크기도 약간 키우자"). */
-  font-size: calc(13px * var(--font-scale)); font-weight: 700; letter-spacing: -.1px; color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: block; width: calc(138px * var(--font-scale)); height: auto;
+  image-rendering: pixelated;
 }
-.nav-app-title-sub {
-  font-size: calc(8px * var(--font-scale)); letter-spacing: .7px; color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* Navigator 최하단 고정 줄 - Dashboard + Settings(사용자 결정: 로고가 상단
+   띠를 채우면서 톱니가 여기로 내려왔다). 띠 전체가 Navigator 폭과 맨 아래까지
+   이어진다. */
+.nav-bottom {
+  display: flex; align-items: stretch; flex-shrink: 0;
+  margin: 6px -7px -8px; border-top: 1px solid var(--border);
+  background: var(--chrome-sub);
 }
-/* Dashboard - Navigator 최하단 고정. */
-/* Dashboard - 속성 띠(신규색). Navigator 폭 전체와 맨 아래까지 채운다. */
 .nav-dashboard {
-  display: flex; align-items: center; gap: 7px; min-height: 36px; flex-shrink: 0;
-  margin: 6px -7px -8px; padding: 8px 14px;
-  border: 0; border-top: 1px solid var(--border); border-radius: 0;
-  background: var(--chrome-sub); color: var(--text);
+  display: flex; align-items: center; gap: 7px; min-height: 36px; flex: 1; min-width: 0;
+  margin: 0; padding: 8px 14px;
+  border: 0; border-radius: 0; background: transparent; color: var(--text);
   font-size: var(--fs-body); font-weight: 600; cursor: pointer; text-align: left;
 }
 .nav-dashboard:hover { background: var(--card3); }
 .nav-dashboard.active { background: var(--list-selected); box-shadow: inset 2px 0 0 var(--nav-active-bar); }
+/* 톱니는 조용해야 한다 - Dashboard가 이 띠의 주인공이고, Settings는 옆에 붙은
+   작은 문이다(HERO의 도구 버튼들과 같은 무게). */
+.nav-bottom .settings-btn {
+  flex: none; padding: 3px; margin: 0 8px 0 0; align-self: center;
+  background: transparent; border: 1px solid transparent; color: var(--muted);
+}
+.nav-bottom .settings-btn:hover { background: var(--card3); color: var(--text); }
 /* System 제목 띠 - GameList Toolbar와 같은 높이라 아래 선이 한 줄로 이어진다(사용자 결정).
    스크롤 영역 밖에 있어 System이 많아도 제자리에 있다. */
 .nav-eyebrow {
@@ -310,23 +320,30 @@ body { font-size: var(--fs-body); }
 .cheader-art {
   position: absolute; inset: 0; z-index: 0; pointer-events: none;
   display: flex; align-items: center; justify-content: flex-end;
-  /* 오른쪽 버튼 열(약 120px)을 피해서 앉힌다 - 아이콘 위에 버튼이 겹치면
-     둘 다 읽기 어려워진다. */
-  padding-right: 128px;
+  /* 아이콘을 버튼 열(약 120px)보다 조금 더 왼쪽으로 당긴다(실사용 피드백 -
+     "그라데이션 + 아이콘 위치를 조금 왼쪽으로 땡기고"). 비워 둔 만큼을 아래
+     포인트색 띠가 차지해서 우측 끝이 휑해 보이지 않는다. */
+  padding-right: 156px;
   /* 오른쪽으로 갈수록 계열 색이 배어 나온다. 왼쪽(글자 영역)은 건드리지 않아서
      대비가 떨어지지 않는다. */
-  /* 몸체색(base)이 먼저 배어 나오고 끝에서 포인트색(point)이 얹힌다 - 실물의
-     "회색 몸체에 빨간 버튼" 같은 인상을 배경만으로 만든다. */
+  /* 몸체색(base)이 먼저 옅게 배어 나오고, 우측 끝에서는 포인트색이 **뚜렷한
+     둘째 색 띠**로 얹힌다(실사용 피드백 - "결국 한 색깔인데 우측이 휑하다").
+     예전엔 point가 22%로 base와 크게 다르지 않아 하나의 흐린 얼룩처럼 보였다 -
+     마지막 구간의 농도를 확 올려 실물의 "회색 몸체에 진한 포인트 버튼" 인상을
+     낸다. */
   background: linear-gradient(100deg,
-    transparent 30%,
-    color-mix(in srgb, var(--sys-base, var(--accent)) 14%, transparent) 74%,
-    color-mix(in srgb, var(--sys-point, var(--accent)) 22%, transparent) 100%);
+    transparent 22%,
+    color-mix(in srgb, var(--sys-base, var(--accent)) 16%, transparent) 58%,
+    color-mix(in srgb, var(--sys-point, var(--accent)) 26%, transparent) 84%,
+    color-mix(in srgb, var(--sys-point, var(--accent)) 40%, transparent) 100%);
 }
 .cheader-art .sys-ic { opacity: .2; }
-/* 전용 그림이 없는 System - 그림은 숨기고 색 물듦만 아주 옅게 남긴다. */
+/* 전용 그림이 없는 System - 그림은 숨기고 색 물듦만 남긴다(아이콘이 없으니
+   둘째 색 띠만으로 우측을 채운다). */
 .cheader-art.generic .sys-ic { display: none; }
-.cheader-art.generic { background: linear-gradient(100deg, transparent 55%,
-  color-mix(in srgb, var(--sys-point, var(--accent)) 9%, transparent) 100%); }
+.cheader-art.generic { background: linear-gradient(100deg, transparent 45%,
+  color-mix(in srgb, var(--sys-point, var(--accent)) 12%, transparent) 80%,
+  color-mix(in srgb, var(--sys-point, var(--accent)) 22%, transparent) 100%); }
 
 /* 제목 옆 콘솔 포인트 색 바. 색을 못 찾은 System은 테마 accent 한 줄. */
 .cheader-bar {
@@ -379,7 +396,12 @@ body { font-size: var(--fs-body); }
 .cheader-storage-warn.on { opacity: 1; }
 .cheader-storage-track {
   position: absolute; left: 0; bottom: -4px; width: 100%; height: 2px;
-  border-radius: var(--radius-pill); background: var(--card3); overflow: hidden;
+  border-radius: var(--radius-pill); overflow: hidden;
+  /* var(--card3)는 이 자리(HERO 상단, var(--chrome) 배경)와 명도가 거의 같아서
+     빈 트랙이 바탕과 구분되지 않았다(실사용 피드백 - "남은용량 부분이 바탕색과
+     유사해서 잘 안보임"). 배경이 무엇이든(민무늬 chrome이든 System 색 그라데이션
+     이든) 항상 뜨도록 글자색을 옅게 섞은 반투명을 쓴다. */
+  background: color-mix(in srgb, var(--text) 18%, transparent);
 }
 .cheader-storage-fill { display: block; height: 100%; background: var(--info); transition: width .2s ease-out; }
 /* 파랑(여유) > 녹색 > 노랑 > 주황 > 빨강(목표 넘어감) - capacityLevel()이 고른다. */
@@ -715,6 +737,12 @@ body { font-size: var(--fs-body); }
 .lrow:hover { background: var(--card2); }
 .lrow.selected { background: var(--list-selected); }
 .lrow.focused { box-shadow: inset 2px 0 0 var(--row-focus-bar); }
+/* 삭제 예정 행 전체를 옅게 물들인다(실사용 피드백 - "Gamelist에 빨간색으로
+   표시를 해서 이게 빠진다고 알려줌"). .selected보다 뒤에 와서 우선순위를
+   가지면 안 된다 - 고른 상태가 더 급한 정보다. */
+.lrow.row-pending-delete { background: color-mix(in srgb, var(--danger) 10%, var(--list-bg)); }
+.lrow.row-pending-delete:hover { background: color-mix(in srgb, var(--danger) 16%, var(--list-bg)); }
+.lrow.row-pending-delete.selected { background: color-mix(in srgb, var(--danger) 20%, var(--list-selected)); }
 .lrow.placeholder { cursor: default; opacity: .5; }
 .lc {
   min-width: 0; display: flex; align-items: center; gap: 6px;
@@ -731,6 +759,12 @@ body { font-size: var(--fs-body); }
 .lc-title { color: var(--list-text); }
 .lc-no { color: var(--list-muted); font-variant-numeric: tabular-nums; justify-content: flex-end; }
 .lc-no .lc-text { flex: 0 1 auto; text-align: right; }
+/* 추가/삭제 예정 행의 No. 자리(사용자 결정 - 숫자보다 여기서 바로 알아보는 게
+   낫다). */
+.lno-mark { display: inline-flex; }
+.lno-mark.add { color: var(--warning); }
+.lno-mark.del { color: var(--danger); }
+.lno-mark.edit { color: var(--info); }
 .lc-file, .lc-desc, .lc-region, .lc-genre { color: var(--list-muted); }
 .lc-rating { color: var(--list-muted); font-variant-numeric: tabular-nums; justify-content: center; }
 .lc-fav, .lc-status { justify-content: center; }
@@ -794,6 +828,11 @@ body { font-size: var(--fs-body); }
 .status-mark.ok { color: var(--success); }
 .status-mark.warn { color: var(--accent-gold); }
 .status-mark.muted { color: var(--muted); opacity: .55; }
+/* ROM/Media/Description/Cover 네 칸(실사용 피드백) - 문제 없는 칸은 흐리게 자리만
+   지키고, 없는 항목만 빨갛게 켜진다. 두 개 이상 없어도 각자의 칸에 독립적으로
+   나타난다 - 예전 단일 기호는 우선순위가 높은 것 하나만 보여줬다. */
+.status-icon { display: inline-flex; color: var(--muted); opacity: .3; }
+.status-icon.missing { color: var(--danger); opacity: 1; }
 .skeleton {
   display: block; width: 45%; height: 9px; border-radius: var(--radius-pill);
   background: linear-gradient(90deg, var(--card2), var(--card3), var(--card2));
@@ -1036,8 +1075,10 @@ body { font-size: var(--fs-body); }
 .status-mark.del { color: var(--danger); font-weight: 700; }
 .status-mark.edit { color: var(--accent); font-weight: 700; }
 
-.sb-add { color: var(--info); font-variant-numeric: tabular-nums; }
-.sb-del { color: var(--danger); font-variant-numeric: tabular-nums; }
+/* 노랑(추가)/빨강(삭제) - Gamelist 위 추가 예정 띠, No. 칸의 +/- 아이콘과 같은
+   색 언어다(사용자 결정). */
+.sb-add { color: var(--warning); font-variant-numeric: tabular-nums; font-weight: 600; }
+.sb-del { color: var(--danger); font-variant-numeric: tabular-nums; font-weight: 600; }
 /* .cheader-storage.over는 §4에서 .plan-over로 이름이 바뀌었다 - Dashboard 목표
    초과(.level-over)와 겹칠 수 있는 별개의 경고라서 클래스를 나눴다. */
 .sb-storage.over, .cheader-storage.plan-over { color: var(--danger); font-weight: 600; }
@@ -1052,12 +1093,45 @@ body { font-size: var(--fs-body); }
 button.sb-badge { cursor: pointer; }
 .sb-badge.warn { border-color: var(--warning); color: var(--warning); }
 .sb-badge.danger { border-color: var(--danger); color: var(--danger); }
-.conflict-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 9px; background: var(--card2);
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
+/* 충돌 확인 다이얼로그(실사용 피드백 - "너무 촌스럽다", 스크린샷) - 예전엔
+   Collection 고르기용 `.picker-row`를 그대로 재활용해서 한 줄짜리 밋밋한 텍스트
+   행이었고, 여러 개가 겹쳐도 첫 번째 이유만 잘려서 보였다. 지금은 충돌마다
+   종류 아이콘 + 크기 비교를 따로 그린다. */
+.conflict-list { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; }
+.copy-conflict-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px; background: var(--card2);
+  border: 1px solid var(--border); border-radius: var(--radius-md);
 }
-.conflict-main { flex: 1; min-width: 0; }
+.copy-conflict-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.conflict-header { display: flex; align-items: center; gap: 8px; }
+.conflict-filename { font-size: var(--fs-body); font-weight: 600; color: var(--text); }
+.conflict-count-badge {
+  flex: none; padding: 1px 7px; border-radius: var(--radius-pill);
+  background: var(--card3); color: var(--warning); font-size: var(--fs-eyebrow); font-weight: 600;
+}
+/* 충돌 하나 - 종류 아이콘, 기존↔새 크기, 이유. 줄바꿈 없이도 한눈에 읽히도록
+   가로로 늘어놓되 줄어들면 자연스럽게 접힌다. */
+.conflict-detail {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  padding: 5px 8px; background: var(--card); border-radius: var(--radius-xs);
+  font-size: var(--fs-caption);
+}
+.conflict-detail .ic { color: var(--muted); flex: none; }
+.conflict-detail-kind { color: var(--text); font-weight: 600; min-width: 5.5em; }
+.conflict-detail-sizes { display: flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.conflict-detail-sizes .ic { color: var(--muted); width: 10px; height: 10px; }
+.conflict-size { padding: 1px 6px; border-radius: var(--radius-xs); }
+.conflict-size.existing { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.conflict-size.incoming { background: color-mix(in srgb, var(--info) 14%, transparent); color: var(--info); }
+.conflict-detail-reason { color: var(--muted); }
+.conflict-detail-reason.same-size { color: var(--warning); }
+.conflict-actions { flex: none; display: flex; flex-direction: column; gap: 5px; }
+.conflict-actions .btn { justify-content: flex-start; gap: 6px; white-space: nowrap; }
+.conflict-actions .btn.danger-outline {
+  color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+.conflict-actions .btn.danger-outline:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
 
 /* Match (스펙 §45-49) - 후보가 있다는 것만 조용히 알리고, 누르기 전에는
    아무 일도 일어나지 않는다. 그래서 뱃지는 눈에 띄되 경고처럼 보이지 않게 한다. */

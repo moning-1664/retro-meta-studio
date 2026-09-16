@@ -7,6 +7,7 @@ RetroMeta Studio 실행 진입점.
 빌드 후:   dist\\RetroMetaStudio.exe
 """
 
+import logging
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ if not getattr(sys, "frozen", False):
 
 import webview  # noqa: E402
 
+from app import paths  # noqa: E402
 from bridge.api import Api  # noqa: E402
 from bridge.windows import WindowManager  # noqa: E402
 
@@ -62,6 +64,10 @@ DETACHED_OFFSET = 48
 
 
 def main():
+    # 로그부터 연다 - Api()를 만들다 터지는 것도 파일에 남아야 한다.
+    paths.setup_logging()
+    logging.getLogger(__name__).info("RetroMeta Studio 시작 (frozen=%s)",
+                                     getattr(sys, "frozen", False))
     api = Api()
     gui_dir = Path(__file__).resolve().parent / "gui_web"
     (width, height), min_size, (x, y) = _fit_to_screen(PREFERRED_SIZE, MIN_SIZE)

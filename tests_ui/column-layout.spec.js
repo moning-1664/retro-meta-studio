@@ -87,7 +87,7 @@ test.describe("머리글 드래그 - 컬럼 순서", () => {
 
 test.describe("Settings - GameList Columns", () => {
   const openColumns = async (page) => {
-    await page.locator(".nav-top .icon-btn[title='Settings']").click();
+    await page.locator(".settings-btn").click();
     await page.locator(".stg-nav-item[data-section='metadata']").click();
     await expect(page.locator(".stg-columns")).toBeVisible();
   };

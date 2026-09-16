@@ -1,7 +1,8 @@
-// Navigator 상하단 고정 영역 - App Title·Settings(위) / Add External·Dashboard(아래).
+// Navigator 상하단 고정 영역 - App Title(위) / Add External·Dashboard·Settings(아래).
 //
 // 사용자 요청으로 위치를 바꿨다: App Title은 GameList 상단 Chromium(.cheader)과
 // 세로로 나란히 보이도록 최상단으로, Dashboard는 그 자리(최하단)로 옮겼다.
+// Settings는 로고가 상단 띠를 채우면서 Dashboard 옆(최하단)으로 내려왔다.
 //
 // System 목록만 스크롤한다(레이아웃 재검토 §5) - 그래서 이 넷은 #nav-scroll
 // 바깥(형제)에 있어야 한다. 안에 있으면 System이 늘어날 때 같이 밀려난다.
@@ -19,6 +20,7 @@ test("Dashboard/Add External/App Title/Settings는 스크롤 영역 밖에 있�
 
   expect(await outside(".nav-dashboard")).toBe(true);
   expect(await outside(".nav-top")).toBe(true);
+  expect(await outside(".settings-btn")).toBe(true);
 
   // Add External Storage는 이미 External이 있으면 숨는다(사용자 결정) - 기본
   // mock이 그 상태라 먼저 지워야 이 버튼이 보인다.
@@ -35,7 +37,8 @@ test("Dashboard를 누르면 Dashboard 화면으로 바뀐다", async ({ page })
 });
 
 test("App Title이 Navigator 상단에 있고 GameList 상단 Chromium과 나란하다", async ({ page }) => {
-  await expect(page.locator(".nav-app-title-name")).toHaveText("RetroMeta Studio");
+  // 제목은 픽셀 글자 그림이다 - 글자가 아니라 alt로 읽힌다(tools/make_branding.py).
+  await expect(page.locator(".nav-app-title-name")).toHaveAttribute("alt", "RetroMeta Studio");
   const navTop = await page.locator(".nav-top").boundingBox();
   const cheader = await page.locator(".cheader").first().boundingBox();
   // 정확히 같은 픽셀일 필요는 없다 - 위쪽 시작 지점이 비슷한 높이에 있으면 된다.
@@ -50,16 +53,21 @@ test("Dashboard가 Navigator 최하단에 있다", async ({ page }) => {
 
 test("Settings를 누르면 Settings 화면이 열린다", async ({ page }) => {
   // 자세한 동작은 settings.spec.js에 있다.
-  await page.locator(".nav-top .icon-btn").click();
+  await page.locator(".settings-btn").click();
   await expect(page.locator(".stg-title")).toHaveText("Settings");
 });
 
-// 실사용 피드백 §8.
+// 실사용 피드백 §8 + 로고 개편(사용자 결정).
 test.describe("App Title / Settings 자리와 크기", () => {
-  test("App Title 글자가 예전(11.5px)보다 크다", async ({ page }) => {
-    const size = await page.locator(".nav-app-title-name")
-      .evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
-    expect(size).toBeGreaterThanOrEqual(12.5);
+  test("로고가 Navigator 폭을 거의 채운다 - 아이콘과 제목이 나란히 들어간다", async ({ page }) => {
+    // 224px 고정 폭 안에서 아이콘 + 제목이 잘리지 않고 들어가야 한다.
+    const [nav, icon, title] = await Promise.all([
+      page.locator(".nav-top").boundingBox(),
+      page.locator(".nav-app-icon").boundingBox(),
+      page.locator(".nav-app-title-name").boundingBox(),
+    ]);
+    expect(icon.width + title.width).toBeGreaterThan(nav.width * 0.8);
+    expect(title.x + title.width).toBeLessThanOrEqual(nav.x + nav.width);
   });
 
   test("App Title이 줄 안에서 세로 가운데다", async ({ page }) => {
@@ -67,15 +75,21 @@ test.describe("App Title / Settings 자리와 크기", () => {
     expect(navTop).toBe("center");
   });
 
-  test("Settings 아이콘은 줄의 아래쪽에 붙는다", async ({ page }) => {
-    const alignSelf = await page.locator(".nav-top .icon-btn")
-      .evaluate((el) => getComputedStyle(el).alignSelf);
-    expect(alignSelf).toBe("flex-end");
+  test("Settings는 Navigator 최하단 Dashboard 줄에 있다", async ({ page }) => {
+    // 로고가 상단 띠를 채우면서 톱니가 여기로 내려왔다(사용자 결정).
+    await expect(page.locator(".nav-top .settings-btn")).toHaveCount(0);
+    await expect(page.locator(".nav-bottom .settings-btn")).toBeVisible();
+    const [dash, settings] = await Promise.all([
+      page.locator(".nav-dashboard").boundingBox(),
+      page.locator(".settings-btn").boundingBox(),
+    ]);
+    expect(settings.x).toBeGreaterThan(dash.x);            // Dashboard 오른쪽
+    expect(Math.abs((settings.y + settings.height / 2) - (dash.y + dash.height / 2))).toBeLessThan(6);
   });
 
   test("Settings 아이콘 패딩이 다른 조용한 도구 버튼과 같다", async ({ page }) => {
     // HERO의 메타데이터 보내기와 같은 3px(레이아웃 재검토 계약).
-    const settingsPad = await page.locator(".nav-top .icon-btn")
+    const settingsPad = await page.locator(".settings-btn")
       .evaluate((el) => getComputedStyle(el).padding);
     const heroPad = await page.locator("#collection-header .cheader-right .icon-btn").first()
       .evaluate((el) => getComputedStyle(el).padding);
@@ -83,18 +97,21 @@ test.describe("App Title / Settings 자리와 크기", () => {
   });
 });
 
-// Archive/App Title 대표 아이콘 - DB 아이콘 대신 스페이스 인베이더 픽셀 실루엣
-// (실사용 피드백). rect로 이루어진 칠한 도형이라는 것으로 구분한다 - database
-// 아이콘은 ellipse/path 획이었다.
+// Archive/App Title 대표 아이콘(실사용 피드백 - "인베이더 마크보다 롬팩 그림이
+// 낫다" / "ARCHIVE는 인베이더 그림보다 DB 아이콘"). App Title은 사용자가 만든
+// 카트리지 그림(app-icon.png)을, Archive는 lucide 스타일 database 아이콘을 쓴다.
 test.describe("Archive/App Title 아이콘", () => {
-  test("App Title 아이콘은 인베이더 픽셀(칠한 사각형들)이다", async ({ page }) => {
-    // .icon 클래스는 <svg> 자신에 붙는다(감싸는 태그가 아니다) - 그 안의 <rect>를 센다.
-    const rects = await page.locator(".nav-app-title .icon rect").count();
-    expect(rects).toBeGreaterThan(5);
+  test("App Title은 카트리지 그림(app-icon.png)을 쓴다 - 제목+부제 높이에 맞춘다", async ({ page }) => {
+    const img = page.locator(".nav-app-title .nav-app-icon");
+    await expect(img).toHaveAttribute("src", /app-icon\.png$/);
+    await expect.poll(() => img.evaluate((el) => el.complete && el.naturalWidth)).toBeGreaterThan(0);
   });
 
-  test("Archive 탭 아이콘도 같은 인베이더 픽셀이다", async ({ page }) => {
-    const rects = await page.locator(".ctab.archive .icon rect").count();
-    expect(rects).toBeGreaterThan(5);
+  test("Archive 탭은 database 아이콘(원기둥 모양)을 쓴다", async ({ page }) => {
+    // database 아이콘은 ellipse + path 획으로 이루어진다 - 칠한 사각형(rect)인
+    // 인베이더 픽셀과 이걸로 구분한다.
+    const svg = page.locator(".ctab.archive .icon");
+    await expect(svg.locator("ellipse")).toHaveCount(1);
+    await expect(svg.locator("rect")).toHaveCount(0);
   });
 });

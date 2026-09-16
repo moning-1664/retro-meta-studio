@@ -305,6 +305,21 @@ test.describe("Storage target Slider", () => {
     await expect(sliderValue(page)).toHaveValue("8 TB");
   });
 
+  // 실사용 피드백: "TARGET 용량은 최소가 8GB부터 시작하는게 맞겠다" - 1GB 같은
+  // 비현실적인 값까지 텍스트로 내려갈 수 있었다.
+  test("최솟값은 8GB고 그 아래로 내려가지 않는다", async ({ page }) => {
+    await openDashboard(page);
+    await setTarget(page, "1 GB");
+    await expect(input(page)).toHaveValue("8 GB");
+    await slider(page).focus();
+    await page.keyboard.press("ArrowLeft");
+    await expect(sliderValue(page)).toHaveValue("8 GB");
+    await dragTo(page, 0);
+    await expect(sliderValue(page)).toHaveValue("8 GB");
+    await row(page).locator(".dsb-spin", { hasText: "▼" }).click();
+    await expect(input(page)).toHaveValue("8 GB");
+  });
+
   test("▲/▼는 세밀하게 한 칸씩 움직인다", async ({ page }) => {
     await openDashboard(page);
     await setTarget(page, "128 GB");

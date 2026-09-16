@@ -13,7 +13,7 @@ const TAGGED_FILES = { 1: "FFX (K).iso", 2: "MGS2 (U).iso", 3: "SMW.sfc" };
 const REGION_INDEX = { kr: 0, en: 1, jp: 2, eu: 3, global: 4 };
 
 const openMetadataSettings = async (page) => {
-  await page.locator(".nav-top .icon-btn[title='Settings']").click();
+  await page.locator(".settings-btn").click();
   await page.locator(".stg-nav-item[data-section='metadata']").click();
   await expect(page.locator(".stg-title-affix")).toBeVisible();
 };

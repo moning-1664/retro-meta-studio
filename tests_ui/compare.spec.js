@@ -65,6 +65,27 @@ test("상태 기호가 행마다 다르게 붙는다", async ({ page }) => {
   await expect(page.locator(".lrow.s-conflict .status-mark.warn")).toHaveCount(1);
 });
 
+// 실사용 피드백(스크린샷) - Compare 행의 File/Title/Description 글자가 서로
+// 겹쳐서 보였다. 원인은 compareRowElement()가 헤더와 다른 grid-template을 썼기
+// 때문이다(`.lrow`는 기본 grid-template-columns이 없어서, 안 주면 모든 칸이
+// 암시적으로 첫 칸 하나에 겹쳐 그려진다). 헤더와 같은 열을 쓰는지 직접 잰다.
+test("행이 헤더와 같은 컬럼 폭을 쓴다 - 글자가 겹치지 않는다", async ({ page }) => {
+  await startCompare(page);
+  const headCells = page.locator("#list-head .lh");
+  const rowCells = page.locator(".lrow").first().locator(".lc");
+  await expect(headCells).toHaveCount(await rowCells.count());
+
+  const [headBoxes, rowBoxes] = await Promise.all([
+    headCells.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().x)),
+    rowCells.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().x)),
+  ]);
+  expect(rowBoxes).toEqual(headBoxes);
+
+  // 겹치면 같은 x에서 시작하는 칸이 둘 이상 생긴다 - 실제로 겹쳤을 때 재현된 증상.
+  const unique = new Set(rowBoxes.map((x) => Math.round(x)));
+  expect(unique.size).toBe(rowBoxes.length);
+});
+
 test("행을 고르면 좌우를 나란히 놓은 상세가 열린다", async ({ page }) => {
   await startCompare(page);
   await page.locator(".lrow", { hasText: "Conflict Game" }).click();

@@ -92,6 +92,33 @@ class RegistryTests(unittest.TestCase):
         self.store.remove_storage(col.id, "ext-1")
         self.assertEqual(len(self.store.get_collection(col.id).storages), 1)
 
+    def test_move_system_can_pin_all_three_paths_at_once(self):
+        """External Storage 제거(파일은 그대로 두고 배치만 합치는 경로)가 쓰는 형태다 -
+        rom/media/metadata 셋 다 절대 경로로 고정하면서 storage_id만 바뀌어야 한다."""
+        col = self.store.create_collection("C", "es-de", "R")
+        self.store.add_storage(col.id, "ext-1", kind="external", root_path=r"F:\roms")
+        self.store.upsert_system(col.id, "PS2", "ext-1")
+
+        self.store.move_system(col.id, "PS2", STORAGE_INTERNAL,
+                               rom_path=r"F:\roms\ps2", media_path=r"F:\roms\media\ps2",
+                               metadata_path=r"F:\roms\gamelists\ps2\gamelist.xml")
+        reloaded = self.store.get_collection(col.id)
+        entry = next(s for s in reloaded.systems if s.system == "PS2")
+        self.assertEqual(entry.storage_id, STORAGE_INTERNAL)
+        self.assertEqual(entry.rom_path, r"F:\roms\ps2")
+        self.assertEqual(entry.media_path, r"F:\roms\media\ps2")
+        self.assertEqual(entry.metadata_path, r"F:\roms\gamelists\ps2\gamelist.xml")
+
+    def test_move_system_without_path_args_leaves_existing_paths_alone(self):
+        col = self.store.create_collection("C", "es-de", "R")
+        self.store.add_storage(col.id, "ext-1", kind="external", root_path=r"F:\roms")
+        self.store.upsert_system(col.id, "PS2", "ext-1", rom_path=r"F:\roms\ps2")
+
+        self.store.move_system(col.id, "PS2", STORAGE_INTERNAL)
+        entry = next(s for s in self.store.get_collection(col.id).systems if s.system == "PS2")
+        self.assertEqual(entry.storage_id, STORAGE_INTERNAL)
+        self.assertEqual(entry.rom_path, r"F:\roms\ps2")
+
     def test_internal_storage_cannot_be_removed(self):
         col = self.store.create_collection("C", "es-de", "R")
         with self.assertRaises(RegistryError):

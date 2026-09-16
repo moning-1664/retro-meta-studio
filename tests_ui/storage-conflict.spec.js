@@ -86,6 +86,33 @@ test.describe("External Storage 설정과 연결", () => {
     expect([args[0], args[1], args[4]]).toEqual(["c1", "ext-1", "1234-ABCD"]);
   });
 
+  // 실사용 피드백 - "Internal의 옵션에 들어있는 Android Storage ID, Storage
+  // 경로는 의미없다." write_custom_systems()가 Internal을 애초에 건너뛰므로
+  // (Android는 %ROMPATH%를 쓴다) 그 필드를 채워도 아무 데도 쓰이지 않는다.
+  test("Internal 설정에는 Android Storage ID/경로 칸이 아예 없다", async ({ page }) => {
+    const head = page.locator(".nav-group-head", { hasText: "INTERNAL" });
+    await head.locator(".storage-settings-btn").click();
+    await expect(page.locator(".modal-title")).toContainText("설정");
+    await expect(page.locator(".storage-device-id")).toHaveCount(0);
+    await expect(page.locator(".storage-device-root")).toHaveCount(0);
+    await expect(page.locator(".modal-body")).not.toContainText("Android Storage ID");
+    // 이름은 여전히 바꿀 수 있다 - Internal도 이름 자체는 뜻이 있다.
+    await expect(page.locator(".storage-label")).toBeVisible();
+  });
+
+  test("Internal 설정 저장은 device_id/device_root를 건드리지 않는다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.__updated = [];
+      const original = window.api.updateStorage;
+      window.api.updateStorage = (...args) => { window.__updated.push(args); return original(...args); };
+    });
+    await page.locator(".nav-group-head", { hasText: "INTERNAL" }).locator(".storage-settings-btn").click();
+    await page.locator(".storage-settings-save").click();
+    const args = await page.evaluate(() => window.__updated[0]);
+    expect(args[4]).toBeNull();   // deviceId
+    expect(args[5]).toBeNull();   // deviceRoot
+  });
+
   test("잘못된 Storage ID는 저장하지 않고 알린다", async ({ page }) => {
     await page.locator(".nav-group-head", { hasText: "EXTERNAL SD" }).locator(".storage-settings-btn").click();
     await page.locator(".storage-device-id").fill("12 34");

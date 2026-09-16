@@ -47,7 +47,7 @@ test.describe("빈 System 숨기기", () => {
   });
 
   test("Settings의 Collections 섹션에서도 바꿀 수 있다", async ({ page }) => {
-    await page.locator(".nav-top .icon-btn[title='Settings']").click();
+    await page.locator(".settings-btn").click();
     await page.locator(".stg-nav-item[data-section='collections']").click();
     const row = page.locator(".stg-row[data-key='navigation.hideEmptySystems']");
     await expect(row).not.toHaveClass(/soon/);

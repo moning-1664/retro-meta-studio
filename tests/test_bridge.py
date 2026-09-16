@@ -63,6 +63,21 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(row["media"]["Covers"], "pending")
         self.assertEqual(row["media"]["Videos"], "video://exists")
 
+    def test_list_rows_status_flags_are_independent(self):
+        """Gamelist Status 아이콘(실사용 피드백 - "ROM/Media/Description/Cover를
+        독립적으로") 4개가 각자 옳은 값을 내야 한다. FFX는 desc·cover·video가 전부
+        있고, MGS2는 desc도 media도 없다 - 서로 다른 조합을 한 번에 본다."""
+        rows = {r["file"]: r for r in self.api.list_rows(self.cid)["data"]["rows"]}
+        ffx = rows["FFX.iso"]
+        self.assertTrue(ffx["hasDescription"])
+        self.assertTrue(ffx["hasCover"])
+        self.assertTrue(ffx["hasMedia"])
+
+        mgs2 = rows["MGS2.iso"]
+        self.assertFalse(mgs2["hasDescription"])
+        self.assertFalse(mgs2["hasCover"])
+        self.assertFalse(mgs2["hasMedia"])
+
     def test_media_image_returns_data_uri(self):
         uid = self._uid("FFX.iso")
         data = self.api.get_media_image(self.cid, uid, "Covers")["data"]
@@ -117,6 +132,43 @@ class BridgeTests(unittest.TestCase):
         placement = {s["id"]: [x["system"] for x in s["systems"]] for s in detail["storages"]}
         self.assertEqual(placement["ext-1"], ["ps2"])
         self.assertEqual(placement["internal"], [])
+
+    def test_reassign_system_storage_does_not_touch_files(self):
+        """External Storage 제거가 쓰는 경로(실사용 피드백 - "실제 롬파일은 유지되는데
+        표시만 Internal로 합쳐지는 걸로 되어야 한다"). move_system(파일도 옮기는
+        Storage 이동)과 달리 파일은 원래 자리에 그대로 있어야 하고, 새로 계산된
+        절대 경로가 System에 고정돼야 Scan이 계속 그 파일을 찾는다."""
+        storage_id = self.api.add_external_storage(self.cid, "SD", str(self.dir / "sd"))["data"]
+        self.assertTrue(self.api.move_system(self.cid, "ps2", storage_id)["ok"])
+
+        old_rom_dir = self.root / "ps2"   # ES-DE 기본 배치 - 아직 실제로 옮기지 않았다.
+        self.assertTrue(old_rom_dir.exists())
+        self.assertFalse((self.dir / "sd" / "ps2").exists())
+
+        result = self.api.reassign_system_storage(self.cid, "ps2", "internal")
+        self.assertTrue(result["ok"], result.get("error"))
+
+        # 파일은 옮긴 적이 없으므로 옛 자리에 그대로다.
+        self.assertTrue(old_rom_dir.exists())
+        self.assertFalse((self.dir / "sd" / "ps2").exists())
+
+        detail = self.api.collection_detail(self.cid)["data"]
+        placement = {s["id"]: [x["system"] for x in s["systems"]] for s in detail["storages"]}
+        self.assertEqual(placement["internal"], ["ps2"])
+
+        # 재배치 뒤에도 Scan이 여전히 그 파일을 찾는다 - 절대 경로가 고정된
+        # 덕분이다(고정하지 않으면 layout()이 Internal 기준으로 다시 계산해
+        # 파일이 "사라진 것"처럼 보인다).
+        wait_job(self.api, self.api.start_scan(self.cid)["data"]["jobId"])
+        self.assertEqual(len(self.api.list_rows(self.cid, systems=["ps2"])["data"]["rows"]), 3)
+
+    def test_reassign_system_storage_lets_the_now_empty_storage_be_removed(self):
+        storage_id = self.api.add_external_storage(self.cid, "SD", str(self.dir / "sd"))["data"]
+        self.api.move_system(self.cid, "ps2", storage_id)
+        self.assertFalse(self.api.remove_storage(self.cid, storage_id)["ok"])
+
+        self.assertTrue(self.api.reassign_system_storage(self.cid, "ps2", "internal")["ok"])
+        self.assertTrue(self.api.remove_storage(self.cid, storage_id)["ok"])
 
     def test_storage_with_systems_cannot_be_removed(self):
         storage_id = self.api.add_external_storage(self.cid, "SD", str(self.dir / "sd"))["data"]

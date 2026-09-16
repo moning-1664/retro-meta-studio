@@ -109,7 +109,7 @@ REM  실행 시 "pip install comtypes"라는 엉뚱한 안내가 뜬다(실제�
 REM  빠진 것은 comtypes가 아니라 comtypes.client가 딛고 선 서브모듈이기 때문이다.
 REM  훅이 하는 일과 정확히 같은 목록을 여기서도 직접 적어 그 훅에 기대지 않는다.
 echo [6/6] Building with PyInstaller (this may take a few minutes)...
-pyinstaller --noconfirm --onefile --windowed --name RetroMetaStudio --add-data "gui_web;gui_web" %WORKER_DATA% ^
+pyinstaller --noconfirm --onefile --windowed --name RetroMetaStudio --icon "app.ico" --add-data "gui_web;gui_web" %WORKER_DATA% ^
     --hidden-import comtypes ^
     --hidden-import comtypes.client ^
     --hidden-import comtypes.gen ^

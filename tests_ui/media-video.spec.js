@@ -76,7 +76,7 @@ test("영상이 없는 게임에는 영상 자리가 생기지 않는다", async
 
 test.describe("Settings > Metadata & Media > Video", () => {
   const openVideoSettings = async (page) => {
-    await page.locator(".nav-top .icon-btn[title='Settings']").click();
+    await page.locator(".settings-btn").click();
     await page.locator(".stg-nav-item[data-section='metadata']").click();
   };
 

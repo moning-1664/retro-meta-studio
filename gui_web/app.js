@@ -33,7 +33,7 @@
     { id: "rating", label: "Rating", key: "rating", width: 66 },
     { id: "fav", label: "★", key: "favorite", width: 30, fixed: true },
     { id: "genre", label: "Genre", key: "genre", width: 120 },
-    { id: "status", label: "Status", width: 62, fixed: true },
+    { id: "status", label: "Status", width: 88, fixed: true },
   ];
   const COL_MIN_WIDTH = 50;
   const DEFAULT_COL_WIDTHS = Object.fromEntries(COLUMNS.map((c) => [c.id, c.width]));
@@ -866,7 +866,7 @@
     }
     const archiveTab = h("div", { class: "ctab archive" + (isArchive() ? " active" : ""),
       title: "여러 Collection에서 수집한 Metadata 보관소" }, [
-      icon("invader", IC.md), h("span", { class: "ctab-name" }, ["Archive"]),
+      icon("database", IC.md), h("span", { class: "ctab-name" }, ["Archive"]),
     ]);
     archiveTab.addEventListener("click", () => selectTab(ARCHIVE_ID));
     bar.appendChild(archiveTab);
@@ -1350,7 +1350,10 @@
         // 사용자가 이 경로를 여기서 이미 알려 줬는데도 Navigator에서 "Add External
         // Storage"를 다시 눌러 똑같은 경로를 한 번 더 찾아야 했다(실사용 피드백).
         if (extRomPath) {
-          const ext = await api.addExternalStorage(r.data.id, "External ROMs", extRomPath);
+          // Internal의 기본 이름이 그냥 "Internal"인 것과 맞춘다(실사용 피드백 -
+          // "Internal은 Internal인데 External은 왜 External ROMs인가"). 나중에
+          // Storage 설정에서 언제든 바꿀 수 있다.
+          const ext = await api.addExternalStorage(r.data.id, "External", extRomPath);
           if (ext.ok) await api.attachStorageSystems(r.data.id, ext.data);
           else showToast(`External ROM 디렉토리는 추가하지 못했습니다: ${ext.error}`, "warning");
         }
@@ -1377,28 +1380,37 @@
   function navTop() {
     const top = h("div", { class: "nav-top" });
     top.appendChild(h("div", { class: "nav-app-title" }, [
-      icon("invader", IC.lg),
-      h("div", { class: "nav-app-title-text" }, [
-        h("div", { class: "nav-app-title-name" }, ["RetroMeta Studio"]),
-        h("div", { class: "nav-app-title-sub" }, ["Frontend Metadata Editor"]),
-      ]),
+      // 인베이더 마크보다 카트리지 그림이 낫다는 사용자 결정 - 제목+부제를 합친
+      // 높이에 맞춘다(CSS의 .nav-app-icon).
+      h("img", { class: "nav-app-icon", src: "app-icon.png", alt: "" }),
+      // 제목은 픽셀 글자 그림이다(사용자 결정 - 대문자 R/M/S와 i의 꼭지에
+      // 빨/녹/파/노). 만드는 방법은 tools/make_branding.py에 있다.
+      //
+      // **부제("Frontend Metadata Editor")는 없앴다** - 카트리지 라벨에 이미
+      // "FRONT-END METADATA MANAGER"가 적혀 있어 같은 말을 두 번 하는 셈이었고,
+      // 두 줄짜리 제목이 띠를 채우면서 세 번째 줄을 놓을 자리도 없다.
+      h("img", { class: "nav-app-title-name", src: "app-title.png", alt: "RetroMeta Studio" }),
     ]));
-    const settings = h("button", { class: "icon-btn", title: "Settings" }, [icon("settings", IC.md)]);
-    settings.addEventListener("click", () => openSettings());
-    top.appendChild(settings);
     return top;
   }
 
-  /** Navigator 최하단 고정 항목. 실제 기능은 아직 없다(레이아웃 재검토, TODO -
-   * PENDING_DECISIONS.md) - 이전 프로젝트 기능을 가져올 진입점 자리만 잡아둔다.
-   * App Title이 상단으로 옮겨간 자리에 대신 놓는다(사용자 요청). */
+  /** Navigator 최하단 고정 줄 - Dashboard와 Settings.
+   *
+   * **Settings가 상단에서 여기로 내려왔다**(사용자 결정). 로고가 상단 띠를 꽉
+   * 채우면서 톱니가 설 자리가 없어졌는데, 창 컨트롤(─ㅁ✕) 옆은 OS 영역이라
+   * 오해를 부르고 하단 Status Bar는 Collection 정보 자리다. Dashboard는 "앱
+   * 전체"를 다루는 같은 층위라 나란히 두는 것이 가장 자연스럽다. */
   function navDashboardRow() {
-    const row = h("button", {
+    const dash = h("button", {
       class: "nav-dashboard" + (S.view === "dashboard" ? " active" : ""),
       title: S.view === "dashboard" ? "목록으로 돌아가기" : "Collection Dashboard",
     }, [icon("dashboard", IC.md), h("span", {}, ["Dashboard"])]);
-    row.addEventListener("click", () => (S.view === "dashboard" ? showList() : showDashboard()));
-    return row;
+    dash.addEventListener("click", () => (S.view === "dashboard" ? showList() : showDashboard()));
+
+    const settings = h("button", { class: "icon-btn settings-btn", title: "Settings" },
+                       [icon("settings", IC.md)]);
+    settings.addEventListener("click", () => openSettings());
+    return h("div", { class: "nav-bottom" }, [dash, settings]);
   }
 
   function renderNav() {
@@ -1674,7 +1686,10 @@
 
   function openAddStorage() {
     if (blockedInCompare("Storage를 추가")) return;
-    const labelInput = h("input", { class: "field-input", value: "External SD" });
+    // Internal의 기본 이름이 단순히 "Internal"인 것과 맞춘다(실사용 피드백) - SD
+    // 카드가 아닌 외장 HDD/USB로 붙이는 경우가 흔해서 "SD"를 기본값으로 못박아
+    // 두면 오히려 고쳐야 할 이름이 된다.
+    const labelInput = h("input", { class: "field-input", value: "External" });
     const pathInput = h("input", { class: "field-input", placeholder: "예: E:\\ROMs" });
     const browse = h("button", { class: "btn", onClick: async () => {
       const r = await api.pickFolder("External Storage 폴더");
@@ -1711,14 +1726,16 @@
     ]);
   }
 
-  /** External Storage 제거(사용자 결정) - System을 Internal로 되돌린 뒤 지운다.
+  /** External Storage 제거(사용자 결정) - System을 Internal로 합친 뒤 지운다.
    *
-   * **순서가 중요하다.** removeStorage는 System이 붙어 있으면 거부한다(registry.py -
-   * 말없이 지우면 그 System들이 가리키던 파일이 붕 뜬다). 그래서 먼저 모든 System을
-   * Internal로 옮기는 Plan을 만들고 **그 자리에서 바로 Apply**한 뒤에 지운다 - Plan에만
-   * 올려 두고 사용자가 나중에 Apply를 누르게 하면, 그 사이 화면에는 System이 이미
-   * Internal에 있는 것처럼 보이는데 실제 파일은 아직 External에 있는 어중간한 상태가
-   * 남는다. 이 버튼을 누른 사람은 "지금 되돌리겠다"고 결정한 것이다.
+   * **실제 파일은 옮기지 않는다.** 처음엔 Storage 이동 Plan(planStorageChange +
+   * Apply)을 그대로 썼는데, 그건 "그 드라이브에 있던 파일을 전부 복사해라"라는
+   * 뜻이라 몇십 GB짜리 External을 지우려다 그만큼을 다시 복사하는 일이 벌어졌다
+   * (실사용 피드백 - "실제 롬파일은 유지되는데 표시만 Internal로 합쳐지는 걸로
+   * 되어야 한다"). `reassignSystemStorage()`는 지금 파일이 있는 절대 경로를
+   * System에 그대로 고정해 두고 배치(storage_id)만 바꾼다 - removeStorage는
+   * System이 붙어 있으면 거부하므로(그 System이 가리키던 파일이 붕 뜨는 것을 막기
+   * 위해) 이 재배치가 먼저 끝나야 한다.
    */
   async function confirmRemoveExternalStorage(storage) {
     if (blockedInCompare("Storage를 제거")) return;
@@ -1726,29 +1743,18 @@
     const systems = (detail.systems || []).filter((sys) => sys.storageId === storage.id);
     const message = systems.length
       ? `"${storage.label}"을 제거합니다. 이 안의 System ${formatCount(systems.length)}개`
-        + `(${systems.map((s) => s.system.toUpperCase()).join(", ")})를 Internal로 옮긴 뒤 제거합니다.`
-        + ` 실제 파일이 이동합니다.`
+        + `(${systems.map((s) => s.system.toUpperCase()).join(", ")})를 Internal로 합칩니다.`
+        + ` 실제 파일은 지금 있는 자리에 그대로 남고, 목록에서의 표시만 바뀝니다.`
       : `"${storage.label}"을 제거합니다. 이 안에는 System이 없습니다.`;
     showConfirm("External Storage 제거", message, true, async () => {
       for (const sys of systems) {
-        const r = await api.planStorageChange(S.activeId, sys.system, STORAGE_INTERNAL);
+        const r = await api.reassignSystemStorage(S.activeId, sys.system, STORAGE_INTERNAL);
         if (!r.ok) { showToast(r.error, "error"); return; }
-      }
-      if (systems.length) {
-        const started = await api.startApply(S.activeId);
-        if (!started.ok) { showToast(started.error, "error"); return; }
-        const result = await pollJob(started.data.jobId, "Internal로 옮기는 중");
-        if (!result.ok) { if (!result.cancelled) showToast(result.error, "error"); return; }
-        const data = result.data || {};
-        if (data.failed || data.partial) {
-          showToast(`일부 System을 옮기지 못해 Storage를 지우지 못했습니다 - Plan을 확인하세요.`, "error");
-          await ensureDetail(S.activeId); renderNav(); renderHeader();
-          return;
-        }
       }
       const removed = await api.removeStorage(S.activeId, storage.id);
       if (!removed.ok) { showToast(removed.error, "error"); return; }
       await ensureDetail(S.activeId);
+      await runScan(S.activeId);
       resetList();
       renderAll();
       showToast(`"${storage.label}"을 제거했습니다.`);
@@ -2338,27 +2344,26 @@
   }
 
   /** Storage 설정 - Internal/External 공통(사용자 결정: "External만 Setting이 있는
-   * 것도 이상하다"). 이름, 안드로이드 Storage ID/경로는 둘 다 바꿀 수 있다 - PC 경로만
-   * External에서만 뜻이 있다(Internal의 PC 경로는 Collection 경로 자체라 여기서
-   * 바꿀 자리가 아니다 - update_storage도 Internal의 root_path는 조용히 무시한다).
-   * ES-DE XML 생성은 External에서만 보인다 - custom_systems가 대상으로 삼는 것이
-   * External의 System뿐이기 때문이다(§ write_custom_systems). */
+   * 것도 이상하다"). 이름은 둘 다 바꿀 수 있다. 안드로이드 Storage ID/경로와 PC
+   * 경로는 **External에서만** 뜻이 있다.
+   *
+   * - PC 경로: Internal의 PC 경로는 Collection 경로 자체라 여기서 바꿀 자리가
+   *   아니다(update_storage도 Internal의 root_path는 조용히 무시한다).
+   * - Android Storage ID/경로: `write_custom_systems()`가 명시적으로 Internal을
+   *   건너뛴다("(Android) Internal은 ES-DE 기본 ROM 폴더(%ROMPATH%)를 쓰므로
+   *   적지 않는다") - custom_systems XML을 만들 때 Internal의 이 값은 아예
+   *   읽히지 않는다. 그런데도 입력칸을 보여주면 "이걸 채워야 하나?" 하는 의미
+   *   없는 질문을 만든다(실사용 피드백 - "Internal의 옵션에 들어있는 Android
+   *   Storage ID, Storage 경로는 의미없다"). External에서만 보여준다.
+   */
   function openStorageSettings(storage) {
     const external = storage.kind === "external";
     const label = h("input", { class: "field-input storage-label", value: storage.label });
-    const deviceId = h("input", { class: "field-input storage-device-id", value: storage.deviceId || "", placeholder: "예: 1234-ABCD" });
-    const deviceRoot = h("input", { class: "field-input storage-device-root", value: storage.deviceRoot || "" });
-    const syncPlaceholder = () => {
-      const id = deviceId.value.trim();
-      deviceRoot.placeholder = id ? `/storage/${id}` : "/storage/<Storage ID>";
-    };
-    deviceId.addEventListener("input", syncPlaceholder);
-    syncPlaceholder();
 
     const body = h("div", { class: "modal-body storage-settings" }, [
       h("div", { class: "field-label" }, ["이름"]), label,
     ]);
-    let root = null;
+    let root = null, deviceId = null, deviceRoot = null;
     if (external) {
       root = h("input", { class: "field-input storage-root", value: storage.rootPath });
       const browse = h("button", { class: "btn", onClick: async () => {
@@ -2367,24 +2372,36 @@
       } }, [icon("folderOpen", IC.sm)]);
       body.appendChild(h("div", { class: "field-label" }, ["이 PC에서의 경로"]));
       body.appendChild(h("div", { class: "field-row" }, [root, browse]));
+
+      deviceId = h("input", { class: "field-input storage-device-id", value: storage.deviceId || "", placeholder: "예: 1234-ABCD" });
+      deviceRoot = h("input", { class: "field-input storage-device-root", value: storage.deviceRoot || "" });
+      const syncPlaceholder = () => {
+        const id = deviceId.value.trim();
+        deviceRoot.placeholder = id ? `/storage/${id}` : "/storage/<Storage ID>";
+      };
+      deviceId.addEventListener("input", syncPlaceholder);
+      syncPlaceholder();
+      body.appendChild(h("div", { class: "field-label" }, ["Android Storage ID"]));
+      body.appendChild(deviceId);
+      body.appendChild(h("div", { class: "modal-hint" }, ["기기의 /storage/ 아래 SD카드 폴더 이름입니다. ES-DE custom_systems XML의 경로를 만드는 데 씁니다."]));
+      body.appendChild(h("div", { class: "field-label" }, ["기기에서 이 Storage의 경로"]));
+      body.appendChild(deviceRoot);
+      body.appendChild(h("div", { class: "modal-hint" }, ["비워 두면 /storage/<Storage ID>를 씁니다. PC 경로가 SD카드의 하위 폴더라면 그 경로까지 적으세요(예: /storage/1234-ABCD/ROMs)."]));
     } else {
       // Internal의 PC 경로는 Collection 자체의 경로다 - 여기서 바꾸면 저장은 되지 않고
       // 조용히 무시되므로, 아예 입력칸을 주지 않고 참고로만 보여준다.
       body.appendChild(h("div", { class: "field-label" }, ["이 PC에서의 경로"]));
       body.appendChild(h("div", { class: "modal-text storage-root-readonly" }, [storage.rootPath]));
     }
-    body.appendChild(h("div", { class: "field-label" }, ["Android Storage ID"]));
-    body.appendChild(deviceId);
-    body.appendChild(h("div", { class: "modal-hint" }, ["기기의 /storage/ 아래 SD카드 폴더 이름입니다. ES-DE custom_systems XML의 경로를 만드는 데 씁니다."]));
-    body.appendChild(h("div", { class: "field-label" }, ["기기에서 이 Storage의 경로"]));
-    body.appendChild(deviceRoot);
-    body.appendChild(h("div", { class: "modal-hint" }, ["비워 두면 /storage/<Storage ID>를 씁니다. PC 경로가 SD카드의 하위 폴더라면 그 경로까지 적으세요(예: /storage/1234-ABCD/ROMs)."]));
 
     const actions = [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       h("button", { class: "btn primary storage-settings-save", onClick: async () => {
+        // Internal은 deviceId/deviceRoot 입력칸 자체가 없다 - null로 넘겨 bridge가
+        // 그 필드를 아예 건드리지 않게 한다(빈 문자열을 보내면 "일부러 지웠다"로
+        // 읽혀 불필요하게 값을 건드린다).
         const r = await api.updateStorage(S.activeId, storage.id, label.value,
-          root ? root.value : null, deviceId.value, deviceRoot.value);
+          root ? root.value : null, deviceId ? deviceId.value : null, deviceRoot ? deviceRoot.value : null);
         if (!r.ok) { showToast(r.error, "error"); return; }
         closeModal();
         await ensureDetail(S.activeId);
@@ -2406,23 +2423,34 @@
   }
 
   function openStorageMenu(storage) {
+    // renderCollapsedHeaderPanel()과 같은 규칙이다 - 목표를 정했으면 Capacity/Free
+    // 둘 다 목표 기준이다(실사용 피드백 - "Free 용량이 Target-Actual이 아니라
+    // 그냥 하드용량임"). 두 자리에서 다른 계산을 쓰면 같은 Storage를 두 번 클릭할
+    // 뿐인데 숫자가 다르게 보인다.
+    const target = S.dashboardTargets[storage.id] || null;
+    const basis = target || storage.capacityBytes;
+    const targetFree = target != null ? Math.max(0, target - storage.actualBytes) : null;
+    const free = target != null
+      ? (storage.freeBytes == null ? targetFree : Math.min(targetFree, storage.freeBytes))
+      : storage.freeBytes;
     const stats = h("div", { class: "modal-body" }, [
       h("div", { class: "health-row" }, [h("span", {}, ["경로"]), h("span", {}, [storage.rootPath])]),
       h("div", { class: "health-row" }, [h("span", {}, ["Actual"]), h("span", {}, [formatBytes(storage.actualBytes)])]),
-      h("div", { class: "health-row" }, [h("span", {}, ["Capacity"]),
-        h("span", {}, [storage.capacityBytes == null ? "Unknown" : formatBytes(storage.capacityBytes)])]),
+      h("div", { class: "health-row" }, [h("span", {}, [target ? "Target" : "Capacity"]),
+        h("span", {}, [basis == null ? "Unknown" : formatBytes(basis)])]),
       h("div", { class: "health-row" }, [h("span", {}, ["Free"]),
-        h("span", {}, [storage.freeBytes == null ? "Unknown" : formatBytes(storage.freeBytes)])]),
+        h("span", {}, [free == null ? "Unknown" : formatBytes(free)])]),
       h("div", { class: "health-row" }, [h("span", {}, ["Systems"]), h("span", {}, [String(storage.systems.length)])]),
     ]);
     const actions = [h("button", { class: "btn primary", onClick: closeModal }, ["닫기"])];
     if (storage.kind !== "internal") {
-      actions.unshift(h("button", { class: "btn danger", onClick: async () => {
+      // confirmRemoveExternalStorage()를 그대로 쓴다 - 여기서 removeStorage를
+      // 바로 부르면 System이 붙어 있을 때 registry가 거부만 하고 끝나서(붙은
+      // System을 안내 없이 방치), Storage Health 모달로 들어온 경로만 재배치
+      // 확인 없이 막히는 결과가 됐다.
+      actions.unshift(h("button", { class: "btn danger", onClick: () => {
         closeModal();
-        const r = await api.removeStorage(S.activeId, storage.id);
-        if (!r.ok) { showToast(r.error, "error"); return; }
-        await ensureDetail(S.activeId);
-        renderNav(); renderHeader();
+        confirmRemoveExternalStorage(storage);
       } }, ["제거"]));
     }
     showModal(`${storage.label} Health`, stats, actions);
@@ -2677,9 +2705,20 @@
       const target = S.dashboardTargets[storage.id] || null;
       const basis = target || storage.capacityBytes;
       const unknown = basis == null;
+      // **Free도 목표를 정했으면 목표 기준이다**(실사용 피드백 - "Free 용량이
+      // Target-Actual이 아니라 그냥 하드용량임"). "이 디스크에 몇 GB가 비어
+      // 있냐"가 아니라 "내가 정한 한도까지 얼마나 더 채울 수 있냐"가 궁금한
+      // 자리이므로, Capacity를 목표로 바꿨다면 Free도 같이 바뀌어야 한다.
+      // 물리적으로 그보다 적게 남았으면(디스크가 실제로 더 작으면) 그쪽이
+      // 진짜 한계이므로 더 작은 값을 쓴다 - 목표가 물리 용량보다 커도 실제로
+      // 채울 수 있는 만큼만 "Free"라고 말해야 한다.
+      const targetFree = target != null ? Math.max(0, target - storage.actualBytes) : null;
+      const free = target != null
+        ? (storage.freeBytes == null ? targetFree : Math.min(targetFree, storage.freeBytes))
+        : storage.freeBytes;
       [[target ? "Target" : "Capacity", unknown ? "Unknown" : formatBytes(basis)],
        ["Actual", formatBytes(storage.actualBytes)],
-       ["Free", storage.freeBytes == null ? "Unknown" : formatBytes(storage.freeBytes)]].forEach(([l, v]) => {
+       ["Free", free == null ? "Unknown" : formatBytes(free)]].forEach(([l, v]) => {
         box.appendChild(h("div", { class: "health-row" }, [h("span", {}, [l]), h("span", {}, [v])]));
       });
       if (!unknown && basis > 0) {
@@ -3223,26 +3262,45 @@
     return h("span", { class: "status-mark ok", title: "양쪽이 같음" }, [""]);
   }
 
+  //: Gamelist Status 아이콘 4개(실사용 피드백 - "Missing Rom/Media/Description/Cover가
+  //: 아이콘으로 나오는게 낫겠음. 각 아이콘은 독립적으로 한 칸을 차지하고, 2개 이상
+  //: 해당되어도 각 위치에 아이콘이 표기"). 예전엔 우선순위대로 기호 하나만
+  //: 보여줬다("·"/"△") - 문제가 두 개 이상이면 하나만 보이고 나머지는 숨겨졌다.
+  //: 이제 네 칸이 각자의 자리를 차지하고, 없는 항목만 빨갛게 켜진다.
+  const STATUS_ICON_DEFS = [
+    { key: "present", icon: "gamepad", label: "ROM" },
+    { key: "hasMedia", icon: "disc", label: "Media" },
+    { key: "hasDescription", icon: "fileText", label: "Description" },
+    { key: "hasCover", icon: "image", label: "Cover" },
+  ];
+
+  function statusIcons(row) {
+    // Metadata 전용 Collection(ROM 폴더를 주지 않은 기기)에서는 ROM이 없는 것이
+    // 정상이다 - 그 칸만 빨갛게 켜지 않는다(자리는 그대로 유지해 칸 정렬이 흔들리지
+    // 않게 한다).
+    const metaOnly = !!(activeDetail() && activeDetail().metadataOnly);
+    return STATUS_ICON_DEFS.map(({ key, icon: name, label }) => {
+      const missing = !row[key] && !(key === "present" && metaOnly);
+      return h("span", {
+        class: "status-icon" + (missing ? " missing" : ""),
+        title: missing ? `${label} 없음` : label,
+      }, [icon(name, 12)]);
+    });
+  }
+
   function statusMark(row) {
-    // Plan 상태가 있으면 그것이 우선이다. 기호는 작게만 표시하고 제목이나 설명
-    // 전체를 색칠하지 않는다(스펙 §24).
+    // Plan 상태가 있으면 그것이 우선이다 - 지금 뭐가 없는지보다 "곧 뭐가 바뀌는지"가
+    // 더 급한 정보다. 기호는 작게만 표시하고 제목이나 설명 전체를 색칠하지 않는다
+    // (스펙 §24).
     const marks = (S.plan && S.plan.marks) || { rows: {}, systems: [] };
     const mark = marks.rows[`${row.system}|${row.file}`];
-    if (mark === "+") return h("span", { class: "status-mark add", title: "추가 예정" }, ["+"]);
-    if (mark === "-") return h("span", { class: "status-mark del", title: "삭제 예정" }, ["−"]);
-    if (mark === "✎") return h("span", { class: "status-mark edit", title: "편집 예정 (Apply해야 반영)" }, ["✎"]);
+    if (mark === "+") return [h("span", { class: "status-mark add", title: "추가 예정" }, ["+"])];
+    if (mark === "-") return [h("span", { class: "status-mark del", title: "삭제 예정" }, ["−"])];
+    if (mark === "✎") return [h("span", { class: "status-mark edit", title: "편집 예정 (Apply해야 반영)" }, ["✎"])];
     if ((marks.systems || []).includes(row.system)) {
-      return h("span", { class: "status-mark warn", title: "Storage 이동 예정" }, ["△"]);
+      return [h("span", { class: "status-mark warn", title: "Storage 이동 예정" }, ["△"])];
     }
-    // Metadata 전용 Collection(ROM 폴더를 주지 않은 기기)에서는 ROM이 없는 것이
-    // 정상이다 - 모든 줄에 경고를 칠하면 아무 뜻도 없는 경고가 된다.
-    const metaOnly = !!(activeDetail() && activeDetail().metadataOnly);
-    if (!row.present && !metaOnly) {
-      return h("span", { class: "status-mark warn", title: "ROM 파일 없음 (metadata만 존재)" }, ["△"]);
-    }
-    if (!row.hasMetadata) return h("span", { class: "status-mark muted", title: "Metadata 없음" }, ["·"]);
-    if (!row.hasMedia) return h("span", { class: "status-mark muted", title: "Media 없음" }, ["·"]);
-    return h("span", { class: "status-mark ok", title: "정상" }, [""]);
+    return statusIcons(row);
   }
 
   /** 카드 보기의 "어디까지 지었는가" 표식을 지운다. 다음에 카드로 오면 새로 짓는다. */
@@ -3444,35 +3502,44 @@
    * 폭으로 그려졌다가 데이터가 오면 제 폭으로 돌아갔다(실사용 피드백: "스크롤 중 File
    * 쪽 넓이가 커졌다가 스크롤이 끝나면 원래 크기로 돌아온다"). */
   function placeholderRow(index) {
-    if (isCompare()) {
-      return h("div", { class: "lrow placeholder", style: { height: ROW_HEIGHT + "px" } }, [
-        h("div", { class: "lc lc-index" }, [String(index + 1)]),
-        h("div", { class: "lc lc-title" }, [h("span", { class: "skeleton" })]),
-      ]);
-    }
+    // Compare든 아니든 헤더와 같은 grid-template을 써야 한다 - `.lrow`는 기본
+    // grid-template-columns이 없어서(studio.css), 안 주면 모든 칸이 암시적으로
+    // 한 칸에 겹쳐 그려진다(실사용 피드백 - "gamelist 상에 표시 내용이 걸쳐서
+    // 표기됨"의 원인이 정확히 이것이었다).
     return h("div", {
-      class: "lrow placeholder",
+      class: "lrow placeholder" + (isCompare() ? " compare-row" : ""),
       style: { height: ROW_HEIGHT + "px", gridTemplateColumns: gridTemplate() },
     }, visibleColumns().map((col) => h("div", { class: "lc lc-" + col.id },
       col.id === "no" ? [truncSpan(String(index + 1))]
         : (col.id === "file" || col.id === "title") ? [h("span", { class: "skeleton" })] : [])));
   }
 
+  /** Compare 목록의 행. **헤더와 같은 컬럼 틀(visibleColumns())을 그대로 쓴다** -
+   * 예전엔 File/Title/Status만 담은 고정 6칸을 grid-template 없이 그렸는데, `.lrow`
+   * 기본값에 grid-template-columns이 없어서 모든 칸이 암시적으로 첫 칸 하나에
+   * 겹쳐 그려졌다(실사용 피드백 - "gamelist 상에 표시 내용이 걸쳐서 표기됨").
+   * Region/Rating/Genre/★처럼 좌우 비교에 뜻이 없는 칸은 비워 두되 자리는
+   * 유지한다 - 그래야 헤더와 계속 줄이 맞는다.
+   */
   function compareRowElement(row, index) {
     const el = h("div", {
       class: "lrow compare-row" + (S.focused === row.key ? " focused" : "") + " s-" + row.status,
-      style: { height: ROW_HEIGHT + "px" },
+      style: { height: ROW_HEIGHT + "px", gridTemplateColumns: gridTemplate() },
     });
-    el.appendChild(h("div", { class: "lc lc-check" }));
-    el.appendChild(h("div", { class: "lc lc-index" }, [String(index + 1)]));
-    el.appendChild(h("div", { class: "lc lc-title" }, [
+    const cells = {};
+    cells.no = h("div", { class: "lc lc-no" }, [truncSpan(String(index + 1))]);
+    cells.file = h("div", { class: "lc lc-file", title: row.file }, [truncSpan(row.file)]);
+    cells.title = h("div", { class: "lc lc-title" }, [
       systemIcon(row.system, 15),
       h("span", { class: "lrow-title truncate" }, [row.title || row.file]),
-    ]));
-    el.appendChild(h("div", { class: "lc lc-system" }, [
-      h("span", { class: "sys-badge" }, [String(row.system).toUpperCase()])]));
-    el.appendChild(h("div", { class: "lc lc-status" }, [compareMark(row)]));
-    el.appendChild(h("div", { class: "lc lc-desc" }, [truncSpan(row.file)]));
+    ]);
+    cells.desc = h("div", { class: "lc lc-desc" });
+    cells.region = h("div", { class: "lc lc-region" });
+    cells.rating = h("div", { class: "lc lc-rating" });
+    cells.fav = h("div", { class: "lc lc-fav" });
+    cells.genre = h("div", { class: "lc lc-genre" });
+    cells.status = h("div", { class: "lc lc-status" }, [compareMark(row)]);
+    visibleColumns().forEach((col) => el.appendChild(cells[col.id]));
     el.addEventListener("click", () => openCompareDetail(row));
     return el;
   }
@@ -3480,8 +3547,13 @@
   function rowElement(row, index) {
     if (isCompare()) return compareRowElement(row, index);
     const selected = S.selected.has(row.romUid);
+    // 삭제 예정 행은 Status 칸의 작은 기호 하나로만 알렸다 - 스크롤 중에는 그
+    // 기호가 화면 밖일 수도 있다(실사용 피드백 - "Gamelist에 빨간색으로 표시를
+    // 해서 이게 빠진다고 알려줌"). 행 전체를 옅게 물들여 어디서 봐도 알 수 있게 한다.
+    const mark = ((S.plan && S.plan.marks) || { rows: {} }).rows[`${row.system}|${row.file}`];
     const el = h("div", {
-      class: "lrow" + (selected ? " selected" : "") + (S.focused === row.romUid ? " focused" : ""),
+      class: "lrow" + (selected ? " selected" : "") + (S.focused === row.romUid ? " focused" : "")
+        + (mark === "-" ? " row-pending-delete" : ""),
       // 카드와 같은 열쇠. 선택이 바뀔 때 목록을 다시 짓지 않고 이 행만 고친다.
       "data-rom-uid": String(row.romUid),
       style: { height: ROW_HEIGHT + "px", gridTemplateColumns: gridTemplate() },
@@ -3489,8 +3561,20 @@
 
     // No. - 화면에 보이는 순번이 아니라 목록 전체에서의 순번이다.
     // 칸은 id별로 만들어 두고, 마지막에 사용자가 정한 순서/표시대로 붙인다.
+    //
+    // **추가/삭제 예정 행은 번호 대신 +/- 아이콘이 선다**(사용자 결정 - "어차피
+    // 숫자는 의미가 없는데"). No. 칸은 Status 칸(오른쪽 끝)보다 훨씬 먼저 눈에
+    // 들어오는 자리라, 스크롤하면서 바로 알아볼 수 있다.
+    // 편집 예정(제목 등 정보가 덮어써질 예정)은 +/-와는 다른 뜻이라 파란
+    // 문서 아이콘으로 구분한다(사용자 결정 - "정보가 덮어질 항목은 +-말고
+    // 문서아이콘으로 파란색으로").
+    const NO_MARK = { "+": ["plus", "add", "추가 예정"], "-": ["minus", "del", "삭제 예정"],
+                      "✎": ["fileText", "edit", "정보 편집 예정"] };
     const cells = {};
-    cells.no = h("div", { class: "lc lc-no" }, [truncSpan(String(index + 1))]);
+    const noMark = NO_MARK[mark];
+    cells.no = h("div", { class: "lc lc-no" }, noMark
+      ? [h("span", { class: "lno-mark " + noMark[1], title: noMark[2] }, [icon(noMark[0], IC.sm)])]
+      : [truncSpan(String(index + 1))]);
     // ROM 파일이 실제로 있으면 파일명을 제목과 같은 색으로, 없으면(메타데이터만) 흐리게.
     // Metadata 전용 Collection에서는 ROM이 없는 것이 정상이라 흐리게 하지 않는다.
     const missingRom = row.present === false && !(activeDetail() && activeDetail().metadataOnly);
@@ -3528,7 +3612,7 @@
 
     cells.genre = h("div", { class: "lc lc-genre", title: row.genre || "" },
                     [truncSpan(row.genre || "")]);
-    cells.status = h("div", { class: "lc lc-status" }, [statusMark(row)]);
+    cells.status = h("div", { class: "lc lc-status" }, statusMark(row));
     visibleColumns().forEach((col) => el.appendChild(cells[col.id]));
 
     el.addEventListener("click", (e) => handleRowClick(e, row, index));
@@ -5132,44 +5216,84 @@
     else showConfirm("삭제", `${formatCount(count)}개를 즉시 삭제합니다. 되돌릴 수 없습니다.`, true, run);
   }
 
-  function conflictLine(entry) {
-    const first = (entry.conflicts || [])[0] || {};
-    return `${entry.filename} — ${first.reason || "목적지에 다른 파일이 있습니다"}`;
+  /** 충돌 하나의 종류 라벨 - ROM이면 "ROM 파일", media면 그 종류(Covers 등). */
+  function conflictKindLabel(conflict) {
+    if (conflict.kind === "rom") return "ROM 파일";
+    return MEDIA_LABEL[conflict.mediaType] || "Media";
+  }
+
+  /** 충돌 하나를 눈에 보이게 그린다 - 기존 파일과 새 파일의 크기를 나란히 대며,
+   * 크기까지 같으면(그래서 더 헷갈리는 경우) 그렇다고 짚어 준다(실사용 피드백 -
+   * "뭐가 겹치는 건지 text나 그림으로 표현할 방법 없나?"). 이 데이터
+   * (sourceSize/destSize)는 builder.classify_destination()이 이미 계산해 두고
+   * 있었는데 예전엔 `reason` 문장 하나로만(그나마 첫 번째 충돌만) 줄여 보여줬다.
+   */
+  function conflictDetailRow(conflict) {
+    const sameSize = conflict.sourceSize === conflict.destSize;
+    return h("div", { class: "conflict-detail" }, [
+      icon(conflict.kind === "rom" ? "gamepad" : "image", IC.sm),
+      h("span", { class: "conflict-detail-kind" }, [conflictKindLabel(conflict)]),
+      h("span", { class: "conflict-detail-sizes" }, [
+        h("span", { class: "conflict-size existing", title: "지금 대상에 있는 파일" },
+          [formatBytes(conflict.destSize)]),
+        icon("arrowLeftRight", IC.xs),
+        h("span", { class: "conflict-size incoming", title: "새로 들어올 파일" },
+          [formatBytes(conflict.sourceSize)]),
+      ]),
+      h("span", { class: "conflict-detail-reason" + (sameSize ? " same-size" : "") },
+        [sameSize ? "크기는 같지만 내용이 다를 수 있습니다" : conflict.reason]),
+    ]);
   }
 
   async function openConflictDialog() {
     const entries = (S.plan && S.plan.conflictEntries) || [];
     if (!entries.length) return;
 
-    const list = h("div", { class: "picker-list" });
+    const list = h("div", { class: "conflict-list" });
     entries.slice(0, 50).forEach((entry) => {
-      const row = h("div", { class: "conflict-row" }, [
-        h("div", { class: "conflict-main" }, [
-          h("div", { class: "picker-name truncate" }, [entry.filename]),
-          h("div", { class: "picker-sub truncate" }, [conflictLine(entry)]),
+      const conflicts = entry.conflicts || [];
+      const row = h("div", { class: "copy-conflict-row" }, [
+        h("div", { class: "copy-conflict-main" }, [
+          h("div", { class: "conflict-header" }, [
+            h("span", { class: "conflict-filename truncate" }, [entry.filename]),
+            // 한 게임에 ROM과 media가 동시에 충돌할 수 있다 - 예전엔 첫 번째
+            // 것만 보이고 나머지는 조용히 가려졌다.
+            conflicts.length > 1
+              ? h("span", { class: "conflict-count-badge" }, [`충돌 ${conflicts.length}개`]) : null,
+          ]),
+          ...conflicts.map(conflictDetailRow),
+        ]),
+        h("div", { class: "conflict-actions" }, [
+          // "건너뛰기"는 그 항목을 통째로 건너뛴다고 읽힌다. 실제로 하는 일은
+          // **ROM은 그대로 두고 메타데이터/media(커버 등)는 반영**이고, 대개는 그것이
+          // 사용자가 원한 것이다(Phase 7.22 QA, tests/test_paste_media_overwrite_combo.py).
+          h("button", {
+            class: "btn compact", title: "ROM은 그대로 두고, 메타데이터와 media(커버 등)는 새 것으로 채웁니다",
+            onClick: async () => {
+              await api.planResolveConflict(S.activeId, entry.key, "skip");
+              await refreshPlan();
+              closeModal();
+              openConflictDialog();
+            },
+          }, [icon("fileText", IC.sm), "메타데이터만"]),
+          h("button", {
+            class: "btn compact danger-outline", title: "대상 파일을 새 파일로 교체합니다",
+            onClick: async () => {
+              await api.planResolveConflict(S.activeId, entry.key, "overwrite");
+              await refreshPlan();
+              closeModal();
+              openConflictDialog();
+            },
+          }, [icon("upload", IC.sm), "파일 덮어쓰기"]),
         ]),
       ]);
-      // "건너뛰기"는 그 항목을 통째로 건너뛴다고 읽힌다. 실제로 하는 일은
-      // **ROM은 그대로 두고 메타데이터/media(커버 등)는 반영**이고, 대개는 그것이
-      // 사용자가 원한 것이다(Phase 7.22 QA, tests/test_paste_media_overwrite_combo.py).
-      [["메타데이터만", "ROM은 그대로 두고, 메타데이터와 media(커버 등)는 새 것으로 채웁니다"],
-       ["파일 덮어쓰기", "대상 파일을 새 파일로 교체합니다"]].forEach(([label, tip], i) => {
-        const btn = h("button", { class: "btn compact", title: tip }, [label]);
-        btn.addEventListener("click", async () => {
-          await api.planResolveConflict(S.activeId, entry.key, i === 0 ? "skip" : "overwrite");
-          await refreshPlan();
-          closeModal();
-          openConflictDialog();
-        });
-        row.appendChild(btn);
-      });
       list.appendChild(row);
     });
     if (entries.length > 50) {
       list.appendChild(h("div", { class: "modal-hint" }, [`외 ${formatCount(entries.length - 50)}개 더 있습니다.`]));
     }
 
-    const body = h("div", { class: "modal-body" }, [
+    const body = h("div", { class: "modal-body conflict-dialog-body" }, [
       h("div", { class: "modal-text" }, [
         `대상에 같은 이름의 파일이 이미 있는 항목 ${formatCount(entries.length)}개입니다. ` +
         "크기가 같아도 내용이 다를 수 있어 자동으로 덮어쓰지 않습니다."]),
@@ -5392,7 +5516,7 @@
     const scopeLabel = send ? archiveScopeLabel(archiveScope())
       : (scope.kind === "system" ? `${String(scope.id).toUpperCase()} 전체` : "Collection 전체");
     const items = [{
-      label: "Archive", icon: "invader",
+      label: "Archive", icon: "database",
       title: send ? `${scopeLabel}을 Archive로 보냅니다` : "Archive에서 이 Collection으로 가져옵니다",
       onSelect: send ? ingestToArchive : importFromArchive,
     }];
@@ -5456,8 +5580,14 @@
       h("span", {}, [`Selected ${formatCount(S.selected.size)}`]),
     ]);
     if (plan && plan.total) {
-      if (plan.addedBytes) left.appendChild(h("span", { class: "sb-add" }, [`+${formatBytes(plan.addedBytes)}`]));
-      if (plan.deletedBytes) left.appendChild(h("span", { class: "sb-del" }, [`−${formatBytes(plan.deletedBytes)}`]));
+      // 바이트만 보여주면 "3GB가 늘어난다"는 알아도 "몇 개가 바뀌는지"는 다시
+      // 세어봐야 했다(사용자 결정 - "n개 추가/m개 삭제를 노랑/빨강으로 표시하면
+      // 의미 전달이 더 잘될 듯"). 개수를 앞에 세우고 용량은 괄호로 보탠다 -
+      // Gamelist 위 노란 미리보기 띠, No. 칸의 +/- 아이콘과 같은 색 언어다.
+      if (plan.added) left.appendChild(h("span", { class: "sb-add" },
+        [`+${formatCount(plan.added)}개`, plan.addedBytes ? ` (${formatBytes(plan.addedBytes)})` : ""]));
+      if (plan.deleted) left.appendChild(h("span", { class: "sb-del" },
+        [`−${formatCount(plan.deleted)}개`, plan.deletedBytes ? ` (${formatBytes(plan.deletedBytes)})` : ""]));
       if (plan.conflicts) {
         const btn = h("button", { class: "sb-badge warn", title: "충돌을 확인하고 처리 방식을 정하세요" },
           [`충돌 ${formatCount(plan.conflicts)}`]);

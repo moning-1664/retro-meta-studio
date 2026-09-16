@@ -21,17 +21,20 @@
   ];
   const mockRows = [
     { romUid: 1, system: "ps2", file: "FFX.iso", title: "Final Fantasy X", size: 4400000000,
-      storageId: "ext-1", hasMetadata: true, hasMedia: true, present: true,
+      storageId: "ext-1", hasMetadata: true, hasMedia: true, hasCover: true, present: true,
       desc: "스피라를 여행하는 소환사와 가드의 이야기.", region: "JP", rating: "4.5",
       genre: "RPG", favorite: true },
     { romUid: 2, system: "ps2", file: "MGS2.iso", title: "Metal Gear Solid 2", size: 4300000000,
-      storageId: "ext-1", hasMetadata: true, hasMedia: false, present: true,
+      storageId: "ext-1", hasMetadata: true, hasMedia: false, hasCover: false, present: true,
       desc: "빅 쉘에서 벌어지는 잠입 임무.", region: "USA", rating: "4.0",
       genre: "Action", favorite: false },
     { romUid: 3, system: "snes", file: "SMW.sfc", title: "Super Mario World", size: 524288,
-      storageId: "internal", hasMetadata: false, hasMedia: false, present: true,
+      storageId: "internal", hasMetadata: false, hasMedia: false, hasCover: false, present: true,
       desc: "", region: "", rating: "", genre: "", favorite: false },
   ];
+  // hasDescription은 desc 필드에서 직접 계산한다 - 실제 백엔드(_row_summary)와
+  // 같은 규칙이고, mockRows를 고칠 때마다 따로 값을 맞춰 둘 필요가 없어진다.
+  mockRows.forEach((r) => { r.hasDescription = !!(r.desc && r.desc.trim()); });
   // 우선 정렬(rom/metadata/media) - 있음(0)이 없음(1)보다 먼저 오게 안정 정렬한다.
   // 실제 SQL 정렬 규칙(2차 기준까지)은 Python 쪽 테스트가 본다 - 여기서는 화면이
   // 값을 제대로 실어 보내는지만 확인할 수 있으면 된다.
@@ -106,6 +109,11 @@
   // "실패 N" 배지를 눌렀을 때 이유를 보여주는 다이얼로그를 테스트하기 위한 상태.
   // 테스트가 window.__setMockFailedEntries()로 채운다.
   let mockFailedEntries = [];
+  // 충돌 확인 다이얼로그(openConflictDialog)를 테스트하기 위한 상태 - 같은 방식으로
+  // window.__setMockConflictEntries()가 채운다. plan_resolve_conflict()/
+  // plan_resolve_all_conflicts()가 이 배열을 실제로 줄여야, "해결하면 다이얼로그가
+  // 다시 그려질 때 그 항목이 빠진다"를 목업으로도 확인할 수 있다.
+  let mockConflictEntries = [];
 
   const mockMatchLinks = {};
   const mockFavorites = {};
@@ -219,7 +227,8 @@
       const rows = {};
       retitledKeys.forEach((key) => { rows[key] = "✎"; });
       return ok({
-        total: Object.keys(mockPendingMoves).length + mockFailedEntries.length + retitledKeys.length,
+        total: Object.keys(mockPendingMoves).length + mockFailedEntries.length + retitledKeys.length
+          + mockConflictEntries.length,
         added: 0, deleted: 0, moved: Object.keys(mockPendingMoves).length, retitled: retitledKeys.length, edited: 0,
         addedBytes: 0, deletedBytes: 0,
         delta: {}, marks: { rows, systems: Object.keys(mockPendingMoves) },
@@ -228,7 +237,8 @@
           planBytes: s.actualBytes, deltaBytes: 0,
           capacityBytes: s.capacityBytes, freeBytes: s.freeBytes,
           over: false, overBytes: 0 })),
-        conflictEntries: [], failedEntries: mockFailedEntries,
+        conflictEntries: mockConflictEntries, failedEntries: mockFailedEntries,
+        conflicts: mockConflictEntries.length,
         failed: mockFailedEntries.length, clipboard: null,
         pendingMoves: { ...mockPendingMoves } });
     },
@@ -275,8 +285,15 @@
     archive_clear_preferred: (id) => ok({ romIdentityId: id, recordId: null }),
     archive_to_collection: () => ok({ updated: 0, planned: 0, skipped: [] }),
     plan_delete: () => ok({ deleted: 1 }),
-    plan_resolve_conflict: () => ok({ resolution: "skip" }),
-    plan_resolve_all_conflicts: () => ok({ resolved: 0 }),
+    plan_resolve_conflict: (id, key) => {
+      mockConflictEntries = mockConflictEntries.filter((e) => e.key !== key);
+      return ok({ resolution: "skip" });
+    },
+    plan_resolve_all_conflicts: () => {
+      const resolved = mockConflictEntries.length;
+      mockConflictEntries = [];
+      return ok({ resolved });
+    },
     plan_storage_change: (id, system, storageTo) => {
       mockPendingMoves[system] = storageTo;
       return ok({ system, bytes: 0 });
@@ -519,6 +536,16 @@
       mockRows.forEach((r) => { if (r.system === system) r.storageId = storageId; });
       return ok(true);
     },
+    reassign_system_storage: (id, system, storageId) => {
+      for (const s of mockDetail.storages) s.systems = s.systems.filter((x) => x.system !== system);
+      const target = mockDetail.storages.find((s) => s.id === storageId);
+      if (!target) return Promise.resolve({ ok: false, error: "없는 Storage" });
+      target.systems.push({ system, count: mockRows.filter((r) => r.system === system).length });
+      // move_system과 달리 rows의 storageId는 바꾸지 않는다 - 파일은 실제로 옮기지
+      // 않았으므로 "어느 물리 위치에서 읽었는가"는 그대로여야 한다(목업도 실제
+      // reassign_system_storage처럼 경로를 그대로 둔다는 것을 보여준다).
+      return ok(true);
+    },
     plan_remove_entry: (id, key) => {
       mockFailedEntries = mockFailedEntries.filter((e) => e.key !== key);
       return ok({ removed: 1 });
@@ -682,6 +709,8 @@
     isMock: () => !hasBridge() && !httpBridge(),
     // 테스트 전용 - "실패 N" 배지/다이얼로그를 목업으로 확인하기 위한 훅.
     __setMockFailedEntries: (entries) => { mockFailedEntries = entries || []; },
+    // 테스트 전용 - 충돌 확인 다이얼로그(openConflictDialog)를 목업으로 확인하기 위한 훅.
+    __setMockConflictEntries: (entries) => { mockConflictEntries = entries || []; },
 
     listCollections: () => call("list_collections"),
     createCollection: (name, frontend, rootPath, target, arch, romPath, mediaPath, storageLabel) =>
@@ -702,6 +731,8 @@
     addExternalStorage: (id, label, rootPath) => call("add_external_storage", id, label, rootPath),
     removeStorage: (id, storageId) => call("remove_storage", id, storageId),
     moveSystem: (id, system, storageId) => call("move_system", id, system, storageId),
+    reassignSystemStorage: (id, system, storageId) =>
+      call("reassign_system_storage", id, system, storageId),
     updateStorage: (id, storageId, label, rootPath, deviceId, deviceRoot) =>
       call("update_storage", id, storageId, label, rootPath, deviceId, deviceRoot),
     attachStorageSystems: (id, storageId) => call("attach_storage_systems", id, storageId),

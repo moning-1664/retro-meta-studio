@@ -8,7 +8,7 @@ const { openApp } = require("./_helpers");
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
 const openSettings = async (page, section = "appearance") => {
-  await page.locator(".nav-top .icon-btn[title='Settings']").click();
+  await page.locator(".settings-btn").click();
   await expect(page.locator(".stg-panel")).toBeVisible();
   await page.locator(`.stg-nav-item[data-section='${section}']`).click();
 };

@@ -89,3 +89,39 @@ test("펼친 정보의 그래프도 같은 5단계 색을 쓴다", async ({ page
   const box = page.locator(".storage-box", { hasText: "EXTERNAL SD" });
   await expect(box.locator(".storage-bar")).toHaveClass(/level-over/);
 });
+
+// 실사용 피드백 - "Internal/External의 Free용량이 Target-Actual이 아니라 그냥
+// 하드용량임". ext-1은 목업에서 actualBytes 8.7GB(8,700,000,000B), 물리
+// freeBytes 90e9B(=83.8GiB). formatBytes()는 1024 기준이라 GB 표기는 GiB다.
+test.describe("펼친 정보의 Free는 목표를 정하면 물리 디스크가 아니라 목표 기준이다", () => {
+  test("목표 - 사용량이 물리 여유보다 작으면 그 값을 쓴다", async ({ page }) => {
+    await setTarget(page, "ext-1", 20 * 1024 ** 3);   // 20GiB - 8.7GB ≈ 11.9GiB
+    await reopenToPickUpUiState(page);
+    await page.locator("#collection-header .icon-btn[title='펼치기']").click();
+    const box = page.locator(".storage-box", { hasText: "EXTERNAL SD" });
+    await expect(box.locator(".health-row", { hasText: "Free" })).toContainText("11.9 GB");
+  });
+
+  test("목표 - 사용량이 물리 여유보다 크면 물리 여유로 잘린다(실제로 그만큼밖에 못 채운다)", async ({ page }) => {
+    await setTarget(page, "ext-1", 200 * 1024 ** 3);   // 목표 기준 계산은 191.9GiB, 물리 여유(83.8GiB)가 더 작다
+    await reopenToPickUpUiState(page);
+    await page.locator("#collection-header .icon-btn[title='펼치기']").click();
+    const box = page.locator(".storage-box", { hasText: "EXTERNAL SD" });
+    await expect(box.locator(".health-row", { hasText: "Free" })).toContainText("83.8 GB");
+  });
+
+  test("목표를 정하지 않았으면 예전처럼 물리 디스크 여유 용량이다", async ({ page }) => {
+    await page.locator("#collection-header .icon-btn[title='펼치기']").click();
+    const box = page.locator(".storage-box", { hasText: "EXTERNAL SD" });
+    await expect(box.locator(".health-row", { hasText: "Free" })).toContainText("83.8 GB");
+  });
+});
+
+test("하단 Status Bar의 Storage 칩을 눌러 보는 Health 모달도 같은 규칙을 쓴다", async ({ page }) => {
+  await setTarget(page, "ext-1", 20 * 1024 ** 3);
+  await reopenToPickUpUiState(page);
+  await page.locator(".sb-storage", { hasText: "External" }).click();
+  const modal = page.locator(".modal-body");
+  await expect(modal.locator(".health-row", { hasText: "Target" })).toContainText("20.0 GB");
+  await expect(modal.locator(".health-row", { hasText: "Free" })).toContainText("11.9 GB");
+});

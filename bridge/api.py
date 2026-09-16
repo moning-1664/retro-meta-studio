@@ -143,7 +143,13 @@ def _reveal_path(path, select=False):
     import sys
     if sys.platform.startswith("win"):
         if select:
-            subprocess.Popen(["explorer", f"/select,{path}"])  # noqa: S603,S607
+            # 경로를 리스트 인자로 넘기면(`["explorer", f"/select,{path}"]`) 경로에
+            # 공백이 있을 때 Windows가 그 인자 전체를 통째로 다시 따옴표로 감싸고,
+            # explorer.exe는 자기만의 명령줄 파서를 쓰기 때문에 그 형태를 못 읽고
+            # 조용히 기본 폴더(문서)로 폴백한다(실사용 피드백 - "문서 폴더가 열림").
+            # 문자열 하나로 넘기면 Python이 그대로 명령줄로 전달해, `/select,"경로"`
+            # 형태를 explorer가 기대하는 그대로 줄 수 있다.
+            subprocess.Popen(f'explorer /select,"{path}"')  # noqa: S603,S607
         else:
             os.startfile(path)  # noqa: S606 - 사용자가 고른 Collection 폴더다
     elif sys.platform == "darwin":
@@ -240,10 +246,21 @@ class Api:
         """
         from storage import mtp
 
+        # **단계마다 로그를 남긴다.** 목록이 비었을 때 "USB를 안 꽂았다"와 "COM이
+        # 안 떴다"와 "Windows가 기기를 0개로 본다"는 전혀 다른 문제인데, 화면에는
+        # 셋 다 빈 목록으로 똑같이 보인다(실사용 피드백 - 기기가 탐색기에는
+        # 보이는데 여기서는 아무것도 안 나왔다). 로그가 없으면 어느 쪽인지
+        # 물어볼 방법조차 없다.
+        log.info("MTP 기기 목록 요청")
         try:
             devices = mtp.provider().devices()
         except mtp.MtpError as e:
+            log.warning("MTP 기기 목록 실패(MtpError): %s", e)
             return ok({"devices": [], "reason": str(e)})
+        except Exception as e:  # noqa: BLE001 - 원인을 통째로 남기고 화면에는 이유만 준다
+            log.exception("MTP 기기 목록 실패(예상 못 한 오류)")
+            return ok({"devices": [], "reason": f"기기를 찾는 중 오류가 났습니다: {e}"})
+        log.info("MTP 기기 목록 결과: %d개 %s", len(devices), [d.name for d in devices])
         return ok({"devices": [{"key": d.key, "name": d.name, "path": mtp.join_path(d.key, [])}
                                for d in devices], "reason": None})
 
@@ -599,6 +616,36 @@ class Api:
         self.registry.move_system(collection_id, system, storage_id)
         return ok(True)
 
+    @guarded
+    def reassign_system_storage(self, collection_id, system, storage_id):
+        """**파일은 그대로 두고** System의 배치만 다른 Storage로 합친다.
+
+        `move_system`/Storage 이동 Plan은 실제로 ROM을 복사한다(스펙 §10) - 드래그로
+        Storage를 옮기는 것은 "파일을 그쪽으로 옮겨라"라는 뜻이 맞다. 그런데 External
+        Storage를 제거할 때는 얘기가 다르다. 사용자가 원하는 것은 "이 등록을
+        지워라"이지 "그 드라이브에 있던 수십 GB를 다시 복사해라"가 아니다(실사용
+        피드백 - "실제 롬파일은 유지되는데 표시만 Internal로 합쳐지는 걸로").
+
+        그래서 지금 `layout()`이 계산한 절대 경로를 SystemEntry에 그대로 고정해 두고
+        storage_id만 바꾼다. 이미 명시적으로 고정된 경로(entry.rom_path 등)가 있으면
+        그것을 그대로 쓴다 - 여기서 다시 계산하면 사용자가 따로 지정해 둔 경로를
+        지우게 된다.
+        """
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            return err("Collection을 찾을 수 없습니다.")
+        entry = next((s for s in collection.systems if s.system == system), None)
+        if entry is None:
+            return err(f"System을 찾을 수 없습니다: {system}")
+        adapter = get_adapter(collection.frontend)
+        layout = adapter.layout(collection, system)
+        self.registry.move_system(
+            collection_id, system, storage_id,
+            rom_path=entry.rom_path or layout.rom_dir,
+            media_path=entry.media_path or layout.media_dir,
+            metadata_path=entry.metadata_path or layout.metadata_file)
+        return ok(True)
+
     def _system_context(self, collection_id):
         collection = self.registry.get_collection(collection_id)
         if collection is None:
@@ -911,12 +958,18 @@ class Api:
         Description이 여기 있는 것이 중요하다 - 이전 프로젝트의 목록은 제목이 아니라
         설명 위주였고, 그래야 어떤 게임인지 목록에서 바로 판단할 수 있다.
         """
+        desc = row["desc_text"] if "desc_text" in row.keys() else ""
         return {
             "romUid": row["rom_uid"], "system": row["system"], "file": row["filename"],
             "title": row["title"], "size": row["size"], "storageId": row["storage_id"],
             "hasMetadata": bool(row["has_metadata"]), "hasMedia": bool(row["has_media"]),
             "present": bool(row["present"]),
-            "desc": row["desc_text"] if "desc_text" in row.keys() else "",
+            "desc": desc,
+            # Gamelist Status 아이콘(실사용 피드백) - ROM/Media/Description/Cover
+            # 네 가지를 독립적으로 표시하려면 hasMedia(무엇이든 하나) 말고 Cover
+            # 하나만 따로, Description은 desc 필드 유무로 판정해야 한다.
+            "hasDescription": bool(desc and desc.strip()),
+            "hasCover": bool(row["has_cover"]) if "has_cover" in row.keys() else bool(row["has_media"]),
             "region": row["region"] if "region" in row.keys() else "",
             "genre": row["genre"] if "genre" in row.keys() else "",
             "rating": row["rating"] if "rating" in row.keys() else "",

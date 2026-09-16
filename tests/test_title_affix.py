@@ -121,6 +121,16 @@ class JoinTests(unittest.TestCase):
         r = compute_new_title("Final Fantasy X", "FFX (USA).iso", {"en": {"enabled": True, "mode": "postfix", "text": "-EN"}})
         self.assertEqual(r["newTitle"], "Final Fantasy X-EN")
 
+    def test_사용자가_직접_넣은_공백은_지워지지_않는다(self):
+        """실사용 피드백: " (KR)"를 postfix로 넣으면 앞 공백이 사라져 "Title(KR)"이
+        됐다. 공백 자체가 구분자이므로 자동 언더바 없이 그대로 살아야 한다."""
+        r = compute_new_title("Final Fantasy X", "FFX (K).iso",
+                              {"kr": {"enabled": True, "mode": "postfix", "text": " (KR)"}})
+        self.assertEqual(r["newTitle"], "Final Fantasy X (KR)")
+        r = compute_new_title("Final Fantasy X", "FFX (K).iso",
+                              {"kr": {"enabled": True, "mode": "prefix", "text": "(KR) "}})
+        self.assertEqual(r["newTitle"], "(KR) Final Fantasy X")
+
 
 class ComputeNewTitleTests(unittest.TestCase):
     def test_disabled_region_leaves_the_stripped_title_unchanged(self):

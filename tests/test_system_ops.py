@@ -166,6 +166,26 @@ class SystemOpsTests(unittest.TestCase):
             self.assertFalse(self.api.open_system_folder(self.cid, "nope", "rom")["ok"])
         reveal.assert_not_called()
 
+    # -------------------------------------------------- Windows 탐색기 선택 열기
+    # 실사용 피드백 - "Gamelist에서 ROM/Metadata/Media 폴더 열기를 선택하면 문서
+    # 폴더가 열림(System에서는 잘 열림)". System 쪽은 select=False라 os.startfile()을
+    # 쓰고, 개별 게임 쪽만 select=True라 explorer /select,를 쓴다 - 거기서만 재현된다.
+    def test_경로에_공백이_있어도_explorer_select가_올바른_명령줄을_받는다(self):
+        """`["explorer", f"/select,{path}"]`처럼 리스트로 넘기면 Windows가 그
+        인자 전체를 다시 따옴표로 감싸는데, explorer.exe는 자기만의 명령줄
+        파서를 쓰기 때문에 그 형태를 못 읽고 조용히 기본 폴더(문서)로
+        폴백한다. 문자열 하나로 넘겨 `/select,"경로"` 형태가 그대로 explorer에
+        전달되는지 본다.
+        """
+        # _reveal_path()는 subprocess/sys를 함수 안에서 지역으로 import한다 - 실제
+        # 모듈을 패치해야 그 지역 import가 같은 객체를 가져온다.
+        path = "C:/Users/tester/My Games/ps2/Final Fantasy X.iso"
+        with mock.patch("sys.platform", "win32"), mock.patch("subprocess.Popen") as popen:
+            bridge_api._reveal_path(path, select=True)
+        (call_arg,), _kwargs = popen.call_args
+        self.assertIsInstance(call_arg, str, "리스트로 넘기면 다시 이 버그가 재현된다")
+        self.assertEqual(call_arg, f'explorer /select,"{path}"')
+
     # ------------------------------------------------------------ 게임 한 개씩 폴더 열기
     # 실사용 피드백 §5 - "롬/메타데이터/미디어 디렉토리 이동(=탐색기로 열기)을 각
     # 롬별로도 지원". System 폴더 열기와 다른 점은 **파일 자체를 고른 채로** 연다는

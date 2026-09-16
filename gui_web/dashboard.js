@@ -18,12 +18,16 @@
   const GB = 1024 * MB;
   const TB = 1024 * GB;
   const TARGET_MAX = 8 * TB;
+  //: 최소 목표 용량(사용자 결정) - 1GB는 실제로 쓸 일이 없는 값이라 텍스트 입력을
+  //: 자유롭게 둬도 프리셋보다 훨씬 작은 값으로 떨어질 수 있었다. 8GB부터는 실제
+  //: 소형 카트리지/핸드헬드 내장 용량과 맞아떨어진다.
+  const TARGET_MIN = 8 * GB;
   //: 사람이 실제로 쓰는 용량 눈금(프리셋). 슬라이더는 연속으로 움직이다가 이 값 **근처에 오면
   //: 자석처럼 붙는다**(사용자 결정). 텍스트 입력은 자유롭고, 여기 가까우면(snap()) 이 값에 붙는다.
-  const SNAP = [32 * GB, 64 * GB, 128 * GB, 256 * GB, 512 * GB, 1 * TB, 2 * TB, 3 * TB, 4 * TB, 8 * TB];
+  const SNAP = [8 * GB, 16 * GB, 32 * GB, 64 * GB, 128 * GB, 256 * GB, 512 * GB, 1 * TB, 2 * TB, 3 * TB, 4 * TB, 8 * TB];
   //: 눈금 아래에 글자로 적는 프리셋 - 로그 눈금에서 고르게(0/25/50/75/100%) 떨어진 값이다.
-  const TICK_LABELS = new Set([32 * GB, 128 * GB, 512 * GB, 2 * TB, 8 * TB]);
-  //: 슬라이더는 32GB~8TB를 **로그 눈금**으로 편다(32→64와 4→8TB가 같은 거리). 1000칸.
+  const TICK_LABELS = new Set([8 * GB, 64 * GB, 512 * GB, 2 * TB, 8 * TB]);
+  //: 슬라이더는 8GB~8TB를 **로그 눈금**으로 편다(8→16과 4→8TB가 같은 거리). 1000칸.
   const SLIDER_MIN = SNAP[0];
   const SLIDER_STEPS = 1000;
   //: 프리셋에서 이 칸 수 안이면 그 값에 붙는다(트랙 길이의 ±1.4%).
@@ -38,7 +42,7 @@
     if (!m) return null;
     const unit = (m[2] || "gb").toLowerCase();
     const mult = unit[0] === "t" ? TB : unit[0] === "m" ? MB : GB;
-    return Math.max(GB, Math.min(TARGET_MAX, Math.round(Number(m[1]) * mult)));
+    return Math.max(TARGET_MIN, Math.min(TARGET_MAX, Math.round(Number(m[1]) * mult)));
   }
 
   function formatCapacity(bytes) {
@@ -55,7 +59,7 @@
   /** 보여줄 수 있는 단위로 반올림한다 - 1TB 미만은 1GB, 그 이상은 0.1TB. */
   function roundCapacity(bytes) {
     if (bytes >= TB) return Math.round(Math.round(bytes / (TB / 10)) * (TB / 10));
-    return Math.max(GB, Math.round(bytes / GB) * GB);
+    return Math.max(TARGET_MIN, Math.round(bytes / GB) * GB);
   }
 
   //: 프리셋 사이의 다음/이전 프리셋. 키보드(슬라이더의 ←→)가 쓴다.
@@ -69,7 +73,7 @@
     : Math.min(TARGET_MAX, roundCapacity(bytes + fineStep(bytes)), nextPreset(bytes) > bytes ? nextPreset(bytes) : TARGET_MAX));
   const stepDown = (bytes) => {
     const below = [...SNAP].reverse().find((v) => v < bytes);
-    return Math.max(GB, roundCapacity(bytes - fineStep(bytes - 1)), below ?? GB);
+    return Math.max(TARGET_MIN, roundCapacity(bytes - fineStep(bytes - 1)), below ?? TARGET_MIN);
   };
 
   const LOG_MIN = Math.log(SLIDER_MIN);

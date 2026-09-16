@@ -260,31 +260,38 @@ class RegistryStore:
                 (collection_id, system, storage_id, rom_path, media_path, metadata_path))
             self._append_change_locked(CHANGE_LAYOUT_UPDATED, collection_id, {"system": system})
 
-    def move_system(self, collection_id, system, storage_id, rom_path=_UNSET):
+    def move_system(self, collection_id, system, storage_id, rom_path=_UNSET,
+                    media_path=_UNSET, metadata_path=_UNSET):
         """System을 다른 Storage로 옮긴다(스펙 §10의 Drag & Drop이 확정될 때 호출).
 
         실제 파일 이동은 여기서 하지 않는다 - Plan Apply가 끝난 뒤 배치 정보만
         갱신하는 용도다.
 
-        `rom_path`는 기본적으로 건드리지 않는다(이 메서드의 다른 호출부는 파일을
-        옮기지 않고 배치만 고치는 용도라, 있던 rom_path를 지우면 ROM을 못 찾게
-        된다). Storage Apply만 명시적으로 새 rom_path(대개 `None` - Storage
-        root에서 다시 계산하라는 뜻)를 넘긴다(§ app/plan/applier.py
-        `_apply_storage_change` - rom_path가 옛 Storage 기준으로 굳어 있으면
-        새 Storage로 옮겨도 Adapter가 여전히 그 경로를 읽어 "이동" 이 제자리로
-        돌아가 버렸다).
+        경로 인자들은 기본적으로 건드리지 않는다(이 메서드의 다른 호출부는 파일을
+        옮기지 않고 배치만 고치는 용도라, 있던 경로를 지우면 파일을 못 찾게 된다).
+        Storage Apply는 명시적으로 새 rom_path(대개 `None` - Storage root에서 다시
+        계산하라는 뜻)를 넘긴다(§ app/plan/applier.py `_apply_storage_change` -
+        rom_path가 옛 Storage 기준으로 굳어 있으면 새 Storage로 옮겨도 Adapter가
+        여전히 그 경로를 읽어 "이동"이 제자리로 돌아가 버렸다).
+
+        External Storage를 제거할 때(§ bridge/api.py `reassign_system_storage`)는
+        반대 방향으로 쓴다 - **파일은 그대로 두고 배치만 Internal로 합친다.** 그때는
+        세 경로 모두를 지금 계산된 절대 경로로 명시해서 넘긴다. 안 그러면
+        storage_id만 바뀐 다음 `layout()`이 새 Storage(Internal) 기준으로 경로를
+        다시 계산해, 파일은 옛 자리에 그대로인데 앱은 엉뚱한 곳을 보게 된다.
         """
         with transaction(self._conn):
             self._require_storage(collection_id, storage_id)
-            if rom_path is _UNSET:
-                cur = self._conn.execute(
-                    "UPDATE collection_systems SET storage_id=? WHERE collection_id=? AND system=?",
-                    (storage_id, collection_id, system))
-            else:
-                cur = self._conn.execute(
-                    "UPDATE collection_systems SET storage_id=?, rom_path=? "
-                    "WHERE collection_id=? AND system=?",
-                    (storage_id, rom_path, collection_id, system))
+            sets, params = ["storage_id=?"], [storage_id]
+            for column, value in (("rom_path", rom_path), ("media_path", media_path),
+                                  ("metadata_path", metadata_path)):
+                if value is not _UNSET:
+                    sets.append(f"{column}=?")
+                    params.append(value)
+            params += [collection_id, system]
+            cur = self._conn.execute(
+                f"UPDATE collection_systems SET {','.join(sets)} WHERE collection_id=? AND system=?",
+                params)
             if cur.rowcount == 0:
                 raise RegistryError(f"System을 찾을 수 없습니다: {system}")
             self._append_change_locked(CHANGE_LAYOUT_UPDATED, collection_id,

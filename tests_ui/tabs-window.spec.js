@@ -121,7 +121,7 @@ test.describe("Settings - Collection → Collection 복사 정책", () => {
       const original = window.api.saveAppSettings;
       window.api.saveAppSettings = (patch) => { window.__saved.push(patch); return original(patch); };
     });
-    await page.locator(".nav-top .icon-btn[title='Settings']").click();
+    await page.locator(".settings-btn").click();
     await page.locator(".stg-nav-item[data-section='transfer']").click();
     const media = page.locator(".stg-row[data-key='transfer.includeMedia']");
     await expect(media).not.toHaveClass(/soon/);
@@ -136,7 +136,7 @@ test.describe("Settings - Collection → Collection 복사 정책", () => {
 
 test.describe("Settings - ROM 미매칭 정책", () => {
   const openTransfer = async (page) => {
-    await page.locator(".nav-top .icon-btn[title='Settings']").click();
+    await page.locator(".settings-btn").click();
     await page.locator(".stg-nav-item[data-section='transfer']").click();
     await expect(page.locator(".stg-unmatched")).toBeVisible();
   };

@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => { await openApp(page); });
 
 const row = (page, file) => page.locator(".lrow", { hasText: file });
 const openSettingsEmulator = async (page) => {
-  await page.locator(".nav-top .icon-btn[title='Settings']").click();
+  await page.locator(".settings-btn").click();
   await page.locator(".stg-nav-item[data-section='emulator']").click();
   await expect(page.locator(".stg-emulator .stg-row[data-key='emulator.retroarchPath']")).toBeVisible();
 };

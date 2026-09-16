@@ -27,7 +27,9 @@ for (const theme of ["stitch", "sfc", "md", "nes"]) {
     test("속성 띠는 한 가지 신규색이고 Chromium과 다르다", async ({ page }) => {
       const sub = await bg(page, ".nav-eyebrow");
       expect(sub).not.toBe(await bg(page, "#collection-header"));
-      expect(await bg(page, ".nav-dashboard")).toBe(sub);
+      // Navigator 최하단 띠는 Dashboard 버튼이 아니라 그것을 감싼 줄이다 -
+      // Settings가 같은 줄로 내려오면서 배경을 감싸는 쪽이 들고 있다.
+      expect(await bg(page, ".nav-bottom")).toBe(sub);
       expect(await bg(page, ".detail-tabs")).toBe(sub);
       expect(await bg(page, "#detail-panel")).toBe(sub);
       expect(await bg(page, ".detail-tab:not(.active)")).toBe(sub);
