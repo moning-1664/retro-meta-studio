@@ -751,6 +751,19 @@ body { font-size: var(--fs-body); }
    구분선을 넣었다. */
 .plan-actions .seg-btn { padding: 3px 9px; font-size: var(--fs-caption); color: var(--text); }
 .plan-actions .seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+/* Apply 개수 뱃지가 이 상자 밖(대각선 위)으로 튀어나와야 하므로, 그룹을
+   둥글게 보이려고 쓰던 overflow:hidden(.seg 기본값)을 여기서만 끈다 - 대신
+   양 끝에 직접 둥근 모서리를 줘서 잘라내지 않고도 같은 모양을 낸다. */
+.plan-actions { overflow: visible; }
+.plan-actions .seg-btn:first-child { border-radius: var(--radius-xs) 0 0 var(--radius-xs); }
+.plan-actions .seg-btn:last-child { border-radius: 0 var(--radius-xs) var(--radius-xs) 0; }
+.plan-actions .seg-btn { position: relative; }
+.plan-apply-badge {
+  position: absolute; top: -6px; right: -6px; min-width: 15px; height: 15px;
+  padding: 0 3px; border-radius: 999px; background: var(--danger); color: #fff;
+  font-size: 9px; font-weight: 800; line-height: 15px; text-align: center;
+  box-shadow: 0 0 0 2px var(--chrome);
+}
 
 /* Collection 추가의 "이 PC / Android(MTP)" - **이건 탭이지 버튼 둘이 아니다**
    (실사용 피드백: "버튼 크기도 안맞고 글씨가 너무 크다"). 폭을 동률로 나누고
@@ -797,6 +810,15 @@ body { font-size: var(--fs-body); }
 /* Detail 윗부분(Archive 버튼 줄 + METADATA 머리)은 옆 GameList Chromium과 같은 색이고(사용자 결정),
    탭 아래 부분은 속성 띠 색(신규색) 위에 내용 카드가 올라간다. */
 #detail-top { background: var(--chrome); }
+/* HERO의 System 색 배경(.cheader-art)이 여기서 뚝 끊겨 보였다(실사용 피드백) -
+   #header-row에 같이 둔 --sys-base/--sys-point를 이어받아, .cheader-art가
+   자기 오른쪽 끝(100%)에서 도달하는 바로 그 색으로 시작해서 옅어지게 한다.
+   System을 안 골랐으면(.has-sys-art 없음) 이 규칙 자체가 안 걸려 예전 그대로다. */
+#header-row.has-sys-art #detail-top {
+  background: linear-gradient(100deg,
+    color-mix(in srgb, var(--sys-point, var(--accent)) 22%, var(--chrome)) 0%,
+    var(--chrome) 55%);
+}
 #detail-panel { background: var(--chrome-sub); }
 #detail-top { display: flex; flex-direction: column; }
 #detail-panel {
@@ -1182,7 +1204,9 @@ button.sb-badge { cursor: pointer; }
 /* 좌측 하단 확인(사용자 결정) - 값은 이미 즉시 적용돼 있으므로 이 버튼은 취소가
    아니라 "닫아도 좋다"는 확인이다. ×만 있을 때보다 또렷하다. */
 .stg-foot { flex: none; padding: 12px 20px; border-top: 1px solid var(--border); background: var(--card2); }
-.stg-confirm { min-width: 96px; }
+/* .btn은 기본이 inline-flex + justify-content 없음(왼쪽 정렬)이라, 글자보다
+   상자를 넓게 잡으면(min-width) 글자가 왼쪽에 붙어 보인다(실사용 피드백). */
+.stg-confirm { min-width: 96px; justify-content: center; }
 .stg-nav { padding: 12px 10px; background: var(--bg); border-right: 1px solid var(--border); overflow: auto; }
 .stg-nav-item {
   width: 100%; text-align: left; padding: 9px 11px; margin-bottom: 3px;

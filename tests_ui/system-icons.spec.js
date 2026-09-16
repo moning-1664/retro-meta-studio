@@ -36,6 +36,31 @@ test("System을 고르면 Collection 헤더 배경에 그 System 그림이 깔�
   await expect(page.locator(".cheader .cheader-icon")).toHaveCount(0);
 });
 
+// HERO(.cheader-art)의 System 색 배경이 Detail 쪽 경계에서 뚝 끊겨 보였다
+// (실사용 피드백 - "hero와 detail 사이는 끊어져 보인다"). 공통 조상(#header-row)에
+// 같은 색 변수를 둬서 #detail-top의 그라데이션이 이어받게 했다.
+test("System을 고르면 Detail 쪽까지 같은 색 그라데이션이 이어진다", async ({ page }) => {
+  const headerRow = page.locator("#header-row");
+  await expect(headerRow).not.toHaveClass(/has-sys-art/);
+  const plainBg = await page.locator("#detail-top").evaluate((el) => getComputedStyle(el).backgroundImage);
+  expect(plainBg).toBe("none");   // System을 안 골랐으면 그냥 단색이다.
+
+  await page.locator(".nav-system", { hasText: "GBA" }).click();
+  await expect(headerRow).toHaveClass(/has-sys-art/);
+  const sysBase = await headerRow.evaluate((el) => el.style.getPropertyValue("--sys-base"));
+  const sysPoint = await headerRow.evaluate((el) => el.style.getPropertyValue("--sys-point"));
+  expect(sysBase).not.toBe("");
+  expect(sysPoint).not.toBe("");
+  const taintedBg = await page.locator("#detail-top").evaluate((el) => getComputedStyle(el).backgroundImage);
+  expect(taintedBg).toContain("gradient");
+
+  // "All Games"로 돌아가면 얼룩 없이 원래대로다.
+  await page.locator(".nav-all").click();
+  await expect(headerRow).not.toHaveClass(/has-sys-art/);
+  const clearedBg = await page.locator("#detail-top").evaluate((el) => getComputedStyle(el).backgroundImage);
+  expect(clearedBg).toBe("none");
+});
+
 test("이름 후보: 구분자·별칭·지역 접미사를 거쳐 기존 파일명에 닿는다", async ({ page }) => {
   const cands = await page.evaluate(() => ({
     ps2: window.RMSystemIconPack.candidates("PlayStation 2"),

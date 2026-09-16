@@ -31,6 +31,14 @@ test("좌측 하단 확인 버튼으로 닫힌다", async ({ page }) => {
   await expect(page.locator(".stg-panel")).toHaveCount(0);
 });
 
+test("확인 버튼의 글자는 가운데 정렬이다(실사용 피드백)", async ({ page }) => {
+  // .btn은 기본이 왼쪽 정렬이라, min-width로 상자를 글자보다 넓게 잡으면
+  // 글자가 왼쪽에 붙어 보였다.
+  await openSettings(page);
+  const justify = await page.locator(".stg-confirm").evaluate((el) => getComputedStyle(el).justifyContent);
+  expect(justify).toBe("center");
+});
+
 test("확인을 누르면 debounce를 기다리지 않고 그 자리에서 저장한다", async ({ page }) => {
   const saved = [];
   await page.exposeFunction("__saved", (p) => saved.push(p));

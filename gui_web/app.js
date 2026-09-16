@@ -2451,7 +2451,13 @@
     const expandedSlot = $("collection-expanded");
     if (expandedSlot) clear(expandedSlot);
     const detail = activeDetail();
-    if (!detail) return;
+    if (!detail) {
+      const headerRow = $("header-row");
+      headerRow.style.removeProperty("--sys-base");
+      headerRow.style.removeProperty("--sys-point");
+      headerRow.classList.remove("has-sys-art");
+      return;
+    }
 
     // Navigator에서 System을 골랐으면 그 System의 정체를 보여준다 - 항상
     // Collection 이름만 보이면 지금 뭘 보고 있는지 다시 Navigator를 봐야
@@ -2460,6 +2466,22 @@
     const scope = activeScope();
     const systemEntry = scope.kind === "system"
       ? (detail.systems || []).find((s) => s.system === scope.id) : null;
+
+    // HERO의 System 색 배경(.cheader-art)이 Detail 쪽 경계에서 뚝 끊겨 보였다
+    // (실사용 피드백 - "hero와 detail 사이는 끊어져 보인다"). 두 기둥의 공통
+    // 조상(#header-row)에 같은 색 변수를 둬서, #detail-top의 그라데이션이 그
+    // 색을 이어받아 오른쪽으로 계속되게 한다 - System을 안 고른 상태에서는
+    // 변수를 지워 Detail 쪽도 얼룩 없이 그대로 있는다.
+    const headerRow = $("header-row");
+    const rowPalette = systemEntry ? systemPalette(systemEntry.system) : null;
+    if (rowPalette) {
+      headerRow.style.setProperty("--sys-base", rowPalette.base);
+      headerRow.style.setProperty("--sys-point", rowPalette.points[0]);
+    } else {
+      headerRow.style.removeProperty("--sys-base");
+      headerRow.style.removeProperty("--sys-point");
+    }
+    headerRow.classList.toggle("has-sys-art", !!systemEntry);
 
     // **이 띠의 높이는 절대 변하지 않는다(--header-row-h).** Navigator의 SYSTEMS
     // 띠와 세로로 맞아야 구분선이 한 줄로 이어지고, 이 줄이 커지면 옆의 Detail
@@ -2913,11 +2935,18 @@
     // 중 9개만 됐다"를 알게 된다. Cancel은 충돌뿐인 Plan도 버릴 수 있어야 하니
     // 그쪽은 total을 그대로 쓴다.
     const runnable = plan ? (plan.runnable != null ? plan.runnable : plan.total) : 0;
+    // 개수는 괄호 글자가 아니라 오른쪽 위 대각선에 빨간 동그라미 뱃지로 보여준다
+    // (사용자 결정) - 알림 뱃지와 같은 언어라 "지금 처리될 게 있다"는 게 글자를
+    // 읽지 않아도 한눈에 들어온다. 99개가 넘으면 "99+"로 자른다 - 세 자리
+    // 숫자까지 다 들어가게 뱃지를 늘리면 원 모양이 무너진다.
     const apply = h("button", {
       class: "seg-btn" + (runnable ? " on" : ""), disabled: !runnable,
       title: runnable ? "Plan을 실제 파일에 적용합니다"
         : (plan && plan.total ? "충돌을 먼저 해결해야 적용할 수 있습니다" : "적용할 Plan이 없습니다"),
-    }, [runnable ? `Apply (${formatCount(runnable)})` : "Apply"]);
+    }, [
+      "Apply",
+      runnable ? h("span", { class: "plan-apply-badge" }, [runnable > 99 ? "99+" : String(runnable)]) : null,
+    ]);
     if (runnable) apply.addEventListener("click", applyPlan);
     planGroup.appendChild(apply);
 
