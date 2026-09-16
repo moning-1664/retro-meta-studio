@@ -276,11 +276,16 @@ class FrontendAdapter:
         """
         return None
 
-    def media_pairs(self, layout, filename, media) -> list[tuple[str, str]]:
+    def media_pairs(self, layout, filename, media, title=None) -> list[tuple[str, str]]:
         """media를 이 Frontend의 규칙에 맞는 목적지로 매핑한 (src, dest) 목록.
 
         실제 복사는 하지 않는다 - Plan이 이 목록으로 용량을 계산하고, Apply가
         FileOperationEngine에 넘긴다.
+
+        `title`이 필요한 이유는 **LaunchBox의 media 파일명이 ROM이 아니라 제목을
+        따르기 때문**이다(`Chrono Trigger (USA).sfc` -> `Chrono Trigger.jpg`). 나머지
+        Frontend는 ROM stem을 쓰므로 이 인자를 무시한다. 제목을 모르면 ROM stem으로
+        떨어지므로 호출부가 반드시 줘야 하는 값은 아니다.
         """
         raise NotImplementedError
 
@@ -340,6 +345,34 @@ def read_document(path, provider=None) -> "bytes | None":
 def write_document(path, data: bytes, provider=None) -> bool:
     """메타데이터 파일 전체를 쓴다. 부모 디렉터리는 Provider가 만든다."""
     return _provider_for(path, provider).write_bytes(path, data)
+
+
+def resolve_existing(candidates, provider=None):
+    """후보 경로들 중 **실제로 있는 첫 번째**를. 하나도 없으면 첫 번째 후보를.
+
+    같은 Frontend가 메타데이터를 여러 자리에 둘 수 있는 경우가 있다 - 원조 ES는
+    gamelist.xml을 ROM 폴더 안과 `gamelists/<system>/` 양쪽에서 찾고, Pegasus는
+    `metadata.pegasus.txt`와 `metadata.txt`를 모두 허용한다. 배치를 하나로 가정하면
+    그 형태를 쓰는 라이브러리는 통째로 안 읽힌다.
+
+    **`layout()` 안에서 부른다.** `layout.metadata_file`은 스캐너의 변경 감지
+    (`provider.stat`)와 폴더 열기까지 쓰는 값이라 실재하지 않는 경로를 돌려주면
+    "메타데이터가 사라졌다"로 오해된다. 그래서 경로를 정하는 자리에서 확정해야 한다.
+
+    `layout()`이 provider를 받지 않는 것은 계약이지만, 경로에서 provider를 얻는 것은
+    이 모듈이 이미 쓰는 방식이다(`_provider_for`). 비용은 System당 exists() 한 번으로,
+    ROM 수와 무관하다.
+
+    못 찾았을 때 첫 후보를 돌려주는 이유는 **새로 만들 때 표준 이름을 쓰기 위해서**다 -
+    후보 목록의 첫 자리에 그 Frontend의 정식 배치를 둔다.
+    """
+    paths = [p for p in candidates if p]
+    if not paths:
+        return None
+    for path in paths:
+        if _provider_for(path, provider).exists(path):
+            return str(path)
+    return str(paths[0])
 
 
 def read_xml(path, provider=None):

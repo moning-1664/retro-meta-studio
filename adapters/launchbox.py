@@ -280,6 +280,21 @@ class LaunchBoxAdapter(FrontendAdapter):
             for key, value in (item.get("attrib") or {}).items():
                 child.set(key, value)
 
+    def strip_location_raw(self, frontend_raw) -> dict:
+        """`ApplicationPath`를 걷어낸다.
+
+        LaunchBox는 실행할 파일의 경로를 `<ApplicationPath>`에 직접 들고 있어서 그 값이
+        `frontend_raw`에 보존된다(계약 2). 그런데 그건 **그 라이브러리 안에서만 참인
+        경로**다. 다른 Collection으로 게임을 복사하면서 그대로 적으면 target의
+        LaunchBox가 source의 드라이브를 가리키게 되고, 사용자가 게임을 눌렀을 때
+        실행이 실패한다 - 원조 ES의 media 경로 태그와 정확히 같은 성격이다.
+
+        새 위치의 경로는 `from_common()`이 `layout.rom_dir`로 다시 계산한다.
+        """
+        raw = dict(frontend_raw or {})
+        raw.pop("applicationPath", None)
+        return raw
+
     def remove_entries(self, layout, filenames) -> None:
         path = Path(layout.metadata_file)
         root = self._parse_file(path)
@@ -295,12 +310,18 @@ class LaunchBoxAdapter(FrontendAdapter):
             return
         write_xml(path, root)
 
-    def media_pairs(self, layout, filename, media) -> list[tuple[str, str]]:
+    def media_pairs(self, layout, filename, media, title=None) -> list[tuple[str, str]]:
         """media를 `Images/<system>/<폴더>/<제목>.<확장자>`로 매핑한다.
+
+        **읽기 규칙과 같은 이름을 써야 한다.** `read_media_index()`가 제목 -> ROM stem
+        대응표로 되돌려 읽는데 쓸 때는 ROM stem으로 저장하면, 우리끼리는 fallback
+        덕에 맞아떨어지고 **LaunchBox 안에서만** 커버가 안 보인다. 읽기가 관대해서
+        왕복 테스트로는 잡히지 않는 종류의 어긋남이다.
 
         제목을 알 수 없으면 ROM stem을 쓴다 - LaunchBox도 그 이름으로 찾아준다.
         """
-        stem = Path(filename).stem
+        stem = title_to_filename(title) if title else ""
+        stem = stem or Path(filename).stem
         folders = dict(IMAGE_FOLDERS)
         folders["videos"] = VIDEO_FOLDER
         pairs, used = [], set()

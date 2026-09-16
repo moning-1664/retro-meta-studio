@@ -40,7 +40,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from adapters.base import (NON_ROM_EXTENSIONS, Detection, FrontendAdapter, GameEntry, Layout, MediaFile, read_xml, register, write_xml)
+from adapters.base import (NON_ROM_EXTENSIONS, Detection, FrontendAdapter, GameEntry, Layout, MediaFile, read_xml, register, resolve_existing, write_xml)
 from app.model.constants import ESDE_IGNORED_SYSTEMS
 from utils import normalize_esde_date, normalize_esde_rating
 
@@ -80,14 +80,34 @@ class EmulationStationAdapter(FrontendAdapter):
     # ------------------------------------------------------------------
     # 구조 파악
     # ------------------------------------------------------------------
+    @staticmethod
+    def _romfolder_systems(provider, root_path) -> set:
+        """`<root>/<system>/gamelist.xml` 배치의 System들.
+
+        원조 ES는 gamelist.xml을 ROM 폴더 안에서도 찾는다 - Batocera 계열이 쓰는
+        배치라 드문 구성이 아니다. `gamelists/` 하나만 보면 그런 라이브러리는
+        Collection 추가 자체가 막힌다.
+        """
+        found = set()
+        for entry in provider.scandir(root_path):
+            if not entry.is_dir or entry.name.lower() in ESDE_IGNORED_SYSTEMS \
+                    or entry.name.lower() in RESERVED_DIRS:
+                continue
+            if provider.exists(Path(entry.path) / "gamelist.xml"):
+                found.add(entry.name)
+        return found
+
     def detect(self, provider, root_path) -> Detection:
         gamelists = Path(root_path) / "gamelists"
-        if not provider.exists(gamelists):
-            return Detection(0.0, message="gamelists 폴더를 찾을 수 없습니다.")
-        systems = tuple(sorted(
-            e.name for e in provider.scandir(gamelists)
-            if e.is_dir and e.name.lower() not in ESDE_IGNORED_SYSTEMS))
+        central = set()
+        if provider.exists(gamelists):
+            central = {e.name for e in provider.scandir(gamelists)
+                       if e.is_dir and e.name.lower() not in ESDE_IGNORED_SYSTEMS}
+        in_rom_folder = self._romfolder_systems(provider, root_path)
+        systems = tuple(sorted(central | in_rom_folder))
         if not systems:
+            if not provider.exists(gamelists):
+                return Detection(0.0, message="gamelist.xml을 찾을 수 없습니다.")
             return Detection(0.3, message="gamelists 아래에 시스템 폴더가 없습니다.")
         # ES-DE도 gamelists를 쓰므로 downloaded_media가 함께 있으면 그쪽일 가능성이
         # 높다. 확신을 낮춰 사용자가 고르게 한다.
@@ -100,6 +120,7 @@ class EmulationStationAdapter(FrontendAdapter):
         root = Path(collection.root_path)
         systems.update(e.name for e in provider.scandir(root / "gamelists")
                        if e.is_dir and e.name.lower() not in ESDE_IGNORED_SYSTEMS)
+        systems.update(self._romfolder_systems(provider, root))
         for storage in collection.storages:
             systems.update(e.name for e in provider.scandir(storage.root_path)
                            if e.is_dir and e.name.lower() not in ESDE_IGNORED_SYSTEMS
@@ -111,11 +132,15 @@ class EmulationStationAdapter(FrontendAdapter):
         storage = collection.storage(entry.storage_id) if entry else None
         rom_root = Path(storage.root_path) if storage else Path(collection.root_path)
         root = Path(collection.root_path)
+        rom_dir = Path(entry.rom_path) if entry and entry.rom_path else rom_root / system
+        # 둘 다 정상적인 ES 배치다. 어느 쪽인지는 파일이 실제로 있는 자리가 정한다 -
+        # 새로 만들 때만 중앙(`gamelists/`)을 쓴다.
         return Layout(
             system=system,
-            rom_dir=str(Path(entry.rom_path) if entry and entry.rom_path else rom_root / system),
-            metadata_file=str(Path(entry.metadata_path) if entry and entry.metadata_path
-                              else root / "gamelists" / system / "gamelist.xml"),
+            rom_dir=str(rom_dir),
+            metadata_file=(str(Path(entry.metadata_path)) if entry and entry.metadata_path
+                           else resolve_existing([root / "gamelists" / system / "gamelist.xml",
+                                                  rom_dir / "gamelist.xml"])),
             media_dir=str(Path(entry.media_path) if entry and entry.media_path
                           else root / MEDIA_SUBDIR / system),
         )
@@ -354,7 +379,7 @@ class EmulationStationAdapter(FrontendAdapter):
             return
         write_xml(path, root)
 
-    def media_pairs(self, layout, filename, media) -> list[tuple[str, str]]:
+    def media_pairs(self, layout, filename, media, title=None) -> list[tuple[str, str]]:
         """복사할 (src, dest). **`build_media_links()`가 계산한 dest를 그대로 쓴다.**
 
         둘이 따로 계산하면 언젠가 갈라지고, 갈라지는 순간 "파일은 복사됐는데 gamelist는

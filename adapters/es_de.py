@@ -379,7 +379,7 @@ class EsDeAdapter(FrontendAdapter):
             return
         self._write_document(path, root, before, after)
 
-    def media_pairs(self, layout, filename, media) -> list[tuple[str, str]]:
+    def media_pairs(self, layout, filename, media, title=None) -> list[tuple[str, str]]:
         stem = Path(filename).stem
         pairs = []
         for item in media:

@@ -169,7 +169,8 @@ def plan_add(plan, collection, provider, items):
             media_items.append({**media, "snapshot": taken})
             size = int(media.get("size") or 0)
             estimated += size
-            pairs = adapter.media_pairs(layout, filename, [_MediaRef(media)])
+            pairs = adapter.media_pairs(layout, filename, [_MediaRef(media)],
+                                        title=(item.get("fields") or {}).get("name"))
             dest = pairs[0][1] if pairs else None
             if dest is None:
                 continue
@@ -244,7 +245,10 @@ def add_destinations(entry, layout, adapter) -> list:
                     int(rom.get("size") or 0)))
     refs = [_MediaRef(m) for m in (source.get("media") or [])]
     sizes = {str(m.path): m.size for m in refs}
-    for src_path, dest in adapter.media_pairs(layout, entry.filename, refs):
+    # 제목은 LaunchBox의 media 파일명이 된다. Apply 직전에 사용자가 고친 제목
+    # (`entry.payload`)이 있으면 그쪽이 실제로 적힐 값이므로 그걸 먼저 본다.
+    title = (entry.payload or source.get("fields") or {}).get("name")
+    for src_path, dest in adapter.media_pairs(layout, entry.filename, refs, title=title):
         out.append((Path(src_path), Path(dest), sizes.get(str(src_path), 0)))
     return out
 
