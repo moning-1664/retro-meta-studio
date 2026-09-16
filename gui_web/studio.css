@@ -758,6 +758,10 @@ body { font-size: var(--fs-body); }
 .plan-actions .seg-btn:first-child { border-radius: var(--radius-xs) 0 0 var(--radius-xs); }
 .plan-actions .seg-btn:last-child { border-radius: 0 var(--radius-xs) var(--radius-xs) 0; }
 .plan-actions .seg-btn { position: relative; }
+/* Apply가 DOM에서 Cancel보다 먼저 오는 형제라, z-index를 안 주면 뒤에 오는
+   Cancel이 그냥 위에 그려져서 뱃지의 오른쪽 절반이 Cancel 밑에 깔렸다(실사용
+   확인) - Apply에만 값을 줘서 그 자식(뱃지)까지 Cancel보다 위로 올린다. */
+.plan-actions .seg-btn.on { z-index: 1; }
 .plan-apply-badge {
   position: absolute; top: -6px; right: -6px; min-width: 15px; height: 15px;
   padding: 0 3px; border-radius: 999px; background: var(--danger); color: #fff;
@@ -810,15 +814,6 @@ body { font-size: var(--fs-body); }
 /* Detail 윗부분(Archive 버튼 줄 + METADATA 머리)은 옆 GameList Chromium과 같은 색이고(사용자 결정),
    탭 아래 부분은 속성 띠 색(신규색) 위에 내용 카드가 올라간다. */
 #detail-top { background: var(--chrome); }
-/* HERO의 System 색 배경(.cheader-art)이 여기서 뚝 끊겨 보였다(실사용 피드백) -
-   #header-row에 같이 둔 --sys-base/--sys-point를 이어받아, .cheader-art가
-   자기 오른쪽 끝(100%)에서 도달하는 바로 그 색으로 시작해서 옅어지게 한다.
-   System을 안 골랐으면(.has-sys-art 없음) 이 규칙 자체가 안 걸려 예전 그대로다. */
-#header-row.has-sys-art #detail-top {
-  background: linear-gradient(100deg,
-    color-mix(in srgb, var(--sys-point, var(--accent)) 22%, var(--chrome)) 0%,
-    var(--chrome) 55%);
-}
 #detail-panel { background: var(--chrome-sub); }
 #detail-top { display: flex; flex-direction: column; }
 #detail-panel {
@@ -850,6 +845,19 @@ body { font-size: var(--fs-body); }
   /* **Chromium과 같은 바탕이다.** 다른 색이면 한 줄인데도 두 덩어리로 끊겨 보인다
      (사용자 피드백 - "크로미움이랑 뚝 떨어져 맥이 끊긴다"). */
   background: var(--chrome);
+}
+/* HERO의 System 색 배경(.cheader-art)이 여기서 뚝 끊겨 보였다(실사용 피드백).
+   처음엔 #detail-top 자체에 그라데이션을 줬는데, 실제로 화면을 덮는 것은 그
+   자식인 .detail-topspace(바로 위 규칙 - 불투명한 단색)였다. #detail-top의
+   배경은 이 자식에 완전히 가려져서 보이지도 않았다(실사용 피드백으로 발견) -
+   그래서 그 자식에 직접 그라데이션을 준다. #header-row에 같이 둔
+   --sys-base/--sys-point를 이어받아, .cheader-art가 자기 오른쪽 끝(100%)에서
+   도달하는 바로 그 색으로 시작해서 옅어진다. System을 안 골랐으면
+   (.has-sys-art 없음) 이 규칙 자체가 안 걸려 예전 그대로다. */
+#header-row.has-sys-art .detail-topspace {
+  background: linear-gradient(100deg,
+    color-mix(in srgb, var(--sys-point, var(--accent)) 22%, var(--chrome)) 0%,
+    var(--chrome) 55%);
 }
 /* 툴바의 기능 버튼으로 보이게 작게(사용자 결정 - 예전엔 강조 버튼처럼 컸다). */
 .detail-topspace .btn { background: var(--card2); border: 1px solid transparent; }

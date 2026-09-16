@@ -55,6 +55,21 @@ test("뱃지는 버튼 상자 밖(오른쪽 위)으로 튀어나온다", async (
   expect(badgeBox.x + badgeBox.width).toBeGreaterThan(btnBox.x + btnBox.width - 4);   // 오른쪽 경계 근처
 });
 
+test("뱃지가 Cancel 버튼에 가려지지 않는다(실사용 확인)", async ({ page }) => {
+  // Apply가 DOM에서 Cancel보다 먼저 오는 형제라, z-index를 안 주면 뒤에 오는
+  // Cancel이 그냥 위에 그려져서 뱃지의 오른쪽 절반이 잘려 보였다.
+  await setPlanTotals(page, { total: 99, runnable: 150 });
+  const applyZ = await applyButton(page).evaluate((el) => getComputedStyle(el).zIndex);
+  expect(applyZ).not.toBe("auto");
+  // 뱃지 중심점이 실제로 Cancel이 아니라 뱃지 자신에게 히트 테스트된다.
+  const badgeBox = await applyButton(page).locator(".plan-apply-badge").boundingBox();
+  const topEl = await page.evaluate(({ x, y }) => {
+    const el = document.elementFromPoint(x, y);
+    return el ? el.className : null;
+  }, { x: badgeBox.x + badgeBox.width / 2, y: badgeBox.y + badgeBox.height / 2 });
+  expect(topEl).toContain("plan-apply-badge");
+});
+
 test("충돌만 있어 Apply를 못 누르면 뱃지도 없다", async ({ page }) => {
   // runnable이 0이면(총 개수는 있어도 전부 충돌) Apply 자체가 비활성이고,
   // 뱃지가 뜨면 "이 개수만큼 지금 처리된다"는 거짓 정보가 된다.

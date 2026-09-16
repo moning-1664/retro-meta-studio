@@ -2469,9 +2469,10 @@
 
     // HERO의 System 색 배경(.cheader-art)이 Detail 쪽 경계에서 뚝 끊겨 보였다
     // (실사용 피드백 - "hero와 detail 사이는 끊어져 보인다"). 두 기둥의 공통
-    // 조상(#header-row)에 같은 색 변수를 둬서, #detail-top의 그라데이션이 그
-    // 색을 이어받아 오른쪽으로 계속되게 한다 - System을 안 고른 상태에서는
-    // 변수를 지워 Detail 쪽도 얼룩 없이 그대로 있는다.
+    // 조상(#header-row)에 같은 색 변수를 둬서, .detail-topspace(#detail-top의
+    // 실제로 보이는 자식 - #detail-top 자체는 그 자식에 완전히 가려진다)의
+    // 그라데이션이 그 색을 이어받아 오른쪽으로 계속되게 한다 - System을 안
+    // 고른 상태에서는 변수를 지워 Detail 쪽도 얼룩 없이 그대로 있는다.
     const headerRow = $("header-row");
     const rowPalette = systemEntry ? systemPalette(systemEntry.system) : null;
     if (rowPalette) {

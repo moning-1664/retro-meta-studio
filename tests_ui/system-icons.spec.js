@@ -38,11 +38,18 @@ test("System을 고르면 Collection 헤더 배경에 그 System 그림이 깔�
 
 // HERO(.cheader-art)의 System 색 배경이 Detail 쪽 경계에서 뚝 끊겨 보였다
 // (실사용 피드백 - "hero와 detail 사이는 끊어져 보인다"). 공통 조상(#header-row)에
-// 같은 색 변수를 둬서 #detail-top의 그라데이션이 이어받게 했다.
+// 같은 색 변수를 둬서 .detail-topspace의 그라데이션이 이어받게 했다.
+//
+// **#detail-top 자체가 아니라 .detail-topspace를 봐야 한다.** #detail-top의
+// 배경은 그 안을 꽉 채우는 자식 .detail-topspace(불투명한 단색)에 완전히
+// 가려져서 화면에 전혀 안 보인다 - 처음엔 #detail-top에 그라데이션을 줬다가
+// 실사용에서 "적용 안 됐다"고 확인받고서야 이 사실을 발견했다. #detail-top의
+// backgroundImage만 확인하면 "CSS는 계산됐다"는 것만 보고 "실제로 안 보인다"는
+// 진짜 문제를 놓친다.
 test("System을 고르면 Detail 쪽까지 같은 색 그라데이션이 이어진다", async ({ page }) => {
   const headerRow = page.locator("#header-row");
   await expect(headerRow).not.toHaveClass(/has-sys-art/);
-  const plainBg = await page.locator("#detail-top").evaluate((el) => getComputedStyle(el).backgroundImage);
+  const plainBg = await page.locator(".detail-topspace").evaluate((el) => getComputedStyle(el).backgroundImage);
   expect(plainBg).toBe("none");   // System을 안 골랐으면 그냥 단색이다.
 
   await page.locator(".nav-system", { hasText: "GBA" }).click();
@@ -51,13 +58,13 @@ test("System을 고르면 Detail 쪽까지 같은 색 그라데이션이 이어�
   const sysPoint = await headerRow.evaluate((el) => el.style.getPropertyValue("--sys-point"));
   expect(sysBase).not.toBe("");
   expect(sysPoint).not.toBe("");
-  const taintedBg = await page.locator("#detail-top").evaluate((el) => getComputedStyle(el).backgroundImage);
+  const taintedBg = await page.locator(".detail-topspace").evaluate((el) => getComputedStyle(el).backgroundImage);
   expect(taintedBg).toContain("gradient");
 
   // "All Games"로 돌아가면 얼룩 없이 원래대로다.
   await page.locator(".nav-all").click();
   await expect(headerRow).not.toHaveClass(/has-sys-art/);
-  const clearedBg = await page.locator("#detail-top").evaluate((el) => getComputedStyle(el).backgroundImage);
+  const clearedBg = await page.locator(".detail-topspace").evaluate((el) => getComputedStyle(el).backgroundImage);
   expect(clearedBg).toBe("none");
 });
 
