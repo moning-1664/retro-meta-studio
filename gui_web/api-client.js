@@ -32,6 +32,14 @@
       storageId: "internal", hasMetadata: false, hasMedia: false, present: true,
       desc: "", region: "", rating: "", genre: "", favorite: false },
   ];
+  // 우선 정렬(rom/metadata/media) - 있음(0)이 없음(1)보다 먼저 오게 안정 정렬한다.
+  // 실제 SQL 정렬 규칙(2차 기준까지)은 Python 쪽 테스트가 본다 - 여기서는 화면이
+  // 값을 제대로 실어 보내는지만 확인할 수 있으면 된다.
+  const applyMockPriority = (rows, priority) => {
+    const key = { rom: "present", metadata: "hasMetadata", media: "hasMedia" }[priority];
+    if (!key) return rows;
+    return [...rows].sort((a, b) => (a[key] ? 0 : 1) - (b[key] ? 0 : 1));
+  };
   //: RetroArch 설정(목업). 실제 값은 registry의 Settings > emulator에 있다.
   const mockRetroarch = { retroarchPath: "", coresDir: "", systemCores: {}, gameCores: {} };
   const MOCK_CORES = ["fbneo_libretro.dll", "mgba_libretro.dll", "pcsx2_libretro.dll", "snes9x_libretro.dll"];
@@ -50,6 +58,9 @@
   const mockDetail = {
     id: "c1", name: "Master Library", frontend: "es-de", frontendLabel: "ES-DE",
     target: "windows", arch: "x64", rootPath: "D:\\ES-DE", systemCount: 2, totalGames: 3,
+    // Metadata가 없는 항목 수 - 헤더가 "전체 - 빠진 수"로 Metadata 개수를 만든다.
+    totalMissingMetadata: 1, totalMissingMedia: 1,
+    totalRomBytes: 8700000000, totalMediaBytes: 3100000,
     storages: [
       { id: "internal", kind: "internal", label: "Internal", rootPath: "D:\\ES-DE",
         actualBytes: 524288, capacityBytes: 512e9, freeBytes: 200e9,
@@ -61,9 +72,11 @@
     // 좌측 내비게이션이 그리는 평평한 System 목록. 게임이 있는 것이 먼저, 없는 것이
     // 나중, 같으면 이름순 - Storage는 계층이 아니라 각 항목이 들고만 있다.
     systems: [
-      { system: "ps2", count: 2, storageId: "ext-1" },
-      { system: "snes", count: 1, storageId: "internal" },
-      { system: "gba", count: 0, storageId: "internal" },
+      { system: "ps2", count: 2, storageId: "ext-1", missingMetadata: 1, missingMedia: 1,
+        romBytes: 8700000000, mediaBytes: 2900000 },
+      { system: "snes", count: 1, storageId: "internal", missingMetadata: 0, missingMedia: 0,
+        romBytes: 524288, mediaBytes: 195000 },
+      { system: "gba", count: 0, storageId: "internal", missingMetadata: 0 },
     ],
   };
 
@@ -86,6 +99,7 @@
   }
 
   let mockLastIngest = {};
+  let mockLastApply = {};
   // Storage 이동을 Plan에 올렸을 때 Navigator가 미리 보여줄 수 있는지 테스트하기
   // 위한 상태(실사용 피드백: 드래그해도 화면이 그대로면 "안 먹었다"처럼 보였다).
   const mockPendingMoves = {};
@@ -97,7 +111,31 @@
   const mockFavorites = {};
   const mockUiState = {};
   // Settings 화면 값(앱 전역). 실제로는 registry의 app_settings에 들어간다.
-  const mockAppSettings = {};
+  // window.__RMS_MOCK_APP_SETTINGS = { navigation: { defaultSortPriority: "media" } }로
+  // 페이지를 열기 전에 채우면(__RMS_MOCK_CONFLICTS와 같은 방식) 앱이 그 값으로 시작한다 -
+  // "Settings의 기본값이 실제로 적용되는가"를 테스트할 때 쓴다.
+  const mockAppSettings = (typeof window !== "undefined" && window.__RMS_MOCK_APP_SETTINGS)
+    ? JSON.parse(JSON.stringify(window.__RMS_MOCK_APP_SETTINGS)) : {};
+  // Plan에 올라간 Title Prefix/Postfix 변경(목업 전용) - 실제로는 Python Plan이 들고 있다.
+  const mockTitlePlanned = {};
+
+  // ---------------------------------------------------------------- Title Prefix/Postfix
+  // 실제 계산은 title-affix.js(index.html에서 이 파일보다 먼저 불러온다) 하나에만 있다 -
+  // 목업과 app.js(메뉴 활성/비활성 판단)가 같은 것을 쓴다.
+  //
+  //: 구역은 **파일명의 지역 태그**로 정한다. 목업 기본 파일명에는 태그가 없으므로(다른
+  //: 테스트가 그 이름을 그대로 참조한다), 태그가 필요한 테스트는 페이지를 열기 전에
+  //: window.__RMS_MOCK_FILES = { 1: "FFX (K).iso" }처럼 romUid별로 채운다
+  //: (__RMS_MOCK_CONFLICTS와 같은 방식).
+  const mockFiles = (typeof window !== "undefined" && window.__RMS_MOCK_FILES) || {};
+  const mockFileOf = (row) => mockFiles[row.romUid] || row.file;
+  const titleAffixCompute = (oldTitle, filename, config) =>
+    window.RMSTitleAffix.compute(oldTitle, filename, config);
+  function titleAffixRows(romUids, system) {
+    if (romUids && romUids.length) return romUids.map((uid) => mockRows.find((r) => r.romUid === uid)).filter(Boolean);
+    if (system) return mockRows.filter((r) => r.system === system);
+    return [];
+  }
 
   const mockCompare = { on: false, takenAt: 0 };
   const mockCompareRows = [
@@ -123,14 +161,19 @@
     collection_detail: () => ok(mockDetailView()),
     open_collection: () => ok(mockDetailView()),
     close_collection: () => ok(true),
-    list_rows: (id, systems) => {
-      const rows = systems && systems.length ? mockRows.filter((r) => systems.includes(r.system)) : mockRows;
+    list_rows: (id, systems, storageIds, search, order, descending, limit, offset, favoritesOnly, priority) => {
+      let rows = systems && systems.length ? mockRows.filter((r) => systems.includes(r.system)) : mockRows;
+      rows = applyMockPriority(rows, priority);
       return ok({ rows, total: rows.length, offset: 0 });
     },
-    list_uids: (id, systems) => ok((systems && systems.length
-      ? mockRows.filter((r) => systems.includes(r.system)) : mockRows).map((r) => r.romUid)),
-    find_row_index: (id, prefix, after, systems) => {
-      const rows = systems && systems.length ? mockRows.filter((r) => systems.includes(r.system)) : mockRows;
+    list_uids: (id, systems, storageIds, search, order, descending, favoritesOnly, priority) => {
+      let rows = systems && systems.length ? mockRows.filter((r) => systems.includes(r.system)) : mockRows;
+      rows = applyMockPriority(rows, priority);
+      return ok(rows.map((r) => r.romUid));
+    },
+    find_row_index: (id, prefix, after, systems, storageIds, search, order, descending, favoritesOnly, priority) => {
+      let rows = systems && systems.length ? mockRows.filter((r) => systems.includes(r.system)) : mockRows;
+      rows = applyMockPriority(rows, priority);
       const needle = String(prefix || "").toLowerCase();
       for (let k = 1; k <= rows.length; k += 1) {
         const i = (Math.max(-1, after) + k) % rows.length;
@@ -171,19 +214,45 @@
     adapter_actions: () => ok([{ id: "esde-custom-systems", label: "ES-DE XML 생성" }]),
     run_adapter_action: () => ok({ path: "D:\\ES-DE\\custom_systems\\es_systems.xml", platform: "windows",
                                   systems: ["ps2"], written: true, needsDeviceId: [], noTemplate: [], kept: [] }),
-    plan_state: () => ok({
-                          total: Object.keys(mockPendingMoves).length + mockFailedEntries.length,
-                          added: 0, deleted: 0, moved: Object.keys(mockPendingMoves).length,
-                          addedBytes: 0, deletedBytes: 0,
-                          delta: {}, marks: { rows: {}, systems: Object.keys(mockPendingMoves) },
-                          capacity: mockDetail.storages.map((s) => ({
-                            storageId: s.id, label: s.label, actualBytes: s.actualBytes,
-                            planBytes: s.actualBytes, deltaBytes: 0,
-                            capacityBytes: s.capacityBytes, freeBytes: s.freeBytes,
-                            over: false, overBytes: 0 })),
-                          conflictEntries: [], failedEntries: mockFailedEntries,
-                          failed: mockFailedEntries.length, clipboard: null,
-                          pendingMoves: { ...mockPendingMoves } }),
+    plan_state: () => {
+      const retitledKeys = Object.keys(mockTitlePlanned);
+      const rows = {};
+      retitledKeys.forEach((key) => { rows[key] = "✎"; });
+      return ok({
+        total: Object.keys(mockPendingMoves).length + mockFailedEntries.length + retitledKeys.length,
+        added: 0, deleted: 0, moved: Object.keys(mockPendingMoves).length, retitled: retitledKeys.length, edited: 0,
+        addedBytes: 0, deletedBytes: 0,
+        delta: {}, marks: { rows, systems: Object.keys(mockPendingMoves) },
+        capacity: mockDetail.storages.map((s) => ({
+          storageId: s.id, label: s.label, actualBytes: s.actualBytes,
+          planBytes: s.actualBytes, deltaBytes: 0,
+          capacityBytes: s.capacityBytes, freeBytes: s.freeBytes,
+          over: false, overBytes: 0 })),
+        conflictEntries: [], failedEntries: mockFailedEntries,
+        failed: mockFailedEntries.length, clipboard: null,
+        pendingMoves: { ...mockPendingMoves } });
+    },
+    title_affix_preview: (id, romUids, system) => {
+      const rows = titleAffixRows(romUids, system);
+      if (!rows.length) return Promise.resolve({ ok: false, error: "대상을 찾을 수 없습니다." });
+      const config = mockAppSettings.titleAffix || {};
+      const items = rows.map((r) => ({ romUid: r.romUid, system: r.system, filename: r.file,
+        ...titleAffixCompute(r.title, mockFileOf(r), config) }));
+      return ok({ items, changed: items.filter((i) => i.changed).length });
+    },
+    plan_title_edit: (id, romUids, system) => {
+      const rows = titleAffixRows(romUids, system);
+      if (!rows.length) return Promise.resolve({ ok: false, error: "대상을 찾을 수 없습니다." });
+      const config = mockAppSettings.titleAffix || {};
+      let added = 0;
+      rows.forEach((r) => {
+        const result = titleAffixCompute(r.title, mockFileOf(r), config);
+        const key = `${r.system}|${r.file}`;
+        if (result.changed) { mockTitlePlanned[key] = result.newTitle; added += 1; }
+        else delete mockTitlePlanned[key];
+      });
+      return ok({ added });
+    },
     start_archive_ingest: (id, scope) => {
       const count = mockIngestCount(scope);
       mockLastIngest = { ingested: count, revised: count, unchanged: 0,
@@ -198,6 +267,7 @@
     }),
     get_archive_media_image: () => ok(null),
     archive_rows: () => ok({ rows: [], total: 0, offset: 0 }),
+    archive_uids: () => ok([]),
     archive_systems: () => ok([]),
     archive_detail: () => ok(null),
     archive_edit: () => ok({ revision: 1, changed: true }),
@@ -215,13 +285,27 @@
     copy_selection: () => ok({ count: 1, bytes: 0 }),
     paste: () => ok({ added: 1, skipped: [] }),
     validate_plan: () => ok({ ok: true, entries: [], capacity: [], blocked: false }),
-    start_apply: () => ok({ jobId: "mock-job" }),
+    start_apply: () => {
+      // Plan에 올라간 제목 변경을 실제로 반영한다 - Storage 이동 등 다른 종류는
+      // 아직 목업에서 흉내 내지 않지만(기존 동작), Title Prefix/Postfix는 화면에서
+      // Apply 결과(새 제목이 목록에 보이는지)를 확인할 수 있어야 의미가 있다.
+      const applied = Object.keys(mockTitlePlanned).length;
+      Object.entries(mockTitlePlanned).forEach(([key, newTitle]) => {
+        const [system, file] = key.split("|");
+        const row = mockRows.find((r) => r.system === system && r.file === file);
+        if (row) row.title = newTitle;
+        delete mockTitlePlanned[key];
+      });
+      mockLastApply = { applied, failed: 0, partial: 0, skipped: 0, systems: [] };
+      return ok({ jobId: "mock-job" });
+    },
     start_scan: () => ok({ jobId: "mock-job" }),
     get_job_progress: (jobId) => ok({
       current: 1, total: 1, label: "완료", done: true, error: null,
-      // Archive 수집은 결과의 개수를 화면이 그대로 읽는다. 빈 객체를 주면 목업에서만
-      // "undefined개 수집"이 뜬다.
-      result: jobId === "mock-archive-ingest" ? { ...mockLastIngest } : {},
+      // Archive 수집/Apply는 결과의 개수를 화면이 그대로 읽는다. 빈 객체를 주면
+      // 목업에서만 "undefined개 수집/적용"이 뜬다.
+      result: jobId === "mock-archive-ingest" ? { ...mockLastIngest }
+        : jobId === "mock-job" ? { ...mockLastApply } : {},
     }),
     cancel_job: () => ok(true),
     pick_folder: () => ok("D:\\ES-DE"),
@@ -283,6 +367,28 @@
     // 지나간다 (tests/test_wiring.py::test_mock_covers_every_call이 누락을 감시한다).
     // 그래서 ok(true)로 때우지 않고 목업 배열을 실제로 고친다 - 그래야 "이름을 바꾸면
     // 탭 제목도 바뀐다" 같은 것을 GUI 테스트가 확인할 수 있다.
+    // MTP 목업 - 기기 하나가 꽂혀 있고 ES-DE가 깔려 있다고 본다.
+    mtp_devices: () => ok({
+      devices: [{ key: "R58N30ABCDE", name: "Galaxy Test", path: "mtp://R58N30ABCDE" }],
+      reason: null,
+    }),
+    mtp_browse: (path) => {
+      const base = "mtp://R58N30ABCDE";
+      const tree = {
+        [base]: ["Internal shared storage", "SD card"],
+        [`${base}/Internal shared storage`]: ["ES-DE", "ROMs"],
+        [`${base}/Internal shared storage/ROMs`]: ["ps2", "snes"],
+        [`${base}/Internal shared storage/ES-DE`]: ["gamelists", "downloaded_media"],
+      };
+      const names = tree[path] || [];
+      const parent = path === base ? null : path.slice(0, path.lastIndexOf("/"));
+      return ok({ path, parent, entries: names.map((n) => ({ name: n, path: `${path}/${n}` })) });
+    },
+    mtp_find_esde: () => ok({
+      esde: [{ path: "mtp://R58N30ABCDE/Internal shared storage/ES-DE", label: "ES-DE" }],
+      roms: ["mtp://R58N30ABCDE/Internal shared storage/ROMs"],
+    }),
+
     create_collection: (name, frontend, rootPath, target, arch) => {
       const created = {
         id: "c" + (mockCollections.length + 1), name, frontend: frontend || "es-de",
@@ -360,6 +466,13 @@
     },
     window_set_bounds: () => ok(true),
     open_system_folder: (id, system, kind) => ok({ path: `D:\\ES-DE\\${kind}\\${system}` }),
+    open_row_folder: (id, romUid, kind) => {
+      const row = mockRows.find((r) => r.romUid === romUid);
+      if (!row) return Promise.resolve({ ok: false, error: "항목을 찾을 수 없습니다." });
+      if (kind === "rom" && !row.present) return Promise.resolve({ ok: false, error: "ROM 파일이 없습니다." });
+      if (kind === "media" && !row.hasMedia) return Promise.resolve({ ok: false, error: "Media 파일이 없습니다." });
+      return ok({ path: `D:\\ES-DE\\${kind}\\${row.system}\\${row.file}` });
+    },
     orphan_metadata_preview: (id, system) => ok({
       system,
       items: mockRows.filter((r) => r.system === system && r.present === false)
@@ -571,9 +684,14 @@
     __setMockFailedEntries: (entries) => { mockFailedEntries = entries || []; },
 
     listCollections: () => call("list_collections"),
-    createCollection: (name, frontend, rootPath, target, arch, romPath, mediaPath) =>
+    createCollection: (name, frontend, rootPath, target, arch, romPath, mediaPath, storageLabel) =>
       call("create_collection", name, frontend, rootPath, target, arch,
-           romPath || null, mediaPath || null),
+           romPath || null, mediaPath || null, storageLabel || null),
+
+    // MTP(안드로이드 기기). 기기를 고르고, 폴더를 한 단계씩 열어 보고, ES-DE를 찾는다.
+    mtpDevices: () => call("mtp_devices"),
+    mtpBrowse: (path) => call("mtp_browse", path),
+    mtpFindEsde: (deviceKey) => call("mtp_find_esde", deviceKey),
     renameCollection: (id, name) => call("rename_collection", id, name),
     updateCollectionTarget: (id, target, arch, os) => call("update_collection_target", id, target, arch, os),
     deleteCollection: (id) => call("delete_collection", id),
@@ -593,19 +711,21 @@
     systemRemovalPreview: (id, system, force) => call("system_removal_preview", id, system, !!force),
     removeSystem: (id, system, force) => call("remove_system", id, system, !!force),
     openSystemFolder: (id, system, kind) => call("open_system_folder", id, system, kind),
+    openRowFolder: (id, romUid, kind) => call("open_row_folder", id, romUid, kind),
     orphanMetadataPreview: (id, system) => call("orphan_metadata_preview", id, system),
     mediaCleanupPreview: (id, system) => call("media_cleanup_preview", id, system),
     mediaCleanup: (id, system, mediaTypes) => call("media_cleanup", id, system, mediaTypes),
 
     listRows: (id, q) => call("list_rows", id, q.systems || null, q.storageIds || null,
                               q.search || null, q.order || "title", !!q.descending,
-                              q.limit || 200, q.offset || 0, !!q.favoritesOnly),
+                              q.limit || 200, q.offset || 0, !!q.favoritesOnly, q.priority || null),
     // 목록 전체 기준 동작(Ctrl+A, 영문키 점프). 인자 순서는 listRows와 같다.
     listUids: (id, q) => call("list_uids", id, q.systems || null, q.storageIds || null,
-                              q.search || null, q.order || "title", !!q.descending, !!q.favoritesOnly),
+                              q.search || null, q.order || "title", !!q.descending, !!q.favoritesOnly,
+                              q.priority || null),
     findRowIndex: (id, q, prefix, after) => call("find_row_index", id, prefix, after,
                               q.systems || null, q.storageIds || null, q.search || null,
-                              q.order || "title", !!q.descending, !!q.favoritesOnly),
+                              q.order || "title", !!q.descending, !!q.favoritesOnly, q.priority || null),
     setFavorite: (id, romUid, on) => call("set_favorite", id, romUid, !!on),
     dashboardStats: (id) => call("dashboard_stats", id),
     validateCollection: (id) => call("validate_collection", id),
@@ -622,6 +742,8 @@
     planState: (id) => call("plan_state", id),
     planDelete: (id, romUids) => call("plan_delete", id, romUids),
     planStorageChange: (id, system, storageId) => call("plan_storage_change", id, system, storageId),
+    titleAffixPreview: (id, romUids, system) => call("title_affix_preview", id, romUids, system),
+    planTitleEdit: (id, romUids, system) => call("plan_title_edit", id, romUids, system),
     planRemoveEntry: (id, key) => call("plan_remove_entry", id, key),
     planResolveConflict: (id, key, resolution) => call("plan_resolve_conflict", id, key, resolution),
     planResolveAllConflicts: (id, resolution) => call("plan_resolve_all_conflicts", id, resolution),
@@ -640,6 +762,7 @@
       call("get_archive_media_image", romIdentityId, label, !!thumbnail),
     archiveRows: (q) => call("archive_rows", q.search || null, q.systems || null,
                              q.limit || 200, q.offset || 0),
+    archiveUids: (systems) => call("archive_uids", systems || null),
     archiveSystems: () => call("archive_systems"),
     archiveDetail: (romIdentityId) => call("archive_detail", romIdentityId),
     archiveEdit: (romIdentityId, fields) => call("archive_edit", romIdentityId, fields),
@@ -673,7 +796,7 @@
 
     frontends: () => call("frontends"),
     adapterActions: (id) => call("adapter_actions", id),
-    runAdapterAction: (id, actionId) => call("run_adapter_action", id, actionId),
+    runAdapterAction: (id, actionId, storageId) => call("run_adapter_action", id, actionId, storageId),
     pickFolder: (title) => call("pick_folder", title || ""),
     pickFile: (title, fileTypes, directory) => call("pick_file", title || "", fileTypes || null, directory || ""),
     retroarchSettings: () => call("retroarch_settings"),

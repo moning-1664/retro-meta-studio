@@ -217,5 +217,38 @@ class BridgeTests(unittest.TestCase):
         return next(g for g in root.findall("game") if (g.findtext("path") or "").strip() == path_text)
 
 
+class DeletedCollectionLeavesNothingBehindTests(unittest.TestCase):
+    """Collection을 지우면 **그것에 딸린 상태도 함께 사라져야 한다** (검증 리스트 #3).
+
+    메모리에 남은 Plan이나 아직 살아 있는 Cache 핸들은 다음에 같은 id가 재사용될 때
+    남의 상태로 되살아난다. 지운 Collection을 가리키는 요청은 «없다»고 답해야 한다.
+    """
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_delcol_"))
+        self.root = build_esde_tree(self.dir / "esde")
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.cid = self.api.create_collection("Test", "es-de", str(self.root))["data"]["id"]
+        wait_job(self.api, self.api.start_scan(self.cid)["data"]["jobId"])
+
+    def test_the_collection_is_gone_from_the_list(self):
+        self.assertTrue(self.api.delete_collection(self.cid)["ok"])
+        self.assertEqual([c["id"] for c in self.api.list_collections()["data"]], [])
+
+    def test_its_in_memory_plan_is_dropped(self):
+        self.api._plan(self.cid)          # Plan을 하나 만들어 둔다
+        self.assertIn(self.cid, self.api._plans)
+        self.api.delete_collection(self.cid)
+        self.assertNotIn(self.cid, self.api._plans, "지운 Collection의 Plan이 메모리에 남았다")
+
+    def test_requests_for_it_answer_that_it_is_gone(self):
+        self.api.delete_collection(self.cid)
+        for call in (lambda: self.api.dashboard_stats(self.cid),
+                     lambda: self.api.list_rows(self.cid, limit=5),
+                     lambda: self.api.collection_detail(self.cid)):
+            self.assertFalse(call()["ok"], "지운 Collection이 아직 응답한다")
+
+
 if __name__ == "__main__":
     unittest.main()

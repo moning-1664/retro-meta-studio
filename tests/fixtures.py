@@ -260,3 +260,164 @@ def wait_job(api, job_id, timeout=10.0):
 def scan(api, cid, force=False):
     api.start_scan(cid, force)
     wait_idle(api)
+
+
+# ----------------------------------------------------------------------
+# MTP(안드로이드 기기) - 기기 없이 검증하기 위한 가짜 backend
+# ----------------------------------------------------------------------
+#
+# 실제 COM 호출(storage/mtp_wpd.py)만 기기가 필요하고, 그 위(경로 해석·문서 읽기/쓰기·
+# Collection 만들기·스캔)는 전부 이 메모리 트리로 검증한다. `app/launch/retroarch.py`가
+# `popen`을 주입받아 프로세스 없이 검증되는 것과 같은 방식이다.
+
+class FakeMtpBackend:
+    """메모리 트리로 흉내 낸 MTP 기기. `put()`으로 파일을 심는다."""
+
+    def __init__(self, device_key="R58N30ABCDE", device_name="Galaxy Test",
+                 storages=("Internal shared storage", "SD card")):
+        from storage.mtp import MtpDeviceInfo
+
+        self.device = MtpDeviceInfo(key=device_key, name=device_name,
+                                    device_id=r"\\?\usb#vid_04e8#" + device_key)
+        self._next_id = 0
+        self.tree = {"id": "DEVICE", "name": "", "is_dir": True, "children": {}}
+        for name in storages:
+            self._add(self.tree, name, is_dir=True)
+        #: 호출 횟수 - "스캔이 기기를 몇 번 두드렸는가"를 검증할 때 쓴다.
+        self.children_calls = 0
+        self.reads = 0
+        #: 앞으로 올 create() 중 몇 번을 실패시킬지(쓰기 실패/복구 실패 재현용).
+        self.fail_next_creates = 0
+
+    # --- 트리 만들기 ----------------------------------------------------
+    def _add(self, parent, name, *, is_dir, data=b""):
+        self._next_id += 1
+        node = {"id": f"o{self._next_id}", "name": name, "is_dir": is_dir}
+        if is_dir:
+            node["children"] = {}
+        else:
+            node["data"] = data
+        parent.setdefault("children", {})[name] = node
+        return node
+
+    def put(self, path: str, data: bytes):
+        """`"Internal shared storage/ES-DE/gamelists/ps2/gamelist.xml"`에 파일을 심는다."""
+        parts = [p for p in str(path).replace("\\", "/").split("/") if p]
+        node = self.tree
+        for name in parts[:-1]:
+            node = node.get("children", {}).get(name) or self._add(node, name, is_dir=True)
+        return self._add(node, parts[-1], is_dir=False, data=data)
+
+    def mkdir(self, path: str):
+        node = self.tree
+        for name in [p for p in str(path).replace("\\", "/").split("/") if p]:
+            node = node.get("children", {}).get(name) or self._add(node, name, is_dir=True)
+        return node
+
+    # --- 조회 -----------------------------------------------------------
+    def _find(self, node, object_id):
+        if node.get("id") == object_id:
+            return node
+        for child in node.get("children", {}).values():
+            found = self._find(child, object_id)
+            if found:
+                return found
+        return None
+
+    def _node(self, object_id):
+        from storage.mtp import MtpError
+
+        node = self._find(self.tree, object_id if object_id is not None else "DEVICE")
+        if node is None:
+            raise MtpError(f"없는 객체: {object_id}")
+        return node
+
+    def _parent_of(self, node, object_id):
+        for child in node.get("children", {}).values():
+            if child["id"] == object_id:
+                return node
+            found = self._parent_of(child, object_id)
+            if found:
+                return found
+        return None
+
+    # --- MtpBackend 인터페이스 -------------------------------------------
+    def devices(self):
+        return [self.device]
+
+    def children(self, device_key, object_id):
+        from storage.mtp import MtpObject
+
+        self.children_calls += 1
+        node = self._node(object_id)
+        return [MtpObject(object_id=c["id"], name=c["name"], is_dir=c["is_dir"],
+                          size=len(c.get("data", b"")), mtime_ns=0)
+                for c in node.get("children", {}).values()]
+
+    def read(self, device_key, object_id):
+        self.reads += 1
+        return self._node(object_id)["data"]
+
+    def create(self, device_key, parent_id, name, data):
+        from storage.mtp import MtpError
+
+        if self.fail_next_creates > 0:
+            self.fail_next_creates -= 1
+            raise MtpError("기기 쓰기 실패")
+        return self._add(self._node(parent_id), name, is_dir=False, data=data)["id"]
+
+    def create_folder(self, device_key, parent_id, name):
+        return self._add(self._node(parent_id), name, is_dir=True)["id"]
+
+    def delete(self, device_key, object_id):
+        node = self._node(object_id)
+        del self._parent_of(self.tree, object_id)["children"][node["name"]]
+
+    def storage_info(self, device_key, object_id):
+        storages = self.tree.get("children", {})
+        first = next(iter(storages.values()), None)
+        if first is not None and object_id == first["id"]:
+            return (64 * 1024 ** 3, 20 * 1024 ** 3)
+        return (None, None)
+
+
+def mtp_gamelist(games) -> bytes:
+    """`[(파일명, 제목), ...]` -> gamelist.xml 바이트."""
+    entries = "".join(
+        f"  <game>\n    <path>./{_xml_escape(filename)}</path>\n"
+        f"    <name>{_xml_escape(title)}</name>\n  </game>\n"
+        for filename, title in games)
+    return f'<?xml version="1.0"?>\n<gameList>\n{entries}</gameList>\n'.encode("utf-8")
+
+
+def build_mtp_device(*, with_roms=True) -> "FakeMtpBackend":
+    """ES-DE가 깔린 안드로이드 기기 흉내.
+
+    Internal shared storage/
+      ES-DE/gamelists/{ps2,snes}/gamelist.xml
+      ROMs/{ps2,snes}/<ROM 파일>          (with_roms=False면 만들지 않는다)
+    """
+    backend = FakeMtpBackend()
+    root = "Internal shared storage"
+    backend.put(f"{root}/ES-DE/gamelists/ps2/gamelist.xml",
+                mtp_gamelist([("FFX (U).iso", "Final Fantasy X"), ("MGS2 (E).iso", "Metal Gear Solid 2")]))
+    backend.put(f"{root}/ES-DE/gamelists/snes/gamelist.xml",
+                mtp_gamelist([("SMW.sfc", "Super Mario World")]))
+    backend.mkdir(f"{root}/ES-DE/downloaded_media/ps2/covers")
+    # 커버 한 장. 기기에서 그림을 읽어 오는 경로(Provider 경유)를 검증하기 위한 것이다.
+    backend.put(f"{root}/ES-DE/downloaded_media/ps2/covers/FFX (U).png", b"c" * 32)
+    if with_roms:
+        backend.put(f"{root}/ROMs/ps2/FFX (U).iso", b"r" * 2048)
+        backend.put(f"{root}/ROMs/ps2/MGS2 (E).iso", b"r" * 1024)
+        backend.put(f"{root}/ROMs/snes/SMW.sfc", b"r" * 512)
+    return backend
+
+
+def use_fake_mtp(test_case, backend=None) -> "FakeMtpBackend":
+    """가짜 기기를 `storage.for_path()`에 끼운다. 테스트가 끝나면 원래대로 돌린다."""
+    from storage.mtp import MtpProvider, set_provider
+
+    backend = backend or build_mtp_device()
+    set_provider(MtpProvider(backend))
+    test_case.addCleanup(set_provider, None)
+    return backend

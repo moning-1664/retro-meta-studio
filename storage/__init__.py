@@ -18,4 +18,8 @@ from storage.provider import DirEntry, Stat, StorageProvider, VolumeInfo  # noqa
 
 def for_path(path) -> StorageProvider:
     """경로에 맞는 Provider. **저장소 종류를 따지는 분기는 여기에만 둔다.**"""
+    from storage import mtp
+
+    if mtp.is_mtp_path(path):
+        return mtp.provider()
     return LocalStorageProvider.for_path(path)

@@ -138,15 +138,23 @@ body { font-size: var(--fs-body); }
    열어 상단 줄이 세 줄로 커지면 두 구분선이 어긋났다. 첫 글자 줄도 .cheader와
    같은 자리에서 시작하도록 위쪽에 붙인다. */
 .nav-top {
-  display: flex; align-items: flex-start; gap: 8px; flex-shrink: 0;
+  /* 세로 가운데 정렬(실사용 피드백 §8) - 예전엔 위쪽에 붙여서 .cheader와 첫 글자
+     줄을 맞췄는데, 그 목적은 .nav-top 상자 자체의 y 좌표가 .cheader와 같은가로도
+     충분히 지켜진다(tests_ui/nav-top.spec.js) - 안의 내용까지 위에 붙을 필요는
+     없었다. Settings 아이콘만 예외로 아래쪽에 고정한다(아래 참고). */
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
   height: var(--header-row-h); box-sizing: border-box;
-  margin: 0 -7px; padding: 12px 10px 0;
+  margin: 0 -7px; padding: 0 10px;
   border-bottom: 1px solid var(--border);
 }
+/* Settings만 오른쪽 아래 고정(실사용 피드백) - 다른 조용한 도구 버튼(HERO의
+   메타데이터 보내기/가져오기 등)과 같은 줄에 서 보이도록. */
+.nav-top .icon-btn { align-self: flex-end; padding: 3px; }
 .nav-app-title { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; color: var(--app-title-fg); }
 .nav-app-title-text { min-width: 0; }
 .nav-app-title-name {
-  font-size: calc(11.5px * var(--font-scale)); font-weight: 700; letter-spacing: -.1px; color: var(--text);
+  /* 11.5px -> 13px(실사용 피드백 - "크기도 약간 키우자"). */
+  font-size: calc(13px * var(--font-scale)); font-weight: 700; letter-spacing: -.1px; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .nav-app-title-sub {
@@ -175,7 +183,7 @@ body { font-size: var(--fs-body); }
 }
 .nav-eyebrow-label { flex: 1; }
 /* 빈 System 숨기기 - 켜져 있으면 글자색으로 상태를 알린다(아이콘도 눈/가린 눈으로 바뀐다). */
-.nav-eyebrow .icon-btn { padding: 2px; background: transparent; color: var(--muted); opacity: .8; }
+.nav-eyebrow .icon-btn { padding: 3px; background: transparent; color: var(--muted); opacity: .8; }
 .nav-eyebrow .icon-btn:hover { opacity: 1; }
 .nav-eyebrow .icon-btn.on { color: var(--list-text); opacity: 1; }
 .nav-empty { color: var(--muted); font-size: var(--fs-caption); padding: 12px 6px; }
@@ -195,6 +203,20 @@ body { font-size: var(--fs-body); }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .sysdel-kept { margin-top: 8px; color: var(--muted); }
+
+/* Title Prefix/Postfix 미리보기 - 예전 제목 -> 새 제목. */
+.title-affix-list {
+  margin-top: 8px; max-height: 260px; overflow: auto; padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel);
+}
+.title-affix-row {
+  display: flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 0;
+  font-size: var(--fs-caption); border-bottom: 1px solid var(--list-row-border);
+}
+.title-affix-row:last-child { border-bottom: 0; }
+.title-affix-row .ic { flex: none; color: var(--muted); }
+.title-affix-old { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.title-affix-new { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 
 /* System 전체 미디어 정리 - Cover/Screenshot/Video 등 타입을 체크박스로 고른다. */
 .media-clean-list { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
@@ -222,6 +244,10 @@ body { font-size: var(--fs-body); }
   background: var(--list-selected); color: var(--text); box-shadow: inset 2px 0 0 var(--nav-active-bar);
 }
 .nav-all { font-weight: 600; }
+/* All / Favorites 칸 - System 목록과 다른 칸이라 스크롤하지 않고 늘 보인다. */
+.nav-lens { flex: 0 0 auto; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.nav-favorites { font-weight: 600; }
+.nav-favorites.active, .nav-favorites:hover { color: var(--accent-gold); }
 .nav-label, .nav-group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-group-name { font-size: var(--fs-eyebrow); letter-spacing: .8px; color: var(--muted); }
 .nav-count { font-size: calc(9px * var(--font-scale)); font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -231,8 +257,23 @@ body { font-size: var(--fs-body); }
   border-radius: 50%; background: var(--danger); color: #fff; font-size: 10px; font-weight: 800; line-height: 1;
 }
 .nav-system.conflict .nav-label { color: var(--danger); }
-.xml-result .xml-needs-id { color: var(--warning); margin-top: 8px; }
+/* ES-DE XML 생성 결과 - System마다 한 줄, 점 색깔로만 상태를 말한다(실사용
+   피드백: 예전 문단 세 개짜리는 항목이 적을 때 빈 자리만 넓었다). */
+.xml-table { margin-top: 8px; max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.xml-row { display: flex; align-items: center; gap: 8px; padding: 5px 9px; border-top: 1px solid var(--border); }
+.xml-row:first-child { border-top: 0; }
+.xml-row-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+.xml-row.warn .xml-row-dot { background: var(--warning); }
+.xml-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-body); }
+.xml-row-note { flex: none; color: var(--muted); font-size: var(--fs-caption); }
 .nav-group { margin-top: 6px; }
+/* 접기 화살표 - 왼쪽(사용자 결정), 이름표보다 눈에 덜 띄어야 한다. */
+.nav-group-chevron { padding: 2px; margin-left: -3px; color: var(--muted); background: transparent; }
+/* 제거 버튼은 평소엔 조용하고, 손대려는 순간에만 위험한 색으로 경고한다 -
+   목록에 늘 붉은 아이콘이 떠 있으면 정작 눌러야 할 때 무뎌진다. */
+.storage-remove-btn { color: var(--muted); background: transparent; }
+.storage-remove-btn:hover { color: #fff; background: var(--danger); }
+.storage-root-readonly { padding: 4px 7px; border-radius: var(--radius-xs); background: var(--card3); border: 1px solid var(--border); }
 .nav-system { padding-left: 13px; }
 /* Storage 이동이 Plan에 올라간 System - Apply 전까지는 미리보기다(실사용
    피드백: 드래그해도 화면이 그대로면 "안 먹었다"고 보인다). */
@@ -260,6 +301,42 @@ body { font-size: var(--fs-body); }
   flex: 1 1 auto; min-width: 0; min-height: var(--header-row-h); box-sizing: border-box;
   border-bottom: 1px solid var(--border); background: var(--chrome);
 }
+/* Hero 배경(.cheader-art)을 담기 위한 기준. */
+.cheader { position: relative; overflow: hidden; }
+.cheader > *:not(.cheader-art) { position: relative; z-index: 1; }
+/* 펼쳤을 때 나오는 System 카드. 목록 기둥 안에 있어서 Detail 패널을 밀지 않는다. */
+#collection-expanded { flex: 0 0 auto; min-width: 0; position: relative; overflow: hidden; }
+#collection-expanded:empty { display: none; }
+.cheader-art {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  display: flex; align-items: center; justify-content: flex-end;
+  /* 오른쪽 버튼 열(약 120px)을 피해서 앉힌다 - 아이콘 위에 버튼이 겹치면
+     둘 다 읽기 어려워진다. */
+  padding-right: 128px;
+  /* 오른쪽으로 갈수록 계열 색이 배어 나온다. 왼쪽(글자 영역)은 건드리지 않아서
+     대비가 떨어지지 않는다. */
+  /* 몸체색(base)이 먼저 배어 나오고 끝에서 포인트색(point)이 얹힌다 - 실물의
+     "회색 몸체에 빨간 버튼" 같은 인상을 배경만으로 만든다. */
+  background: linear-gradient(100deg,
+    transparent 30%,
+    color-mix(in srgb, var(--sys-base, var(--accent)) 14%, transparent) 74%,
+    color-mix(in srgb, var(--sys-point, var(--accent)) 22%, transparent) 100%);
+}
+.cheader-art .sys-ic { opacity: .2; }
+/* 전용 그림이 없는 System - 그림은 숨기고 색 물듦만 아주 옅게 남긴다. */
+.cheader-art.generic .sys-ic { display: none; }
+.cheader-art.generic { background: linear-gradient(100deg, transparent 55%,
+  color-mix(in srgb, var(--sys-point, var(--accent)) 9%, transparent) 100%); }
+
+/* 제목 옆 콘솔 포인트 색 바. 색을 못 찾은 System은 테마 accent 한 줄. */
+.cheader-bar {
+  width: 4px; border-radius: var(--radius-pill); flex: none; align-self: stretch;
+  margin: 1px 0; background: var(--accent);
+}
+
+/* 통계 한 칸 - 작은 아이콘 + 숫자. */
+.cheader-stat { display: inline-flex; align-items: center; gap: 4px; }
+.cheader-stat svg { opacity: .75; }
 .cheader { display: flex; align-items: center; gap: 10px; min-height: calc(var(--header-row-h) - 1px); box-sizing: border-box; padding: 8px 13px; }
 .cheader-icon {
   display: flex; align-items: center; justify-content: center;
@@ -278,23 +355,79 @@ body { font-size: var(--fs-body); }
 .cheader-sub { font-size: calc(9px * var(--font-scale)); color: var(--muted); display: flex; gap: 6px; }
 .cheader-sub .dot { opacity: .5; }
 .cheader-stats {
-  display: flex; gap: 12px; margin-top: 3px;
+  display: flex; align-items: center; gap: 10px; margin-top: 3px;
   font-size: calc(9px * var(--font-scale)); color: var(--muted); font-variant-numeric: tabular-nums;
 }
-.cheader-storage { white-space: nowrap; }
-.cheader-right { display: flex; align-items: center; gap: 5px; }
-.cheader-right .icon-btn { padding: 4px; background: var(--chrome); border: 1px solid transparent; }
-.cheader-expanded {
-  display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 14px;
-  padding: 12px 14px; border-top: 1px solid var(--border); background: var(--card);
+.cheader-stat-group { display: flex; gap: 12px; }
+/* 숫자 자리를 고정한다(실사용 피드백 §4 - "10000단위라고 가정하고 거리를 둔다") -
+   ROM/Metadata 개수가 몇 자리든 뒤의 | 구분선이 밀리지 않는다. */
+.cheader-stat-num { display: inline-block; min-width: 4.2ch; text-align: right; }
+.cheader-stats-divider { color: var(--border); font-weight: 300; user-select: none; }
+/* Storage 뱃지 - 목표 대비 그래프(.cheader-storage-track/.fill)를 글자 줄 바로
+   아래에 겹쳐 그린다. **자리를 차지하지 않는 절대 위치라 띠 높이가 늘지 않는다**
+   (--header-row-h는 절대 안 바뀐다는 계약, layout-bands.spec.js). */
+.cheader-storage {
+  position: relative; white-space: nowrap;
+  /* 천 단위 GB + 경고 아이콘 자리까지 고정한다(실사용 피드백) - Internal/External
+     용량이 몇 자리든, 경고가 뜨든 안 뜨든 뱃지 폭이 흔들리지 않는다. */
+  min-width: 13ch;
 }
-.cheader-info-row { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; }
-.cheader-info-label { color: var(--muted); font-size: var(--fs-caption); }
-.cheader-info-value { font-size: var(--fs-caption); text-align: right; overflow: hidden; text-overflow: ellipsis; }
-.storage-box { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px; }
-.storage-box-title { font-size: var(--fs-eyebrow); letter-spacing: .8px; color: var(--muted); margin-bottom: 6px; }
-.storage-bar { height: 5px; border-radius: var(--radius-pill); background: var(--card3); margin-top: 8px; overflow: hidden; }
+.cheader-storage-warn {
+  display: inline-flex; width: 11px; margin-left: 2px; vertical-align: -1px;
+  opacity: 0; color: var(--danger);
+}
+.cheader-storage-warn.on { opacity: 1; }
+.cheader-storage-track {
+  position: absolute; left: 0; bottom: -4px; width: 100%; height: 2px;
+  border-radius: var(--radius-pill); background: var(--card3); overflow: hidden;
+}
+.cheader-storage-fill { display: block; height: 100%; background: var(--info); transition: width .2s ease-out; }
+/* 파랑(여유) > 녹색 > 노랑 > 주황 > 빨강(목표 넘어감) - capacityLevel()이 고른다. */
+.cheader-storage.level-blue .cheader-storage-fill { background: var(--info); }
+.cheader-storage.level-green .cheader-storage-fill { background: var(--success); }
+.cheader-storage.level-yellow .cheader-storage-fill { background: var(--warning); }
+.cheader-storage.level-orange .cheader-storage-fill { background: var(--gauge-orange); }
+.cheader-storage.level-over .cheader-storage-fill { background: var(--danger); }
+.cheader-storage.level-over { color: var(--danger); font-weight: 600; }
+/* **도구 버튼은 조용해야 한다.** 예전엔 크고 세로 한가운데 떠 있어서 제목보다
+   먼저 눈에 들어왔다(사용자 피드백).
+   작게 만들고 **아랫줄에 맞춘다** - 옆 Detail 상단 줄의 버튼도 같은 선에 서기
+   때문에, 두 영역이 나뉘어 있어도 버튼들이 한 줄로 읽힌다(사용자 결정). */
+.cheader-right { display: flex; align-items: flex-end; gap: 3px; align-self: flex-end; }
+.cheader-right .icon-btn { padding: 3px; background: transparent; border: 1px solid transparent; color: var(--muted); }
+.cheader-right .icon-btn:hover { background: var(--card2); color: var(--text); }
+.cheader-expanded {
+  position: relative; padding: 8px 13px;
+  border-bottom: 1px solid var(--border);
+  /* 띠와 같은 규칙으로 카드 전체가 콘솔 색으로 물든다. */
+  background:
+    linear-gradient(100deg, transparent 34%,
+      color-mix(in srgb, var(--sys-base, transparent) 12%, transparent) 76%,
+      color-mix(in srgb, var(--sys-point, transparent) 18%, transparent) 100%),
+    var(--card);
+  display: grid; grid-template-columns: 1.7fr 1fr 1fr; gap: 10px;
+}
+/* 두 단. 폭은 남고 높이만 먹던 한 단짜리 목록을 접어서 같은 높이에 두 배를 담는다. */
+.cheader-info { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; align-content: start; }
+.cheader-info-row {
+  display: flex; justify-content: space-between; gap: 8px; padding: 1px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+}
+.cheader-info-label { color: var(--muted); font-size: var(--fs-caption); white-space: nowrap; }
+.cheader-info-value { font-size: var(--fs-caption); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 빠진 것이 있을 때만 눈에 띄게 - 0이면 평범한 숫자로 남는다. */
+.cheader-info-row.warn .cheader-info-value { color: var(--warning); font-weight: 600; }
+.storage-box { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 7px 9px; }
+.storage-box-title { font-size: var(--fs-eyebrow); letter-spacing: .8px; color: var(--muted); margin-bottom: 3px; }
+.storage-bar { height: 4px; border-radius: var(--radius-pill); background: var(--card3); margin-top: 5px; overflow: hidden; }
 .storage-bar-fill { height: 100%; background: var(--accent); }
+/* HERO 배지(.cheader-storage)와 같은 5단계 색 - capacityLevel(), app.js §4. */
+.storage-bar.level-blue .storage-bar-fill { background: var(--info); }
+.storage-bar.level-green .storage-bar-fill { background: var(--success); }
+.storage-bar.level-yellow .storage-bar-fill { background: var(--warning); }
+.storage-bar.level-orange .storage-bar-fill { background: var(--gauge-orange); }
+.storage-bar.level-over .storage-bar-fill { background: var(--danger); }
+.storage-box .health-row { padding: 1px 0; }
 .health-row {
   display: flex; justify-content: space-between; gap: 10px;
   padding: 3px 0; font-size: var(--fs-caption); color: var(--muted);
@@ -307,7 +440,8 @@ body { font-size: var(--fs-body); }
   padding: 4px 12px; border-bottom: 1px solid var(--border); background: var(--chrome);
 }
 .search-box {
-  display: flex; align-items: center; gap: 6px; flex: 0 1 200px;  /* 검색만 넓게 차지하지 않게 */
+  /* 200px -> 240px(실사용 피드백 - "search는 지금보다 20% 더 길게"). */
+  display: flex; align-items: center; gap: 6px; flex: 0 1 240px;
   padding: 3px 8px; background: var(--card);
   border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--muted);
 }
@@ -326,6 +460,9 @@ body { font-size: var(--fs-body); }
 
 /* 버튼 - Stitch의 조금 더 작고 단단한 모양. */
 .btn { min-height: 26px; border-radius: 6px; }
+/* 촘촘한 띠 안의 버튼은 어디서나 같은 높이다 - 예전엔 Detail 상단에서만
+   22px이라 같은 .compact인데 자리마다 크기가 달랐다. */
+.btn.compact { min-height: 22px; padding: 3px 8px; gap: 5px; font-size: calc(10px * var(--font-scale)); }
 .btn.primary { background: var(--primary-bg); color: var(--primary-fg); }
 .btn.primary:hover { background: var(--primary-hover); }
 .btn.compact.primary { border: 1px solid var(--primary-bg); }
@@ -415,14 +552,21 @@ body { font-size: var(--fs-body); }
   display: flex; align-items: center; gap: 10px; flex-shrink: 0;
   padding: 4px 2px; color: var(--list-muted); font-size: var(--fs-caption);
 }
-.media-flag-item { display: flex; align-items: center; gap: 5px; }
+.media-flag-item {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px; border-radius: var(--radius-pill);
+  background: var(--card2); border: 1px solid var(--border);
+  color: var(--muted); opacity: .55;
+}
+.media-flag-item svg { flex: none; }
 .media-flag {
   font-weight: 700; font-size: 12px; line-height: 1;
   min-width: 17px; height: 17px;
   display: flex; align-items: center; justify-content: center;
   border: 1px solid currentColor; border-radius: 3px;
 }
-.media-flag-item.on { color: var(--success); }
+/* 있으면 또렷하게, 없으면 흐리게 - 밝기만으로 갈린다. */
+.media-flag-item.on { opacity: 1; color: var(--success); border-color: color-mix(in srgb, var(--success) 45%, var(--border)); }
 .media-flag-item.on .media-flag-label { color: var(--text); }
 
 
@@ -466,7 +610,10 @@ body { font-size: var(--fs-body); }
   flex: 0 0 auto; will-change: transform;
   background: var(--list-head); border-bottom: 1px solid var(--list-border);
   /* 대문자 변환은 뺐다 - 한글 컬럼명과 섞이면 정렬이 어긋나 보인다. */
-  font-size: calc(9px * var(--font-scale)); letter-spacing: .45px; color: var(--list-muted);
+  /* 글자 크기 슬라이더 작업 중에 9px로 줄어든 채 굳었다(실사용 피드백 - "헤더
+     폰트가 작아졌는데 원복된 거 같다") - 본문(게임리스트 행)과 같은 크기로
+     되돌린다. 헤더가 라벨링하는 내용보다 작으면 안 된다. */
+  font-size: var(--fs-body); letter-spacing: .3px; color: var(--list-muted);
   user-select: none;
 }
 .lh {
@@ -483,8 +630,11 @@ body { font-size: var(--fs-body); }
   cursor: col-resize; z-index: 2;
 }
 .col-resize:hover { background: var(--accent-gold); opacity: .45; }
-/* 머리글 드래그로 컬럼 순서 바꾸기 - 놓일 자리에 세로 막대를 보인다. */
-.lh[draggable="true"] { cursor: grab; }
+/* 머리글 드래그로 컬럼 순서 바꾸기 - 놓일 자리에 세로 막대를 보인다.
+   커서는 grab(손 모양)이 아니라 move(십자 화살표)를 쓴다 - 브라우저 기본 손
+   커서가 촌스럽다는 실사용 피드백. move는 "이 자리를 옮긴다"는 뜻을 손을
+   그리지 않고도 전달한다. */
+.lh[draggable="true"] { cursor: move; }
 .lh.dragging { opacity: .45; }
 .lh.drop-before { box-shadow: inset 2px 0 0 var(--accent-gold); }
 .lh.drop-after { box-shadow: inset -2px 0 0 var(--accent-gold); }
@@ -528,6 +678,19 @@ body { font-size: var(--fs-body); }
 .stg-unmatched-check:disabled { cursor: not-allowed; }
 .stg-unmatched-checks:has(.stg-unmatched-check:disabled) { opacity: .5; }
 
+/* Settings > Metadata & Media > Title Prefix/Postfix - 구역(한/영/일/유럽/글로벌)마다
+   켜짐·Prefix/Postfix·텍스트 한 줄. */
+.stg-title-affix { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 10px; }
+.stg-title-affix-row {
+  display: flex; align-items: center; gap: 10px; padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel);
+}
+.stg-title-affix-row.off { opacity: .6; }
+.stg-title-affix-label { flex: 0 0 84px; font-size: var(--fs-body); }
+.stg-title-affix-row .stg-control { min-width: 0; }
+.stg-title-affix-row select.stg-control { flex: 0 0 132px; }
+.stg-title-affix-text { flex: 1; width: auto; min-width: 0; }
+
 #list-scroll { flex: 1; overflow: auto; position: relative; background: var(--list-bg); }
 /* 폭은 app.js가 컬럼 합으로 정한다 - 가로로 넘칠 것이 있어야 가로 스크롤이 생긴다. */
 #list-spacer { width: 1px; }
@@ -545,7 +708,9 @@ body { font-size: var(--fs-body); }
    두께가 아니라 말줄임이 안 먹던 것이었다(.lc-text 참고). */
 .lrow {
   display: grid; align-items: center; padding: 0 8px; cursor: pointer;
-  background: var(--list-bg); border-bottom: 1px solid var(--list-row-border); color: var(--list-text);
+  background: var(--list-bg); color: var(--list-text);
+  /* 실선 대신 점선(사용자 요청) - 줄 사이가 실선보다 가볍게 나뉜다. */
+  border-bottom: 1px dotted var(--list-row-border);
 }
 .lrow:hover { background: var(--card2); }
 .lrow.selected { background: var(--list-selected); }
@@ -586,6 +751,34 @@ body { font-size: var(--fs-body); }
    구분선을 넣었다. */
 .plan-actions .seg-btn { padding: 3px 9px; font-size: var(--fs-caption); color: var(--text); }
 .plan-actions .seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+/* Apply 개수 뱃지가 이 상자 밖(대각선 위)으로 튀어나와야 하므로, 그룹을
+   둥글게 보이려고 쓰던 overflow:hidden(.seg 기본값)을 여기서만 끈다 - 대신
+   양 끝에 직접 둥근 모서리를 줘서 잘라내지 않고도 같은 모양을 낸다. */
+.plan-actions { overflow: visible; }
+.plan-actions .seg-btn:first-child { border-radius: var(--radius-xs) 0 0 var(--radius-xs); }
+.plan-actions .seg-btn:last-child { border-radius: 0 var(--radius-xs) var(--radius-xs) 0; }
+.plan-actions .seg-btn { position: relative; }
+/* Apply가 DOM에서 Cancel보다 먼저 오는 형제라, z-index를 안 주면 뒤에 오는
+   Cancel이 그냥 위에 그려져서 뱃지의 오른쪽 절반이 Cancel 밑에 깔렸다(실사용
+   확인) - Apply에만 값을 줘서 그 자식(뱃지)까지 Cancel보다 위로 올린다. */
+.plan-actions .seg-btn.on { z-index: 1; }
+.plan-apply-badge {
+  position: absolute; top: -6px; right: -6px; min-width: 15px; height: 15px;
+  padding: 0 3px; border-radius: 999px; background: var(--danger); color: #fff;
+  font-size: 9px; font-weight: 800; line-height: 15px; text-align: center;
+  box-shadow: 0 0 0 2px var(--chrome);
+}
+
+/* Collection 추가의 "이 PC / Android(MTP)" - **이건 탭이지 버튼 둘이 아니다**
+   (실사용 피드백: "버튼 크기도 안맞고 글씨가 너무 크다"). 폭을 동률로 나누고
+   Detail 탭과 같은 언더바로 고른 쪽을 말한다 - 라벨 길이가 달라도 같은 무게로
+   보여야 "이 둘 중 하나"라는 관계가 한눈에 들어온다. */
+#add-source { display: flex; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; }
+#add-source .seg-btn {
+  flex: 1; justify-content: center; gap: 6px; padding: 7px 8px;
+  background: transparent; font-size: var(--fs-body);
+}
+#add-source .seg-btn.on { background: var(--card2); box-shadow: inset 0 -2px 0 var(--accent); }
 
 /* Archive에 수집 버튼 - scopeLabel이 System 이름/선택 개수에 따라 들쭉날쭉하다.
    옆의 Plan 버튼들이 밀리지 않도록 폭을 고정한다. 전체 문구는 title 툴팁으로 남는다. */
@@ -645,17 +838,38 @@ body { font-size: var(--fs-body); }
    재검토 §18). 왼쪽엔 Archive 이동 버튼, 오른쪽엔 Preview 토글. */
 .detail-topspace {
   height: var(--header-row-h); flex-shrink: 0; box-sizing: border-box;
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 0 9px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 8px;
+  /* 아래 여백은 .cheader의 padding-bottom과 같은 8px이다 - 그래야 이 줄의 버튼과
+     옆 Chromium의 도구 버튼이 정확히 같은 선에 선다. */
+  padding: 0 9px 8px; border-bottom: 1px solid var(--border);
+  /* **Chromium과 같은 바탕이다.** 다른 색이면 한 줄인데도 두 덩어리로 끊겨 보인다
+     (사용자 피드백 - "크로미움이랑 뚝 떨어져 맥이 끊긴다"). */
+  background: var(--chrome);
+}
+/* HERO의 System 색 배경(.cheader-art)이 여기서 뚝 끊겨 보였다(실사용 피드백).
+   처음엔 #detail-top 자체에 그라데이션을 줬는데, 실제로 화면을 덮는 것은 그
+   자식인 .detail-topspace(바로 위 규칙 - 불투명한 단색)였다. #detail-top의
+   배경은 이 자식에 완전히 가려져서 보이지도 않았다(실사용 피드백으로 발견) -
+   그래서 그 자식에 직접 그라데이션을 준다. #header-row에 같이 둔
+   --sys-base/--sys-point를 이어받아, .cheader-art가 자기 오른쪽 끝(100%)에서
+   도달하는 바로 그 색으로 시작해서 옅어진다. System을 안 골랐으면
+   (.has-sys-art 없음) 이 규칙 자체가 안 걸려 예전 그대로다. */
+#header-row.has-sys-art .detail-topspace {
+  background: linear-gradient(100deg,
+    color-mix(in srgb, var(--sys-point, var(--accent)) 22%, var(--chrome)) 0%,
+    var(--chrome) 55%);
 }
 /* 툴바의 기능 버튼으로 보이게 작게(사용자 결정 - 예전엔 강조 버튼처럼 컸다). */
-.detail-topspace .btn {
-  min-height: 22px; padding: 3px 8px; gap: 5px;
-  background: var(--card2); border: 1px solid transparent; font-size: calc(10px * var(--font-scale));
-}
-.detail-topspace .icon-btn { padding: 4px; }
+.detail-topspace .btn { background: var(--card2); border: 1px solid transparent; }
+.detail-topspace .icon-btn { padding: 3px; }
 .detail-preview-label { font-size: var(--fs-caption); color: var(--muted); }
 .detail-topspace .btn:hover { background: var(--card3); }
+/* 항상 우측 구석에 붙는다(실사용 피드백) - space-between은 왼쪽에 다른 버튼이
+   있을 때(Archive 탭의 "Collection으로 보내기" 등)만 이걸 오른쪽으로 밀어준다.
+   일반 Collection은 왼쪽 버튼이 없어져서(§4·§6, Archive로 버튼을 HERO로 옮김)
+   자식이 이것 하나뿐이 되었고, space-between은 자식이 하나면 시작 쪽(왼쪽)에
+   둔다 - margin-left: auto로 왼쪽에 뭐가 있든 없든 항상 오른쪽 끝에 붙게 한다. */
+.detail-preview-toggle { margin-left: auto; }
 /* 아이콘과 "미리보기" 글자 전체가 한 버튼이다 - 예전엔 아이콘만 눌렸다(사용자 요청). */
 .detail-preview-toggle { cursor: pointer; border-radius: var(--radius-xs); padding-right: 4px; }
 .detail-preview-toggle:hover .detail-preview-label { color: var(--text); }
@@ -666,7 +880,7 @@ body { font-size: var(--fs-body); }
   background: var(--chrome); height: calc(var(--toolbar-h) + var(--head-h)); box-sizing: border-box;
   padding: 6px 10px; border-bottom: 1px solid var(--border);
 }
-.detail-header .icon-btn { padding: 4px; }
+.detail-header .icon-btn { padding: 3px; }
 .detail-eyebrow { color: var(--accent); letter-spacing: .85px; }
 /* 탭 줄 - 바탕과 선택 안 된 탭은 신규색(흐린 글자), 선택된 탭은 아래 내용 카드와 같은 색으로 이어진다. */
 .detail-tabs { background: var(--chrome-sub); border-bottom: 1px solid var(--border); padding-top: 5px; }
@@ -729,6 +943,12 @@ body { font-size: var(--fs-body); }
 .field-row { display: flex; gap: 6px; align-items: center; }
 .field-row .field-input { flex: 1; }
 .field-grid.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* 대화상자 안의 한 묶음(라벨+입력+설명). hidden으로 통째로 접는다. */
+.field-block { display: flex; flex-direction: column; gap: 4px; }
+/* display:flex가 hidden 속성을 덮어쓴다 - 접으라고 했으면 접혀야 한다. */
+.field-block[hidden] { display: none; }
+.field-hint { color: var(--muted); font-size: var(--fs-caption); line-height: 1.4; }
+
 
 .picker-list { display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; }
 .picker-row {
@@ -814,10 +1034,13 @@ body { font-size: var(--fs-body); }
 /* 상태 기호는 작게만. 제목/설명 전체를 색칠하지 않는다(스펙 §24). */
 .status-mark.add { color: var(--info); font-weight: 700; }
 .status-mark.del { color: var(--danger); font-weight: 700; }
+.status-mark.edit { color: var(--accent); font-weight: 700; }
 
 .sb-add { color: var(--info); font-variant-numeric: tabular-nums; }
 .sb-del { color: var(--danger); font-variant-numeric: tabular-nums; }
-.sb-storage.over, .cheader-storage.over { color: var(--danger); font-weight: 600; }
+/* .cheader-storage.over는 §4에서 .plan-over로 이름이 바뀌었다 - Dashboard 목표
+   초과(.level-over)와 겹칠 수 있는 별개의 경고라서 클래스를 나눴다. */
+.sb-storage.over, .cheader-storage.plan-over { color: var(--danger); font-weight: 600; }
 .health-row.over span:last-child { color: var(--danger); font-weight: 600; }
 
 /* 충돌 / 실패 배지 */
@@ -986,6 +1209,12 @@ button.sb-badge { cursor: pointer; }
 .stg-close { width: 32px; height: 32px; border-radius: 6px; font-size: 23px; color: var(--muted); }
 .stg-close:hover { background: var(--card3); color: var(--text); }
 .stg-body { display: grid; grid-template-columns: 225px minmax(0, 1fr); flex: 1; min-height: 0; }
+/* 좌측 하단 확인(사용자 결정) - 값은 이미 즉시 적용돼 있으므로 이 버튼은 취소가
+   아니라 "닫아도 좋다"는 확인이다. ×만 있을 때보다 또렷하다. */
+.stg-foot { flex: none; padding: 12px 20px; border-top: 1px solid var(--border); background: var(--card2); }
+/* .btn은 기본이 inline-flex + justify-content 없음(왼쪽 정렬)이라, 글자보다
+   상자를 넓게 잡으면(min-width) 글자가 왼쪽에 붙어 보인다(실사용 피드백). */
+.stg-confirm { min-width: 96px; justify-content: center; }
 .stg-nav { padding: 12px 10px; background: var(--bg); border-right: 1px solid var(--border); overflow: auto; }
 .stg-nav-item {
   width: 100%; text-align: left; padding: 9px 11px; margin-bottom: 3px;
@@ -1047,15 +1276,20 @@ button.sb-badge { cursor: pointer; }
 .stg-path { display: flex; gap: 6px; align-items: center; flex: none; width: 380px; }
 .stg-path .stg-text { flex: 1; width: auto; min-width: 0; }
 .stg-path .btn { flex: none; white-space: nowrap; }
-.stg-core-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.stg-cores { display: flex; flex-direction: column; gap: 2px; }
+/* System별 기본 Core - 패널 전체 폭(680px)까지 늘어지지 않게 폭을 고정 열로 묶는다
+   (사용자 결정 - System 이름과 select 사이에 빈 공간만 넓었다). 세 열 다 고정 폭이라
+   행마다 배지 유무가 달라도 select 위치가 흔들리지 않는다. */
+.stg-core-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 372px; }
+.stg-cores { display: flex; flex-direction: column; gap: 3px; width: 372px; }
 .stg-core-row {
-  display: grid; grid-template-columns: minmax(120px, 1fr) auto 220px; align-items: center; gap: 10px;
-  min-height: 30px; padding: 2px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel);
+  display: grid; grid-template-columns: 84px 104px 148px; align-items: center; gap: 8px;
+  min-height: 26px; padding: 3px 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel);
 }
-.stg-core-row .stg-control { min-width: 0; width: 100%; height: 26px; }
-.stg-core-system { display: flex; align-items: center; gap: 7px; font-weight: 600; }
+.stg-core-row .stg-control { min-width: 0; width: 100%; height: 24px; padding: 0 6px; font-size: var(--fs-caption); }
+.stg-core-system { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: var(--fs-caption); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stg-core-row.unverified .stg-core-system { color: var(--muted); }
+.stg-core-row .stg-soon { justify-self: start; white-space: nowrap; }
 /* RetroArch Core 선택 창 */
 .core-dialog .core-now { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 10px; color: var(--muted); }
 .core-dialog .core-now b { color: var(--text); font-weight: 600; }
@@ -1110,6 +1344,11 @@ button.sb-badge { cursor: pointer; }
 .dsb-card.dsb-wide { grid-column: 1 / -1; }
 .dsb-card-title { font-size: var(--fs-eyebrow); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
 .dsb-empty, .dsb-muted { color: var(--muted); font-size: var(--fs-caption); }
+/* Storage usage - Internal/External을 한 막대에 섞지 않는다(실사용 피드백 §3).
+   Storage target 카드의 머리와 같은 모양(이름 + Internal/External 표)을 써서
+   두 카드가 같은 단위로 읽힌다는 것을 보여준다. */
+.dsb-usage-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.dsb-usage-sep { margin: 14px 0 12px; border-top: 1px solid var(--border); }
 /* 전체 대비 비율 막대 - 조각 사이는 선이 아니라 배경색 2px 틈으로 가른다. */
 .dsb-stack { display: flex; gap: 2px; height: 18px; }
 .dsb-seg { min-width: 3px; flex-basis: 0; }
@@ -1140,13 +1379,19 @@ button.sb-badge { cursor: pointer; }
 .dsb-target-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .dsb-target-name { font-weight: 650; }
 .dsb-target-kind { font-size: var(--fs-eyebrow); color: var(--muted); }
-.dsb-target-controls { margin-left: auto; display: flex; align-items: center; gap: 3px; }
+/* 값을 만지는 자리는 슬라이더 옆 하나뿐이다(실사용 피드백 §3) - 굴리기(슬라이더)·
+   미세 조정(▲▼)·직접 입력(타이핑)이 전부 같은 칸에 모여 있어야, 어느 쪽을 써도
+   "지금 이 숫자를 바꾸고 있다"는 게 헷갈리지 않는다. */
+.dsb-target-controls { flex: none; display: flex; align-items: center; gap: 3px; }
 .dsb-target-input {
   width: 84px; height: 24px; padding: 2px 7px; text-align: right; font-family: inherit;
   font-size: var(--fs-caption); font-variant-numeric: tabular-nums; color: var(--text);
   background: var(--card2); border: 1px solid var(--border); border-radius: 5px; outline: none;
+  transition: color .12s, border-color .12s;
 }
 .dsb-target-input:focus { border-color: var(--accent); }
+/* 슬라이더가 프리셋에 딱 붙으면 입력칸도 같이 강조한다 - 둘이 하나의 값이라는 것을 보여준다. */
+.dsb-target-input.snapped { color: var(--accent); font-weight: 650; border-color: var(--accent); }
 .dsb-spins { display: flex; flex-direction: column; }
 .dsb-spin {
   width: 18px; height: 12px; padding: 0; font-size: 7px; line-height: 10px;
@@ -1169,11 +1414,6 @@ button.sb-badge { cursor: pointer; }
 .dsb-tick::before { content: ""; display: block; width: 1px; height: 4px; margin: 0 auto 1px; background: var(--border); }
 .dsb-tick.on { color: var(--accent); font-weight: 650; }
 .dsb-tick.on::before { width: 2px; height: 5px; background: var(--accent); }
-.dsb-slider-value {
-  flex: none; width: 52px; padding-top: 1px; text-align: right; font-variant-numeric: tabular-nums;
-  color: var(--muted); font-size: var(--fs-caption); transition: color .12s;
-}
-.dsb-slider-value.snapped { color: var(--accent); font-weight: 650; }
 .dsb-target-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 5px; font-size: var(--fs-caption); }
 .dsb-bar + .dsb-bar { margin-top: 9px; }
 .dsb-bar-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 4px; font-size: var(--fs-caption); }
@@ -1225,10 +1465,11 @@ button.sb-badge { cursor: pointer; }
 /* Gamelist 파일명 - ROM 파일이 있으면 제목과 같은 색, 없으면(메타데이터만) 흐리게(사용자 요청).
    색은 테마의 목록 토큰을 따른다. */
 .lc-file.rom-present { color: var(--list-text); }
-.lc-file.rom-missing { color: var(--list-muted); }
+.lc-file.rom-missing { color: var(--list-faint, var(--list-muted)); }
 
-/* Detail 파일명 - 글자로 골라 복사할 수 있고, 옆 버튼으로 한 번에 복사한다. */
-.detail-filename-row { display: flex; align-items: center; gap: 4px; min-width: 0; margin-top: 1px; }
-.detail-filename-row .detail-filename { flex: 1; min-width: 0; margin-top: 0; user-select: text; cursor: text; }
+/* Detail 파일명 - 글자로 골라 복사할 수 있고, Play 옆 버튼으로 한 번에 복사한다
+   (실사용 피드백 §6 - 예전엔 이 버튼이 파일명 글자 바로 뒤에 있어서 파일명이
+   길면 말줄임과 겹쳤다). */
+.detail-filename { user-select: text; cursor: text; }
 .detail-copy { flex: none; padding: 3px; background: transparent; opacity: .7; }
 .detail-copy:hover { opacity: 1; }

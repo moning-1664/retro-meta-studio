@@ -20,8 +20,8 @@ from pathlib import Path
 from adapters import get_adapter
 from app.model.collection import STORAGE_INTERNAL
 from app.model.plan import (
-    OP_ADD, OP_DELETE, OP_STORAGE_CHANGE, RESOLVE_OVERWRITE, RESOLVE_SKIP,
-    STATUS_CONFLICT, STATUS_PENDING, PlanEntry,
+    OP_ADD, OP_DELETE, OP_METADATA_EDIT, OP_STORAGE_CHANGE, OP_TITLE_EDIT,
+    RESOLVE_OVERWRITE, RESOLVE_SKIP, STATUS_CONFLICT, STATUS_PENDING, PlanEntry,
 )
 
 
@@ -169,7 +169,8 @@ def plan_add(plan, collection, provider, items):
             media_items.append({**media, "snapshot": taken})
             size = int(media.get("size") or 0)
             estimated += size
-            pairs = adapter.media_pairs(layout, filename, [_MediaRef(media)])
+            pairs = adapter.media_pairs(layout, filename, [_MediaRef(media)],
+                                        title=(item.get("fields") or {}).get("name"))
             dest = pairs[0][1] if pairs else None
             if dest is None:
                 continue
@@ -244,7 +245,10 @@ def add_destinations(entry, layout, adapter) -> list:
                     int(rom.get("size") or 0)))
     refs = [_MediaRef(m) for m in (source.get("media") or [])]
     sizes = {str(m.path): m.size for m in refs}
-    for src_path, dest in adapter.media_pairs(layout, entry.filename, refs):
+    # 제목은 LaunchBox의 media 파일명이 된다. Apply 직전에 사용자가 고친 제목
+    # (`entry.payload`)이 있으면 그쪽이 실제로 적힐 값이므로 그걸 먼저 본다.
+    title = (entry.payload or source.get("fields") or {}).get("name")
+    for src_path, dest in adapter.media_pairs(layout, entry.filename, refs, title=title):
         out.append((Path(src_path), Path(dest), sizes.get(str(src_path), 0)))
     return out
 
@@ -395,3 +399,54 @@ def plan_storage_change(plan, collection, cache, system, storage_to):
                       physical_delta={storage_from: -rom_bytes, storage_to: rom_bytes})
     plan.add(entry)
     return {"system": system, "from": storage_from, "to": storage_to, "bytes": rom_bytes}
+
+
+def plan_metadata_edit(plan, cache, rom_uid, fields, frontend_raw=None) -> PlanEntry:
+    """기기(MTP) Collection의 편집을 Plan에 올린다(사용자 결정 - app/model/plan.py 머리말).
+
+    **payload에는 늘 "그 게임의 전체 필드"를 넣는다.** 같은 게임을 두 번 고치면 Plan
+    항목이 교체되는데(같은 key), 바뀐 필드만 들고 있으면 먼저 고친 값이 사라진다.
+    그래서 이미 올라와 있는 항목이 있으면 그 payload를 바탕으로 합친다.
+    """
+    row = cache.get_row(int(rom_uid))
+    if row is None:
+        raise PlanBuildError("항목을 찾을 수 없습니다.")
+
+    key = f"{OP_METADATA_EDIT}|{row['system']}|{row['filename']}"
+    pending = plan.get(key)
+    base = (pending.payload if pending is not None else None) or row["fields"]
+    raw = frontend_raw
+    if raw is None and pending is not None:
+        raw = (pending.source or {}).get("frontendRaw")
+
+    entry = PlanEntry(op=OP_METADATA_EDIT, system=row["system"], filename=row["filename"],
+                      rom_uid=int(rom_uid), payload={**base, **(fields or {})},
+                      source={"frontendRaw": raw} if raw is not None else None)
+    return plan.add(entry)
+
+
+def plan_title_edit(plan, cache, changes) -> dict:
+    """제목을 새 값으로 바꿀 예정으로 올린다(Title Prefix/Postfix, 사용자 결정 - Plan을
+    거치는 유일한 텍스트 편집. `app/model/plan.py`의 Plan 머리말 참고).
+
+    changes: `app/title_affix.py`의 `preview_titles()`가 돌려준 것과 같은 모양
+    (`[{"romUid","system","filename","oldTitle","newTitle",...}, ...]`) - 실제 값
+    계산은 호출부(bridge)가 그 모듈로 미리 해서 넘긴다. 여기서는 Plan에 올리는 것만
+    한다 - 같은 계산을 두 곳에 두면 언젠가 갈라진다.
+
+    바뀌지 않는 항목(oldTitle == newTitle)은 올리지 않는다 - "아무 일도 일어나지
+    않을 항목"이 Plan에 있으면 사용자가 실제로 몇 개나 바뀌는지 헷갈린다.
+    """
+    added = []
+    for change in changes:
+        if change.get("newTitle") == change.get("oldTitle"):
+            continue
+        rom_uid = int(change["romUid"])
+        row = cache.get_row(rom_uid)
+        if row is None:
+            continue  # 그 사이 사라진 항목 - 조용히 건너뛴다(다른 붙여넣기와 같은 태도, D3)
+        entry = PlanEntry(op=OP_TITLE_EDIT, system=row["system"], filename=row["filename"],
+                          rom_uid=rom_uid, old_title=change["oldTitle"], new_title=change["newTitle"])
+        plan.add(entry)
+        added.append(entry)
+    return {"added": len(added)}

@@ -296,5 +296,135 @@ class PartialScanAtomicityTests(unittest.TestCase):
         self.assertEqual(self._snapshot(), self.before)
 
 
+# ======================================================================
+# 여러 항목 중 하나만 실패했을 때 - 재시도가 성공한 것들을 다시 건드리지 않는가
+# ======================================================================
+class MixedBatchRetryTests(PlanCase):
+    """**한 번에 여러 개를 Apply하다 중간 하나가 실패한 경우.**
+
+    앞선 테스트들은 항목이 하나뿐이라 «실패하면 되돌린다»까지만 본다. 실제 사용은
+    열 개를 한 번에 보내고 여섯 번째가 실패하는 식이다. 그때 사용자가 다시 Apply를
+    누르면, **이미 성공한 것들을 다시 복사하면 안 된다** - 다시 복사하면 그 사이
+    사용자가 손댄 대상 파일을 말없이 덮어쓰게 되고, 큰 ROM이면 시간도 두 배로 든다.
+    """
+
+    GAMES = ["A.iso", "B.iso", "C.iso", "D.iso"]
+    BROKEN = "C.iso"
+
+    def setUp(self):
+        super().setUp()
+        self.srcs = {name: touch(self.src_root / "ps2" / name, b"DATA-" + name.encode())
+                     for name in self.GAMES}
+        builder.plan_add(self.plan, self.collection, PROVIDER, [
+            {"system": "ps2", "filename": name,
+             "rom": {"path": str(path), "size": path.stat().st_size},
+             "media": [], "fields": {"name": name.split(".")[0]}}
+            for name, path in self.srcs.items()])
+        self.validate()
+        self.copied = []          # Apply마다 실제로 복사를 시도한 목적지
+        self.breaking = False     # 켜면 BROKEN 항목만 실패한다
+
+        # spy는 **한 번만** 끼운다 - 두 번 끼우면 두 번째가 첫 번째를 감싸 버려서
+        # 꺼 둔 줄 알았던 실패 주입이 안쪽에 그대로 남는다.
+        original = file_ops.copy_files
+
+        def spy(dest_dirs, pairs):
+            self.copied.extend(Path(dest).name for _src, dest in pairs)
+            results = original(dest_dirs, pairs)
+            if self.breaking:
+                for _src, dest in pairs:
+                    if Path(dest).name == self.BROKEN:
+                        Path(dest).unlink(missing_ok=True)
+                        results[str(dest)] = False
+            return results
+
+        file_ops.copy_files = spy
+        self.addCleanup(setattr, file_ops, "copy_files", original)
+
+    def _watch_copies(self, break_one):
+        self.breaking = break_one
+
+    def _dest(self, name):
+        return self.dst_root / "ps2" / name
+
+    def test_one_failure_does_not_stop_the_others(self):
+        self._watch_copies(break_one=True)
+        result = self.apply()
+        self.assertEqual(result["applied"], 3)
+        self.assertEqual(result["failed"], 1)
+        for name in self.GAMES:
+            self.assertEqual(self._dest(name).exists(), name != self.BROKEN, name)
+
+    def test_the_plan_keeps_only_the_failed_entry(self):
+        self._watch_copies(break_one=True)
+        self.apply()
+        self.assertEqual([e.filename for e in self.plan.entries], [self.BROKEN])
+
+    def test_a_retry_copies_only_the_failed_entry(self):
+        """사용자가 물은 그것 - 이미 성공한 것을 다시 처리하지 않는가."""
+        self._watch_copies(break_one=True)
+        self.apply()
+
+        self.copied.clear()
+        self._watch_copies(break_one=False)   # 이번에는 정상 동작
+        self.validate()
+        self.apply()
+
+        self.assertEqual(sorted(set(self.copied)), [self.BROKEN],
+                         "이미 성공한 항목을 재시도가 다시 복사했다")
+        self.assertTrue(self._dest(self.BROKEN).exists(), "재시도가 실패 항목을 못 채웠다")
+
+    def test_a_retry_leaves_the_already_applied_files_untouched(self):
+        self._watch_copies(break_one=True)
+        self.apply()
+        before = {name: self._dest(name).stat().st_mtime_ns
+                  for name in self.GAMES if name != self.BROKEN}
+
+        self._watch_copies(break_one=False)
+        self.validate()
+        self.apply()
+
+        after = {name: self._dest(name).stat().st_mtime_ns for name in before}
+        self.assertEqual(after, before, "성공했던 파일을 재시도가 다시 썼다")
+
+
+class ApplyCountMatchesWhatApplyDoesTests(PlanCase):
+    """**Apply 버튼이 말하는 수 = Apply가 실제로 처리하는 수.**
+
+    Plan에는 해결되지 않은 충돌도 함께 올라간다. 적용기는 그것을 건너뛰는데
+    (`runnable` 필터), 화면이 Plan 전체 수를 보여주면 사용자는 누르고 나서야
+    "12개라더니 9개만 됐다"를 알게 된다.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.clean = touch(self.src_root / "ps2" / "Clean.iso", b"CLEAN")
+        # Conflict.iso는 대상에 이미 있다 - 해결하지 않으면 blocked가 된다.
+        self.clash = touch(self.src_root / "ps2" / "Conflict.iso", b"NEW")
+        touch(self.dst_root / "ps2" / "Conflict.iso", b"ALREADY HERE")
+        builder.plan_add(self.plan, self.collection, PROVIDER, [
+            {"system": "ps2", "filename": path.name,
+             "rom": {"path": str(path), "size": path.stat().st_size},
+             "media": [], "fields": {"name": path.stem}}
+            for path in (self.clean, self.clash)])
+        self.validate()
+
+    def test_an_unresolved_conflict_is_blocked(self):
+        blocked = [e.filename for e in self.plan.entries if e.blocked]
+        self.assertEqual(blocked, ["Conflict.iso"])
+
+    def test_total_counts_everything_but_runnable_counts_only_what_apply_will_do(self):
+        summary = self.plan.summary()
+        self.assertEqual(summary["total"], 2, "Cancel은 충돌까지 포함한 Plan 전체를 버린다")
+        self.assertEqual(summary["runnable"], 1, "Apply가 처리할 수 있는 것은 하나뿐이다")
+
+    def test_runnable_is_exactly_what_apply_reports_as_applied_plus_failed(self):
+        """숫자가 맞다는 것을 실제 Apply 결과로 확인한다."""
+        runnable = self.plan.summary()["runnable"]
+        result = self.apply()
+        self.assertEqual(result["applied"] + result["failed"] + result["partial"], runnable)
+        self.assertEqual(result["skipped"], 1, "충돌은 건너뛴 것으로 보고된다")
+
+
 if __name__ == "__main__":
     unittest.main()

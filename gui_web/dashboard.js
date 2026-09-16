@@ -127,20 +127,29 @@
           statusLine("bad", r.error || "검사하지 못했습니다."), h("span", { class: "dsb-validate-spacer" }), clearBtn]));
         return;
       }
-      const { checked, invalid, duplicates, issues, statuses } = r.data;
+      const { checked, invalid, duplicates, issues, statuses, countsStale, staleReason } = r.data;
       const problems = invalid.length + duplicates.length + issues.length;
 
-      // 네 가지 상태를 늘 보여준다(사용자 요구) - Metadata Health 카드와 같은 기준이다
-      // (app/dashboard.py::validate_collection).
+      // **Cache에서 온 숫자를 못 믿을 때가 있다.** 검사 전 재스캔이 실패하면
+      // Complete/Missing 세 숫자는 지난 스캔의 기억이다. 그냥 보여주면 지금 숫자인
+      // 줄 알기 때문에, 값 대신 «?»를 두고 왜인지 말한다 - Invalid XML은 파일을
+      // 직접 읽어 세므로 이때도 정확하다.
+      const count = (n) => (countsStale ? "?" : formatCount(n));
       const summary = h("div", { class: "dsb-validate-summary" }, [
-        statusLine("good", `Complete ${formatCount(statuses.complete)}`),
-        statuses.missingMedia ? statusLine("warn", `Missing Media ${formatCount(statuses.missingMedia)}`) : null,
-        statuses.missingDescription
-          ? statusLine("warn", `Missing Description ${formatCount(statuses.missingDescription)}`) : null,
+        statusLine(countsStale ? "warn" : "good", `Complete ${count(statuses.complete)}`),
+        statuses.missingMedia || countsStale
+          ? statusLine("warn", `Missing Media ${count(statuses.missingMedia)}`) : null,
+        statuses.missingDescription || countsStale
+          ? statusLine("warn", `Missing Description ${count(statuses.missingDescription)}`) : null,
         statuses.invalidXml ? statusLine("bad", `Invalid XML ${formatCount(statuses.invalidXml)}`)
           : statusLine("good", "Invalid XML 0"),
-        problems ? null : statusLine("good", `Metadata 파일 ${formatCount(checked)}개 확인 · 문제 없음`),
+        problems || countsStale ? null
+          : statusLine("good", `Metadata 파일 ${formatCount(checked)}개 확인 · 문제 없음`),
       ]);
+      if (countsStale) {
+        summary.appendChild(statusLine("bad",
+          `개수를 다시 세지 못했습니다 - 스캔 실패${staleReason ? ": " + staleReason : ""}`));
+      }
       const head = h("div", { class: "dsb-validate-head" }, [summary, h("span", { class: "dsb-validate-spacer" })]);
       if (problems) {
         const toggle = h("button", { class: "btn compact dsb-validate-toggle", "aria-expanded": String(!!ctx.validationOpen) },
@@ -208,16 +217,28 @@
     const grid = h("div", { class: "dsb-grid" });
     host.appendChild(grid);
 
-    // ---------------------------------------------------------- 사용량 (전체 대비 System 비율)
+    // ---------------------------------------------------------- 사용량 (Storage별 System 비율)
+    // **Internal과 External을 한 막대에 섞지 않는다**(실사용 피드백 §3). 한 막대에
+    // 합쳐 보여주면 "External이 꽉 찼다"는 것이 Internal의 널널함에 묻혀 안 보인다 -
+    // 목표 용량도 Storage마다 따로 정하므로(Storage target 카드), 사용량도 그 단위와
+    // 맞춰야 두 카드를 나란히 읽을 수 있다.
     const usage = card("Storage usage · ROM + Media");
-    const ranked = data.systems
-      .map((s) => ({ system: s.system, bytes: s.romBytes + s.mediaBytes }))
-      .filter((s) => s.bytes > 0)
-      .sort((a, b) => b.bytes - a.bytes);
-    const total = ranked.reduce((sum, s) => sum + s.bytes, 0);
-    if (!total) {
-      usage.appendChild(h("div", { class: "dsb-empty" }, ["아직 스캔된 파일이 없습니다."]));
-    } else {
+    data.storages.forEach((storage, index) => {
+      if (index) usage.appendChild(h("div", { class: "dsb-usage-sep" }));
+      usage.appendChild(h("div", { class: "dsb-usage-head" }, [
+        h("span", { class: "dsb-target-name" }, [storage.label]),
+        h("span", { class: "dsb-target-kind" }, [storage.kind === "external" ? "External" : "Internal"]),
+      ]));
+      const ranked = data.systems
+        .filter((s) => s.storageId === storage.id)
+        .map((s) => ({ system: s.system, bytes: s.romBytes + s.mediaBytes }))
+        .filter((s) => s.bytes > 0)
+        .sort((a, b) => b.bytes - a.bytes);
+      const total = ranked.reduce((sum, s) => sum + s.bytes, 0);
+      if (!total) {
+        usage.appendChild(h("div", { class: "dsb-empty" }, ["아직 스캔된 파일이 없습니다."]));
+        return;
+      }
       const parts = ranked.slice(0, TOP_SYSTEMS).map((s, i) => ({ ...s, name: s.system.toUpperCase(), color: `var(--series-${i + 1})` }));
       const rest = ranked.slice(TOP_SYSTEMS);
       if (rest.length) {
@@ -239,6 +260,9 @@
         h("span", { class: "dsb-legend-value" }, [`${formatBytes(p.bytes)} · ${pct(p.bytes, total)}%`]),
       ])));
       usage.appendChild(legend);
+    });
+    if (!data.storages.length) {
+      usage.appendChild(h("div", { class: "dsb-empty" }, ["Storage가 없습니다."]));
     }
     grid.appendChild(usage);
 
@@ -247,6 +271,14 @@
     data.storages.forEach((s) => targets.appendChild(targetRow(s)));
     grid.appendChild(targets);
 
+    /** 목표 용량 한 줄.
+     *
+     * **입력칸은 슬라이더 옆 하나뿐이다**(실사용 피드백). 예전에는 머리에 텍스트
+     * 입력+▲▼가 있고, 슬라이더 밑에 또 값 표시가 있어 같은 숫자를 두 자리에서
+     * 만졌다 - 슬라이더를 굴리는 칸과 숫자를 직접 고치는 칸이 서로 다른 곳에
+     * 있으니 "지금 값이 어디 반영되고 있는지" 헷갈렸다. 슬라이더 옆 칸 하나가
+     * 굴리기(슬라이더)·미세 조정(▲▼)·직접 입력(타이핑) 셋을 전부 맡는다.
+     */
     function targetRow(s) {
       const used = s.romBytes + s.mediaBytes;
       const target = ctx.targets[s.id] || s.capacityBytes || null;
@@ -277,12 +309,11 @@
       down.addEventListener("click", () => { if (target) commit(stepDown(target)); });
 
       // Slider - 로그 눈금 위를 연속으로 움직이고, 프리셋 근처에 오면 그 값에 딱 붙는다
-      // (눈금이 켜지고 값 글자가 강조된다). 끄는 동안은 미리보기만 바꾸고(row를 새로 만들면
-      // 드래그가 끊긴다), 손을 뗀 순간(change)에만 반영한다. 키보드 ←→는 프리셋 단위로 움직인다.
+      // (눈금이 켜지고 옆 입력칸이 강조된다). 끄는 동안은 입력칸 미리보기만 바꾸고(row를
+      // 새로 만들면 드래그가 끊긴다), 손을 뗀 순간(change)에만 반영한다. 키보드 ←→는
+      // 프리셋 단위로 움직인다.
       const initial = target ? sliderValueAt(toPos(target)) : null;
       let current = target ? { bytes: target, snapped: SNAP.includes(target) } : null;
-      const sliderValue = h("span", { class: "dsb-slider-value" + (current && current.snapped ? " snapped" : "") },
-        [target ? formatCapacity(target) : "—"]);
       const slider = h("input", {
         type: "range", class: "dsb-target-slider", min: "0", max: String(SLIDER_STEPS), step: "1",
         value: String(target ? toPos(target) : 0), "aria-label": `${s.label} 목표 용량`,
@@ -296,11 +327,12 @@
       }, [TICK_LABELS.has(p) ? formatCapacity(p).replace(" ", "") : ""])));
       const markTicks = () => ticks.querySelectorAll(".dsb-tick").forEach((tick) =>
         tick.classList.toggle("on", !!current && current.snapped && Number(tick.dataset.bytes) === current.bytes));
+      input.classList.toggle("snapped", !!(current && current.snapped));
       slider.addEventListener("input", () => {
         current = sliderValueAt(Number(slider.value));
         if (current.snapped) slider.value = String(current.pos);
-        sliderValue.textContent = formatCapacity(current.bytes);
-        sliderValue.classList.toggle("snapped", current.snapped);
+        input.value = formatCapacity(current.bytes);
+        input.classList.toggle("snapped", current.snapped);
         slider.setAttribute("aria-valuetext", formatCapacity(current.bytes));
         markTicks();
       });
@@ -322,11 +354,10 @@
         h("div", { class: "dsb-target-head" }, [
           h("span", { class: "dsb-target-name" }, [s.label]),
           h("span", { class: "dsb-target-kind" }, [s.kind === "external" ? "External" : "Internal"]),
-          h("span", { class: "dsb-target-controls" }, [input, h("span", { class: "dsb-spins" }, [up, down])]),
         ]),
         h("div", { class: "dsb-target-slider-row" }, [
           h("div", { class: "dsb-slider-track" }, [slider, ticks]),
-          sliderValue,
+          h("span", { class: "dsb-target-controls" }, [input, h("span", { class: "dsb-spins" }, [up, down])]),
         ]),
         h("div", { class: "dsb-meter " + level }, [
           h("div", { class: "dsb-meter-fill", style: { width: `${Math.min(100, ratio * 100)}%` } }),

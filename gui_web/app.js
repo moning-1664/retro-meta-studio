@@ -154,7 +154,23 @@
    * (system-icons-pack.js). 없는 파일은 한 번만 확인하고 결과를 기억해 둔다 -
    * Navigator는 자주 다시 그려지므로 매번 없는 파일을 요청하면 깜빡이고 낭비다. */
   const systemIconFile = new Map();   // "base|key" -> 찾은 파일명 | null(없음)
-  function systemIcon(name, size) {
+  /** System 아이콘. `onGeneric`은 전용 그림(PNG/SVG)이 하나도 없어서 범용
+   * 카테고리 아이콘으로 떨어질 때만 불린다 - 그 사실을 알아야 하는 곳이 있다
+   * (Chromium Hero는 그때 배경 그림을 아예 깔지 않는다). */
+  /** 아이콘 크기는 **네 단계뿐이다**(레이아웃 재검토).
+   *
+   * 예전에는 자리마다 9·11·12·13·14·15·16·17·20·22를 섞어 썼다. 한 줄에 선 두
+   * 아이콘의 크기가 1px씩 어긋나면 눈에 딱 집어 말하기는 어려워도 화면 전체가
+   * 정돈되지 않은 느낌을 준다(실사용 피드백 - "통일성과 안정감").
+   *
+   * - xs: 탭 닫기처럼 글자보다 작아야 하는 자리
+   * - sm: 버튼·칩 안에 글자와 나란히 서는 곁들이
+   * - md: 도구 버튼 하나가 통째로 아이콘일 때(툴바 기본)
+   * - lg: 비어 있음을 알리는 자리표시자처럼 혼자 크게 서는 것
+   */
+  const IC = { xs: 10, sm: 12, md: 14, lg: 18 };
+
+  function systemIcon(name, size, onGeneric) {
     const px = size || 14;
     const key = String(name || "").toLowerCase();
     const holder = h("span", { class: "sys-ic", style: { width: `${px}px`, height: `${px}px` } });
@@ -164,6 +180,7 @@
         holder.innerHTML = window.RMSystemIcons.svg(key, px);
       } else {
         holder.appendChild(icon("cartridge", Math.max(10, px - 1)));
+        if (onGeneric) onGeneric();
       }
     };
     const pack = window.RMSystemIconPack;
@@ -187,6 +204,92 @@
     return holder;
   }
 
+  /** Chromium Hero의 색 - 콘솔마다 **몸체색(base) + 포인트색(points)** 두 가지를 갖는다.
+   *
+   * 실물의 인상을 그대로 옮긴 것이다(사용자 결정). SFC는 회색 몸체에 빨·파·노·초
+   * 버튼, 패미컴은 베이지에 빨강·금색, 메가드라이브는 검정에 검붉은색·파랑 하는 식.
+   * base는 배경 물듦에, points는 제목 옆 세로 바에 쓴다 - 그래서 System을 바꾸면
+   * 화면 색이 그 기기의 색으로 바뀐다.
+   *
+   * **System 하나하나에 지정하지 않는다.** 계열 단위로만 정하고 못 찾으면 테마
+   * 기본색으로 떨어진다 - System이 몇 개로 늘어나든 관리할 것은 이 목록뿐이다. */
+  const SYSTEM_PALETTES = [
+    // 닌텐도 - 거치형
+    [/^(snes|superfamicom|satellaview|sufami)/,
+      { base: "#9b9ba6", points: ["#c0392f", "#2f6fb5", "#e0b32c", "#3f9e57"] }],
+    [/^(nes|famicom|fds|nesh)/, { base: "#d8cbb0", points: ["#b5322c", "#c9a227"] }],
+    [/^(n64)/, { base: "#4a4a52", points: ["#2f6fb5", "#3f9e57", "#c0392f", "#e0b32c"] }],
+    [/^(gamecube|gc)/, { base: "#5f5490", points: ["#6b5bbd", "#3f9e57"] }],
+    [/^(wii|wiiu)/, { base: "#dfe3e8", points: ["#1f9fd8"] }],
+    [/^(switch)/, { base: "#3a3a42", points: ["#e4404a", "#2f9fd8"] }],
+    // 닌텐도 - 휴대용
+    [/^(gb|gbc)/, { base: "#a8ae96", points: ["#8e2f6a", "#3f5aa8"] }],
+    [/^(gba)/, { base: "#6b5bbd", points: ["#8e2f6a", "#3f5aa8"] }],
+    [/^(nds|n3ds|virtualboy)/, { base: "#c8ccd2", points: ["#c0392f"] }],
+    // 세가
+    [/^(megadrive|genesis|segacd|megacd|sega32x|32x)/,
+      { base: "#2b2b30", points: ["#8e2b2b", "#2f6fb5"] }],
+    [/^(mastersystem|sg1000|gamegear)/, { base: "#2b2b30", points: ["#c0392f"] }],
+    [/^(saturn)/, { base: "#3a3a42", points: ["#2f6fb5", "#8e8e96"] }],
+    [/^(dreamcast)/, { base: "#e2e2e4", points: ["#e8622c", "#2f6fb5"] }],
+    // 소니 - 짙은 회색 몸체에 ✕○□△ 네 색
+    [/^(ps[x1-5]?$|psx|ps2|ps3|ps4|ps5|psp|psvita|pocketstation|minis)/,
+      { base: "#5a6472", points: ["#4a7fd4", "#d6453f", "#d97ab0", "#4fae7a"] }],
+    [/^(xbox)/, { base: "#2f2f34", points: ["#5bb85b"] }],
+    // 그 외
+    [/^(atari|lynx|jaguar)/, { base: "#3a2f28", points: ["#d4452c", "#e07b2a"] }],
+    [/^(pcengine|pcfx|supergrafx|turbografx|tg16)/,
+      { base: "#d6d2c8", points: ["#e0842c", "#c0392f"] }],
+    [/^(neogeo|ngp|ngpc)/, { base: "#2b2b30", points: ["#c8443a", "#e8b93a"] }],
+    [/^(amiga|c64|commodore|vic20|plus4|cpc|amstrad|zx|spectrum)/,
+      { base: "#6f6f78", points: ["#d4453f", "#e8b93a", "#3f9e57", "#3a6fc4"] }],
+    [/^(arcade|mame|fba|fbneo|cps[123]?|naomi|model[23]|daphne|neogeocd)/,
+      { base: "#2b2b30", points: ["#c0392f", "#2f6fb5", "#e0b32c", "#3f9e57"] }],
+    [/^(dos|windows|pc98|pc88|x68000|fmtowns|steam|scummvm|linux|android|msx)/,
+      { base: "#4a5568", points: ["#4a90d9"] }],
+  ];
+
+  function systemPalette(name) {
+    const key = String(name || "").toLowerCase();
+    const hit = SYSTEM_PALETTES.find(([re]) => re.test(key));
+    return hit ? hit[1] : null;
+  }
+
+  /** Chromium의 빈 영역에 지금 보고 있는 System을 은은하게 깔아 준다(레이아웃 재검토).
+   *
+   * **새 그림 자산을 만들지 않는다.** Navigator가 쓰는 System 아이콘을 그대로 크게
+   * 키워 아주 낮은 투명도로 깐다 - 전용 PNG가 없어 카테고리 아이콘으로 떨어지는
+   * System도 이 투명도에서는 "은은한 무늬"로만 읽혀서, 콘솔 사진을 System마다
+   * 준비할 때 생기는 "이 System은 지원이 덜 됐나" 하는 인상이 생기지 않는다. */
+  /** 제목 왼쪽의 세로 바. 콘솔의 포인트 색을 그대로 나눠 칠해서, System을 바꾸면
+   * 이 바 하나로 어느 기기인지 알아본다(사용자 결정 - 예전 아이콘 상자는 제목
+   * 크기와 안 맞아 뺐다). 색을 못 찾은 System은 테마 accent 한 줄이다. */
+  function pointBar(system) {
+    const palette = systemPalette(system);
+    const bar = h("div", { class: "cheader-bar", "aria-hidden": "true" });
+    const points = palette ? palette.points : null;
+    if (points && points.length) {
+      const stops = points.map((color, i) =>
+        `${color} ${(i / points.length * 100).toFixed(2)}% ${((i + 1) / points.length * 100).toFixed(2)}%`);
+      bar.style.background = `linear-gradient(180deg, ${stops.join(", ")})`;
+    }
+    return bar;
+  }
+
+  function headerArt(system) {
+    const art = h("div", { class: "cheader-art", "aria-hidden": "true" });
+    const palette = systemPalette(system);
+    if (palette) {
+      art.style.setProperty("--sys-base", palette.base);
+      art.style.setProperty("--sys-point", palette.points[0]);
+    }
+    // **전용 그림이 없으면 배경을 비운다.** 범용 카트리지 아이콘을 크게 깔면
+    // 그것이 있는 System마다 똑같은 실루엣이 반복돼서, 은은한 무늬가 아니라
+    // "이 System들은 뭔가 빠졌다"는 표시로 읽힌다(프로토타입 검토 결과).
+    art.appendChild(systemIcon(system, 62, () => art.classList.add("generic")));
+    return art;
+  }
+
   function formatBytes(n) {
     if (!n) return "0 B";
     const units = ["B", "KB", "MB", "GB", "TB"];
@@ -204,13 +307,22 @@
   // ------------------------------------------------------------------
   const DEFAULT_SETTINGS = {
     appearance: { theme: "stitch", density: "compact", scale: 100, previewDefault: true },
-    navigation: { hideEmptySystems: false },
+    navigation: { hideEmptySystems: false, defaultSortPriority: "none" },
     gamelist: { order: [], hidden: [] },
     collections: { order: [] },
     transfer: { includeRom: true, includeMedia: true, conflict: "ask",
                 unmatchedRomMode: "skip", unmatchedRomMetadata: true, unmatchedRomMedia: true, unmatchedRomVideo: true },
     //: Media 탭의 영상(사용자 결정: 소리 켬, 반복 켬, 5초 뒤 자동 재생 - 전부 Settings에서 바꾼다).
     media: { videoMode: "auto", videoDelay: 3, videoSound: true, videoLoop: true },
+    //: Title Prefix/Postfix - 지역별로 제목에 붙일 표시(app/title_affix.py와 같은 기본값).
+    //: 기본은 전부 꺼져 있다 - 사용자가 명시적으로 켜야 제목이 바뀐다.
+    titleAffix: {
+      kr: { enabled: false, mode: "prefix", text: "KR" },
+      en: { enabled: false, mode: "prefix", text: "EN" },
+      jp: { enabled: false, mode: "prefix", text: "JP" },
+      eu: { enabled: false, mode: "prefix", text: "EU" },
+      global: { enabled: false, mode: "prefix", text: "WORLD" },
+    },
   };
   const APPEARANCE_CACHE_KEY = "rms.appearance";
 
@@ -258,9 +370,21 @@
     descending: false,
     favoritesOnly: false,
     viewMode: "list",          // "list" | "card"
-    statusFilter: "all",       // all | metadata | media | missing
+    // 우선 정렬 - null(구분 없음) | rom | metadata | media. 예전 상태 필터
+    // (all/metadata/media/missing)는 currentQuery()가 값을 읽지 않아 실제로는
+    // 아무것도 걸러내지 못했다(실사용 피드백) - 지금은 목록을 걸러내지 않고
+    // "있는 항목을 먼저 보여주는" 1차 정렬로 동작한다.
+    sortPriority: null,
     // 컬럼 폭은 사용자가 맞춰 놓는 것이라 Collection별로 기억한다(`ui_state`).
     colWidths: { ...DEFAULT_COL_WIDTHS },
+    // Navigator에서 접어 둔 Storage 그룹 - `${collectionId}:${storageId}`. 세션
+    // 동안만 기억한다(서버에 저장하지 않는다) - 접힘은 지금 화면을 정리해 두는
+    // 용도지 Collection의 영구 설정이 아니다.
+    navCollapsed: new Set(),
+    // Dashboard에서 정한 Storage별 목표 용량 - {storageId: bytes}. HERO의 용량
+    // 그래프도 같은 값을 쓴다(실사용 피드백 §4) - Dashboard를 열지 않아도 목표
+    // 대비 상태를 봐야 하므로, ui_state에서 읽어 여기 함께 둔다.
+    dashboardTargets: {},
     // Shift+Click 범위 선택의 기준점. 마지막으로 "그냥 누른" 행이다.
     selectAnchor: null,
     previewOn: true,
@@ -294,6 +418,7 @@
   //: Archive는 Collection이 아니지만 같은 Gamelist/Detail UI를 쓴다(스펙 §43).
   //  별도 화면을 만들지 않고 특수한 탭 id 하나로 취급한다.
   const ARCHIVE_ID = "archive";
+  const STORAGE_INTERNAL = "internal";   // app/model/collection.py의 같은 상수와 값을 맞춘다.
   const isArchive = () => S.activeId === ARCHIVE_ID;
 
   const MEDIA_LABEL = {
@@ -310,7 +435,7 @@
     const scope = activeScope();
     const query = {
       search: S.search, order: S.order, descending: S.descending,
-      favoritesOnly: !!S.favoritesOnly,
+      favoritesOnly: !!S.favoritesOnly, priority: S.sortPriority || null,
     };
     if (scope.kind === "system") query.systems = [scope.id];
     else if (scope.kind === "storage") query.storageIds = [scope.id];
@@ -334,6 +459,10 @@
     if (!r.ok || !r.data) return;
     if (r.data.colWidths) S.colWidths = { ...DEFAULT_COL_WIDTHS, ...r.data.colWidths };
     if (r.data.sort) { S.order = r.data.sort.key || S.order; S.descending = !!r.data.sort.desc; }
+    // 우선 정렬은 Collection별로 기억해 두지 않는다 - Toolbar에서 그때그때
+    // 바꾸는 값이고, 새로 열 때는 항상 Settings의 기본값에서 다시 시작한다.
+    const defaultPriority = S.settings.navigation.defaultSortPriority || "none";
+    S.sortPriority = defaultPriority === "none" ? null : defaultPriority;
     // 한 번도 끄고 켠 적 없는 Collection은 Settings의 "Preview by default"를 따른다.
     S.previewOn = typeof r.data.previewOn === "boolean"
       ? r.data.previewOn : S.settings.appearance.previewDefault !== false;
@@ -341,6 +470,7 @@
     // 언제나 List로 시작했다 - "재시작하면 Card가 한참 뒤에 나온다"의 정체는 사실
     // "Card 상태가 저장되지 않았다"였다.
     if (r.data.viewMode === "card" || r.data.viewMode === "list") S.viewMode = r.data.viewMode;
+    S.dashboardTargets = { ...(r.data.dashboardTargets || {}) };
   }
 
   let uiStateTimer = null;
@@ -476,6 +606,11 @@
       reset: () => updateSettings("appearance", { ...DEFAULT_SETTINGS.appearance }),
       renderColumns: columnSettingsEditor,
       renderEmulator: emulatorSettingsEditor,
+      // 확인 버튼이 부른다(실사용 피드백 §7) - 값은 이미 바뀔 때마다 즉시
+      // 적용돼 있지만(슬라이더 미리보기 등), 서버 저장은 300ms 묶어서 나간다.
+      // "확인을 눌렀는데 화면은 닫혔고 저장은 아직 안 나갔다"가 없도록 그
+      // 자리에서 바로 흘려보낸다.
+      flush: flushPendingUiState,
     });
   }
 
@@ -714,9 +849,9 @@
       S.tabs.forEach((id) => {
         const collection = S.collections.find((c) => c.id === id);
         if (!collection) return;
-        const tab = h("div", { class: "ctab active detached" }, [icon("gamepad", 13),
+        const tab = h("div", { class: "ctab active detached" }, [icon("gamepad", IC.md),
           h("span", { class: "ctab-name" }, [collection.name])]);
-        const close = h("button", { class: "ctab-close", title: "창 닫기" }, [icon("x", 9)]);
+        const close = h("button", { class: "ctab-close", title: "창 닫기" }, [icon("x", IC.xs)]);
         close.addEventListener("click", async (e) => {
           e.stopPropagation();
           await flushPendingUiState();
@@ -731,7 +866,7 @@
     }
     const archiveTab = h("div", { class: "ctab archive" + (isArchive() ? " active" : ""),
       title: "여러 Collection에서 수집한 Metadata 보관소" }, [
-      icon("database", 13), h("span", { class: "ctab-name" }, ["Archive"]),
+      icon("invader", IC.md), h("span", { class: "ctab-name" }, ["Archive"]),
     ]);
     archiveTab.addEventListener("click", () => selectTab(ARCHIVE_ID));
     bar.appendChild(archiveTab);
@@ -740,9 +875,9 @@
       const collection = S.collections.find((c) => c.id === id);
       if (!collection) return;
       const tab = h("div", { class: "ctab" + (id === S.activeId ? " active" : "") });
-      tab.appendChild(icon("gamepad", 13));
+      tab.appendChild(icon("gamepad", IC.md));
       tab.appendChild(h("span", { class: "ctab-name" }, [collection.name]));
-      const close = h("button", { class: "ctab-close", title: "닫기" }, [icon("x", 9)]);
+      const close = h("button", { class: "ctab-close", title: "닫기" }, [icon("x", IC.xs)]);
       close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(id); });
       tab.appendChild(close);
       tab.addEventListener("click", () => selectTab(id));
@@ -750,7 +885,7 @@
       bindTabDrag(tab, id);
       bar.appendChild(tab);
     });
-    const add = h("button", { class: "ctab-add", title: "Collection 추가" }, [icon("plus", 13)]);
+    const add = h("button", { class: "ctab-add", title: "Collection 추가" }, [icon("plus", IC.md)]);
     add.addEventListener("click", openAddCollection);
     bar.appendChild(add);
   }
@@ -961,37 +1096,168 @@
                                    placeholder: "폴더를 선택하세요 (선택)" });
     const romInput = h("input", { class: "field-input", id: "add-rom-path",
                                   placeholder: "폴더를 선택하세요 (선택)" });
+    // **Architecture는 묻지 않는다.** ES-DE Adapter를 포함해 어떤 Frontend도 이
+    // 값으로 동작을 바꾸지 않는다(esde_platform()이 쓰는 것은 target/os뿐이다) -
+    // 사용자가 기기 아키텍처를 몰라서 "Unknown"으로 넘겨도 되는데, 넘기는 값이
+    // 아무 데도 안 쓰인다면 애초에 묻지 않는 것이 맞다(실사용 피드백).
+    // Target은 다르다 - esde_platform()이 이 값으로 custom_systems XML의 System
+    // 정의(windows/android/linux 템플릿)와 경로 표기를 고른다. 그래서 이것만 남긴다.
     const targetSel = h("select", { class: "field-input" }, [
       h("option", { value: "" }, ["Unknown"]),
       h("option", { value: "windows" }, ["Windows"]),
       h("option", { value: "android" }, ["Android"]),
       h("option", { value: "linux" }, ["Linux"]),
     ]);
-    const archSel = h("select", { class: "field-input" }, [
-      h("option", { value: "" }, ["Unknown"]),
-      h("option", { value: "x64" }, ["x64"]),
-      h("option", { value: "arm64" }, ["ARM64"]),
-      h("option", { value: "arm32" }, ["ARM32"]),
-    ]);
-    const frontendSel = h("select", { class: "field-input" },
+    const frontendSel = h("select", { class: "field-input", id: "add-frontend" },
       frontends.map((f) => h("option", { value: f.id }, [f.label])));
 
     const pathLabel = h("div", { class: "field-label" }, ["ROM 디렉토리"]);
     const romLabel = h("div", { class: "field-label" }, ["ROM 디렉토리"]);
+    const extRomInput = h("input", { class: "field-input", id: "add-ext-rom-path",
+                                     placeholder: "폴더를 선택하세요 (선택)" });
+    const extRomLabel = h("div", { class: "field-label" }, [
+      "External ROM 디렉토리 ", h("span", { class: "field-optional" }, ["(선택)"]),
+    ]);
 
-    const browseInto = (input, title, alsoName) => h("button", { class: "btn", onClick: async () => {
-      const r = await api.pickFolder(title);
-      if (!r.ok || !r.data) return;
-      input.value = r.data;
-      if (alsoName && !nameInput.value.trim()) {
-        nameInput.value = String(r.data).split(/[\\/]/).filter(Boolean).pop() || "";
+    // **버튼 하나가 "찾아보기"를 맡는다.** PC/Android는 이미 위 탭에서 고른
+    // 뒤라(sourceSeg), 그 아래 필드마다 "찾아보기"와 "기기에서 찾기"를 나란히
+    // 두는 것은 같은 일을 하는 버튼 두 개를 보여주는 것과 같았다(실사용 피드백) -
+    // source가 local이면 OS 폴더 선택창을, device면 MTP 폴더 탐색기를 연다.
+    function browseButton(input, title, alsoName) {
+      const btn = h("button", { class: "btn" }, [icon("folderOpen", IC.sm), h("span", {}, ["찾아보기"])]);
+      btn.addEventListener("click", async () => {
+        if (source === "device") {
+          if (!deviceSel.value) { showToast("먼저 기기를 고르세요.", "warning"); return; }
+          browseTarget = input;
+          browsePath = "mtp://" + deviceSel.value;
+          browserBox.hidden = false;
+          renderBrowser();
+          return;
+        }
+        const r = await api.pickFolder(title);
+        if (!r.ok || !r.data) return;
+        input.value = r.data;
+        if (alsoName && !nameInput.value.trim()) {
+          nameInput.value = String(r.data).split(/[\\/]/).filter(Boolean).pop() || "";
+        }
+      });
+      return btn;
+    }
+
+    const metaBrowse = browseButton(pathInput, "Metadata 폴더 선택", true);
+    const romBrowse = browseButton(romInput, "ROM 폴더 선택", true);
+    const extRomBrowse = browseButton(extRomInput, "External ROM 폴더 선택", false);
+    const metaRow = h("div", { class: "field-row" }, [pathInput, metaBrowse]);
+    const romRow = h("div", { class: "field-row" }, [romInput, romBrowse]);
+    // External ROM은 **로컬 PC일 때만 있다.** MTP 경로를 일반 Collection의
+    // External Storage로 섞으면 그 경로를 로컬 Provider가 읽으려다 조용히 빈
+    // 목록만 돌려주므로(storage.for_path가 종류로 갈리고, add_external_storage가
+    // 종류 다른 저장소를 거절한다 - bridge/api.py) source가 device일 때는 숨긴다.
+    const extRomRow = h("div", { class: "field-row" }, [extRomInput, extRomBrowse]);
+
+    // --- 안드로이드 기기(MTP) -----------------------------------------
+    // **저장 위치를 먼저 고른다**(사용자 결정). 기기는 폴더 선택 대화상자로 고를 수
+    // 없어서(MTP에는 드라이브 문자가 없다) 여기서 기기를 고르고 폴더를 한 단계씩
+    // 열어 본다. 기기 Collection은 Metadata 전용이라 ROM 폴더는 선택 사항이다 -
+    // 넣으면 ROM이 "있는 것"으로 보이고, 안 넣으면 gamelist만 다룬다.
+    const deviceSel = h("select", { class: "field-input", id: "add-device" });
+    const deviceNote = h("div", { class: "field-hint" }, [""]);
+    const deviceRow = h("div", { class: "field-block", hidden: true }, [
+      h("div", { class: "field-label" }, ["기기"]), deviceSel, deviceNote,
+    ]);
+    const browserList = h("div", { class: "picker-list", id: "mtp-browser" });
+    const browserBox = h("div", { class: "field-block", hidden: true }, [browserList]);
+    let browseTarget = null, browsePath = null;
+
+    function rowButton(name, sub, iconName, onClick) {
+      const row = h("button", { class: "picker-row", title: sub });
+      row.appendChild(icon(iconName, 14));
+      row.appendChild(h("div", { class: "picker-main" }, [h("div", { class: "picker-name" }, [name])]));
+      row.addEventListener("click", onClick);
+      return row;
+    }
+
+    async function renderBrowser() {
+      browserList.replaceChildren();
+      const r = await api.mtpBrowse(browsePath);
+      if (!r.ok) { browserList.appendChild(h("div", { class: "empty-msg" }, [r.error])); return; }
+      const data = r.data;
+      browserList.appendChild(h("div", { class: "picker-sub" }, [browsePath]));
+      if (data.parent) {
+        browserList.appendChild(rowButton("위로", data.parent, "cornerUpLeft", () => {
+          browsePath = data.parent; renderBrowser();
+        }));
       }
-    } }, [icon("folderOpen", 12), h("span", {}, ["찾아보기"])]);
+      (data.entries || []).forEach((entry) => browserList.appendChild(
+        rowButton(entry.name, entry.path, "folderOpen", () => { browsePath = entry.path; renderBrowser(); })));
+      browserList.appendChild(h("button", { class: "btn primary", id: "mtp-pick-here",
+        onClick: () => {
+          browseTarget.value = browsePath;
+          if (browseTarget === pathInput && !nameInput.value.trim()) {
+            const device = (S.mtpDevices || []).find((d) => d.key === deviceSel.value);
+            nameInput.value = device ? device.name : "";
+          }
+          browserBox.hidden = true;
+        } }, ["이 폴더 선택"]));
+    }
 
-    const metaRow = h("div", { class: "field-row" },
-                      [pathInput, browseInto(pathInput, "Metadata 폴더 선택", true)]);
-    const romRow = h("div", { class: "field-row" },
-                     [romInput, browseInto(romInput, "ROM 폴더 선택", true)]);
+    async function autoFindEsde() {
+      const r = await api.mtpFindEsde(deviceSel.value);
+      if (!r.ok) return;
+      const found = (r.data.esde || [])[0];
+      if (found) pathInput.value = found.path;
+      const device = (S.mtpDevices || []).find((d) => d.key === deviceSel.value);
+      if (device && !nameInput.value.trim()) nameInput.value = device.name;
+      deviceNote.textContent = found
+        ? "ES-DE 폴더를 찾았습니다. 다르면 '찾아보기'로 고르세요."
+        : "ES-DE 폴더를 못 찾았습니다. '찾아보기'로 직접 고르세요.";
+    }
+
+    async function loadDevices() {
+      const r = await api.mtpDevices();
+      const data = r.ok ? r.data : { devices: [], reason: r.error };
+      S.mtpDevices = data.devices || [];
+      deviceSel.replaceChildren(...S.mtpDevices.map((d) => h("option", { value: d.key }, [d.name])));
+      // 기기가 없으면 이유를 함께 보여준다 - 빈 목록만 보이면 무엇을 해야 할지 모른다.
+      deviceNote.textContent = S.mtpDevices.length
+        ? "기기의 ES-DE 폴더를 자동으로 찾습니다."
+        : (data.reason || "연결된 기기가 없습니다. USB를 파일 전송(MTP) 모드로 두고 기기 화면에서 허용을 눌러주세요.");
+      if (S.mtpDevices.length) await autoFindEsde();
+    }
+    deviceSel.addEventListener("change", autoFindEsde);
+
+    const sourceSeg = h("div", { class: "seg", id: "add-source" });
+    let source = "local";
+    // **탭이다 - 버튼이 아니다**(실사용 피드백). 둘 중 하나를 고르는 것이지 각각
+    // 독립된 동작을 거는 것이 아니므로, Detail 패널 탭과 같은 언더바 방식을 쓰고
+    // 폭을 동률로 맞춘다(.source-tabs, studio.css) - 라벨 길이가 서로 달라도
+    // 같은 무게로 보여야 "둘 중 하나"라는 게 한눈에 들어온다.
+    const sourceBtn = (value, label, iconName) => {
+      const btn = h("button", { class: "seg-btn" + (value === source ? " on" : ""),
+                                "data-source": value }, [icon(iconName, 12), h("span", {}, [label])]);
+      btn.addEventListener("click", () => { source = value; syncSource(); });
+      return btn;
+    };
+    sourceSeg.appendChild(sourceBtn("local", "이 PC", "hardDrive"));
+    sourceSeg.appendChild(sourceBtn("device", "Android (MTP)", "smartphone"));
+
+    function syncSource() {
+      const device = source === "device";
+      sourceSeg.querySelectorAll(".seg-btn").forEach((btn) =>
+        btn.classList.toggle("on", btn.dataset.source === source));
+      deviceRow.hidden = !device;
+      if (!device) browserBox.hidden = true;
+      romInput.placeholder = device
+        ? "ROM 폴더 (선택 - 넣으면 ROM 파일도 확인합니다)"
+        : "폴더를 선택하세요 (선택)";
+      // External Storage는 로컬 파일시스템 개념이다 - MTP 경로를 여기 섞으면
+      // add_external_storage가 거절한다(종류가 다른 저장소, bridge/api.py).
+      extRomLabel.hidden = extRomRow.hidden = device;
+      if (device) {
+        targetSel.value = "android";
+        if (!S.mtpDevices) loadDevices();
+      }
+    }
 
     // 긴 설명을 필드 아래 줄줄이 적지 않는다 - hover하면 뜨는 title 툴팁 하나로
     // 충분하다. 항상 보이는 문장이 아니라 필요할 때만 보이는 문장으로 정책을 맞춘다.
@@ -1010,12 +1276,10 @@
     }
     frontendSel.addEventListener("change", syncFrontend);
     syncFrontend();
+    syncSource();
 
     const advancedBody = h("div", {}, [
-      h("div", { class: "field-grid two" }, [
-        h("div", {}, [h("div", { class: "field-label" }, ["Target"]), targetSel]),
-        h("div", {}, [h("div", { class: "field-label" }, ["Architecture"]), archSel]),
-      ]),
+      h("div", { class: "field-label" }, ["Target"]), targetSel,
     ]);
     const advanced = h("details", { class: "add-collection-advanced" }, [
       h("summary", {}, ["고급"]),
@@ -1028,7 +1292,7 @@
     S.collections.forEach((c) => {
       const opened = S.tabs.includes(c.id);
       const row = h("button", { class: "picker-row" + (opened ? " disabled" : "") });
-      row.appendChild(icon("gamepad", 14));
+      row.appendChild(icon("gamepad", IC.md));
       row.appendChild(h("div", { class: "picker-main" }, [
         h("div", { class: "picker-name" }, [c.name]),
         h("div", { class: "picker-sub" }, [`${c.frontendLabel} · ${c.rootPath}`]),
@@ -1046,9 +1310,13 @@
     ]);
 
     const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "field-label" }, ["저장 위치"]), sourceSeg,
+      deviceRow,
       h("div", { class: "field-label" }, ["Frontend"]), frontendSel,
       pathLabel, metaRow,
       romLabel, romRow,
+      extRomLabel, extRomRow,
+      browserBox,
       h("div", { class: "field-label" }, ["이름"]), nameInput,
       advanced,
       history,
@@ -1059,6 +1327,7 @@
       h("button", { class: "btn primary", id: "add-collection-submit", onClick: async () => {
         const metaPath = pathInput.value.trim();
         const romPath = romRow.hidden ? "" : romInput.value.trim();
+        const extRomPath = extRomRow.hidden ? "" : extRomInput.value.trim();
         // 둘 다 선택 사항이다. Metadata만 있어도, ROM만 있어도 정상적인 Collection이다
         // - 스크래핑을 한 번도 안 한 컬렉션이 후자의 모습이다. 유효하지 않은 것은
         // 둘 다 비었을 때뿐이다.
@@ -1069,11 +1338,22 @@
         const name = nameInput.value.trim() ||
           String(metaPath || romPath).split(/[\\/]/).filter(Boolean).pop() || "Collection";
         closeModal();
+        // 기기 Collection의 Storage는 "Internal"이 아니라 기기 이름으로 보여야 한다.
+        const device = source === "device"
+          ? (S.mtpDevices || []).find((d) => d.key === deviceSel.value) : null;
         const r = await api.createCollection(name, frontendSel.value, metaPath || null,
-                                             targetSel.value || null, archSel.value || null,
-                                             romPath || null, "");
+                                             targetSel.value || null, null,
+                                             romPath || null, "", device ? device.name : null);
         if (!r.ok) { showToast(r.error, "error"); return; }
         await loadCollections();
+        // External ROM 디렉토리를 함께 넣었으면 만들자마자 Storage로 붙인다 - 안 그러면
+        // 사용자가 이 경로를 여기서 이미 알려 줬는데도 Navigator에서 "Add External
+        // Storage"를 다시 눌러 똑같은 경로를 한 번 더 찾아야 했다(실사용 피드백).
+        if (extRomPath) {
+          const ext = await api.addExternalStorage(r.data.id, "External ROMs", extRomPath);
+          if (ext.ok) await api.attachStorageSystems(r.data.id, ext.data);
+          else showToast(`External ROM 디렉토리는 추가하지 못했습니다: ${ext.error}`, "warning");
+        }
         // 메타데이터가 없다는 이유로 여기서 gamelist 생성 여부를 묻지 않는다.
         //
         // ROM만 있는 Collection은 **그 자체로 정상**이다. 만들자마자 "메타데이터가
@@ -1097,13 +1377,13 @@
   function navTop() {
     const top = h("div", { class: "nav-top" });
     top.appendChild(h("div", { class: "nav-app-title" }, [
-      icon("database", 16),
+      icon("invader", IC.lg),
       h("div", { class: "nav-app-title-text" }, [
         h("div", { class: "nav-app-title-name" }, ["RetroMeta Studio"]),
         h("div", { class: "nav-app-title-sub" }, ["Frontend Metadata Editor"]),
       ]),
     ]));
-    const settings = h("button", { class: "icon-btn", title: "Settings" }, [icon("settings", 14)]);
+    const settings = h("button", { class: "icon-btn", title: "Settings" }, [icon("settings", IC.md)]);
     settings.addEventListener("click", () => openSettings());
     top.appendChild(settings);
     return top;
@@ -1116,7 +1396,7 @@
     const row = h("button", {
       class: "nav-dashboard" + (S.view === "dashboard" ? " active" : ""),
       title: S.view === "dashboard" ? "목록으로 돌아가기" : "Collection Dashboard",
-    }, [icon("dashboard", 14), h("span", {}, ["Dashboard"])]);
+    }, [icon("dashboard", IC.md), h("span", {}, ["Dashboard"])]);
     row.addEventListener("click", () => (S.view === "dashboard" ? showList() : showDashboard()));
     return row;
   }
@@ -1137,16 +1417,27 @@
       nav.appendChild(navDashboardRow());
       return;
     }
-    // System 제목 띠는 스크롤 영역 밖(바로 위)에 둔다 - Toolbar와 같은 높이의 고정 띠다.
+    // **All / Favorites는 System이 아니다.** 예전에는 셋을 한 목록에 섞어 놓아서
+    // "All"이 System 이름들 사이에 낀 또 하나의 System처럼 보였다(사용자 피드백).
+    //
+    // 맨 위 띠(.nav-eyebrow)는 **Toolbar와 아래 선을 맞춰야 하는 고정 높이 띠**라
+    // (레이아웃 재검토 §18, tests_ui/layout-bands), 그 위에는 아무것도 못 끼운다.
+    // **라벨은 "SYSTEMS"다.** 예전엔 "NAVIGATOR"였고 그 아래 스크롤 안에 또
+    // "SYSTEMS" 머리가 있어 같은 뜻의 글자가 두 번 보였다(실사용 피드백 - "아래
+    // Systems는 중복") - 이제 이 한 줄이 전부고, 빈 System 숨기기 토글도 여기로
+    // 옮겨 그 중복을 없앴다.
     const eyebrow = h("div", { class: "nav-eyebrow" }, [h("span", { class: "nav-eyebrow-label" }, ["SYSTEMS"])]);
     nav.insertBefore(eyebrow, scroll);
+    // 관점 칸. 스크롤되지 않는다 - System이 아무리 많아도 늘 같은 자리에 있다.
+    const lens = h("div", { class: "nav-lens" });
+    nav.insertBefore(lens, scroll);
 
     const scope = activeScope();
     if (isArchive()) {
       const all = navRow("All", detail.totalGames, scope.kind === "all", () => setScope({ kind: "all" }));
       all.classList.add("nav-all");
-      all.insertBefore(icon("database", 13), all.firstChild);
-      scroll.appendChild(all);
+      all.insertBefore(icon("database", IC.md), all.firstChild);
+      lens.appendChild(all);
       (detail.archiveSystems || []).forEach((sys) => {
         const row = navRow(sys.system.toUpperCase(), sys.count,
           scope.kind === "system" && scope.id === sys.system,
@@ -1158,10 +1449,24 @@
       nav.appendChild(navDashboardRow());
       return;
     }
-    const allRow = navRow("All", detail.totalGames, scope.kind === "all", () => setScope({ kind: "all" }));
+    const allRow = navRow("All Games", detail.totalGames,
+      scope.kind === "all" && !S.favoritesOnly, () => {
+        S.favoritesOnly = false;
+        setScope({ kind: "all" });
+      });
     allRow.classList.add("nav-all");
-    allRow.insertBefore(icon("layoutList", 13), allRow.firstChild);
-    scroll.appendChild(allRow);
+    allRow.insertBefore(icon("layoutList", IC.md), allRow.firstChild);
+    lens.appendChild(allRow);
+
+    // 즐겨찾기는 System을 가로지르는 관점이라 여기 있어야 한다 - Toolbar의 ☆
+    // 토글과 같은 값(S.favoritesOnly)을 바꾼다. 두 곳이 서로 다른 상태를 갖지 않는다.
+    const favRow = navRow("Favorites", null, !!S.favoritesOnly, () => {
+      S.favoritesOnly = true;
+      setScope({ kind: "all" });
+    });
+    favRow.classList.add("nav-favorites");
+    favRow.insertBefore(icon("star", IC.md), favRow.firstChild);
+    lens.appendChild(favRow);
 
     // **System 목록은 기본적으로 평평하다.**
     //
@@ -1197,6 +1502,7 @@
       "aria-pressed": hideEmpty ? "true" : "false",
     }, [icon(hideEmpty ? "eyeOff" : "eye", 12)]);
     hideToggle.addEventListener("click", () => updateSettings("navigation", { hideEmptySystems: !hideEmpty }));
+    // SYSTEMS 띠 자체가 이 토글이 거는 목록의 이름이므로 그 자리에 둔다(사용자 결정).
     eyebrow.appendChild(hideToggle);
 
     function renderSystemRow(sys) {
@@ -1246,27 +1552,39 @@
     } else {
       (detail.storages || []).forEach((storage) => {
         const group = h("div", { class: "nav-group" });
+        const collapsed = S.navCollapsed.has(`${S.activeId}:${storage.id}`);
+        // 접기 화살표 - 왼쪽(사용자 결정). System이 많은 Storage를 접어 두면
+        // 다른 Storage를 보려고 스크롤할 거리가 줄어든다.
+        const chevron = h("button", { class: "icon-btn nav-group-chevron",
+          title: collapsed ? "펼치기" : "접기" }, [icon(collapsed ? "chevronRight" : "chevronDown", IC.sm)]);
+        chevron.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const key = `${S.activeId}:${storage.id}`;
+          if (S.navCollapsed.has(key)) S.navCollapsed.delete(key); else S.navCollapsed.add(key);
+          renderNav();
+        });
         const head = h("div", { class: "nav-group-head" },
-          [h("span", { class: "nav-group-name" }, [storage.label.toUpperCase()])]);
+          [chevron, h("span", { class: "nav-group-name" }, [storage.label.toUpperCase()])]);
 
-        // ES-DE의 custom_systems XML은 External Storage에 있는 System만 대상으로
-        // 하므로(§ write_custom_systems), 그 그룹 옆에만 버튼을 둔다. Collection당
-        // 파일이 하나라 어느 External 그룹에서 눌러도 같은 파일을 다시 쓴다.
-        if (storage.kind === "external" && !isCompare() && S.adapterActions && S.adapterActions.length) {
-          S.adapterActions.forEach((action) => {
-            const xmlBtn = h("button", { class: "icon-btn", title: `${action.label} (External Storage 전체 기준)` },
-                             [icon("save", 11)]);
-            xmlBtn.addEventListener("click", (e) => { e.stopPropagation(); runAdapterAction(action); });
-            head.appendChild(xmlBtn);
-          });
-        }
-        if (storage.kind === "external" && !isCompare()) {
-          const gear = h("button", { class: "icon-btn storage-settings-btn", title: "Storage 설정 (이름·경로·Android Storage ID)" },
-                         [icon("settings", 11)]);
+        // **Internal도 External도 같은 설정 버튼 하나다**(실사용 피드백 - "External만
+        // Setting이 있는 것도 이상하다"). update_storage는 이미 Internal의 이름/
+        // Android 경로를 받는다 - PC 경로만 External에서만 뜻이 있다(Internal의
+        // PC 경로는 Collection 경로 자체라 여기서 바꿀 자리가 아니다).
+        if (!isCompare()) {
+          const gear = h("button", { class: "icon-btn storage-settings-btn", title: `${storage.label} 설정` },
+                         [icon("settings", IC.sm)]);
           gear.addEventListener("click", (e) => { e.stopPropagation(); openStorageSettings(storage); });
           head.appendChild(gear);
         }
+        // External을 지우면 그 System들을 Internal로 되돌린다(사용자 결정).
+        if (storage.kind === "external" && !isCompare()) {
+          const remove = h("button", { class: "icon-btn storage-remove-btn", title: `${storage.label} 제거` },
+                           [icon("trash", IC.sm)]);
+          remove.addEventListener("click", (e) => { e.stopPropagation(); confirmRemoveExternalStorage(storage); });
+          head.appendChild(remove);
+        }
         group.appendChild(head);
+        if (collapsed) { scroll.appendChild(group); return; }
 
         if (!isCompare()) {
           const systemNames = (detail.systems || [])
@@ -1292,9 +1610,11 @@
     }
 
     // Add External Storage는 System이 아무리 늘어나도 밀려나면 안 되므로 스크롤
-    // 밖(고정 영역)에 둔다.
-    if (!isCompare()) {
-      const add = h("button", { class: "nav-action" }, [icon("plus", 12), h("span", {}, ["Add External Storage"])]);
+    // 밖(고정 영역)에 둔다. **이미 External이 있으면 숨긴다**(사용자 결정) - 이
+    // Collection이 쓰는 External은 하나뿐이라고 본다. 더 필요하면 먼저 지우고
+    // 다시 추가한다(그룹 머리의 제거 버튼).
+    if (!isCompare() && !externalStorages.length) {
+      const add = h("button", { class: "nav-action" }, [icon("plus", IC.sm), h("span", {}, ["Add External Storage"])]);
       add.addEventListener("click", openAddStorage);
       nav.appendChild(add);
       // gamelist 만들기는 Toolbar 아이콘(Collection 전체) + System/Storage 우클릭
@@ -1304,9 +1624,11 @@
   }
 
   function navRow(label, count, active, onClick) {
+    // count가 null이면 숫자 칸을 비운다 - Favorites처럼 목록을 다 읽기 전에는
+    // 개수를 알 수 없는 줄이 "0"으로 보이면 안 된다.
     const row = h("div", { class: "nav-row" + (active ? " active" : "") }, [
       h("span", { class: "nav-label" }, [label]),
-      h("span", { class: "nav-count" }, [formatCount(count)]),
+      h("span", { class: "nav-count" }, [count == null ? "" : formatCount(count)]),
     ]);
     row.addEventListener("click", onClick);
     return row;
@@ -1357,7 +1679,7 @@
     const browse = h("button", { class: "btn", onClick: async () => {
       const r = await api.pickFolder("External Storage 폴더");
       if (r.ok && r.data) pathInput.value = r.data;
-    } }, [icon("folderOpen", 12)]);
+    } }, [icon("folderOpen", IC.sm)]);
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "field-label" }, ["이름"]), labelInput,
       h("div", { class: "field-label" }, ["경로"]),
@@ -1389,6 +1711,50 @@
     ]);
   }
 
+  /** External Storage 제거(사용자 결정) - System을 Internal로 되돌린 뒤 지운다.
+   *
+   * **순서가 중요하다.** removeStorage는 System이 붙어 있으면 거부한다(registry.py -
+   * 말없이 지우면 그 System들이 가리키던 파일이 붕 뜬다). 그래서 먼저 모든 System을
+   * Internal로 옮기는 Plan을 만들고 **그 자리에서 바로 Apply**한 뒤에 지운다 - Plan에만
+   * 올려 두고 사용자가 나중에 Apply를 누르게 하면, 그 사이 화면에는 System이 이미
+   * Internal에 있는 것처럼 보이는데 실제 파일은 아직 External에 있는 어중간한 상태가
+   * 남는다. 이 버튼을 누른 사람은 "지금 되돌리겠다"고 결정한 것이다.
+   */
+  async function confirmRemoveExternalStorage(storage) {
+    if (blockedInCompare("Storage를 제거")) return;
+    const detail = activeDetail();
+    const systems = (detail.systems || []).filter((sys) => sys.storageId === storage.id);
+    const message = systems.length
+      ? `"${storage.label}"을 제거합니다. 이 안의 System ${formatCount(systems.length)}개`
+        + `(${systems.map((s) => s.system.toUpperCase()).join(", ")})를 Internal로 옮긴 뒤 제거합니다.`
+        + ` 실제 파일이 이동합니다.`
+      : `"${storage.label}"을 제거합니다. 이 안에는 System이 없습니다.`;
+    showConfirm("External Storage 제거", message, true, async () => {
+      for (const sys of systems) {
+        const r = await api.planStorageChange(S.activeId, sys.system, STORAGE_INTERNAL);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+      }
+      if (systems.length) {
+        const started = await api.startApply(S.activeId);
+        if (!started.ok) { showToast(started.error, "error"); return; }
+        const result = await pollJob(started.data.jobId, "Internal로 옮기는 중");
+        if (!result.ok) { if (!result.cancelled) showToast(result.error, "error"); return; }
+        const data = result.data || {};
+        if (data.failed || data.partial) {
+          showToast(`일부 System을 옮기지 못해 Storage를 지우지 못했습니다 - Plan을 확인하세요.`, "error");
+          await ensureDetail(S.activeId); renderNav(); renderHeader();
+          return;
+        }
+      }
+      const removed = await api.removeStorage(S.activeId, storage.id);
+      if (!removed.ok) { showToast(removed.error, "error"); return; }
+      await ensureDetail(S.activeId);
+      resetList();
+      renderAll();
+      showToast(`"${storage.label}"을 제거했습니다.`);
+    });
+  }
+
   /** System 하나의 정보와 Storage 이동(스펙 §10, §471의 System 메뉴).
    *
    * 예전에는 Storage 그룹 사이로 끌어다 놓는 것이 유일한 이동 방법이었다. 그런데
@@ -1396,8 +1762,21 @@
    * 그룹 자체가 없다. 기능은 그대로 두고 들어가는 문만 옮긴다.
    */
   /** System 우클릭 메뉴 - 게임 행 메뉴와 같은 컨텍스트 메뉴를 쓴다. */
-  function openSystemMenu(sys, storages, event) {
+  /** 이 System 전체에 Title Prefix/Postfix를 적용하면 뭐라도 바뀌는 게 있는지. 없으면
+   * 메뉴 항목 자체를 고를 수 없게 한다(사용자 결정) - 눌러서 "바뀔 게 없다"는 안내를
+   * 받는 것보다 아예 흐리게 보이는 편이 직관적이다. */
+  async function titleAffixHasChangesForSystem(system) {
+    const r = await api.titleAffixPreview(S.activeId, null, system);
+    return r.ok && r.data.items.some((i) => i.changed);
+  }
+
+  async function openSystemMenu(sys, storages, event) {
+    const titleAffixDisabled = !sys.count || !(await titleAffixHasChangesForSystem(sys.system));
     const current = storages.find((s) => s.id === sys.storageId);
+    // 기기(MTP) Collection은 Metadata 전용이다 - 파일을 옮기고 지우는 항목은 눌러도
+    // 안 되는 대신 아예 비활성으로 보여준다(사용자 결정: "적용할 게 없으면 못 고르게").
+    const deviceOnly = !!(activeDetail() && activeDetail().isDevice);
+    const deviceTip = "기기 Collection은 Metadata만 다룹니다. 파일 작업은 ADB 모드에서 지원할 예정입니다.";
     const items = [];
     if (sys.conflict && sys.conflict.length) {
       items.push({ section: "충돌 해결 - 쓰기 막힘" });
@@ -1409,7 +1788,7 @@
       });
       items.push("separator");
     }
-    const others = storages.filter((s) => s.id !== sys.storageId);
+    const others = deviceOnly ? [] : storages.filter((s) => s.id !== sys.storageId);
     if (others.length) {
       items.push({ section: "Storage 옮기기" });
       others.forEach((target) => items.push({
@@ -1419,19 +1798,25 @@
       }));
       items.push("separator");
     }
-    items.push({ label: "System 이름 바꾸기…", icon: "tag", disabled: !!(sys.conflict && sys.conflict.length),
+    items.push({ label: "System 이름 바꾸기…", icon: "tag",
+      disabled: deviceOnly || !!(sys.conflict && sys.conflict.length),
       title: "ROM·gamelist·media 폴더 이름을 함께 바꿉니다.",
       onSelect: () => openRenameSystemFolder(sys, { storageId: sys.storageId, label: current ? current.label : sys.storageId, path: null }) });
     items.push({ label: "gamelist 만들기", icon: "fileWarning",
       title: "이 System에 gamelist가 없으면 ROM 파일명만 담아 만듭니다.",
       onSelect: () => openMetadataBootstrap(S.activeId, [sys.system]) });
+    items.push({ label: "Title Prefix/Postfix 일괄 적용…", icon: "tag", disabled: titleAffixDisabled,
+      title: titleAffixDisabled
+        ? "지금 설정으로는 이 System에서 바뀔 제목이 없습니다. Settings > Metadata & Media에서 규칙을 확인하세요."
+        : "이 System 전체 제목에서 기존 장식을 떼고, Settings에 설정한 지역별 표시를 다시 붙입니다.",
+      onSelect: () => openTitleAffixDialog({ system: sys.system, label: sys.system.toUpperCase() }) });
     items.push("separator", {
-      label: "ROM 없는 항목 정리", icon: "eraser",
-      title: "Metadata/Media는 있는데 ROM 파일이 없는 항목을 찾아 지웁니다.",
+      label: "ROM 없는 항목 정리", icon: "eraser", disabled: deviceOnly,
+      title: deviceOnly ? deviceTip : "Metadata/Media는 있는데 ROM 파일이 없는 항목을 찾아 지웁니다.",
       onSelect: () => confirmOrphanCleanup(sys),
     }, {
-      label: "System 전체 미디어 정리", icon: "imageOff",
-      title: "Cover/Screenshot/Video 등 media 종류를 골라 이 System 전체에서 지웁니다.",
+      label: "System 전체 미디어 정리", icon: "imageOff", disabled: deviceOnly,
+      title: deviceOnly ? deviceTip : "Cover/Screenshot/Video 등 media 종류를 골라 이 System 전체에서 지웁니다.",
       onSelect: () => confirmMediaCleanup(sys),
     });
     // 폴더 경로는 백엔드(Adapter layout)가 정한다 - Storage 배치와 System별 경로 지정을 따른다.
@@ -1440,8 +1825,8 @@
       items.push({ label, icon: "folderOpen", onSelect: () => openSystemFolder(sys.system, kind) }));
     // 메뉴 최하단, 빨간색(사용자 결정). 누르면 경고 + "확인하였습니다" 체크 + 확인으로 한 번 더 묻는다.
     items.push("separator", {
-      label: "전체 삭제", icon: "trash", danger: true,
-      title: "이 System의 ROM·Metadata·Media를 디스크에서 지우고 목록에서 뺍니다.",
+      label: "전체 삭제", icon: "trash", danger: true, disabled: deviceOnly,
+      title: deviceOnly ? deviceTip : "이 System의 ROM·Metadata·Media를 디스크에서 지우고 목록에서 뺍니다.",
       onSelect: () => confirmRemoveSystem(sys),
     });
     showContextMenu(menuPoint(event), sys.system.toUpperCase(),
@@ -1554,6 +1939,56 @@
     showModal(`${name} - 미디어 정리`, body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       confirmBtn,
+    ]);
+  }
+
+  /** Title Prefix/Postfix 일괄 적용(사용자 결정) - Gamelist에서 고른 항목(target.romUids) 또는
+   * System 전체(target.system) 중 하나를 받는다. 미리보기를 보여주고 확인해야 Plan에 올라간다 -
+   * System 전체 적용은 "일괄 적용 여부를 확인한 후" 반영해야 한다는 요구가 이 확인 창이다.
+   *
+   * 실제 파일은 여기서 바뀌지 않는다 - Plan에 올린 뒤 Apply를 눌러야 반영된다(다른 텍스트 편집과
+   * 달리 이 기능만 Plan을 거친다, app/model/plan.py의 OP_TITLE_EDIT 참고). */
+  async function openTitleAffixDialog(target) {
+    const collectionId = S.activeId;
+    const preview = await api.titleAffixPreview(collectionId, target.romUids || null, target.system || null);
+    if (!preview.ok) { showToast(preview.error, "error"); return; }
+    const items = preview.data.items;
+    const changed = items.filter((i) => i.changed);
+    if (!changed.length) {
+      showToast("바뀔 제목이 없습니다 - Settings > Metadata & Media에서 Title Prefix/Postfix 설정을 확인하세요.",
+        "warning");
+      return;
+    }
+
+    const LIMIT = 50;
+    const list = h("div", { class: "title-affix-list" });
+    changed.slice(0, LIMIT).forEach((item) => list.appendChild(h("div", { class: "title-affix-row" }, [
+      h("span", { class: "title-affix-old", title: item.oldTitle }, [item.oldTitle || "(제목 없음)"]),
+      icon("chevronRight", IC.sm),
+      h("span", { class: "title-affix-new", title: item.newTitle }, [item.newTitle]),
+    ])));
+    if (changed.length > LIMIT) {
+      list.appendChild(h("div", { class: "sysdel-file" }, [`… 외 ${formatCount(changed.length - LIMIT)}개`]));
+    }
+
+    const unchanged = items.length - changed.length;
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "modal-text" }, [
+        `${target.label} - 제목 ${formatCount(changed.length)}개가 바뀝니다`
+        + (unchanged ? ` (변경 없음 ${formatCount(unchanged)}개 제외)` : "") + ". "
+        + "Plan에 추가한 뒤 목록 위 Apply를 눌러야 실제 파일에 반영됩니다.",
+      ]),
+      list,
+    ]);
+    showModal("Title Prefix/Postfix", body, [
+      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+      h("button", { class: "btn primary", onClick: async () => {
+        closeModal();
+        const r = await api.planTitleEdit(collectionId, target.romUids || null, target.system || null);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        if (collectionId === S.activeId) await refreshPlan();
+        showToast(`제목 ${formatCount(r.data.added)}개를 Plan에 올렸습니다. Apply를 누르면 반영됩니다.`);
+      } }, ["Plan에 추가"]),
     ]);
   }
 
@@ -1902,10 +2337,15 @@
     ]);
   }
 
-  /** External Storage 설정 - 이름, PC 경로, 안드로이드 Storage ID와 기기 경로(ES-DE XML용). */
+  /** Storage 설정 - Internal/External 공통(사용자 결정: "External만 Setting이 있는
+   * 것도 이상하다"). 이름, 안드로이드 Storage ID/경로는 둘 다 바꿀 수 있다 - PC 경로만
+   * External에서만 뜻이 있다(Internal의 PC 경로는 Collection 경로 자체라 여기서
+   * 바꿀 자리가 아니다 - update_storage도 Internal의 root_path는 조용히 무시한다).
+   * ES-DE XML 생성은 External에서만 보인다 - custom_systems가 대상으로 삼는 것이
+   * External의 System뿐이기 때문이다(§ write_custom_systems). */
   function openStorageSettings(storage) {
+    const external = storage.kind === "external";
     const label = h("input", { class: "field-input storage-label", value: storage.label });
-    const root = h("input", { class: "field-input storage-root", value: storage.rootPath });
     const deviceId = h("input", { class: "field-input storage-device-id", value: storage.deviceId || "", placeholder: "예: 1234-ABCD" });
     const deviceRoot = h("input", { class: "field-input storage-device-root", value: storage.deviceRoot || "" });
     const syncPlaceholder = () => {
@@ -1914,22 +2354,37 @@
     };
     deviceId.addEventListener("input", syncPlaceholder);
     syncPlaceholder();
-    const browse = h("button", { class: "btn", onClick: async () => {
-      const r = await api.pickFolder("External Storage 폴더");
-      if (r.ok && r.data) root.value = r.data;
-    } }, [icon("folderOpen", 12)]);
+
     const body = h("div", { class: "modal-body storage-settings" }, [
       h("div", { class: "field-label" }, ["이름"]), label,
-      h("div", { class: "field-label" }, ["이 PC에서의 경로"]), h("div", { class: "field-row" }, [root, browse]),
-      h("div", { class: "field-label" }, ["Android Storage ID"]), deviceId,
-      h("div", { class: "modal-hint" }, ["기기의 /storage/ 아래 SD카드 폴더 이름입니다. ES-DE custom_systems XML의 경로를 만드는 데 씁니다."]),
-      h("div", { class: "field-label" }, ["기기에서 이 Storage의 경로"]), deviceRoot,
-      h("div", { class: "modal-hint" }, ["비워 두면 /storage/<Storage ID>를 씁니다. PC 경로가 SD카드의 하위 폴더라면 그 경로까지 적으세요(예: /storage/1234-ABCD/ROMs)."]),
     ]);
-    showModal(`${storage.label} 설정`, body, [
+    let root = null;
+    if (external) {
+      root = h("input", { class: "field-input storage-root", value: storage.rootPath });
+      const browse = h("button", { class: "btn", onClick: async () => {
+        const r = await api.pickFolder("External Storage 폴더");
+        if (r.ok && r.data) root.value = r.data;
+      } }, [icon("folderOpen", IC.sm)]);
+      body.appendChild(h("div", { class: "field-label" }, ["이 PC에서의 경로"]));
+      body.appendChild(h("div", { class: "field-row" }, [root, browse]));
+    } else {
+      // Internal의 PC 경로는 Collection 자체의 경로다 - 여기서 바꾸면 저장은 되지 않고
+      // 조용히 무시되므로, 아예 입력칸을 주지 않고 참고로만 보여준다.
+      body.appendChild(h("div", { class: "field-label" }, ["이 PC에서의 경로"]));
+      body.appendChild(h("div", { class: "modal-text storage-root-readonly" }, [storage.rootPath]));
+    }
+    body.appendChild(h("div", { class: "field-label" }, ["Android Storage ID"]));
+    body.appendChild(deviceId);
+    body.appendChild(h("div", { class: "modal-hint" }, ["기기의 /storage/ 아래 SD카드 폴더 이름입니다. ES-DE custom_systems XML의 경로를 만드는 데 씁니다."]));
+    body.appendChild(h("div", { class: "field-label" }, ["기기에서 이 Storage의 경로"]));
+    body.appendChild(deviceRoot);
+    body.appendChild(h("div", { class: "modal-hint" }, ["비워 두면 /storage/<Storage ID>를 씁니다. PC 경로가 SD카드의 하위 폴더라면 그 경로까지 적으세요(예: /storage/1234-ABCD/ROMs)."]));
+
+    const actions = [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       h("button", { class: "btn primary storage-settings-save", onClick: async () => {
-        const r = await api.updateStorage(S.activeId, storage.id, label.value, root.value, deviceId.value, deviceRoot.value);
+        const r = await api.updateStorage(S.activeId, storage.id, label.value,
+          root ? root.value : null, deviceId.value, deviceRoot.value);
         if (!r.ok) { showToast(r.error, "error"); return; }
         closeModal();
         await ensureDetail(S.activeId);
@@ -1937,7 +2392,17 @@
         renderHeader();
         showToast("Storage 설정을 저장했습니다.");
       } }, ["저장"]),
-    ]);
+    ];
+    if (external && !isCompare() && S.adapterActions && S.adapterActions.length) {
+      // 취소/저장과 같은 줄에 두지 않는다 - 이건 저장과 무관한 별도 동작이다.
+      S.adapterActions.forEach((action) => {
+        actions.unshift(h("button", { class: "btn", onClick: () => {
+          closeModal();
+          runAdapterAction(action, storage.id, storage.label);
+        } }, [icon("save", IC.sm), h("span", {}, [action.label])]));
+      });
+    }
+    showModal(`${storage.label} 설정`, body, actions);
   }
 
   function openStorageMenu(storage) {
@@ -1966,11 +2431,33 @@
   // ------------------------------------------------------------------
   // Collection 헤더
   // ------------------------------------------------------------------
+  /** 목표 대비 사용량 5단계(실사용 피드백 §4) - 파랑(여유) > 녹색 > 노랑 > 주황 >
+   * 빨강(목표 넘어감). Dashboard의 3단계(.dsb-meter: ok/warn/over)보다 세밀하게
+   * 나눈다 - HERO는 항상 보이는 자리라, 목표에 다가가는 낌새를 Dashboard를 열기
+   * 전에 미리 알아채야 한다는 게 이 자리의 존재 이유다. */
+  function capacityLevel(ratio) {
+    if (ratio == null) return "none";
+    if (ratio > 1) return "over";
+    if (ratio >= 0.9) return "orange";
+    if (ratio >= 0.75) return "yellow";
+    if (ratio >= 0.5) return "green";
+    return "blue";
+  }
+
   function renderHeader() {
     const host = $("collection-header");
     clear(host);
+    // 확장 칸은 다른 기둥에 있지만 이 함수가 함께 책임진다 - 안 비우면 접어도 남는다.
+    const expandedSlot = $("collection-expanded");
+    if (expandedSlot) clear(expandedSlot);
     const detail = activeDetail();
-    if (!detail) return;
+    if (!detail) {
+      const headerRow = $("header-row");
+      headerRow.style.removeProperty("--sys-base");
+      headerRow.style.removeProperty("--sys-point");
+      headerRow.classList.remove("has-sys-art");
+      return;
+    }
 
     // Navigator에서 System을 골랐으면 그 System의 정체를 보여준다 - 항상
     // Collection 이름만 보이면 지금 뭘 보고 있는지 다시 Navigator를 봐야
@@ -1980,10 +2467,32 @@
     const systemEntry = scope.kind === "system"
       ? (detail.systems || []).find((s) => s.system === scope.id) : null;
 
+    // HERO의 System 색 배경(.cheader-art)이 Detail 쪽 경계에서 뚝 끊겨 보였다
+    // (실사용 피드백 - "hero와 detail 사이는 끊어져 보인다"). 두 기둥의 공통
+    // 조상(#header-row)에 같은 색 변수를 둬서, .detail-topspace(#detail-top의
+    // 실제로 보이는 자식 - #detail-top 자체는 그 자식에 완전히 가려진다)의
+    // 그라데이션이 그 색을 이어받아 오른쪽으로 계속되게 한다 - System을 안
+    // 고른 상태에서는 변수를 지워 Detail 쪽도 얼룩 없이 그대로 있는다.
+    const headerRow = $("header-row");
+    const rowPalette = systemEntry ? systemPalette(systemEntry.system) : null;
+    if (rowPalette) {
+      headerRow.style.setProperty("--sys-base", rowPalette.base);
+      headerRow.style.setProperty("--sys-point", rowPalette.points[0]);
+    } else {
+      headerRow.style.removeProperty("--sys-base");
+      headerRow.style.removeProperty("--sys-point");
+    }
+    headerRow.classList.toggle("has-sys-art", !!systemEntry);
+
+    // **이 띠의 높이는 절대 변하지 않는다(--header-row-h).** Navigator의 SYSTEMS
+    // 띠와 세로로 맞아야 구분선이 한 줄로 이어지고, 이 줄이 커지면 옆의 Detail
+    // 패널까지 밀린다(사용자 피드백). 펼쳤을 때 커지는 것은 아래 System 카드다.
     const compact = h("div", { class: "cheader" });
-    compact.appendChild(h("div", { class: "cheader-icon" }, [
-      systemEntry ? systemIcon(systemEntry.system, 26) : icon("gamepad", 20),
-    ]));
+    if (systemEntry) compact.appendChild(headerArt(systemEntry.system));
+    // 아이콘 상자 대신 콘솔 포인트 색 바(사용자 결정) - System을 보고 있을 때만.
+    compact.appendChild(systemEntry
+      ? pointBar(systemEntry.system)
+      : h("div", { class: "cheader-icon" }, [icon("gamepad", IC.lg)]));
 
     const main = h("div", { class: "cheader-main" });
     // "Collection 제목 (System)" - Collection 소속을 잃지 않으면서 지금 어느
@@ -1998,18 +2507,75 @@
       h("span", { class: "dot" }, ["·"]),
       detail.arch ? detail.arch.toUpperCase() : "Unknown",
     ]));
+    // 숫자만 나열하면 무엇의 수인지 매번 읽어야 한다 - 앞에 작은 아이콘을 두면
+    // 모양만으로 구분된다(사용자 결정). Metadata는 "전체 - 빠진 수"로 계산해서
+    // 목록에 뜨는 수와 항상 아귀가 맞는다.
+    //
+    // **두 칸으로 나눈다.** ROM/Metadata는 지금 보는 System(또는 Collection
+    // 전체)의 숫자고, Internal/External은 Collection 전체의 Storage 용량이다 -
+    // 서로 다른 단위인데 한 줄에 섞여 있으면 숫자가 바뀔 때마다 그 사이 |
+    // 구분선까지 밀렸다 당겼다 했다(실사용 피드백). 각 자리 폭을 고정해서
+    // 숫자가 몇 자리든 |가 항상 같은 자리에 있게 한다.
+    const romCount = systemEntry ? systemEntry.count : detail.totalGames;
+    const missingMeta = systemEntry
+      ? (systemEntry.missingMetadata || 0) : (detail.totalMissingMetadata || 0);
     const summary = h("div", { class: "cheader-stats" }, [
-      h("span", {}, [`${formatCount(systemEntry ? systemEntry.count : detail.totalGames)} Games`]),
+      h("div", { class: "cheader-stat-group" }, [
+        h("span", { class: "cheader-stat", title: "ROM 항목 수" }, [
+          icon("cartridge", IC.sm),
+          h("span", { class: "cheader-stat-num" }, [formatCount(romCount)]), " ROMs",
+        ]),
+        h("span", { class: "cheader-stat", title: "Metadata가 있는 항목 수" }, [
+          icon("fileText", IC.sm),
+          h("span", { class: "cheader-stat-num" }, [formatCount(Math.max(0, romCount - missingMeta))]), " Metadata",
+        ]),
+      ]),
     ]);
-    detail.storages.forEach((storage) => {
-      // Plan이 있으면 "Actual -> Plan"으로 보여준다(스펙 §19, §30).
-      const capacity = planCapacity(storage.id);
-      const changed = capacity && capacity.deltaBytes;
-      summary.appendChild(h("span", { class: "cheader-storage" + (capacity && capacity.over ? " over" : "") }, [
-        `${storage.label} ${formatBytes(storage.actualBytes)}`,
-        changed ? ` → ${formatBytes(capacity.planBytes)}` : "",
-      ]));
-    });
+    if (detail.storages.length) {
+      summary.appendChild(h("span", { class: "cheader-stats-divider", "aria-hidden": "true" }, ["|"]));
+      const storageGroup = h("div", { class: "cheader-stat-group storages" });
+      detail.storages.forEach((storage) => {
+        // Plan이 있으면 "Actual -> Plan"으로 보여준다(스펙 §19, §30) - Dashboard
+        // 목표(다음 줄)와는 다른 얘기다. 이건 "지금 계산해 둔 변경을 Apply하면
+        // 얼마가 되는가"고, 목표는 "얼마까지 채워도 되는가"다.
+        const capacity = planCapacity(storage.id);
+        const changed = capacity && capacity.deltaBytes;
+        // **목표는 Dashboard가 정한 값이다.** 없으면(아직 목표를 안 정했으면)
+        // 그래프는 무채색이고 경고도 없다 - 정하지 않은 목표를 "넘었다"고 말할
+        // 수는 없다.
+        const target = S.dashboardTargets[storage.id] || null;
+        const ratio = target ? storage.actualBytes / target : null;
+        const level = capacityLevel(ratio);
+        // 두 가지 "초과"는 서로 다른 얘기다. planOver는 지금 Plan대로 Apply하면
+        // 실제 디스크 용량(storage.capacityBytes)을 넘는다는 뜻이고(예전부터 있던
+        // 경고), targetOver는 Dashboard에서 정한 목표를 이미 넘었다는 뜻이다(§4
+        // 신규). 하나만 있어도 경고 아이콘을 보여준다.
+        const planOver = !!(capacity && capacity.over);
+        const targetOver = level === "over";
+        const fillPct = ratio != null ? `${Math.min(100, Math.max(0, ratio * 100))}%` : "0%";
+        const badge = h("span", {
+          class: `cheader-storage level-${level}` + (planOver ? " plan-over" : ""),
+          title: (planOver ? "Apply하면 디스크 용량을 넘습니다. " : "")
+            + (target
+              ? `${storage.label} · 목표 ${formatBytes(target)} 중 ${formatBytes(storage.actualBytes)} 사용 (${Math.round(ratio * 100)}%)`
+              : `${storage.label} · 목표를 정하지 않았습니다 (Dashboard에서 정할 수 있습니다)`),
+        }, [
+          `${storage.label} ${formatBytes(storage.actualBytes)}`,
+          changed ? ` → ${formatBytes(capacity.planBytes)}` : "",
+          // 경고 아이콘 자리는 **항상 차지한다**(보이지 않아도) - 넘었다 안 넘었다에
+          // 따라 자리가 생겼다 없어지면 그 옆 뱃지가 매번 밀린다.
+          h("span", { class: "cheader-storage-warn" + (targetOver || planOver ? " on" : "") },
+            [(targetOver || planOver) ? icon("triangleAlert", IC.xs) : null]),
+          // 목표 대비 그래프 - 띠 높이는 절대 안 늘어난다(header-row-h). 자리를
+          // 차지하지 않는 절대 위치로 글자 줄 바로 밑(패딩 안)에 겹쳐 그린다.
+          target ? h("span", { class: "cheader-storage-track" }, [
+            h("span", { class: "cheader-storage-fill", style: { width: fillPct } }),
+          ]) : null,
+        ]);
+        storageGroup.appendChild(badge);
+      });
+      summary.appendChild(storageGroup);
+    }
     main.appendChild(summary);
     compact.appendChild(main);
 
@@ -2017,7 +2583,7 @@
     if (isArchive()) {
       // Archive에는 gamelist 만들기/Collection 가져오기/Expand가 의미 없다 -
       // 다시 스캔만 있으면 된다(Toolbar에 있던 것과 중복이라 그쪽은 없앴다).
-      const refresh = h("button", { class: "icon-btn", title: "다시 스캔" }, [icon("refresh", 13)]);
+      const refresh = h("button", { class: "icon-btn", title: "다시 스캔" }, [icon("refresh", IC.md)]);
       refresh.addEventListener("click", refreshActive);
       right.appendChild(refresh);
       compact.appendChild(right);
@@ -2025,24 +2591,26 @@
       return;
     }
 
-    // gamelist 만들기 / Collection 가져오기는 Toolbar에 있었는데 여기로
-    // 옮겼다(레이아웃 재검토 - GameList 상단 chrome에 모으는 게 자연스럽다는
-    // 실사용 피드백). 순서: gamelist 생성, Collection 가져오기, 새로고침, 확장.
+    // **순서: 메타데이터 보내기, 메타데이터 가져오기, 새로고침, 확장**(실사용 피드백).
+    // gamelist 만들기 아이콘은 없앴다 - Storage 그룹 우클릭(부분)과 System 우클릭
+    // 메뉴로도 만들 수 있어, Collection 전체 한 번에 만드는 자리는 여기 하나뿐이었다.
+    // "Collection 가져오기(Import)"였던 자리는 그 새 Collection 여는 기능(탭 바의
+    // "+"와 중복이었다)이 아니라, **이 Collection의 metadata를 Archive와 주고받는
+    // 것**으로 바꿨다 - Detail 패널에 있던 "Archive로" 버튼(§6)이 여기로 옮겨 왔다.
     if (!isCompare()) {
-      const bootstrap = h("button", { class: "icon-btn", id: "make-gamelist-btn",
-        title: "gamelist가 없는 System에 ROM 파일명만 담은 gamelist를 만듭니다." },
-        [icon("fileWarning", 13)]);
-      bootstrap.addEventListener("click", () => openMetadataBootstrap(S.activeId));
-      right.appendChild(bootstrap);
+      const send = h("button", { class: "icon-btn", title: "메타데이터 보내기 (Archive로)" },
+        [icon("upload", IC.md)]);
+      send.addEventListener("click", (e) => openMetaTargetMenu(e, "send"));
+      right.appendChild(send);
 
-      const importBtn = h("button", { class: "icon-btn", title: "Collection 가져오기 (Import)" },
-        [icon("upload", 13)]);
-      importBtn.addEventListener("click", openAddCollection);
+      const importBtn = h("button", { class: "icon-btn", title: "메타데이터 가져오기 (Archive에서)" },
+        [icon("download", IC.md)]);
+      importBtn.addEventListener("click", (e) => openMetaTargetMenu(e, "import"));
       right.appendChild(importBtn);
     }
 
     // 아이콘만 - 글자("Rescan")는 없앴다. 확장(v) 버튼과 같은 크기로 맞춘다.
-    const rescan = h("button", { class: "icon-btn", title: "다시 스캔" }, [icon("refresh", 13)]);
+    const rescan = h("button", { class: "icon-btn", title: "다시 스캔" }, [icon("refresh", IC.md)]);
     rescan.addEventListener("click", refreshActive);
     right.appendChild(rescan);
     const toggle = h("button", { class: "icon-btn", title: S.headerExpanded ? "접기" : "펼치기" },
@@ -2054,31 +2622,72 @@
 
     if (!S.headerExpanded) return;
 
+    // 펼친 내용은 목록 기둥 안에 그린다 - 헤더 줄을 키우지 않으려는 것이다(위 주석).
+    const expandedHost = $("collection-expanded");
     const panel = h("div", { class: "cheader-expanded" });
+    // **카드에 제목을 다시 쓰지 않는다.** 바로 위 띠에 "Collection (SYSTEM)"이 이미
+    // 있어서, 큰 글씨로 한 번 더 쓰면 같은 것을 두 번 읽게 된다(사용자 피드백).
+    // 콘솔의 정체(포인트 바·그림·색)는 띠가 맡고, 카드는 숫자만 담는다. 다만 색은
+    // 카드까지 이어져서 두 줄이 한 덩어리로 보인다.
+    if (systemEntry) {
+      const palette = systemPalette(systemEntry.system);
+      if (palette) {
+        panel.style.setProperty("--sys-base", palette.base);
+        panel.style.setProperty("--sys-point", palette.points[0]);
+      }
+    }
+
+    // **왼쪽은 Collection의 정체, 오른쪽은 지금 보고 있는 것의 숫자다.**
+    //
+    // 예전에는 일곱 줄을 한 단으로 세로로 늘어놓아서, 폭은 남아돌고 높이만 먹었다.
+    // 두 단으로 접으면 같은 높이에 두 배를 담을 수 있어서, Scan이 이미 세어 둔
+    // 용량·누락 수치를 Dashboard까지 가지 않고 여기서 바로 보여준다.
+    const scoped = systemEntry || null;
+    const romBytes = scoped ? (scoped.romBytes || 0) : (detail.totalRomBytes || 0);
+    const mediaBytes = scoped ? (scoped.mediaBytes || 0) : (detail.totalMediaBytes || 0);
+    const noMeta = scoped ? (scoped.missingMetadata || 0) : (detail.totalMissingMetadata || 0);
+    const noMedia = scoped ? (scoped.missingMedia || 0) : (detail.totalMissingMedia || 0);
+
     const info = h("div", { class: "cheader-info" });
-    [["Frontend", detail.frontendLabel], ["Target", detail.target || "Unknown"],
-     ["OS", detail.os || "Unknown"], ["Architecture", detail.arch || "Unknown"],
-     ["Root Path", detail.rootPath], ["Systems", String(detail.systemCount)],
-     ["Games", formatCount(detail.totalGames)]].forEach(([label, value]) => {
-      info.appendChild(h("div", { class: "cheader-info-row" }, [
+    const infoRow = (label, value, warn) => info.appendChild(
+      h("div", { class: "cheader-info-row" + (warn ? " warn" : "") }, [
         h("span", { class: "cheader-info-label" }, [label]),
-        h("span", { class: "cheader-info-value" }, [value]),
+        h("span", { class: "cheader-info-value", title: String(value) }, [String(value)]),
       ]));
-    });
+    infoRow("Frontend", detail.frontendLabel);
+    infoRow("ROM", formatBytes(romBytes));
+    infoRow("Target", detail.target || "Unknown");
+    infoRow("Media", formatBytes(mediaBytes));
+    infoRow("OS", detail.os || "Unknown");
+    infoRow("Metadata 없음", formatCount(noMeta), noMeta > 0);
+    infoRow("Architecture", detail.arch || "Unknown");
+    infoRow("Media 없음", formatCount(noMedia), noMedia > 0);
+    infoRow("Root Path", detail.rootPath);
+    infoRow(scoped ? "System" : "Systems",
+            scoped ? scoped.system.toUpperCase() : formatCount(detail.systemCount));
     panel.appendChild(info);
 
     detail.storages.forEach((storage) => {
       const box = h("div", { class: "storage-box" });
       box.appendChild(h("div", { class: "storage-box-title" }, [storage.label.toUpperCase()]));
-      const unknown = storage.capacityBytes == null;
-      [["Capacity", unknown ? "Unknown" : formatBytes(storage.capacityBytes)],
+      // **목표를 정했으면 "Capacity" 자리는 전체 하드 용량이 아니라 목표를
+      // 보여준다**(실사용 피드백 §4) - 사용자가 실제로 재고 싶은 것은 "이 디스크가
+      // 몇 GB냐"가 아니라 "내가 정한 한도까지 얼마나 남았냐"다. 목표를 안 정했으면
+      // 예전처럼 디스크 전체 용량이다.
+      const target = S.dashboardTargets[storage.id] || null;
+      const basis = target || storage.capacityBytes;
+      const unknown = basis == null;
+      [[target ? "Target" : "Capacity", unknown ? "Unknown" : formatBytes(basis)],
        ["Actual", formatBytes(storage.actualBytes)],
        ["Free", storage.freeBytes == null ? "Unknown" : formatBytes(storage.freeBytes)]].forEach(([l, v]) => {
         box.appendChild(h("div", { class: "health-row" }, [h("span", {}, [l]), h("span", {}, [v])]));
       });
-      if (!unknown && storage.capacityBytes > 0) {
-        const used = Math.min(100, (storage.actualBytes / storage.capacityBytes) * 100);
-        box.appendChild(h("div", { class: "storage-bar" }, [
+      if (!unknown && basis > 0) {
+        const ratio = storage.actualBytes / basis;
+        const used = Math.min(100, ratio * 100);
+        // 같은 5단계 색(파랑>녹색>노랑>주황>빨강)을 여기서도 쓴다 - HERO의 그래프와
+        // 다른 색을 쓰면 같은 값인데 두 곳이 다른 말을 하는 것처럼 보인다.
+        box.appendChild(h("div", { class: `storage-bar level-${capacityLevel(ratio)}` }, [
           h("div", { class: "storage-bar-fill", style: { width: used.toFixed(1) + "%" } })]));
       }
       panel.appendChild(box);
@@ -2087,7 +2696,7 @@
     // Frontend 고유 기능(ES-DE의 custom systems XML)은 여기 두지 않는다 - 그
     // 기능은 External Storage에 있는 System만 대상으로 하므로, Navigator의
     // External Storage 그룹 옆으로 옮겼다(renderNav 참고).
-    host.appendChild(panel);
+    expandedHost.appendChild(panel);
   }
 
   async function loadAdapterActions() {
@@ -2097,27 +2706,45 @@
     if (r.ok) S.adapterActions = r.data;
   }
 
-  async function runAdapterAction(action) {
+  /** ES-DE XML 생성 결과.
+   *
+   * 예전에는 문단 세 개(만든 System 목록 / Storage ID 없음 / 템플릿 없음)를 따로
+   * 늘어놓았다 - System이 하나뿐이거나 문제가 없으면 그 문단들이 통째로 비어
+   * 보였고, 있어도 긴 설명 문장을 읽어야 무슨 일이 있었는지 알 수 있었다(실사용
+   * 피드백 - "빈 항목이 너무 많고 설명이 너무 길다"). 지금은 System마다 한 줄,
+   * 상태는 글자가 아니라 점 색깔로 말한다.
+   */
+  async function runAdapterAction(action, storageId, storageLabel) {
     if (blockedInCompare(`${action.label}을 실행`)) return;
-    const r = await api.runAdapterAction(S.activeId, action.id);
+    const r = await api.runAdapterAction(S.activeId, action.id, storageId);
     if (!r.ok) { showToast(r.error, "error"); return; }
     const data = r.data || {};
     const needs = data.needsDeviceId || [];
-    const noTemplate = data.noTemplate || [];
+    const noTemplate = new Set(data.noTemplate || []);
+    const systems = data.systems || [];
     if (data.written === false && !needs.length) {
       // 만들 내용이 없는 것과 실패한 것은 다르다 - 왜 아무 일도 없었는지 말해준다.
-      showToast("External Storage나 Collection 밖에 있는 System이 없어 만들 XML이 없습니다.");
+      showToast(`${storageLabel || "이 Storage"}에는 XML로 적을 System이 없습니다.`);
       return;
     }
-    const systems = data.systems || [];
+    const rows = [
+      ...systems.map((s) => ({ name: s, warn: noTemplate.has(s),
+        note: noTemplate.has(s) ? "ES-DE 기본 목록에 없음" : "" })),
+      ...needs.map((s) => ({ name: s, warn: true, note: "Storage ID 없음" })),
+    ];
+    const table = h("div", { class: "xml-table" }, rows.map((row) => h("div", {
+      class: "xml-row" + (row.warn ? " warn" : ""), title: row.note || "정상 반영",
+    }, [
+      h("span", { class: "xml-row-dot" }), h("span", { class: "xml-row-name" }, [row.name]),
+      h("span", { class: "xml-row-note" }, [row.note]),
+    ])));
+    const kept = (data.kept || []).length;
     const body = h("div", { class: "modal-body xml-result" }, [
-      h("div", { class: "modal-text" }, [data.written
-        ? `${data.path}에 ${formatCount(systems.length)}개 System을 적었습니다 (ES-DE ${data.platform}).`
-        : "XML을 쓰지 않았습니다."]),
-      systems.length ? h("div", { class: "sysdel-list" }, systems.map((s) => h("div", { class: "sysdel-file" }, [s]))) : null,
-      (data.kept || []).length ? h("div", { class: "modal-hint" }, [`기존 파일의 다른 System ${formatCount(data.kept.length)}개는 그대로 두었습니다.`]) : null,
-      needs.length ? h("div", { class: "modal-text xml-needs-id" }, [`Android Storage ID가 없어 빠진 System: ${needs.join(", ")} - External 그룹 머리의 설정(⚙)에서 입력하세요.`]) : null,
-      noTemplate.length ? h("div", { class: "modal-hint" }, [`ES-DE 기본 목록에 없는 System(확장자·실행 명령이 비어 있음): ${noTemplate.join(", ")}`]) : null,
+      h("div", { class: "modal-text" }, [
+        `${storageLabel || "External"} · ${formatCount(systems.length + needs.length)}개`,
+        kept ? ` (다른 System ${formatCount(kept)}개는 그대로 둠)` : "",
+      ]),
+      table,
     ]);
     showModal(action.label, body, [h("button", { class: "btn primary", onClick: closeModal }, ["닫기"])]);
   }
@@ -2221,22 +2848,7 @@
     // 있고 지금 System은 Header에 크게 나오므로, 같은 것을 고르는 두 번째
     // 컨트롤을 둘 이유가 없었다.
 
-    const statusSel = h("select", { class: "mini-select", title: "상태 필터" }, [
-      h("option", { value: "all" }, ["모든 상태"]),
-      h("option", { value: "metadata" }, ["메타데이터 없음"]),
-      h("option", { value: "media" }, ["미디어 없음"]),
-      h("option", { value: "missing" }, ["ROM 없음"]),
-    ]);
-    statusSel.value = S.statusFilter;
-    statusSel.addEventListener("change", async (e) => {
-      S.statusFilter = e.target.value;
-      resetList();
-      await reloadList();
-    });
-    bar.appendChild(statusSel);
-
-    // 정렬 셀렉트는 두지 않는다 - 목록 머리글(#list-head)이 Card 보기에서도
-    // 그대로 보이고 클릭도 되므로(실사용 확인) 따로 둘 이유가 없다.
+    // **순서: LIST/CARD, Favorite, 우선정렬, Search**(실사용 피드백).
     const fav = h("button", {
       class: "icon-btn" + (S.favoritesOnly ? " on" : ""),
       title: S.favoritesOnly ? "전체 보기" : "즐겨찾기만 보기",
@@ -2249,6 +2861,31 @@
     });
     bar.appendChild(fav);
 
+    // **예전 "상태 필터"는 실제로 아무것도 걸러내지 못했다** - currentQuery()가
+    // 그 값을 끝내 읽지 않아서, 셀렉트를 바꿔도 목록은 그대로였다(실사용 피드백).
+    // 그 자리를 필터가 아니라 **1차 정렬 기준**으로 바꿨다 - "있는 항목"이
+    // "없는 항목"보다 먼저 오고, 그 안에서는 기존 정렬(제목/파일명 등)이 그대로
+    // 2차 기준이다. "구분 없음"은 예전과 똑같이 동작한다(1차 기준이 없을 뿐).
+    // Archive는 present/hasMetadata가 항상 참이라(§37) 이 정렬이 뜻이 없어 뺀다.
+    if (!isArchive()) {
+      const prioritySel = h("select", { class: "mini-select", title: "우선 정렬" }, [
+        h("option", { value: "" }, ["구분 없음"]),
+        h("option", { value: "rom" }, ["ROM 우선"]),
+        h("option", { value: "metadata" }, ["메타데이터 우선"]),
+        h("option", { value: "media" }, ["미디어 우선"]),
+      ]);
+      prioritySel.value = S.sortPriority || "";
+      prioritySel.addEventListener("change", async (e) => {
+        S.sortPriority = e.target.value || null;
+        resetList();
+        await reloadList();
+      });
+      bar.appendChild(prioritySel);
+    }
+
+    // 정렬 셀렉트는 따로 두지 않는다 - 목록 머리글(#list-head)이 Card 보기에서도
+    // 그대로 보이고 클릭도 되므로(실사용 확인) 따로 둘 이유가 없다.
+
     const search = h("input", { class: "search-input", placeholder: "Search...", value: S.search });
     let timer = null;
     search.addEventListener("input", (e) => {
@@ -2256,7 +2893,7 @@
       const value = e.target.value;
       timer = setTimeout(async () => { S.search = value; resetList(); await reloadList(); }, 180);
     });
-    bar.appendChild(h("div", { class: "search-box" }, [icon("search", 13), search]));
+    bar.appendChild(h("div", { class: "search-box" }, [icon("search", IC.md), search]));
 
     // 다시 스캔 / gamelist 만들기 / Collection 가져오기는 GameList 상단
     // chrome(Overview, renderHeader의 cheader-right)으로 옮겼다 - 여기 그대로
@@ -2294,11 +2931,24 @@
     // 구분선으로 보여준다. Auto Plan 토글은 뺐다(실사용 시나리오가 확인될 때까지
     // 화면에서 감춘다, PENDING_DECISIONS.md) - 내부 값은 기본 ON을 유지한다.
     const planGroup = h("div", { class: "seg plan-actions" });
+    // **Apply는 실제로 처리될 수(runnable)를 말한다.** total에는 해결 안 된 충돌도
+    // 들어 있는데 Apply는 그것을 건너뛰므로, total을 보여주면 누른 뒤에야 "12개
+    // 중 9개만 됐다"를 알게 된다. Cancel은 충돌뿐인 Plan도 버릴 수 있어야 하니
+    // 그쪽은 total을 그대로 쓴다.
+    const runnable = plan ? (plan.runnable != null ? plan.runnable : plan.total) : 0;
+    // 개수는 괄호 글자가 아니라 오른쪽 위 대각선에 빨간 동그라미 뱃지로 보여준다
+    // (사용자 결정) - 알림 뱃지와 같은 언어라 "지금 처리될 게 있다"는 게 글자를
+    // 읽지 않아도 한눈에 들어온다. 99개가 넘으면 "99+"로 자른다 - 세 자리
+    // 숫자까지 다 들어가게 뱃지를 늘리면 원 모양이 무너진다.
     const apply = h("button", {
-      class: "seg-btn" + (plan && plan.total ? " on" : ""), disabled: !(plan && plan.total),
-      title: plan && plan.total ? "Plan을 실제 파일에 적용합니다" : "적용할 Plan이 없습니다",
-    }, [plan && plan.total ? `Apply (${formatCount(plan.total)})` : "Apply"]);
-    if (plan && plan.total) apply.addEventListener("click", applyPlan);
+      class: "seg-btn" + (runnable ? " on" : ""), disabled: !runnable,
+      title: runnable ? "Plan을 실제 파일에 적용합니다"
+        : (plan && plan.total ? "충돌을 먼저 해결해야 적용할 수 있습니다" : "적용할 Plan이 없습니다"),
+    }, [
+      "Apply",
+      runnable ? h("span", { class: "plan-apply-badge" }, [runnable > 99 ? "99+" : String(runnable)]) : null,
+    ]);
+    if (runnable) apply.addEventListener("click", applyPlan);
     planGroup.appendChild(apply);
 
     const cancel = h("button", {
@@ -2319,18 +2969,11 @@
    * 선택 때문에 달라지는 것은 수집 대상 표시뿐이다(Delete는 상시 버튼이 없다).
    */
   function updateSelectionDependentActions() {
-    const ingest = $("archive-ingest-btn");
-    if (ingest) {
-      const scope = archiveScope();
-      const label = archiveScopeLabel(scope);
-      ingest.dataset.scope = scope.kind;
-      ingest.title = `${label}을 Archive에 수집합니다`;
-      // 버튼 안에는 span이 둘이다(아이콘 span이 먼저, 글자 span이 나중) - 그냥
-      // "span"으로 고르면 **아이콘 span을 잡아 아이콘을 글자로 덮어썼다.**
-      const text = ingest.querySelector(".ingest-label");
-      if (text) text.textContent = `수집 · ${label}`;
-    }
-    // Archive 탭의 "Collection으로 보내기"도 Detail 패널 상단에 있다 - 선택이
+    // "Archive로"는 HERO의 메타데이터 보내기 아이콘으로 옮겨갔다(§4, §6) - 그
+    // 버튼은 누를 때마다 scope를 새로 계산하는 플로팅 메뉴라서(openMetaTargetMenu),
+    // 여기서 선택이 바뀔 때마다 따로 패치해 둘 상태가 없다.
+    //
+    // Archive 탭의 "Collection으로 보내기"는 여전히 Detail 패널 상단에 있다 - 선택이
     // 바뀔 때마다 renderDetailPanel()을 통째로 다시 그리진 않으므로(Metadata
     // 입력 중 커서가 날아간다) 여기서 같이 패치한다.
     const send = $("archive-send-btn");
@@ -2517,8 +3160,10 @@
     if (!S.activeId) { renderListWindow(); return; }
     const token = ++S.queryToken;
     const r = await fetchRows({ ...currentQuery(), limit: PAGE_SIZE, offset: 0 });
-    if (!r.ok) { showToast(r.error, "error"); return; }
+    // 버릴지부터 정한다 - 실패 여부보다 먼저다. 순서가 반대면 이미 떠난 System의
+    // 실패가 지금 보고 있는 System 위로 토스트를 띄운다.
     if (token !== S.queryToken) return;   // 더 최신 요청이 있으면 버린다
+    if (!r.ok) { showToast(r.error, "error"); return; }
     S.total = r.data.total;
     S.loadedPages.add(0);
     r.data.rows.forEach((row, i) => S.rowCache.set(i, row));
@@ -2585,10 +3230,16 @@
     const mark = marks.rows[`${row.system}|${row.file}`];
     if (mark === "+") return h("span", { class: "status-mark add", title: "추가 예정" }, ["+"]);
     if (mark === "-") return h("span", { class: "status-mark del", title: "삭제 예정" }, ["−"]);
+    if (mark === "✎") return h("span", { class: "status-mark edit", title: "편집 예정 (Apply해야 반영)" }, ["✎"]);
     if ((marks.systems || []).includes(row.system)) {
       return h("span", { class: "status-mark warn", title: "Storage 이동 예정" }, ["△"]);
     }
-    if (!row.present) return h("span", { class: "status-mark warn", title: "ROM 파일 없음 (metadata만 존재)" }, ["△"]);
+    // Metadata 전용 Collection(ROM 폴더를 주지 않은 기기)에서는 ROM이 없는 것이
+    // 정상이다 - 모든 줄에 경고를 칠하면 아무 뜻도 없는 경고가 된다.
+    const metaOnly = !!(activeDetail() && activeDetail().metadataOnly);
+    if (!row.present && !metaOnly) {
+      return h("span", { class: "status-mark warn", title: "ROM 파일 없음 (metadata만 존재)" }, ["△"]);
+    }
     if (!row.hasMetadata) return h("span", { class: "status-mark muted", title: "Metadata 없음" }, ["·"]);
     if (!row.hasMedia) return h("span", { class: "status-mark muted", title: "Media 없음" }, ["·"]);
     return h("span", { class: "status-mark ok", title: "정상" }, [""]);
@@ -2733,7 +3384,7 @@
       if (cardObserver) cardObserver.observe(cover);
     } else {
       // Media가 없다고 이미 아는 카드는 아예 묻지 않는다.
-      cover.appendChild(icon("imageOff", 20));
+      cover.appendChild(icon("imageOff", IC.lg));
     }
     card.appendChild(cover);
     card.appendChild(h("div", { class: "preview-title truncate", title: row.title || row.file },
@@ -2841,7 +3492,8 @@
     const cells = {};
     cells.no = h("div", { class: "lc lc-no" }, [truncSpan(String(index + 1))]);
     // ROM 파일이 실제로 있으면 파일명을 제목과 같은 색으로, 없으면(메타데이터만) 흐리게.
-    const missingRom = row.present === false;
+    // Metadata 전용 Collection에서는 ROM이 없는 것이 정상이라 흐리게 하지 않는다.
+    const missingRom = row.present === false && !(activeDetail() && activeDetail().metadataOnly);
     cells.file = h("div", {
       class: "lc lc-file " + (missingRom ? "rom-missing" : "rom-present"),
       title: missingRom ? `${row.file} - ROM 파일 없음` : row.file,
@@ -2985,7 +3637,7 @@
    * 오클릭 한 번이 곧바로 삭제 확인으로 이어졌다(사용자 요청). 이제는 메뉴를 먼저
    * 띄우고 삭제는 그 안의 한 항목이다. 선택한 여러 개 중 하나를 우클릭하면 선택
    * 전체가 대상이다(탐색기와 같다). */
-  function openRowMenu(row, event) {
+  async function openRowMenu(row, event) {
     if (!S.selected.has(row.romUid)) {
       S.selected = new Set([row.romUid]);
       S.selectAnchor = row.romUid;
@@ -2998,6 +3650,14 @@
     const files = [...S.selected].map((uid) => (rowByUid(uid) || {}).file).filter(Boolean);
     const star = document.querySelector(`.lrow[data-rom-uid="${row.romUid}"] .fav-btn, `
       + `.preview-card[data-rom-uid="${row.romUid}"] .fav-btn`);
+
+    // 적용할 내용이 없으면 아예 고를 수 없게 미리 확인한다(사용자 결정) - 눌러서
+    // "바뀔 게 없다"는 안내를 받는 것보다 흐리게 보이는 편이 직관적이다.
+    let titleAffixDisabled = isArchive() || locked;
+    if (!titleAffixDisabled) {
+      const preview = await api.titleAffixPreview(S.activeId, [...S.selected], null);
+      titleAffixDisabled = !preview.ok || !preview.data.items.some((i) => i.changed);
+    }
 
     showContextMenu(menuPoint(event), single ? (row.title || row.file) : `${formatCount(count)}개 선택됨`,
       single ? row.file : null, [
@@ -3013,6 +3673,13 @@
         { label: "RetroArch Core 선택", icon: "settings", disabled: !single || !!launchBlockReason(row),
           onSelect: () => openCoreDialog(row) },
         "separator",
+        { label: single ? "Title Prefix/Postfix 적용…" : `Title Prefix/Postfix 적용… (${formatCount(count)}개)`,
+          icon: "tag", disabled: titleAffixDisabled,
+          title: titleAffixDisabled && !isArchive() && !locked
+            ? "지금 설정으로는 바뀔 제목이 없습니다. Settings > Metadata & Media에서 규칙을 확인하세요." : null,
+          onSelect: () => openTitleAffixDialog({ romUids: [...S.selected],
+            label: single ? (row.title || row.file) : `선택한 ${formatCount(count)}개` }) },
+        "separator",
         { label: "복사", icon: "copy", hint: "Ctrl+C", disabled: isArchive() || locked, onSelect: copySelectedRows },
         { label: "붙여넣기", icon: "upload", hint: "Ctrl+V", disabled: isArchive() || locked, onSelect: pasteClipboard },
         { label: single ? "파일명 복사" : `파일명 ${formatCount(files.length)}개 복사`, icon: "copy",
@@ -3021,7 +3688,34 @@
             files.length > 1 ? `파일명 ${formatCount(files.length)}개를 복사했습니다.` : "파일명을 복사했습니다.") },
         "separator",
         { label: "삭제", icon: "trash", hint: "Del", danger: true, disabled: locked, onSelect: deleteSelection },
+        ...rowFolderItems(row, single),
       ]);
+  }
+
+  /** System 우클릭의 "폴더 열기"(System 전체)를 게임 한 개 단위로도 지원한다
+   * (실사용 피드백 §5). 여러 개를 고른 채로는 하나만 열 수 없으므로 안 보여준다.
+   * 그 게임에 없는 종류(ROM/Metadata/Media)는 회색으로 - 눌러서 "없다"는 안내를
+   * 받는 것보다 흐리게 보이는 편이 직관적이다(openSystemMenu와 같은 결정). */
+  function rowFolderItems(row, single) {
+    // Archive 항목은 이 Collection의 파일 배치(adapter.layout)를 따르지 않는다 -
+    // "폴더 열기"가 가리킬 자리 자체가 없다.
+    if (!single || isArchive()) return [];
+    return ["separator", { section: "폴더 열기" },
+      { label: "ROM 파일", icon: "folderOpen", disabled: !row.present,
+        title: row.present ? null : "ROM 파일이 없습니다.",
+        onSelect: () => openRowFolder(row, "rom") },
+      { label: "Metadata 파일", icon: "folderOpen", disabled: !row.hasMetadata,
+        title: row.hasMetadata ? null : "Metadata가 없습니다.",
+        onSelect: () => openRowFolder(row, "metadata") },
+      { label: "Media 파일", icon: "folderOpen", disabled: !row.hasMedia,
+        title: row.hasMedia ? null : "Media가 없습니다.",
+        onSelect: () => openRowFolder(row, "media") },
+    ];
+  }
+
+  async function openRowFolder(row, kind) {
+    const r = await api.openRowFolder(S.activeId, row.romUid, kind);
+    if (!r.ok) showToast(r.error, "error");
   }
 
   // ------------------------------------------------------------------
@@ -3402,7 +4096,7 @@
         h("div", { class: "detail-system" }, [systemIcon(d.system, 13), String(d.system).toUpperCase()]),
       ]),
     ]);
-    const close = h("button", { class: "icon-btn", title: "닫기 (Esc)" }, [icon("x", 13)]);
+    const close = h("button", { class: "icon-btn", title: "닫기 (Esc)" }, [icon("x", IC.md)]);
     close.addEventListener("click", closeDetail);
     header.appendChild(close);
     inner.appendChild(header);
@@ -3454,7 +4148,7 @@
 
     if (d.mediaDiff) {
       body.appendChild(h("div", { class: "cmp-media-note" }, [
-        icon("image", 12),
+        icon("image", IC.sm),
         h("span", {}, [`Media 구성이 다릅니다 - ${((d.left || {}).mediaTypes || []).join(", ") || "없음"}`
                        + ` \u2194 ${((d.right || {}).mediaTypes || []).join(", ") || "없음"}`]),
       ]));
@@ -3566,8 +4260,17 @@
     if (!S.previewOn) return;
     const tab = (S.detailState && S.detailState.tab) || "metadata";
 
+    // **늦게 온 응답은 버린다.** 고른 줄은 위에서 이미 S.focused에 적었으니, 응답이
+    // 돌아왔을 때 그 값이 아니면 그 사이 사용자가 다른 줄로 옮겨 간 것이다. 이 검사가
+    // 없으면 A -> B를 빠르게 고를 때 느린 A의 응답이 나중에 도착해 B의 상세를 덮어썼고,
+    // 목록은 B를 강조하는데 패널은 A를 보여줬다. 더 나쁜 것은 S.detailState.romUid가
+    // A로 남아, 사용자가 B를 고친다고 믿고 누른 저장이 A에 들어간 것이다.
+    const collectionId = S.activeId;
+    const stale = () => S.focused !== row.romUid || S.activeId !== collectionId;
+
     if (isArchive()) {
       const r = await api.archiveDetail(row.romIdentityId);
+      if (stale()) return;
       if (!r.ok || !r.data) { showToast(r.error || "항목을 찾을 수 없습니다.", "error"); return; }
       const d = r.data;
       S.detailState = {
@@ -3584,7 +4287,8 @@
       return;
     }
 
-    const r = await api.getRow(S.activeId, row.romUid);
+    const r = await api.getRow(collectionId, row.romUid);
+    if (stale()) return;
     if (!r.ok) { showToast(r.error, "error"); return; }
     S.detailState = { ...r.data, tab, draft: null };
     renderDetailPanel();
@@ -3657,16 +4361,10 @@
       // onclick으로 통일한다.
       if (S.selected.size && targets.length) send.onclick = openSendToCollection;
       bar.appendChild(send);
-    } else {
-      const scope = archiveScope();
-      const scopeLabel = archiveScopeLabel(scope);
-      const ingest = h("button", { class: "btn compact", id: "archive-ingest-btn",
-        "data-scope": scope.kind,
-        title: `${scopeLabel}을 Archive에 수집합니다` },
-        [icon("database", 11), h("span", { class: "ingest-label truncate" }, [`수집 · ${scopeLabel}`])]);
-      ingest.addEventListener("click", ingestToArchive);
-      bar.appendChild(ingest);
     }
+    // "Archive로" 버튼은 여기 있었다. 무엇을 하는 버튼인지 이름만 봐서는 잘 안
+    // 읽혔고(실사용 피드백), HERO로 옮겨 아이콘 하나(메타데이터 보내기)로 만들었다
+    // - openMetaTargetMenu, renderHeader 참고.
 
     // 아이콘과 "미리보기" 글자를 합친 전체가 누르는 자리다(사용자 요청). 클릭은
     // 이 바깥 상자 하나에만 건다 - 안쪽 아이콘 버튼에도 걸면 한 번 눌러 두 번 토글된다.
@@ -3677,7 +4375,7 @@
     previewToggle.appendChild(h("button", {
       class: "icon-btn" + (S.previewOn ? " on" : ""),
       title: S.previewOn ? "미리보기 끄기" : "미리보기 켜기",
-    }, [icon("previewPane", 15)]));
+    }, [icon("previewPane", IC.md)]));
     previewToggle.appendChild(h("span", { class: "detail-preview-label" }, ["미리보기"]));
     previewToggle.addEventListener("click", () => {
       S.previewOn = !S.previewOn;
@@ -3712,7 +4410,7 @@
       // 패널이 늘 자리를 차지하므로 빈 칸을 그냥 두지 않는다.
       panel.appendChild(h("div", { id: "detail-panel-inner" }, [
         h("div", { class: "panel-empty-state" }, [
-          icon("gamepad", 22),
+          icon("gamepad", IC.lg),
           h("div", { class: "panel-empty-msg" }, ["게임을 선택하면 여기에 표시됩니다"]),
         ]),
       ]));
@@ -3724,25 +4422,38 @@
     const inner = h("div", { id: "detail-panel-inner" });
     panel.appendChild(inner);
 
-    const header = h("div", { class: "detail-header" }, [
-      h("div", { style: { minWidth: "0", flex: "1" } }, [
-        h("div", { class: "detail-eyebrow" }, ["METADATA"]),
-        h("div", { class: "detail-filename-row" }, [
-          h("div", { class: "detail-filename", title: state.file }, [state.file]),
-          h("button", {
-            class: "icon-btn detail-copy", title: "파일명 복사",
-            onClick: () => copyTextToClipboard(state.file, "파일명을 복사했습니다."),
-          }, [icon("copy", 11)]),
-        ]),
-        h("div", { class: "detail-system" }, [systemIcon(state.system, 13), String(state.system).toUpperCase()]),
-      ]),
-    ]);
+    // **순서: Favorite, 제목, 파일명 복사, Play**(실사용 피드백 §6).
+    //
+    // Favorite는 제목 왼쪽으로 - 게임을 훑어보며 즐겨찾기를 표시할 때 가장 먼저
+    // 눈에 들어오는 자리다. 파일명 복사는 예전에 파일명 글자 바로 뒤에 붙어 있어서,
+    // 파일명이 길면 버튼이 밀려나거나 말줄임(...)과 겹쳐 보였다 - Play 옆(맨
+    // 오른쪽 고정 자리)으로 옮기고, 파일명 자리는 항상 같은 폭을 갖고 넘치면
+    // 말줄임으로 잘라 보여준다(.detail-filename의 text-overflow는 그대로 둔다).
+    const header = h("div", { class: "detail-header" });
+    if (!state.archive) {
+      const star = h("button", {
+        class: "icon-btn fav-btn" + (state.favorite ? " on" : ""),
+        title: state.favorite ? "즐겨찾기 해제" : "즐겨찾기",
+      }, [state.favorite ? "★" : "☆"]);
+      star.addEventListener("click", () => toggleFavoriteFromDetail(star));
+      header.appendChild(star);
+    }
+
+    header.appendChild(h("div", { style: { minWidth: "0", flex: "1" } }, [
+      h("div", { class: "detail-eyebrow" }, ["METADATA"]),
+      h("div", { class: "detail-filename", title: state.file }, [state.file]),
+      h("div", { class: "detail-system" }, [systemIcon(state.system, 13), String(state.system).toUpperCase()]),
+    ]));
+
+    // 파일명 복사는 Archive 항목에도 있다(예전부터 그랬다) - Play/Favorite만
+    // 실행 개념이 있는 일반 Collection 전용이다.
+    const copyBtn = h("button", {
+      class: "icon-btn detail-copy", title: "파일명 복사",
+      onClick: () => copyTextToClipboard(state.file, "파일명을 복사했습니다."),
+    }, [icon("copy", IC.sm)]);
+    header.appendChild(copyBtn);
 
     if (!state.archive) {
-      // Play/Favorite는 게임을 보고 있을 때 바로 손이 가는 자리에 있어야
-      // 한다(레이아웃 재검토 §20). Preview는 더 이상 여기 없다 -
-      // .detail-topspace로 옮겼다.
-      //
       // 실행은 아직 연결되지 않았다. **버튼을 없애는 대신 못 한다고 말한다** -
       // 사라진 기능은 언제 돌아오는지 알 수 없지만, 눌러서 안내를 받으면 안다.
       const target = { romUid: state.romUid, system: state.system, file: state.file, present: state.present };
@@ -3750,16 +4461,9 @@
       const play = h("button", {
         class: "icon-btn detail-launch", title: blocked || "RetroArch로 실행 (행 더블클릭도 됩니다)",
         disabled: !!blocked,
-      }, [icon("play", 14)]);
+      }, [icon("play", IC.md)]);
       play.addEventListener("click", () => launchGame(target));
       header.appendChild(play);
-
-      const star = h("button", {
-        class: "icon-btn fav-btn" + (state.favorite ? " on" : ""),
-        title: state.favorite ? "즐겨찾기 해제" : "즐겨찾기",
-      }, [state.favorite ? "★" : "☆"]);
-      star.addEventListener("click", () => toggleFavoriteFromDetail(star));
-      header.appendChild(star);
     }
     inner.appendChild(header);
 
@@ -3785,7 +4489,7 @@
       const footer = h("div", { class: "detail-footer" });
       const conflictInfo = !state.archive && currentSystemConflict(state.system);
       const save = h("button", { class: "btn primary w-full detail-save", disabled: !!conflictInfo },
-        [icon("save", 13), h("span", {}, [conflictInfo ? "쓰기 막힘 - Storage 충돌" : "저장 (Ctrl+S)"])]);
+        [icon("save", IC.md), h("span", {}, [conflictInfo ? "쓰기 막힘 - Storage 충돌" : "저장 (Ctrl+S)"])]);
       if (conflictInfo) save.title = "같은 System 폴더가 여러 Storage에 있습니다 - System 우클릭에서 한쪽을 지우거나 이름을 바꾸세요.";
       save.addEventListener("click", handleSaveDetail);
       footer.appendChild(save);
@@ -3818,8 +4522,12 @@
       cover.appendChild(img);
       loadMediaImage(img, "Covers", true);
     } else {
-      cover.appendChild(icon("image", 17));
+      cover.appendChild(icon("image", IC.lg));
     }
+    // **표지는 크게, 요약은 그 옆에.** 아래 편집 폼과 값이 겹치지만, 편집하러
+    // 들어오기 전에 "이 게임이 무엇인가"를 한눈에 보는 자리라 그대로 둔다(사용자
+    // 결정 - 한 번 없애 봤더니 게임을 알아보기 어려워졌다).
+    const main = h("div", { class: "identity-main" });
     const grid = h("div", { class: "identity-grid" });
     [["Genre", "genre"], ["Release", "releasedate"], ["Players", "players"],
      ["Region", "region"], ["Developer", "developer"], ["Publisher", "publisher"]].forEach(([label, key]) => {
@@ -3828,8 +4536,22 @@
         h("div", { class: "identity-field-value truncate" }, [value(key) || "-"]),
       ]));
     });
+    main.appendChild(grid);
+
+    // 폼에 없는 것 - ROM과 Media의 실물 상태. 요약 맨 아래 한 줄로만 둔다.
+    const mediaCount = Object.keys(state.media || {}).length;
+    main.appendChild(h("div", { class: "identity-facts" }, [
+      h("span", { class: "identity-fact" + (state.present ? "" : " warn"), title: "ROM 파일" }, [
+        icon("cartridge", IC.sm),
+        state.present ? formatBytes(state.size || 0) : "ROM 없음",
+      ]),
+      h("span", { class: "identity-fact" + (mediaCount ? "" : " warn"), title: "가지고 있는 media 종류" }, [
+        icon("image", IC.sm), `Media ${formatCount(mediaCount)}`,
+      ]),
+    ]));
+
     card.appendChild(cover);
-    card.appendChild(grid);
+    card.appendChild(main);
     topFixed.appendChild(card);
 
     topFixed.appendChild(h("div", { class: "field-label" }, ["Title"]));
@@ -3838,12 +4560,13 @@
     topFixed.appendChild(nameInput);
     body.appendChild(topFixed);
 
-    // Description은 **10줄쯤을 기본으로 두고 넘치면 안에서 스크롤한다.**
-    // 남는 세로 공간을 전부 흡수하게 두면 설명이 긴 게임에서 아래 필드들이 화면
-    // 밖으로 밀려나, 장르 하나 고치려고 스크롤을 내려야 한다.
+    // Description은 **12줄에서 멈춘다**(실사용 피드백 - 예전엔 남는 세로 공간을
+    // 전부 흡수해서 창을 늘릴수록 한없이 길어졌다). 12줄보다 길면 안에서
+    // 스크롤한다. rows 속성 그대로가 그 12줄 높이를 정한다 - CSS가 더 이상
+    // flex:1로 늘리지 않는다(style.css의 .detail-body-desc-wrap 참고).
     const descWrap = h("div", { class: "detail-body-desc-wrap" });
     descWrap.appendChild(h("div", { class: "field-label" }, ["Description"]));
-    const desc = h("textarea", { class: "field-input", rows: 10 });
+    const desc = h("textarea", { class: "field-input", rows: 12 });
     desc.value = value("desc");
     fieldRefs.desc = desc;
     descWrap.appendChild(desc);
@@ -3860,6 +4583,35 @@
     fieldGrid.appendChild(fieldGroup("users", "Players", "players", value("players")));
     bottom.appendChild(fieldGrid);
     body.appendChild(bottom);
+
+    // Description을 12줄로 멈춘 만큼 남는 세로 공간을, 패널이 넉넉히 클 때만
+    // (컨테이너 쿼리, 850px) Screenshot과 나머지 media 유무로 채운다(실사용
+    // 피드백) - 비좁은 화면에서는 style.css가 이 블록 자체를 숨긴다.
+    //
+    // **숨겨져 있으면 요청 자체를 안 보낸다.** CSS display:none은 화면에서만
+    // 감출 뿐이라, 여기서 바로 loadMediaImage()를 부르면 좁은 패널에서도 게임을
+    // 넘길 때마다 안 보이는 Screenshot을 매번 받아 온다(코드 리뷰 지적) -
+    // extra가 실제로 DOM에 붙은 다음 프레임에 컨테이너 쿼리 결과(getComputedStyle)를
+    // 보고, 보일 때만 요청한다.
+    const extra = h("div", { class: "detail-body-fixed detail-extra-media" });
+    extra.appendChild(h("div", { class: "field-label" }, ["Screenshot"]));
+    const shot = h("div", { class: "detail-extra-screenshot" });
+    let shotImg = null;
+    if (state.media && state.media.Screenshots) {
+      shotImg = h("img", { alt: "Screenshot" });
+      shot.appendChild(shotImg);
+    } else {
+      shot.appendChild(icon("image", IC.lg));
+    }
+    extra.appendChild(shot);
+    extra.appendChild(mediaFlagRow(state.media || {}));
+    body.appendChild(extra);
+    if (shotImg) {
+      const img = shotImg;
+      requestAnimationFrame(() => {
+        if (getComputedStyle(extra).display !== "none") loadMediaImage(img, "Screenshots", true);
+      });
+    }
   }
 
   async function loadMediaImage(img, label, thumbnail) {
@@ -3952,13 +4704,21 @@
       zone.addEventListener("click", () => openMediaLightbox(img, slot.label));
     } else {
       // "… 없음"을 열두 번 적으면 그것만 눈에 들어온다. 아이콘 하나로 족하다.
-      preview.appendChild(icon("imageOff", 16));
+      preview.appendChild(icon("imageOff", IC.lg));
     }
     zone.appendChild(preview);
     return zone;
   }
 
-  /** 그림 없이 있고 없고만 말하는 줄. `v Video   x Manual` 처럼 보인다. */
+  //: 그림으로 보여줄 수 없는 media의 아이콘. 영상은 재생, 설명서는 문서다.
+  const MEDIA_FLAG_ICONS = { Videos: "play", Manuals: "fileText", FanArt: "image" };
+
+  /** 그림 없이 있고 없고만 말하는 줄.
+   *
+   * 예전에는 `v` / `x` 글자를 그대로 찍었는데, 두 글자가 서로 닮아서 멀리서는
+   * 구분이 안 되고 투박했다(사용자 피드백). 지금은 media 종류를 뜻하는 아이콘을
+   * 칩 안에 넣고, **있으면 또렷하게 없으면 흐리게** 한다 - 글자를 읽지 않아도
+   * 밝기만으로 갈린다. */
   function mediaFlagRow(media) {
     const row = h("div", { class: "media-flags" });
     MEDIA_FLAGS.forEach((slot) => {
@@ -3967,7 +4727,7 @@
         class: "media-flag-item" + (has ? " on" : ""),
         title: `${slot.label}${has ? " 있음" : " 없음"}`,
       }, [
-        h("span", { class: "media-flag" }, [has ? "v" : "x"]),
+        icon(MEDIA_FLAG_ICONS[slot.key] || "image", 11),
         h("span", { class: "media-flag-label" }, [slot.label]),
       ]));
     });
@@ -4070,7 +4830,7 @@
     }, true);
 
     if (settings.videoMode === "manual") {
-      const btn = h("button", { class: "media-video-play", title: "영상 재생" }, [icon("play", 16)]);
+      const btn = h("button", { class: "media-video-play", title: "영상 재생" }, [icon("play", IC.lg)]);
       btn.addEventListener("click", (e) => { e.stopPropagation(); btn.remove(); current.playBtn = null; start(); });
       zone.appendChild(btn);
       current.playBtn = btn;
@@ -4081,7 +4841,17 @@
 
   function renderMediaTab(body) {
     body.classList.add("media-tab-body");
-    const media = S.detailState.media || {};
+    const state = S.detailState;
+    const media = state.media || {};
+
+    // 패널이 넉넉히 클 때만(컨테이너 쿼리, 850px) 맨 위에 Title/Description을
+    // 보여준다(실사용 피드백 - "타이틀 description 순으로"). 읽기 전용이다 -
+    // 편집은 Metadata 탭에서만 한다(같은 값을 두 곳에서 고치게 하지 않는다).
+    const fields = state.fields || {};
+    body.appendChild(h("div", { class: "media-tab-identity" }, [
+      h("div", { class: "media-tab-title truncate" }, [fields.name || state.file || "(제목 없음)"]),
+      h("div", { class: "media-tab-desc" }, [fields.desc || "설명 없음"]),
+    ]));
 
     const hero = h("div", { class: "media-hero" });
     hero.appendChild(mediaTile(MEDIA_HERO, media, "cover"));
@@ -4288,7 +5058,12 @@
   // ------------------------------------------------------------------
   async function refreshPlan() {
     if (!S.activeId || isArchive()) { S.plan = null; renderStatusBar(); return; }
-    const r = await api.planState(S.activeId);
+    const collectionId = S.activeId;
+    const r = await api.planState(collectionId);
+    // 늦게 온 이전 Collection의 Plan은 버린다. 이게 없으면 A -> B로 빠르게 옮겼을 때
+    // A의 응답이 나중에 도착해 S.plan이 A의 것이 되고, 툴바는 A의 건수를 보여주면서
+    // Apply는 B에 걸린다 - 사용자가 보는 숫자와 눌렀을 때 벌어지는 일이 달라진다.
+    if (S.activeId !== collectionId) return;
     S.plan = r.ok ? r.data : null;
     renderHeader();
     // Apply/Cancel이 목록 위 툴바에 있으므로 Plan이 바뀌면 툴바도 다시 그려야 한다.
@@ -4480,7 +5255,8 @@
 
     const body = h("div", { class: "modal-body" });
     body.appendChild(h("div", { class: "modal-text" }, [
-      `추가 ${formatCount(S.plan.added)} · 삭제 ${formatCount(S.plan.deleted)} · 이동 ${formatCount(S.plan.moved)}`,
+      `추가 ${formatCount(S.plan.added)} · 삭제 ${formatCount(S.plan.deleted)} · 이동 ${formatCount(S.plan.moved)}`
+      + ` · 편집 ${formatCount((S.plan.retitled || 0) + (S.plan.edited || 0))}`,
     ]));
     (report.capacity || []).forEach((c) => {
       const row = h("div", { class: "health-row" + (c.over ? " over" : "") }, [
@@ -4576,6 +5352,53 @@
               `변경 없음 ${formatCount(d.unchanged)}개`);
   }
 
+  /** HERO "메타데이터 가져오기"(§4) - Archive에서 이 Collection으로 당겨온다.
+   * `sendToCollection`(Archive 탭 안에서 선택 항목을 보낸다)의 반대 방향이다 -
+   * 여기서는 선택이 아니라 지금 보고 있는 범위(System/전체)가 대상을 정한다. */
+  async function importFromArchive() {
+    const scope = activeScope();
+    const systems = scope.kind === "system" ? [scope.id] : null;
+    const label = systems ? `${String(scope.id).toUpperCase()} 전체` : "Collection 전체";
+    const uidsR = await api.archiveUids(systems);
+    if (!uidsR.ok) { showToast(uidsR.error, "error"); return; }
+    if (!uidsR.data.length) { showToast(`${label}에 해당하는 Archive 항목이 없습니다.`, "warning"); return; }
+    const r = await api.archiveToCollection(S.activeId, uidsR.data);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    const d = r.data;
+    let message = `${label} — Metadata 반영 ${formatCount(d.updated)}개`;
+    if (d.planned) message += ` · Plan에 추가 ${formatCount(d.planned)}개`;
+    if (d.conflicts) message += ` · 충돌 ${formatCount(d.conflicts)}개`;
+    if ((d.skipped || []).length) message += ` · 원본 없어 제외 ${formatCount(d.skipped.length)}개`;
+    showToast(message, d.planned || d.conflicts ? "warning" : "info");
+    await ensureDetail(S.activeId);
+    resetList();
+    renderAll();
+    await reloadList();
+  }
+
+  /** "메타데이터 보내기"/"가져오기"의 우클릭 스타일 플로팅 메뉴(사용자 결정) -
+   * 항상 맨 위는 Archive다. **지금은 Archive가 유일한 대상이다** - Collection끼리
+   * 직접 주고받는 것은 이 Collection이 가진 항목과 상대 Collection의 항목을
+   * 매칭·충돌 판정하는 별도 로직이 필요해서(Archive를 매개로 하지 않는 경로),
+   * 여기서 함께 만들지 않았다. 필요해지면 이 items 배열에 항목만 더하면 된다.
+   */
+  function openMetaTargetMenu(event, direction) {
+    const send = direction === "send";
+    // 보내기는 선택이 있으면 선택을, 없으면 지금 보는 System/전체를 대상으로 한다
+    // (예전 Detail 패널의 "Archive로" 버튼과 같은 규칙 - archiveScope() 참고).
+    // 가져오기는 선택이라는 개념이 없다(Archive 쪽 항목을 고르는 것이 아니라
+    // 이 Collection에 이미 있는 범위를 기준으로 당겨오므로) - Navigator scope만 쓴다.
+    const scope = activeScope();
+    const scopeLabel = send ? archiveScopeLabel(archiveScope())
+      : (scope.kind === "system" ? `${String(scope.id).toUpperCase()} 전체` : "Collection 전체");
+    const items = [{
+      label: "Archive", icon: "invader",
+      title: send ? `${scopeLabel}을 Archive로 보냅니다` : "Archive에서 이 Collection으로 가져옵니다",
+      onSelect: send ? ingestToArchive : importFromArchive,
+    }];
+    showContextMenu(menuPoint(event), send ? "메타데이터 보내기" : "메타데이터 가져오기", `${scopeLabel} 기준`, items);
+  }
+
   function openSendToCollection() {
     const targets = S.tabs.filter((t) => t !== ARCHIVE_ID);
     const list = h("div", { class: "picker-list" });
@@ -4583,7 +5406,7 @@
       const collection = S.collections.find((c) => c.id === id);
       if (!collection) return;
       const row = h("button", { class: "picker-row" }, [
-        icon("gamepad", 14),
+        icon("gamepad", IC.md),
         h("div", { class: "picker-main" }, [
           h("div", { class: "picker-name" }, [collection.name]),
           h("div", { class: "picker-sub truncate" }, [collection.rootPath]),
@@ -4629,7 +5452,7 @@
     const plan = S.plan;
 
     const left = h("div", { class: "sb-left" }, [
-      icon("layoutList", 12),
+      icon("layoutList", IC.sm),
       h("span", {}, [`Selected ${formatCount(S.selected.size)}`]),
     ]);
     if (plan && plan.total) {
@@ -4769,6 +5592,10 @@
         targets[storageId] = bytes;
         // 목표 용량은 그 Collection의 화면 상태로 기억한다(Storage 구성이 Collection마다 다르다).
         api.saveUiState(id, { dashboardTargets: { ...targets } });
+        // HERO도 같은 값을 쓴다(§4) - Dashboard에서 바꾸는 순간 HERO의 그래프도
+        // 바로 따라가야, "Dashboard에서는 바뀌었는데 옆에서 보면 그대로다"가 안 생긴다.
+        S.dashboardTargets = { ...targets };
+        if (id === S.activeId) renderHeader();
       },
       onValidate: () => api.validateCollection(id),
       onOpenSystem: (system) => setScope({ kind: "system", id: system }),

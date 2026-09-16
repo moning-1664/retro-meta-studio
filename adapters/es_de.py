@@ -379,7 +379,7 @@ class EsDeAdapter(FrontendAdapter):
             return
         self._write_document(path, root, before, after)
 
-    def media_pairs(self, layout, filename, media) -> list[tuple[str, str]]:
+    def media_pairs(self, layout, filename, media, title=None) -> list[tuple[str, str]]:
         stem = Path(filename).stem
         pairs = []
         for item in media:
@@ -418,7 +418,7 @@ class EsDeAdapter(FrontendAdapter):
             return {}
         return {(node.findtext("name") or "").strip().lower(): node for node in root.findall("system")}
 
-    def write_custom_systems(self, collection) -> dict:
+    def write_custom_systems(self, collection, storage_id: str | None = None) -> dict:
         """`custom_systems/es_systems.xml`을 만든다(§22).
 
         **Storage 기능이 아니라 ES-DE Adapter의 기능이다.** 다른 Frontend는 System을
@@ -433,19 +433,25 @@ class EsDeAdapter(FrontendAdapter):
         - (Windows/Linux) ROM이 Collection root 밖에 있는 System - ES-DE가 스스로 못 찾는다
         - (Android) Internal은 ES-DE 기본 ROM 폴더(%ROMPATH%)를 쓰므로 적지 않는다
 
-        안드로이드 External은 기기 경로로 적는다: `<Storage의 기기 경로>/<Storage 안의 상대 경로>`.
-        Storage ID가 없으면 그 System은 빼고 알려준다. 기존 파일의 다른 System 항목은 그대로 둔다.
+        `storage_id`를 주면 그 Storage의 System만 대상으로 한다(실사용 피드백 - External이
+        여러 개일 때 Navigator의 그룹 옆 버튼이 어느 그룹에서 눌러도 전체를 다시 썼다).
+        파일은 여전히 Collection당 하나다 - 그 파일에서 **이번 대상이 될 수 있는 System들**의
+        기존 항목만 이번 결과로 바꾸고, 대상 밖의 System 항목은 그대로 둔다(기존 `kept` 로직과
+        같다). Windows/Linux의 "root 밖 Internal" 케이스는 특정 Storage를 고른 요청과는
+        관계가 없는 예외 처리이므로 storage_id가 주어지면 건너뛴다.
         """
         platform = self.esde_platform(collection)
         templates = self._template_systems(platform)
         root = Path(collection.root_path)
         generated, needs_id, no_template = [], [], []
         for entry in collection.systems:
+            if storage_id is not None and entry.storage_id != storage_id:
+                continue
             storage = collection.storage(entry.storage_id)
             rom_dir = Path(self.layout(collection, entry.system).rom_dir)
             external = storage is not None and storage.is_external
             if not external:
-                if platform == "android":
+                if storage_id is not None or platform == "android":
                     continue
                 try:
                     rom_dir.relative_to(root)

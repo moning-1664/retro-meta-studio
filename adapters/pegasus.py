@@ -37,9 +37,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from adapters.base import (NON_ROM_EXTENSIONS, Detection, FrontendAdapter, GameEntry, Layout, MediaFile,
-                           read_text_document, register, write_text_document)
+                           read_text_document, register, resolve_existing, write_text_document)
 
 METADATA_FILENAME = "metadata.pegasus.txt"
+#: Pegasus 공식 포맷은 이 이름도 허용한다. 새로 만들 때는 위쪽(정식 이름)을 쓴다.
+METADATA_FILENAMES = (METADATA_FILENAME, "metadata.txt")
 
 #: 공통 모델 <-> Pegasus 키. 여기 없는 키는 전부 frontend_raw로 보존된다.
 FIELD_KEYS = {
@@ -124,6 +126,50 @@ def parse_metadata(text: str) -> tuple[list[str], list[list[tuple[str, str]]]]:
     return header, blocks
 
 
+def rating_to_common(value: str) -> str:
+    """Pegasus rating -> 공통 모델의 5점 만점.
+
+    Pegasus 공식 포맷의 rating은 **퍼센트**(`rating: 75%`)이고, 공통 모델은 5점
+    만점이다(ES-DE의 0~1을 ×5한 값). 변환하지 않으면 ES-DE의 별 4.5개가 Pegasus에서
+    `4.5`로 적혀 평점이 조용히 다른 값이 된다 - 오류는 안 나고 값만 틀리는 종류라
+    눈으로는 오래 못 잡는다.
+
+    퍼센트가 아닌 값도 받아들인다. 0~1이면 ES-DE와 같은 비율로 보고, 그보다 크면
+    이미 5점 만점이라고 본다 - 손으로 적은 파일이나 예전에 우리가 잘못 쓴 파일을
+    만났을 때 값을 버리는 것보다 낫다.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        if text.endswith("%"):
+            return f"{float(text[:-1]) / 20:.1f}"
+        number = float(text)
+    except (TypeError, ValueError):
+        return text
+    return f"{number * 5:.1f}" if 0.0 <= number <= 1.0 else text
+
+
+def rating_from_common(value: str) -> str:
+    """공통 모델의 5점 만점 -> Pegasus의 퍼센트 표기."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        return f"{round(float(text) / 5 * 100)}%"
+    except (TypeError, ValueError):
+        return text
+
+
+def _asset_key(name: str) -> str:
+    """`assets.` 뒤의 이름을 `ASSET_ALIASES`의 키 모양으로.
+
+    Pegasus는 `box_front`와 `boxFront`를 같은 것으로 본다. `parse_metadata()`가 키를
+    이미 소문자로 만들므로 여기서는 구분자만 걷어내면 된다.
+    """
+    return name.replace("_", "").replace("-", "").strip().lower()
+
+
 def _block_value(block, key):
     for k, v in block:
         if k == key:
@@ -161,7 +207,7 @@ class PegasusAdapter(FrontendAdapter):
             if not entry.is_dir or entry.name.lower() in RESERVED_DIRS:
                 continue
             systems.append(entry.name)
-            if provider.exists(Path(entry.path) / METADATA_FILENAME):
+            if any(provider.exists(Path(entry.path) / name) for name in METADATA_FILENAMES):
                 with_metadata += 1
         if not systems:
             return Detection(0.0, message="시스템 폴더가 없습니다.")
@@ -192,8 +238,9 @@ class PegasusAdapter(FrontendAdapter):
         return Layout(
             system=system,
             rom_dir=str(system_dir),
-            metadata_file=str(Path(entry.metadata_path) if entry and entry.metadata_path
-                              else system_dir / METADATA_FILENAME),
+            metadata_file=(str(Path(entry.metadata_path)) if entry and entry.metadata_path
+                           else resolve_existing([system_dir / name
+                                                  for name in METADATA_FILENAMES])),
             media_dir=str(Path(entry.media_path) if entry and entry.media_path
                           else system_dir / "media"),
         )
@@ -248,6 +295,7 @@ class PegasusAdapter(FrontendAdapter):
             elif key not in STRUCTURAL_KEYS:
                 extra.append({"key": key, "value": value})
         raw = {"extra": extra} if extra else {}
+        fields["rating"] = rating_to_common(fields["rating"])
         # Pegasus 포맷에는 region이 없다. 공통 모델의 키 구성을 다른 Adapter와
         # 맞추기 위해 빈 값으로 채워 둔다(없는 것과 빈 것을 구분하지 않는다).
         fields["region"] = ""
@@ -258,10 +306,48 @@ class PegasusAdapter(FrontendAdapter):
         """게임별 폴더라 타입별 디렉터리가 없다 - media 루트 하나만 돌려준다."""
         return [layout.media_dir] if layout.media_dir else []
 
+    def _assets_media_index(self, provider, layout, wanted) -> dict[str, list[MediaFile]]:
+        """메타데이터의 `assets.*` 키가 **직접 가리키는** media를 모은다.
+
+        Pegasus는 `media/<game>/boxFront.png` 폴더 규칙 외에 `assets.box_front:`로
+        경로를 적는 것도 공식 문법이다. 폴더 규칙만 훑으면 그렇게 정리해 둔
+        라이브러리의 media를 통째로 놓친다 - 값은 `frontend_raw`에 보존되므로 잃지는
+        않지만 앱에서는 "media 없음"으로 보인다.
+
+        경로는 메타데이터 파일 기준 상대 경로이거나 절대 경로다.
+        """
+        text = self._read_text(provider, layout.metadata_file)
+        if text is None:
+            return {}
+        base = Path(layout.metadata_file).parent
+        index: dict[str, list[MediaFile]] = {}
+        for block in parse_metadata(text)[1]:
+            filename = Path(_block_value(block, "file")).name
+            if not filename:
+                continue
+            stem = Path(filename).stem
+            for key, value in block:
+                if not key.startswith("assets.") or not value:
+                    continue
+                media_type = ASSET_ALIASES.get(_asset_key(key[len("assets."):]))
+                if not media_type or (wanted is not None and media_type not in wanted):
+                    continue
+                raw = value.replace("\\", "/")
+                path = Path(raw) if Path(raw).is_absolute() else (base / raw)
+                info = provider.stat(path)
+                if info is None:
+                    continue   # 가리키지만 실제로는 없는 파일
+                index.setdefault(stem, []).append(
+                    MediaFile(media_type=media_type, path=str(path),
+                              size=info.size, mtime_ns=info.mtime_ns))
+        return index
+
     def read_media_index(self, provider, layout, media_types=None) -> dict[str, list[MediaFile]]:
         if not layout.media_dir:
             return {}
         wanted = set(media_types) if media_types is not None else None
+        # 폴더 규칙이 우선이고, `assets.*`는 그 자리가 비었을 때만 채운다 - 둘 다
+        # 있으면 Pegasus 자신도 폴더 쪽을 쓴다.
         index: dict[str, list[MediaFile]] = {}
         for game_dir in provider.scandir(layout.media_dir):
             if not game_dir.is_dir:
@@ -275,6 +361,10 @@ class PegasusAdapter(FrontendAdapter):
                 index.setdefault(game_dir.name, []).append(
                     MediaFile(media_type=media_type, path=entry.path,
                               size=entry.size, mtime_ns=entry.mtime_ns))
+
+        for stem, items in self._assets_media_index(provider, layout, wanted).items():
+            have = {m.media_type for m in index.get(stem, [])}
+            index.setdefault(stem, []).extend(m for m in items if m.media_type not in have)
         return index
 
     # ------------------------------------------------------------------
@@ -318,6 +408,7 @@ class PegasusAdapter(FrontendAdapter):
         fields = entry.fields or {}
         values = {pegasus_key: (fields.get(common) or "").strip()
                   for common, pegasus_key in FIELD_KEYS.items()}
+        values["rating"] = rating_from_common(values["rating"])
         # 모양이 다른 항목(다른 Frontend의 raw)이 섞여 들어와도 깨지지 않는다.
         # 호출부가 걸러주는 것이 정상이지만, 여기서 KeyError로 Apply 전체가 실패하는
         # 일은 없어야 한다.
@@ -364,7 +455,7 @@ class PegasusAdapter(FrontendAdapter):
         chunks.extend(format_block(block) for block in kept)
         write_text_document(path, ("\n\n".join(chunks) + "\n") if chunks else "")
 
-    def media_pairs(self, layout, filename, media) -> list[tuple[str, str]]:
+    def media_pairs(self, layout, filename, media, title=None) -> list[tuple[str, str]]:
         """media type을 게임 폴더 안의 정해진 파일명으로 바꾼다.
 
         같은 타입이 여러 개면 첫 번째만 쓴다 - Pegasus는 타입당 파일 하나를 기대한다.

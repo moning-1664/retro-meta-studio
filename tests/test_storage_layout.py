@@ -179,6 +179,33 @@ class StorageSettingsAndXmlTests(unittest.TestCase):
         self.assertIn("snes9x", ET.tostring(snes, encoding="unicode"))   # 실행 명령도 살아 있다
         self.assertNotIn("ps2", self.xml_systems())                      # Android Internal은 적지 않는다
 
+    def test_a_storage_id_scopes_generation_to_just_that_storage(self):
+        """External이 둘일 때, 한쪽 그룹의 버튼이 다른 쪽까지 다시 쓰면 안 된다
+        (실사용 피드백 - "external만 골라서 생성하는게 맞다"). Collection당 파일은
+        하나지만, 이번에 쓴 것은 storage_id로 고른 Storage의 System뿐이어야 한다."""
+        cid, ext1 = self.make("windows")
+        write_file(self.sd / "ROMs" / "gba" / "Zelda.gba", b"g" * 20)
+        sd2 = self.dir / "sd2"
+        write_file(sd2 / "n64" / "Mario64.z64", b"n" * 20)
+        wait_job(self.api, self.api.start_scan(cid, force=True)["data"]["jobId"])
+        ext2 = self.api.add_external_storage(cid, "SD2", str(sd2))["data"]
+        self.api.attach_storage_systems(cid, ext2)
+
+        result = self.api.run_adapter_action(cid, "esde-custom-systems", storage_id=ext1)["data"]
+        self.assertEqual(sorted(result["systems"]), ["gba", "snes"])
+        self.assertNotIn("n64", result["systems"])
+        systems = self.xml_systems()
+        self.assertIn("snes", systems)
+        self.assertIn("gba", systems)
+        self.assertNotIn("n64", systems, "다른 External의 System까지 함께 썼다")
+
+        # 이번엔 ext2만 골라 쓴다 - ext1(snes/gba)의 기존 항목은 그대로 남아야 한다.
+        result2 = self.api.run_adapter_action(cid, "esde-custom-systems", storage_id=ext2)["data"]
+        self.assertEqual(result2["systems"], ["n64"])
+        self.assertEqual(sorted(result2["kept"]), ["gba", "snes"])
+        systems2 = self.xml_systems()
+        self.assertEqual(set(systems2), {"snes", "gba", "n64"})
+
     def test_windows_xml_uses_the_pc_path_and_keeps_other_entries(self):
         write_file(self.root / "custom_systems" / "es_systems.xml",
                    '<?xml version="1.0"?>\n<systemList><system><name>mine</name><path>C:\\mine</path></system>'
@@ -190,6 +217,48 @@ class StorageSettingsAndXmlTests(unittest.TestCase):
         self.assertEqual(Path(systems["snes"].findtext("path")), self.sd / "ROMs" / "snes")
         self.assertIn("mine", systems)
         self.assertEqual(len([n for n in systems if n == "snes"]), 1)
+
+
+class MixedStorageKindsTests(unittest.TestCase):
+    """**한 Collection은 한 종류의 저장소만 쓴다** (검증 리스트 #10).
+
+    Provider는 Collection의 root_path 하나로 정해진다(workspace.provider_for).
+    그래서 종류가 다른 경로를 Storage로 붙이면 엉뚱한 Provider가 그 경로를 읽는다.
+    로컬 Provider에게 `mtp://...`를 읽히면 예외조차 없이 **빈 목록**이 와서,
+    사용자에게는 그 System이 그냥 비어 보인다 - 원인을 알 방법이 없다.
+    """
+
+    def setUp(self):
+        self.dir = temp_root("rms_mixed_")
+        self.root = build_esde_tree(self.dir / "lib")
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.cid = self.api.create_collection("C", "es-de", str(self.root))["data"]["id"]
+
+    def test_a_device_path_cannot_be_added_to_a_local_collection(self):
+        result = self.api.add_external_storage(self.cid, "Phone", "mtp://R58N30ABCDE")
+        self.assertFalse(result["ok"])
+        self.assertIn("함께 둘 수 없습니다", result["error"])
+
+    def test_the_rejected_storage_is_not_registered(self):
+        self.api.add_external_storage(self.cid, "Phone", "mtp://R58N30ABCDE")
+        storages = self.api.collection_detail(self.cid)["data"]["storages"]
+        self.assertEqual([s for s in storages if "mtp" in str(s.get("rootPath", "")).lower()], [])
+
+    def test_a_normal_external_storage_still_works(self):
+        """가드가 평범한 경우까지 막으면 안 된다."""
+        sd = self.dir / "sd"
+        sd.mkdir(parents=True, exist_ok=True)
+        self.assertTrue(self.api.add_external_storage(self.cid, "SD", str(sd))["ok"])
+
+    def test_the_silent_emptiness_this_guard_prevents_is_real(self):
+        """가드가 왜 필요한지를 못 박아 둔다 - 로컬 Provider는 기기 경로에 대해
+        오류가 아니라 «아무것도 없음»을 돌려준다."""
+        import storage
+
+        provider = storage.for_path(str(self.root))
+        self.assertEqual(provider.scandir("mtp://DEV/Internal shared storage/ps2"), [])
+        self.assertFalse(provider.exists("mtp://DEV/Internal shared storage/ps2"))
 
 
 if __name__ == "__main__":

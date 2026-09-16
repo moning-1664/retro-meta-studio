@@ -34,10 +34,11 @@ import file_ops
 from adapters import get_adapter
 from adapters.base import GameEntry
 from app.model.plan import (
-    OP_ADD, OP_DELETE, OP_STORAGE_CHANGE, RESOLVE_OVERWRITE, RESOLVE_SKIP,
-    STATUS_APPLIED, STATUS_FAILED, STATUS_PARTIAL,
+    OP_ADD, OP_DELETE, OP_METADATA_EDIT, OP_STORAGE_CHANGE, OP_TITLE_EDIT,
+    RESOLVE_OVERWRITE, RESOLVE_SKIP, STATUS_APPLIED, STATUS_FAILED, STATUS_PARTIAL,
 )
 from app.plan.builder import ACTION_CONFLICT, ACTION_IDENTICAL, classify_destination
+from utils import normalize_title
 
 
 def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) -> dict:
@@ -56,6 +57,8 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
     adds = [e for e in runnable if e.op == OP_ADD]
     deletes = [e for e in runnable if e.op == OP_DELETE]
     moves = [e for e in runnable if e.op == OP_STORAGE_CHANGE]
+    # 제목 편집과 기기 Collection의 메타데이터 편집은 쓰는 방식이 같다(System 단위 묶음 쓰기).
+    retitles = [e for e in runnable if e.op in (OP_TITLE_EDIT, OP_METADATA_EDIT)]
 
     # Storage 이동은 **옮길 ROM 수만큼** 걸음을 잡는다(§ MOVE_PROGRESS_STEPS). System
     # 하나를 한 걸음으로 두면 수십 GB를 옮기는 내내 진행률이 멈춰 있다.
@@ -65,7 +68,7 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
 
     # 진행률에 마지막 정리 단계 몫을 하나 더 얹는다. 파일 작업이 끝나기 전에 진행률이
     # 100%에 도달하지 않도록.
-    total = len(adds) + len(deletes) + sum(move_units.values()) + 1
+    total = len(adds) + len(deletes) + sum(move_units.values()) + len(retitles) + 1
     done = 0
     errors = []
 
@@ -90,6 +93,8 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
         # 끝났는데도 진행률이 중간에 걸린 채로 사라진다.
         if reported < move_units[entry.key]:
             step(entry.system, move_units[entry.key] - reported)
+
+    _apply_title_edits(retitles, collection, adapter, cache, errors, step)
 
     _write_media_links(adds, collection, adapter, media_links, errors)
     # 백업은 **여기서** 정리한다. 복사가 끝난 시점이 아니라 그 항목의 작업 전체가
@@ -476,6 +481,78 @@ def _apply_delete(entry, collection, adapter, cache, provider, errors):
             errors.append(f"{entry.filename}: {entry.error}")
             return
     entry.status = STATUS_APPLIED
+
+
+# ----------------------------------------------------------------------
+# TITLE EDIT (Title Prefix/Postfix 일괄 적용, 사용자 결정)
+# ----------------------------------------------------------------------
+def _merged_fields(entry, row) -> dict:
+    """이 항목이 실제로 쓸 필드. 제목 편집은 name 하나만, 기기 편집은 payload 전체다."""
+    if entry.op == OP_METADATA_EDIT:
+        return dict(entry.payload or row["fields"])
+    return {**row["fields"], "name": entry.new_title}
+
+
+def _frontend_raw(entry, row):
+    """Frontend 고유 값(ES-DE의 <favorite> 등). 편집이 직접 바꾼 경우에만 새 값을 쓴다."""
+    saved = (entry.source or {}).get("frontendRaw")
+    return row["frontend_raw"] if saved is None else saved
+
+
+def _apply_title_edits(entries, collection, adapter, cache, errors, step):
+    """제목·메타데이터 편집을 System 단위로 한 번에 쓴다.
+
+    ADD의 `_write_metadata`와 같은 이유(계약 1) - 항목마다 gamelist.xml을 다시 읽고
+    쓰면 O(n^2)다. 수백 개를 한 번에 바꾸는 것이 바로 이 기능의 존재 이유이므로,
+    묶어 쓰지 않으면 정작 쓸모 있을 규모에서 느리다.
+    """
+    by_system: dict[str, list] = {}
+    for entry in entries:
+        by_system.setdefault(entry.system, []).append(entry)
+
+    for system, group in by_system.items():
+        layout = adapter.layout(collection, system)
+        rows_by_key, write_entries = {}, []
+        for entry in group:
+            row = cache.get_row(entry.rom_uid) if entry.rom_uid is not None else None
+            if row is None:
+                # rom_uid가 stale할 수 있다(_validate_delete와 같은 사정) - 파일명으로 재연결한다.
+                row = cache.get_row_by_filename(system, entry.filename)
+            if row is None:
+                entry.status, entry.error = STATUS_FAILED, "항목이 이미 사라졌습니다."
+                errors.append(f"{entry.filename}: {entry.error}")
+                step(entry.filename)
+                continue
+            rows_by_key[entry.key] = row
+            merged = _merged_fields(entry, row)
+            write_entries.append(GameEntry(filename=row["filename"], fields=merged,
+                                           frontend_raw=_frontend_raw(entry, row)))
+
+        if not write_entries:
+            continue
+        try:
+            adapter.write_index(layout, write_entries)
+        except Exception as e:  # noqa: BLE001
+            for entry in group:
+                if entry.key not in rows_by_key:
+                    continue
+                entry.status, entry.error = STATUS_FAILED, f"Metadata 기록 실패: {e}"
+                errors.append(f"{entry.filename}: {entry.error}")
+                step(entry.filename)
+            continue
+
+        for entry in group:
+            row = rows_by_key.get(entry.key)
+            if row is None:
+                continue
+            merged = _merged_fields(entry, row)
+            title = (merged.get("name") or "").strip() or Path(row["filename"]).stem
+            raw = _frontend_raw(entry, row)
+            cache.update_metadata(row["rom_uid"], merged, title=title,
+                                  title_norm=normalize_title(title),
+                                  frontend_raw=None if entry.op == OP_TITLE_EDIT else raw)
+            entry.status = STATUS_APPLIED
+            step(entry.filename)
 
 
 # ----------------------------------------------------------------------

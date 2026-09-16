@@ -54,6 +54,16 @@
     const main = h("div", { class: "stg-main" });
     panel.appendChild(head);
     panel.appendChild(h("div", { class: "stg-body" }, [nav, main]));
+    // **좌측 하단 확인 버튼**(실사용 결정) - 구석의 ×만으로 닫는 것보다, "확인을
+    // 누르면 적용되고 사라진다"는 편이 더 또렷하다. 값 자체는 이미 바뀔 때마다
+    // 즉시 반영돼 있으므로(슬라이더 미리보기 등) 이 버튼이 하는 일은 아직 안 나간
+    // 저장을 그 자리에서 흘려보내고 닫는 것이다 - 취소가 아니라 확인이다.
+    const confirmBtn = h("button", { class: "btn primary stg-confirm" }, ["확인"]);
+    confirmBtn.addEventListener("click", async () => {
+      if (ctx.flush) await ctx.flush();
+      close();
+    });
+    panel.appendChild(h("div", { class: "stg-foot" }, [confirmBtn]));
     overlay.appendChild(panel);
     // 바깥(어두운 영역)을 누르면 닫는다 - 패널 안에서 끌다가 바깥에서 놓는 경우는 닫지 않는다.
     overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
@@ -107,6 +117,48 @@
     }
     const soonSelect = (options) => select(options[0][0], options, null, true);
     const soonToggle = (checked) => toggle(checked, null, true);
+
+    /** Title Prefix/Postfix - 5개 구역(한국/영어권/일본/유럽/글로벌) 줄마다 켜짐 여부·
+     * Prefix/Postfix·붙일 텍스트를 정한다(app/title_affix.py의 DEFAULT_CONFIG와 같은 구역).
+     *
+     * `ctx.update()`는 패널을 다시 그리지 않으므로(unmatchedRomPolicy와 같은 사정), 한 구역
+     * 안에서 여러 필드를 잇달아 바꿔도 항상 최신 값을 함께 보내도록 `state`에 누적해 둔다 -
+     * 안 그러면 나중에 바꾼 필드가 먼저 바꾼 필드를 예전 값으로 되돌려 보낸다("titleAffix"
+     * 섹션도 한 단계 깊이까지만 병합되므로, 이 구역 하나는 항상 통째로 보내야 한다).
+     */
+    function titleAffixEditor(s) {
+      const REGIONS = [["kr", "한국(KR)"], ["en", "영어권(EN)"], ["jp", "일본(JP)"],
+                       ["eu", "유럽(EU)"], ["global", "글로벌"]];
+      const wrap = h("div", { class: "stg-title-affix", "data-key": "titleAffix" });
+      REGIONS.forEach(([bucket, label]) => {
+        let state = { ...s.titleAffix[bucket] };
+        const commit = (patch) => {
+          state = { ...state, ...patch };
+          ctx.update("titleAffix", { [bucket]: state });
+        };
+        const textInput = h("input", {
+          class: "stg-control stg-text stg-title-affix-text", value: state.text,
+          placeholder: "예: KR", disabled: !state.enabled,
+        });
+        textInput.addEventListener("change", () => commit({ text: textInput.value }));
+        const modeSelect = select(state.mode,
+          [["prefix", "제목 앞에 (Prefix)"], ["postfix", "제목 뒤에 (Postfix)"]],
+          (v) => commit({ mode: v }), !state.enabled);
+        const rowEl = h("div", { class: "stg-title-affix-row" + (state.enabled ? "" : " off") }, [
+          toggle(state.enabled, (v) => {
+            commit({ enabled: v });
+            modeSelect.disabled = !v;
+            textInput.disabled = !v;
+            rowEl.classList.toggle("off", !v);
+          }),
+          h("span", { class: "stg-title-affix-label" }, [label]),
+          modeSelect,
+          textInput,
+        ]);
+        wrap.appendChild(rowEl);
+      });
+      return wrap;
+    }
 
     /** ROM 미매칭 정책 - 원본에 ROM 파일이 없는 항목(Archive처럼 메타데이터만 있는 항목)을
      * 붙여넣을 때 무엇을 할지. 라디오 두 개 + Metadata/Media/Video 체크박스 세 개가
@@ -177,6 +229,16 @@
           toggle(s.navigation && s.navigation.hideEmptySystems,
             (v) => ctx.update("navigation", { hideEmptySystems: v })),
           "좌측 SYSTEMS 목록에서 게임이 없는 System을 숨깁니다. SYSTEMS 제목 옆 눈 아이콘으로도 바꿀 수 있습니다."));
+        // 우선 정렬(실사용 피드백) - 예전 상태 필터는 실제로 아무것도 걸러내지
+        // 못했다. 그 자리를 "ROM/Metadata/Media가 있는 항목을 먼저 보여주는"
+        // 1차 정렬로 바꾸면서, Collection을 새로 열 때 기본으로 쓸 값도 여기서
+        // 정할 수 있게 했다 - Toolbar에서 그때그때 바꾼 값은 이 기본값과 별개다.
+        add(row("navigation.defaultSortPriority", "Default sort priority",
+          select(s.navigation && s.navigation.defaultSortPriority || "none", [
+            ["none", "구분 없음"], ["rom", "ROM 우선"],
+            ["metadata", "메타데이터 우선"], ["media", "미디어 우선"],
+          ], (v) => ctx.update("navigation", { defaultSortPriority: v })),
+          "Collection을 새로 열 때 목록의 기본 우선 정렬입니다. Toolbar에서 그때그때 바꿀 수 있습니다."));
         add(h("div", { class: "stg-info" }, ["ROM / Metadata / Media 경로는 Collection 탭의 우클릭 메뉴에서 관리합니다."]));
       } else if (key === "metadata") {
         add(...section("Metadata & Media", "목록 표시와 Metadata/Media의 기본 처리 정책입니다."));
@@ -196,6 +258,14 @@
         add(row("media.videoSound", "소리", toggle(m.videoSound, (v) => ctx.update("media", { videoSound: v }))));
         add(row("media.videoLoop", "반복 재생", toggle(m.videoLoop, (v) => ctx.update("media", { videoLoop: v }))));
         add(row("media.overwrite", "Media overwrite", soonSelect([["ask", "Always ask"], ["replace", "Replace"], ["keep", "Keep existing"]]), null, true));
+        add(h("div", { class: "stg-subsection-title" }, ["Title Prefix/Postfix"]));
+        add(h("div", { class: "stg-help" }, [
+          "구역은 ROM 파일명의 지역 태그로 정합니다 - (KR), [Kor], _k, (USA), global 같은 표시입니다. "
+          + "해당 구역이 켜져 있으면 제목 양 끝의 기존 장식을 떼고(디스크 표시는 보존) 아래 텍스트를 "
+          + "다시 붙입니다. 태그가 없는 파일은 미분류라 건드리지 않습니다. "
+          + "실행은 Gamelist나 System 우클릭 메뉴에서 합니다.",
+        ]));
+        add(titleAffixEditor(s));
       } else if (key === "transfer") {
         add(...section("Import / Export", "파일과 Metadata/Media를 옮길 때의 기본값입니다."));
         // 붙여넣기(bridge paste)가 이 값을 읽는다. 기본값은 예전 동작 그대로다.

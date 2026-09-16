@@ -64,6 +64,28 @@ test.describe("Validate Collection - 강화된 결과", () => {
     await expect(summary).toContainText("Invalid XML 0");
   });
 
+  test("개수를 다시 세지 못했으면 숫자 대신 ?를 두고 이유를 말한다", async ({ page }) => {
+    // 검사 전 재스캔이 실패하면 Complete/Missing 세 숫자는 지난 스캔의 기억이다.
+    // 그대로 보여주면 지금 숫자인 줄 안다 - 못 믿는다는 것을 화면이 말해야 한다.
+    await page.evaluate(() => {
+      window.api.validateCollection = async () => ({ ok: true, data: {
+        checked: 2, invalid: [], duplicates: [], issues: [],
+        statuses: { complete: 1, missingMedia: 1, missingDescription: 1, invalidXml: 0 },
+        countsStale: true, staleReason: "폴더를 읽지 못했습니다",
+      } });
+    });
+    await openDashboard(page);
+    await page.locator(".dsb-validate").click();
+    const summary = page.locator(".dsb-validate-summary");
+    await expect(summary).toContainText("Complete ?");
+    await expect(summary).toContainText("스캔 실패");
+    await expect(summary).toContainText("폴더를 읽지 못했습니다");
+    // 파일을 직접 세는 항목은 이때도 정확하므로 숫자를 그대로 둔다.
+    await expect(summary).toContainText("Invalid XML 0");
+    // 숫자를 못 믿는데 "문제 없음"이라고 하면 안 된다.
+    await expect(summary).not.toContainText("문제 없음");
+  });
+
   test("Invalid XML이 있으면 요약과 목록에 모두 나온다", async ({ page }) => {
     await page.evaluate(() => {
       window.api.validateCollection = async () => ({ ok: true, data: {
@@ -188,7 +210,10 @@ test.describe("Storage target Slider", () => {
   const row = (page) => page.locator(".dsb-target[data-storage='internal']");
   const slider = (page) => row(page).locator(".dsb-target-slider");
   const input = (page) => row(page).locator(".dsb-target-input");
-  const sliderValue = (page) => row(page).locator(".dsb-slider-value");
+  // 값을 보여주는 자리는 입력칸 하나뿐이다(실사용 피드백 §3) - 예전엔 따로
+  // <span>이 있었는데, 굴리기(슬라이더)와 직접 입력(타이핑)이 서로 다른 칸에
+  // 값을 보여줘서 "지금 이 숫자를 바꾸고 있다"는 게 헷갈렸다.
+  const sliderValue = input;
   const posOf = (page, bytes) => page.evaluate((b) => window.RMSDashboard.toPos(b), bytes);
   // 드래그 중인 것처럼 값만 바꾸고 input 이벤트를 보낸다(손을 떼는 것은 release).
   const dragTo = (page, pos) => slider(page).evaluate((el, p) => {
@@ -206,7 +231,7 @@ test.describe("Storage target Slider", () => {
     await openDashboard(page);
     await setTarget(page, "512 GB");
     await expect(slider(page)).toHaveAttribute("value", String(await posOf(page, 512 * GB)));
-    await expect(sliderValue(page)).toHaveText("512 GB");
+    await expect(sliderValue(page)).toHaveValue("512 GB");
     await expect(sliderValue(page)).toHaveClass(/snapped/);
     await expect(row(page).locator(`.dsb-tick[data-bytes='${512 * GB}']`)).toHaveClass(/on/);
   });
@@ -216,7 +241,7 @@ test.describe("Storage target Slider", () => {
     await setTarget(page, "128 GB");
     const at = await posOf(page, 512 * GB);
     await dragTo(page, at + 9);
-    await expect(sliderValue(page)).toHaveText("512 GB");
+    await expect(sliderValue(page)).toHaveValue("512 GB");
     await expect(sliderValue(page)).toHaveClass(/snapped/);
     expect(await slider(page).evaluate((el) => el.value)).toBe(String(at));   // 손잡이도 눈금 위로 붙는다
     await release(page);
@@ -230,7 +255,7 @@ test.describe("Storage target Slider", () => {
     const b = await posOf(page, 512 * GB);
     await dragTo(page, Math.round((a + b) / 2));
     await expect(sliderValue(page)).not.toHaveClass(/snapped/);
-    const text = await sliderValue(page).textContent();
+    const text = await sliderValue(page).inputValue();
     expect(text).toMatch(/^\d+ GB$/);
     const value = parseInt(text, 10);
     expect(value).toBeGreaterThan(300);
@@ -272,12 +297,12 @@ test.describe("Storage target Slider", () => {
     await setTarget(page, "4 TB");
     await slider(page).focus();
     await page.keyboard.press("ArrowRight");
-    await expect(sliderValue(page)).toHaveText("8 TB");
+    await expect(sliderValue(page)).toHaveValue("8 TB");
     await page.keyboard.press("ArrowRight");
-    await expect(sliderValue(page)).toHaveText("8 TB");
+    await expect(sliderValue(page)).toHaveValue("8 TB");
     await expect(input(page)).toHaveValue("8 TB");
     await dragTo(page, 1000);
-    await expect(sliderValue(page)).toHaveText("8 TB");
+    await expect(sliderValue(page)).toHaveValue("8 TB");
   });
 
   test("▲/▼는 세밀하게 한 칸씩 움직인다", async ({ page }) => {

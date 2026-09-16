@@ -314,8 +314,22 @@ class CacheStore:
         "rating": "CAST(COALESCE(json_extract(m.fields_json,'$.rating'),0) AS REAL)",
     }
 
+    #: 우선 정렬(실사용 피드백 - "모든상태/메타데이터 없음/미디어없음/ROM없음
+    #: 필터는 실제로 동작 안 한다"). 예전 상태 필터는 목록을 걸러내는 셀렉트였는데
+    #: `currentQuery()`가 값을 끝내 안 읽어서 실제로는 아무것도 안 걸렀다 - 그
+    #: 자리를 필터가 아니라 **1차 정렬 기준**으로 바꾼다. 있는 항목(0)이 없는
+    #: 항목(1)보다 먼저 오고, 그 안에서는 기존 정렬(title/filename/...)이 2차
+    #: 기준으로 그대로 적용된다 - 항목이 사라지지 않으므로 "필터가 항목을
+    #: 숨겼다"는 오해도 없다.
+    PRIORITY_ORDERS = {
+        "rom": "CASE WHEN r.present THEN 0 ELSE 1 END",
+        "metadata": "CASE WHEN r.has_metadata THEN 0 ELSE 1 END",
+        "media": "CASE WHEN r.has_media THEN 0 ELSE 1 END",
+    }
+
     def query_rows(self, *, systems=None, storage_ids=None, search=None, order="title",
-                   descending=False, limit=None, offset=0, favorites_only=False, present=None) -> list[dict]:
+                   descending=False, limit=None, offset=0, favorites_only=False, present=None,
+                   priority=None) -> list[dict]:
         """목록 한 페이지. **정렬·필터·검색은 전부 SQL이 한다.**
 
         Description/Region/Rating/Genre는 `metadata.fields_json` 안에 있어 JOIN해서
@@ -334,20 +348,27 @@ class CacheStore:
                f" json_extract(m.fields_json,'$.genre') AS genre,"
                f" json_extract(m.fields_json,'$.rating') AS rating"
                f" FROM roms r LEFT JOIN metadata m ON m.rom_uid = r.rom_uid{where}"
-               f" ORDER BY {self._order_sql(order, descending)}")
+               f" ORDER BY {self._order_sql(order, descending, priority)}")
         if limit is not None:
             sql += " LIMIT ? OFFSET ?"
             params = [*params, int(limit), int(offset)]
         return [dict(r) for r in self._conn.execute(sql, params)]
 
-    def _order_sql(self, order, descending) -> str:
+    def _order_sql(self, order, descending, priority=None) -> str:
         """목록 정렬. **query_rows / query_uids / index_of_prefix가 반드시 같이 쓴다** -
-        하나라도 다르면 Ctrl+A나 영문키 점프가 화면과 다른 줄을 고른다."""
+        하나라도 다르면 Ctrl+A나 영문키 점프가 화면과 다른 줄을 고른다.
+
+        `priority`(rom/metadata/media)를 주면 그 있음/없음을 1차 기준으로 앞세우고,
+        `order`는 그 안에서의 2차 기준이 된다 - 방향(descending)은 2차 기준에만
+        적용된다. 1차 기준의 방향까지 뒤집으면 "미디어 우선"을 눌렀는데 없는 것부터
+        보이는 모순이 생긴다.
+        """
         column = self.ORDERS.get(order, "r.title_norm")
-        return f"{column} {'DESC' if descending else 'ASC'}, r.filename"
+        prefix = f"{self.PRIORITY_ORDERS[priority]}, " if priority in self.PRIORITY_ORDERS else ""
+        return f"{prefix}{column} {'DESC' if descending else 'ASC'}, r.filename"
 
     def query_uids(self, *, systems=None, storage_ids=None, search=None, order="title",
-                   descending=False, favorites_only=False) -> list[int]:
+                   descending=False, favorites_only=False, priority=None) -> list[int]:
         """지금 목록(필터·정렬 그대로)의 모든 rom_uid - Ctrl+A용.
 
         목록은 가상 스크롤이라 화면에 그려진 행은 수십 개뿐이다. 그 행들만 고르면
@@ -355,11 +376,11 @@ class CacheStore:
         """
         where, params = self._build_where(systems, storage_ids, search, favorites_only, "r.")
         sql = (f"SELECT r.rom_uid FROM roms r LEFT JOIN metadata m ON m.rom_uid = r.rom_uid{where}"
-               f" ORDER BY {self._order_sql(order, descending)}")
+               f" ORDER BY {self._order_sql(order, descending, priority)}")
         return [int(row[0]) for row in self._conn.execute(sql, params)]
 
     def index_of_prefix(self, prefix, after=-1, *, systems=None, storage_ids=None, search=None,
-                        order="title", descending=False, favorites_only=False) -> int:
+                        order="title", descending=False, favorites_only=False, priority=None) -> int:
         """목록에서 `after` 다음 줄부터 파일명이 `prefix`로 시작하는 첫 줄의 위치.
 
         끝까지 없으면 처음부터 다시 찾는다(탐색기의 영문키 이동과 같다). 없으면 -1.
@@ -370,7 +391,7 @@ class CacheStore:
             return -1
         where, params = self._build_where(systems, storage_ids, search, favorites_only, "r.")
         numbered = (f"SELECT LOWER(r.filename) AS name,"
-                    f" ROW_NUMBER() OVER (ORDER BY {self._order_sql(order, descending)}) - 1 AS idx"
+                    f" ROW_NUMBER() OVER (ORDER BY {self._order_sql(order, descending, priority)}) - 1 AS idx"
                     f" FROM roms r LEFT JOIN metadata m ON m.rom_uid = r.rom_uid{where}")
         # 파일명에 흔한 `_`와 `%`가 LIKE 와일드카드로 해석되지 않게 막는다.
         needle = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"

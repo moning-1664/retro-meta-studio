@@ -26,6 +26,9 @@
   --warning: #e6b84b;
   --danger: #ef6b78;
   --info: #4aaeea;
+  /* HERO 용량 그래프의 5단계 중 "주황"만 새로 필요했다 - blue=info, green=success,
+     yellow=warning, red=danger는 이미 있다(capacityLevel(), app.js §4). */
+  --gauge-orange: #e28c3c;
 
   /* 콘솔 4색 - 테마마다 강조를 어디에 쓰는지가 다르다. */
   --accent-red: #ef6b78;
@@ -39,6 +42,10 @@
   --list-row-border: #202a36;
   --list-text: #e4eaf1;
   --list-muted: #8d9aaa;
+  /* ROM 없는 항목의 파일명 색 - 어두운 테마에서는 --list-muted가 이미 잘 보이므로
+     그대로 물려받는다. SFC/NES(밝은 테마)만 따로 밝은 회색을 쓴다(아래) - 실사용
+     피드백: "어두운 테마에서는 잘 보이는데 밝은 테마에서는 잘 안 보인다". */
+  --list-faint: var(--list-muted);
   --list-selected: #172b35;
 
   --media-bg: #0b1017;
@@ -110,6 +117,9 @@
   --accent-red: #d13a35; --accent-gold: #d39a18; --accent-blue: #2864c7; --accent-green: #2d8b4b;
   --list-bg: #ffffff; --list-head: #e7e7e4; --list-border: #b5b5b1; --list-row-border: #ddddda;
   --list-text: #252525; --list-muted: #575854; --list-selected: #edf3ff;
+  /* --list-muted는 흰 배경에서도 또렷해서 ROM 없음 표시로 쓰면 본문과 잘 안
+     갈렸다(실사용 피드백) - 더 밝은 회색을 따로 둔다. */
+  --list-faint: #9b9c96;
   --media-bg: #e6e6e3; --icon-bg: #eeeeeb;
   --chrome-sub: #d5d5d1;
   --cheader-icon-fg: var(--accent-blue);
@@ -127,6 +137,8 @@
   --accent-red: #b72e2b; --accent-gold: #b28722; --accent-blue: #6d7782; --accent-green: #687d39;
   --list-bg: #ffffff; --list-head: #e9e3d7; --list-border: #aaa396; --list-row-border: #d9d2c5;
   --list-text: #2b2925; --list-muted: #5e594f; --list-selected: #f5dfdc;
+  /* SFC와 같은 이유로 ROM 없음 표시만 더 밝은 회색을 쓴다(실사용 피드백). */
+  --list-faint: #a19a89;
   --media-bg: #e5ded0; --icon-bg: #eee8dc;
   --chrome-sub: #ccc4b5;
   --primary-fg: var(--accent-gold);
@@ -146,24 +158,27 @@
 :root[data-theme="sfc"] #filter-bar .view-mode-seg .seg-btn:nth-child(2) { background: var(--accent-gold); color: #fff; }
 :root[data-theme="sfc"] #filter-bar .plan-actions .seg-btn:first-child { background: var(--accent-green); color: #fff; }
 :root[data-theme="sfc"] #filter-bar .plan-actions .seg-btn:last-child { background: var(--accent-blue); color: #fff; }
-:root[data-theme="sfc"] #collection-header .cheader-right > .icon-btn:nth-child(4n+1) { background: var(--accent-red); border-color: var(--accent-red); color: #fff; }
-:root[data-theme="sfc"] #collection-header .cheader-right > .icon-btn:nth-child(4n+2) { background: var(--accent-gold); border-color: var(--accent-gold); color: #fff; }
-:root[data-theme="sfc"] #collection-header .cheader-right > .icon-btn:nth-child(4n+3) { background: var(--accent-blue); border-color: var(--accent-blue); color: #fff; }
-:root[data-theme="sfc"] #collection-header .cheader-right > .icon-btn:nth-child(4n) { background: var(--accent-green); border-color: var(--accent-green); color: #fff; }
-:root[data-theme="sfc"] #filter-bar .seg-btn:hover,
-:root[data-theme="sfc"] #collection-header .cheader-right > .icon-btn:hover { filter: brightness(1.06); }
+/* SFC의 콘솔 4색은 이제 제목 옆 포인트 바가 맡는다. 도구 버튼까지 빨강·노랑·
+   파랑·초록으로 칠하니 네 버튼이 서로 다른 기능처럼 보이고 제목보다 먼저
+   눈에 들어왔다(사용자 피드백) - 버튼은 모든 테마에서 조용한 회색이다. */
 :root[data-theme="sfc"] #tabs-bar .ctab:nth-child(4n+1).active { box-shadow: inset 0 2px 0 var(--accent-red); }
 :root[data-theme="sfc"] #tabs-bar .ctab:nth-child(4n+2).active { box-shadow: inset 0 2px 0 var(--accent-gold); }
 :root[data-theme="sfc"] #tabs-bar .ctab:nth-child(4n+3).active { box-shadow: inset 0 2px 0 var(--accent-blue); }
 :root[data-theme="sfc"] #tabs-bar .ctab:nth-child(4n).active { box-shadow: inset 0 2px 0 var(--accent-green); }
 
-/* SFC / NES: Detail 상단의 Archive 이동 버튼은 기본(primary) 버튼 색을 쓴다. */
+/* SFC / NES: Detail 상단의 Archive 이동 버튼에 살짝 색을 준다.
+   예전에는 primary 색을 통째로 칠해서, 옆 Chromium의 조용한 도구 버튼들과 나란히
+   있을 때 저 버튼 하나만 튀었다(사용자 피드백 - "일관성이 없어 보인다").
+   이제는 테두리와 글자만 물들이고 바탕은 다른 버튼과 같게 둔다. */
 :root[data-theme="sfc"] #detail-top .btn.compact:not(:disabled),
 :root[data-theme="nes"] #detail-top .btn.compact:not(:disabled) {
-  background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg);
+  border-color: color-mix(in srgb, var(--primary-bg) 45%, var(--border));
+  color: var(--primary-bg);
 }
 :root[data-theme="sfc"] #detail-top .btn.compact:not(:disabled):hover,
-:root[data-theme="nes"] #detail-top .btn.compact:not(:disabled):hover { background: var(--primary-hover); }
+:root[data-theme="nes"] #detail-top .btn.compact:not(:disabled):hover {
+  background: color-mix(in srgb, var(--primary-bg) 12%, transparent);
+}
 
 /* MD: Detail 탭 막대 아래 선을 금색으로. */
 :root[data-theme="md"] .detail-tabs { border-bottom-color: var(--accent-gold); }

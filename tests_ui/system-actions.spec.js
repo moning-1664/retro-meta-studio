@@ -7,6 +7,8 @@ const { openApp, modalButton } = require("./_helpers");
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
 const navSystem = (page, name) => page.locator(".nav-system", { hasText: name });
+// 토글은 맨 위 SYSTEMS 띠에 있다(실사용 피드백) - 그 아래 스크롤 안에 같은
+// 뜻의 머리를 또 두지 않는다.
 const hideToggle = (page) => page.locator(".nav-eyebrow .nav-hide-empty");
 
 test.describe("빈 System 숨기기", () => {
@@ -20,8 +22,8 @@ test.describe("빈 System 숨기기", () => {
     await expect(navSystem(page, "GBA")).toBeVisible();
   });
 
-  test("SYSTEMS 제목 글자는 그대로다", async ({ page }) => {
-    await expect(page.locator(".nav-eyebrow")).toHaveText("SYSTEMS");
+  test("SYSTEMS 띠가 맨 위에 있다", async ({ page }) => {
+    await expect(page.locator(".nav-eyebrow-label")).toHaveText("SYSTEMS");
   });
 
   test("값을 Settings에 저장한다", async ({ page }) => {

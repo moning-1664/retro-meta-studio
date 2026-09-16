@@ -95,6 +95,44 @@ test.describe("종료 직전 저장 flush", () => {
   });
 });
 
+test.describe("Gamelist 선택 -> Detail race", () => {
+  test("느리게 도착한 이전 선택의 상세가 지금 고른 게임을 덮지 않는다", async ({ page }) => {
+    // **이건 화면만 틀리는 버그가 아니다.** 덮어쓴 S.detailState에는 이전 게임의
+    // romUid가 그대로 남아, 사용자가 지금 고른 게임을 고친다고 믿고 누른 저장이
+    // 엉뚱한 게임에 들어간다. 그래서 저장 대상까지 함께 본다.
+    await page.evaluate(() => {
+      const original = window.api.getRow;
+      window.api.getRow = (cid, uid) => {
+        const answer = original(cid, uid);
+        // Final Fantasy X(romUid 1)의 응답만 늦춘다.
+        if (uid !== 1) return answer;
+        return new Promise((resolve) => { setTimeout(() => answer.then(resolve), 400); });
+      };
+    });
+
+    // FFX를 고르고(느린 요청 시작) 곧바로 MGS2로 옮긴다.
+    await page.locator(".lrow").first().locator(".lc-file").click();
+    await page.locator(".lrow").nth(1).locator(".lc-file").click();
+    await expect(page.locator(".title-input")).toHaveValue("Metal Gear Solid 2");
+
+    // 늦은 FFX 응답이 도착할 시간을 준다. 그래도 화면은 MGS2여야 한다.
+    await page.waitForTimeout(600);
+    await expect(page.locator(".title-input")).toHaveValue("Metal Gear Solid 2");
+
+    // 저장 대상도 MGS2(romUid 2)다 - 화면만 맞고 속이 FFX면 저장이 엉뚱한 곳에 들어간다.
+    await page.evaluate(() => {
+      window.__savedUid = null;
+      const original = window.api.saveFields;
+      window.api.saveFields = (cid, uid, fields) => {
+        window.__savedUid = uid;
+        return original(cid, uid, fields);
+      };
+    });
+    await page.locator(".detail-footer .btn", { hasText: "저장" }).click();
+    expect(await page.evaluate(() => window.__savedUid)).toBe(2);
+  });
+});
+
 test.describe("Collection 경계", () => {
   test("Collection을 바꾸면 이전 선택이 넘어오지 않는다", async ({ page }) => {
     await openBoth(page);   // 지금 활성은 c2(Android ES-DE)

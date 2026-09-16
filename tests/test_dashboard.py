@@ -86,6 +86,82 @@ class ValidateCollectionTests(unittest.TestCase):
         self.api.validate_collection(self.cid)
         self.assertEqual(path.read_text(encoding="utf-8"), broken)
 
+    # --- 고친 뒤 다시 검사하기 (검증 리스트 #13) --------------------------
+    def test_a_fixed_gamelist_stops_being_reported(self):
+        """이전 결과가 캐시로 남아 있으면 고쳐도 계속 «깨졌다»고 한다."""
+        path = self.root / "gamelists" / "ps2" / "gamelist.xml"
+        good = path.read_text(encoding="utf-8")
+        write_file(path, "<gameList><game>")
+        self.assertEqual(len(self.api.validate_collection(self.cid)["data"]["invalid"]), 1)
+
+        write_file(path, good)
+        again = self.api.validate_collection(self.cid)["data"]
+        self.assertEqual(again["invalid"], [], "고쳤는데 이전 결과가 남아 있다")
+        self.assertEqual(again["statuses"]["invalidXml"], 0)
+
+    def test_repeated_validation_is_stable(self):
+        first = self.api.validate_collection(self.cid)["data"]
+        second = self.api.validate_collection(self.cid)["data"]
+        self.assertEqual(first, second, "같은 상태인데 검사할 때마다 결과가 다르다")
+
+    def test_the_counts_also_follow_a_fix_made_outside_the_app(self):
+        """리포트 안의 숫자는 **전부 같은 시점**을 가리켜야 한다.
+
+        깨진 XML 같은 것은 파일을 그 자리에서 읽어 알아내지만, Complete/Missing
+        Description은 Cache에서 온다. 맞춰 두지 않으면 앱 밖에서 설명을 채운 뒤
+        검사했을 때 "Missing Description"만 옛 숫자로 남아, 한 화면에서 절반은
+        지금 상태 절반은 지난번 상태가 된다.
+        """
+        before = self.api.validate_collection(self.cid)["data"]["statuses"]
+        self.assertGreater(before["missingDescription"], 0, "전제가 깨졌다")
+
+        path = self.root / "gamelists" / "ps2" / "gamelist.xml"
+        write_file(path, path.read_text(encoding="utf-8").replace(
+            "</game>", "<desc>설명을 채웠다</desc></game>"))
+
+        after = self.api.validate_collection(self.cid)["data"]["statuses"]
+        self.assertEqual(after["missingDescription"], 0,
+                         "설명을 채웠는데 숫자가 지난 스캔 그대로다")
+
+    # --- 재스캔이 실패했을 때 (P1 검토) ----------------------------------
+    # 스캔 실패를 조용히 삼키면 옛 Cache로 계산한 숫자가 지금 숫자인 척 나간다 -
+    # 재스캔이 막으려던 바로 그 상태인데, 이번엔 알아챌 방법조차 없다.
+
+    def _break_scan(self):
+        def boom(*_a, **_k):
+            raise RuntimeError("스캔 실패")
+        self.api.workspace.scan = boom
+
+    def test_a_failed_rescan_is_reported_not_swallowed(self):
+        self._break_scan()
+        data = self.api.validate_collection(self.cid)["data"]
+        self.assertTrue(data["countsStale"], "스캔이 실패했는데 숫자를 그대로 내보냈다")
+        self.assertIn("스캔 실패", data["staleReason"])
+
+    def test_a_successful_rescan_is_not_marked_stale(self):
+        data = self.api.validate_collection(self.cid)["data"]
+        self.assertFalse(data["countsStale"])
+        self.assertIsNone(data["staleReason"])
+
+    def test_file_level_findings_survive_a_failed_rescan(self):
+        """Cache와 무관한 검사는 스캔이 실패해도 여전히 정확하다 - 그래서 중단하지 않는다."""
+        write_file(self.root / "gamelists" / "ps2" / "gamelist.xml", "<gameList><game>")
+        self._break_scan()
+        data = self.api.validate_collection(self.cid)["data"]
+        self.assertEqual(len(data["invalid"]), 1, "스캔 실패로 파일 검사까지 잃었다")
+        self.assertEqual(data["statuses"]["invalidXml"], 1)
+
+    def test_file_level_findings_read_the_disk_not_the_scan_cache(self):
+        """파일을 앱 밖에서 고쳐도 **재스캔 없이** 바로 반영돼야 한다.
+
+        Validate는 «지금 파일이 어떤가»를 묻는 기능이다 - 스캔 시점의 기억을
+        보여주면 사용자가 고친 것을 확인할 방법이 없다.
+        """
+        write_file(self.root / "gamelists" / "ps2" / "gamelist.xml", "<gameList><game>")
+        # 스캔을 다시 돌리지 않는다.
+        result = self.api.validate_collection(self.cid)["data"]
+        self.assertEqual(len(result["invalid"]), 1, "디스크가 아니라 캐시를 읽고 있다")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,39 @@ test("Navigator의 Settings 버튼으로 열리고 Esc로 닫힌다", async ({ p
   await expect(page.locator(".stg-panel")).toHaveCount(0);
 });
 
+// 좌측 하단 확인 버튼(실사용 결정) - ×만으로 닫는 것보다 또렷하다. 값은 이미
+// 즉시 적용돼 있으므로(라이브 미리보기), 이 버튼이 하는 일은 아직 안 나간
+// 저장을 그 자리에서 흘려보내고 닫는 것이다.
+test("좌측 하단 확인 버튼으로 닫힌다", async ({ page }) => {
+  await openSettings(page);
+  await expect(page.locator(".stg-confirm")).toHaveText("확인");
+  await page.locator(".stg-confirm").click();
+  await expect(page.locator(".stg-panel")).toHaveCount(0);
+});
+
+test("확인 버튼의 글자는 가운데 정렬이다(실사용 피드백)", async ({ page }) => {
+  // .btn은 기본이 왼쪽 정렬이라, min-width로 상자를 글자보다 넓게 잡으면
+  // 글자가 왼쪽에 붙어 보였다.
+  await openSettings(page);
+  const justify = await page.locator(".stg-confirm").evaluate((el) => getComputedStyle(el).justifyContent);
+  expect(justify).toBe("center");
+});
+
+test("확인을 누르면 debounce를 기다리지 않고 그 자리에서 저장한다", async ({ page }) => {
+  const saved = [];
+  await page.exposeFunction("__saved", (p) => saved.push(p));
+  await page.evaluate(() => {
+    const original = window.api.saveAppSettings;
+    window.api.saveAppSettings = (p) => { window.__saved(p); return original(p); };
+  });
+  await openSettings(page);
+  await row(page, "appearance.theme").locator("select").selectOption("sfc");
+  // 저장 debounce(300ms)가 돌기 전에 바로 확인을 누른다.
+  await page.locator(".stg-confirm").click();
+  expect(saved.length).toBeGreaterThan(0);
+  expect(saved.at(-1).appearance.theme).toBe("sfc");
+});
+
 test("테마를 바꾸면 즉시 화면에 반영되고 백엔드에 저장된다", async ({ page }) => {
   const saved = [];
   await page.exposeFunction("__saved", (p) => saved.push(p));

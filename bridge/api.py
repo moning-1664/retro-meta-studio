@@ -30,8 +30,9 @@ from app import dashboard
 from app import media_cleanup
 from app import system_ops
 from app import storage_layout
+from app import title_affix
 from app.launch import retroarch
-from app.model.plan import OP_STORAGE_CHANGE, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan
+from app.model.plan import OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan
 from app.plan import builder, clipboard
 from app.plan.applier import apply_plan
 from app.plan.validator import check_capacity, validate
@@ -70,7 +71,7 @@ THUMBNAIL_CACHE_MAX = 256
 _MISS = object()
 
 
-def _sorted_systems(entries, games, *, with_storage=False):
+def _sorted_systems(entries, games, *, with_storage=False, stats=None):
     """게임이 있는 System을 먼저, 없는 것을 뒤에. 같은 상태끼리는 이름순.
 
     빈 System을 별도의 "Empty Systems" 묶음으로 만들지 않는다 - 사용자가 보는 것은
@@ -82,6 +83,19 @@ def _sorted_systems(entries, games, *, with_storage=False):
         row = {"system": entry.system, "count": games.get(entry.system, 0)}
         if with_storage:
             row["storageId"] = entry.storage_id
+        # Metadata가 없는 항목 수. 개수 자체를 따로 주지 않고 "빠진 수"만 주는 이유는,
+        # 화면이 `count - missingMetadata`로 계산하면 목록에 뜨는 수(count)와 항상
+        # 아귀가 맞기 때문이다 - 두 곳에서 따로 센 숫자가 어긋나는 일이 없다.
+        #
+        # 용량과 Media 누락 수도 같이 준다. Scan이 이미 세어 둔 값이라 추가 비용이
+        # 없고, 헤더를 펼쳤을 때 "이 System이 얼마나 차지하고 무엇이 빠졌는지"를
+        # Dashboard까지 가지 않고 바로 볼 수 있다.
+        if stats is not None:
+            stat = stats.get(entry.system) or {}
+            row["missingMetadata"] = int(stat.get("missing_metadata") or 0)
+            row["missingMedia"] = int(stat.get("missing_media") or 0)
+            row["romBytes"] = int(stat.get("rom_bytes") or 0)
+            row["mediaBytes"] = int(stat.get("media_bytes") or 0)
         return row
 
     return sorted((item(e) for e in entries),
@@ -116,17 +130,26 @@ def guarded(fn):
     return wrapper
 
 
-def _reveal_path(path):
-    """파일 탐색기로 폴더를 연다. 테스트는 이 함수를 바꿔 끼운다."""
+def _reveal_path(path, select=False):
+    """파일 탐색기로 연다. 테스트는 이 함수를 바꿔 끼운다.
+
+    `select=True`면 폴더를 열지 않고 **그 파일을 고른 채로** 탐색기를 연다(개별
+    게임의 ROM/Media 파일을 가리킬 때 - 폴더만 열면 수백 개 파일 중에서 다시
+    찾아야 한다). Linux는 탐색기마다 파일 선택 방법이 달라 통일된 방법이 없으므로
+    부모 폴더를 여는 것으로 대신한다.
+    """
     import os
     import subprocess
     import sys
     if sys.platform.startswith("win"):
-        os.startfile(path)  # noqa: S606 - 사용자가 고른 Collection 폴더다
+        if select:
+            subprocess.Popen(["explorer", f"/select,{path}"])  # noqa: S603,S607
+        else:
+            os.startfile(path)  # noqa: S606 - 사용자가 고른 Collection 폴더다
     elif sys.platform == "darwin":
-        subprocess.Popen(["open", path])
+        subprocess.Popen(["open", "-R", path] if select else ["open", path])
     else:
-        subprocess.Popen(["xdg-open", path])
+        subprocess.Popen(["xdg-open", str(Path(path).parent) if select else path])
 
 
 class Api:
@@ -183,7 +206,7 @@ class Api:
 
     @guarded
     def create_collection(self, name, frontend, root_path=None, target=None, arch=None,
-                          rom_path=None, media_path=None):
+                          rom_path=None, media_path=None, storage_label=None):
         """`root_path`는 메타데이터가 있는 곳, `rom_path`는 ROM이 있는 곳이다.
 
         ES-DE는 이 둘을 떼어 놓는 것이 기본이라 하나만 받으면 반쪽짜리 Collection만
@@ -191,10 +214,85 @@ class Api:
         ROM만 가지고 있고, 그것도 정상적인 Collection이다. 유효하지 않은 것은 둘 다
         비어 있을 때뿐이며, 그 판단은 Workspace가 한다.
         """
+        extra = {}
+        if storage_label:
+            # 기기 Collection은 Storage 이름이 "Internal"이면 어느 기기인지 알 수 없다.
+            extra["internal_label"] = str(storage_label)
         collection = self.workspace.create_collection(
             name, frontend, root_path, target=target or None, arch=arch or None,
-            rom_path=rom_path or None, media_path=media_path or None)
+            rom_path=rom_path or None, media_path=media_path or None, **extra)
         return ok(self._collection_summary(collection))
+
+    # ------------------------------------------------------------------
+    # MTP 기기 (storage/mtp.py) - Metadata(gamelist) 전용 연결
+    # ------------------------------------------------------------------
+    #: ES-DE 폴더를 찾을 때 기기를 얼마나 깊이 훑을지. MTP는 폴더 하나 여는 것도 비싸서
+    #: 기기 전체를 뒤지면 몇 분씩 걸린다 - 안드로이드 ES-DE는 저장소 바로 아래
+    #: (`/storage/emulated/0/ES-DE`)에 있으므로 두 단계면 충분하다.
+    MTP_SEARCH_DEPTH = 2
+
+    @guarded
+    def mtp_devices(self):
+        """연결된 안드로이드 기기 목록.
+
+        **기기가 없는 것과 못 읽는 것을 구분해서 돌려준다** - 빈 목록만 주면 화면이
+        "USB를 꽂으라는 건지, 뭔가 잘못된 건지"를 말해줄 수 없다.
+        """
+        from storage import mtp
+
+        try:
+            devices = mtp.provider().devices()
+        except mtp.MtpError as e:
+            return ok({"devices": [], "reason": str(e)})
+        return ok({"devices": [{"key": d.key, "name": d.name, "path": mtp.join_path(d.key, [])}
+                               for d in devices], "reason": None})
+
+    @guarded
+    def mtp_browse(self, path):
+        """기기 폴더 한 단계(폴더만). `path`가 기기 루트면 저장소 목록이 나온다."""
+        from storage import mtp
+
+        if not mtp.is_mtp_path(path):
+            return err("MTP 경로가 아닙니다.")
+        device_key, segments = mtp.split_path(path)
+        entries = [e for e in mtp.provider().scandir(path) if e.is_dir]
+        return ok({
+            "path": mtp.join_path(device_key, segments),
+            "parent": mtp.join_path(device_key, segments[:-1]) if segments else None,
+            "entries": sorted(({"name": e.name, "path": e.path} for e in entries),
+                              key=lambda e: e["name"].lower()),
+        })
+
+    @guarded
+    def mtp_find_esde(self, device_key):
+        """기기에서 ES-DE 폴더(`gamelists`를 품은 폴더)와 ROM 폴더 후보를 찾는다.
+
+        얕게만 훑는다(MTP_SEARCH_DEPTH) - 못 찾으면 화면에서 직접 고르면 된다.
+        """
+        from storage import mtp
+
+        provider = mtp.provider()
+        found: list[dict] = []
+        roms: list[str] = []
+
+        def walk(segments, depth):
+            if depth > self.MTP_SEARCH_DEPTH or len(found) >= 4:
+                return
+            for entry in provider.scandir(mtp.join_path(device_key, segments)):
+                if not entry.is_dir:
+                    continue
+                here = [*segments, entry.name]
+                if provider.exists(mtp.join_path(device_key, [*here, "gamelists"])):
+                    found.append({"path": mtp.join_path(device_key, here), "name": entry.name})
+                elif entry.name.lower() in ("roms", "rom"):
+                    roms.append(mtp.join_path(device_key, here))
+                walk(here, depth + 1)
+
+        try:
+            walk([], 0)
+        except mtp.MtpError as e:
+            return err(e)
+        return ok({"esde": found, "roms": roms})
 
     @guarded
     def rename_collection(self, collection_id, name):
@@ -255,7 +353,7 @@ class Api:
                 "deviceRoot": storage.device_root or "",
             })
 
-        systems = _sorted_systems(collection.systems, games, with_storage=True)
+        systems = _sorted_systems(collection.systems, games, with_storage=True, stats=stats)
         clash = self._conflicts(collection)
         for row in systems:
             sides = clash.get(row["system"].lower())
@@ -274,6 +372,10 @@ class Api:
             # (배지/툴팁용), 계층을 만들지 않는다.
             "systems": systems,
             "totalGames": cache.count_rows(),
+            "totalMissingMetadata": sum(int(s.get("missing_metadata") or 0) for s in stats.values()),
+            "totalMissingMedia": sum(int(s.get("missing_media") or 0) for s in stats.values()),
+            "totalRomBytes": sum(int(s.get("rom_bytes") or 0) for s in stats.values()),
+            "totalMediaBytes": sum(int(s.get("media_bytes") or 0) for s in stats.values()),
         })
 
     def _collection_summary(self, collection):
@@ -287,6 +389,10 @@ class Api:
             "arch": collection.arch,
             "rootPath": collection.root_path,
             "systemCount": len(collection.systems),
+            # 화면이 기기 Collection을 다르게 그려야 하는 두 가지.
+            # isDevice: 편집이 Plan을 거친다. metadataOnly: ROM이 없는 것이 정상이다.
+            "isDevice": collection.is_device,
+            "metadataOnly": collection.metadata_only,
         }
 
     # ------------------------------------------------------------------
@@ -387,9 +493,36 @@ class Api:
         collection = self.registry.get_collection(collection_id)
         if collection is None:
             return err("Collection을 찾을 수 없습니다.")
+
+        # **검사 전에 Cache를 맞춘다.** 이 리포트는 두 곳에서 나온다 - 깨진 XML이나
+        # 없는 ROM 같은 것은 파일을 그 자리에서 읽어 알아내지만, Complete/Missing
+        # Description 같은 집계는 Cache(=지난 스캔의 기억)에서 온다. 맞춰 두지 않으면
+        # 한 리포트 안에서 절반은 지금 상태, 절반은 지난번 상태가 되어 사용자가
+        # 어느 쪽을 믿어야 할지 알 수 없다(실제로 앱 밖에서 설명을 채운 뒤 검사하면
+        # "Missing Description 2"가 그대로 남았다).
+        #
+        # 스캔은 지문으로 걸러지므로 바뀐 게 없으면 거의 공짜다 - 바뀐 게 있다면
+        # 그 재스캔이야말로 정확한 숫자를 내는 데 꼭 필요한 일이다.
+        #
+        # **스캔이 실패하면 그 사실을 숨기지 않는다.** 조용히 넘어가면 옛 Cache로
+        # 계산한 숫자가 지금 숫자인 척 나가고, 이 재스캔이 막으려던 바로 그 상태로
+        # 되돌아간다 - 게다가 이번엔 사용자가 알아챌 방법조차 없다. 파일을 직접 읽어
+        # 얻는 항목(깨진 XML·없는 ROM·중복)은 Cache와 무관하게 여전히 정확하므로
+        # 검사 자체는 끝까지 하고, Cache에서 온 숫자만 «믿을 수 없음»으로 표시한다.
+        stale_reason = None
+        try:
+            self.workspace.scan(collection_id)
+        except Exception as e:  # noqa: BLE001
+            stale_reason = str(e) or e.__class__.__name__
+
         cache = self.workspace.open(collection_id)
         provider = self.workspace.provider_for(collection)
-        return ok(dashboard.validate_collection(collection, get_adapter(collection.frontend), cache, provider))
+        report = dashboard.validate_collection(collection, get_adapter(collection.frontend),
+                                               cache, provider)
+        # 화면이 숫자를 흐리게 보여주고 이유를 말할 수 있도록 함께 내보낸다.
+        report["countsStale"] = stale_reason is not None
+        report["staleReason"] = stale_reason
+        return ok(report)
 
     @guarded
     def set_favorite(self, collection_id, rom_uid, favorite=True):
@@ -434,6 +567,18 @@ class Api:
 
     @guarded
     def add_external_storage(self, collection_id, label, root_path):
+        # **한 Collection은 한 종류의 저장소만 쓴다.** Provider는 Collection의
+        # root_path 하나로 정해지므로(workspace.provider_for), 다른 종류의 경로를
+        # Storage로 붙이면 그 경로를 엉뚱한 Provider가 읽는다. 로컬 Provider에게
+        # `mtp://...`를 읽히면 **오류도 없이 빈 목록**이 와서, 사용자에게는 System이
+        # 그냥 비어 보인다 - 왜 비었는지 알 길이 없는 것이 가장 나쁘다.
+        from storage import mtp
+
+        collection = self.registry.get_collection(collection_id)
+        if collection is not None and \
+                mtp.is_mtp_path(root_path) != mtp.is_mtp_path(collection.root_path):
+            return err("기기(MTP) 저장소와 일반 저장소는 한 Collection에 함께 둘 수 없습니다. "
+                       "기기는 별도 Collection으로 열어주세요.")
         storage_id = self._next_storage_id(collection_id)
         self.registry.add_storage(collection_id, storage_id, kind="external",
                                   label=label or "External", root_path=root_path)
@@ -510,6 +655,43 @@ class Api:
         return ok({"path": path})
 
     @guarded
+    def open_row_folder(self, collection_id, rom_uid, kind):
+        """게임 한 개의 ROM/Metadata/Media를 파일 탐색기에서 **그 파일을 고른 채로** 연다
+        (실사용 피드백 §5 - "각 롬별로도 지원"). System 폴더 열기(open_system_folder)는
+        폴더까지만 열어서, System 안에 파일이 많으면 다시 찾아야 했다.
+
+        Metadata는 이 게임 하나만의 파일이 아니라 System이 공유하는 gamelist.xml이다 -
+        그래도 "이 게임의 데이터가 있는 곳"이므로 그 파일을 고른 채로 연다. Media는
+        종류가 여럿일 수 있어(cover/video/...) 있는 것 중 처음 것을 고른다.
+        """
+        collection, cache, provider, adapter = self._system_context(collection_id)
+        blocked = self._ensure_file_ops(collection)
+        if blocked:
+            return blocked
+        row = cache.get_row(int(rom_uid))
+        if row is None:
+            return err("항목을 찾을 수 없습니다.")
+        layout = adapter.layout(collection, row["system"])
+        if kind == "rom":
+            if not row["present"]:
+                return err("ROM 파일이 없습니다.")
+            path = str(Path(layout.rom_dir) / row["filename"])
+        elif kind == "metadata":
+            if not layout.metadata_file:
+                return err("Metadata 파일이 없습니다.")
+            path = layout.metadata_file
+        elif kind == "media":
+            if not row["media"]:
+                return err("Media 파일이 없습니다.")
+            path = row["media"][0]["rel_path"]
+        else:
+            return err(f"알 수 없는 종류입니다: {kind}")
+        if not path or not provider.exists(path):
+            return err(f"파일이 없습니다: {path}")
+        _reveal_path(path, select=True)
+        return ok({"path": path})
+
+    @guarded
     def orphan_metadata_preview(self, collection_id, system):
         """이 System에서 Metadata/Media는 있는데 **ROM 파일이 없는** 항목들(System
         우클릭 > ROM 없는 항목 정리). 목록에서 파일명이 흐리게 보이는 것과 같은 기준
@@ -518,6 +700,11 @@ class Api:
         collection, cache, _provider, _adapter = self._system_context(collection_id)
         if not any(entry.system == system for entry in collection.systems):
             return err(f"System을 찾을 수 없습니다: {system}")
+        # Metadata 전용 Collection에서는 ROM이 없는 것이 정상이다 - 여기서 목록을
+        # 내주면 멀쩡한 메타데이터 전부가 "정리 대상"으로 보인다.
+        blocked = self._ensure_file_ops(collection)
+        if blocked:
+            return blocked
         rows = cache.query_rows(systems=[system], present=False, order="title")
         return ok({"system": system, "items": [
             {"romUid": r["rom_uid"], "filename": r["filename"], "title": r["title"]} for r in rows]})
@@ -546,7 +733,7 @@ class Api:
         collection, cache, provider, _adapter = self._system_context(collection_id)
         if not any(entry.system == system for entry in collection.systems):
             return err(f"System을 찾을 수 없습니다: {system}")
-        blocked = self._ensure_writable(collection, [system])
+        blocked = self._ensure_file_ops(collection) or self._ensure_writable(collection, [system])
         if blocked:
             return blocked
         result = media_cleanup.cleanup_media(cache, provider, self.workspace, collection_id,
@@ -572,6 +759,19 @@ class Api:
             return None
         return err(f"{', '.join(h.upper() for h in hit)} System 폴더가 여러 Storage에 함께 있어 쓰기가 막혀 "
                    "있습니다. System 우클릭에서 한쪽 폴더를 지우거나 이름을 바꾸면 풀립니다.")
+
+    @staticmethod
+    def _ensure_file_ops(collection):
+        """파일을 옮기고 지우는 작업을 할 수 있는 Collection인가.
+
+        MTP로 연결한 기기는 Metadata 전용이다(사용자 결정) - 대량 전송은 MTP로
+        감당할 수 없어서 ADB 모드를 따로 두기로 했다. 막히면 화면에 그대로 보여줄
+        err를, 괜찮으면 None을 돌려준다.
+        """
+        if collection is not None and collection.is_device:
+            return err("기기 Collection은 Metadata만 다룹니다. 파일 복사·이동·삭제는 "
+                       "ADB 모드에서 지원할 예정입니다.")
+        return None
 
     def _drop_plan_entries(self, collection_id, system):
         plan = self._plans.get(collection_id)
@@ -668,28 +868,30 @@ class Api:
     @guarded
     def list_rows(self, collection_id, systems=None, storage_ids=None, search=None,
                   order="title", descending=False, limit=200, offset=0,
-                  favorites_only=False):
+                  favorites_only=False, priority=None):
         """가상 스크롤이 요청한 구간만 돌려준다. 정렬/필터/검색은 전부 SQL이 처리한다."""
         cache = self.workspace.open(collection_id)
         query = {"systems": systems or None, "storage_ids": storage_ids or None,
                  "search": search or None, "favorites_only": bool(favorites_only)}
         rows = cache.query_rows(**query, order=order, descending=bool(descending),
-                                limit=int(limit), offset=int(offset))
+                                limit=int(limit), offset=int(offset), priority=priority or None)
         return ok({"rows": [self._row_summary(r) for r in rows],
                    "total": cache.count_rows(**query), "offset": int(offset)})
 
     @guarded
     def list_uids(self, collection_id, systems=None, storage_ids=None, search=None,
-                  order="title", descending=False, favorites_only=False):
+                  order="title", descending=False, favorites_only=False, priority=None):
         """지금 목록 전체의 rom_uid(필터·정렬 그대로). Ctrl+A가 쓴다."""
         cache = self.workspace.open(collection_id)
         return ok(cache.query_uids(systems=systems or None, storage_ids=storage_ids or None,
                                    search=search or None, order=order,
-                                   descending=bool(descending), favorites_only=bool(favorites_only)))
+                                   descending=bool(descending), favorites_only=bool(favorites_only),
+                                   priority=priority or None))
 
     @guarded
     def find_row_index(self, collection_id, prefix, after=-1, systems=None, storage_ids=None,
-                       search=None, order="title", descending=False, favorites_only=False):
+                       search=None, order="title", descending=False, favorites_only=False,
+                       priority=None):
         """영문키 점프: `after` 다음 줄부터 파일명이 `prefix`로 시작하는 줄의 위치(없으면 -1).
 
         가상 스크롤이라 화면에 그려진 행만 뒤지면 목록 뒤쪽으로 갈 수 없다 - 그래서
@@ -698,7 +900,7 @@ class Api:
         return ok(cache.index_of_prefix(prefix, int(after), systems=systems or None,
                                         storage_ids=storage_ids or None, search=search or None,
                                         order=order, descending=bool(descending),
-                                        favorites_only=bool(favorites_only)))
+                                        favorites_only=bool(favorites_only), priority=priority or None))
 
     @staticmethod
     def _row_summary(row):
@@ -780,10 +982,12 @@ class Api:
 
     def _thumbnail_key(self, path, max_size):
         try:
-            stat = Path(path).stat()
-        except OSError:
+            stat = storage.for_path(path).stat(path)
+        except Exception:
             return None
-        return (str(path), stat.st_size, stat.st_mtime_ns, max_size)
+        if stat is None:
+            return None
+        return (str(path), stat.size, stat.mtime_ns, max_size)
 
     def _thumbnail_cache_get(self, path, max_size):
         key = self._thumbnail_key(path, max_size)
@@ -803,17 +1007,24 @@ class Api:
 
     @staticmethod
     def _encode_image_uncached(path, max_size=None):
-        path = Path(path)
-        if not path.exists():
-            return None
-        suffix = path.suffix.lower()
+        """이미지 한 장을 data URL로 만든다.
+
+        **바이트는 Provider를 통해서만 읽는다.** 로컬에서는 결과가 같지만, MTP
+        기기 Collection에서는 `Path.read_bytes()`가 아예 동작하지 않는다 - 커버를
+        "선택한 항목부터" 한 장씩 읽어 오는 것이 기기에서 그림이 보이는 유일한
+        길이다(사용자 결정).
+        """
+        suffix = Path(path).suffix.lower()
         if suffix in (".mp4", ".avi"):
             return None
         try:
+            data = storage.for_path(path).read_bytes(path)
+            if data is None:
+                return None
             if max_size:
                 from PIL import Image
                 import io
-                with Image.open(path) as image:
+                with Image.open(io.BytesIO(data)) as image:
                     image.thumbnail((max_size, max_size))
                     buffer = io.BytesIO()
                     # WebP는 같은 화질에서 JPEG보다 작다. 브릿지로 넘어가는 base64
@@ -821,7 +1032,7 @@ class Api:
                     image.convert("RGB").save(buffer, format="WEBP", quality=82, method=4)
                     payload, mime = buffer.getvalue(), "image/webp"
             else:
-                payload = path.read_bytes()
+                payload = data
                 mime = {"png": "image/png", "webp": "image/webp"}.get(suffix.lstrip("."), "image/jpeg")
         except Exception:
             # 깨진 이미지 하나가 상세 패널 전체를 막으면 안 된다.
@@ -838,6 +1049,11 @@ class Api:
         Plan을 거치지 않는다(D1) - Plan은 저장 용량이 변하는 작업만 담는다. 대신
         Adapter에 이 항목 하나만 넘기므로 gamelist.xml의 다른 항목과 우리가
         해석하지 않는 요소는 그대로 남는다.
+
+        **기기(MTP) Collection만 예외로 Plan을 거친다(사용자 결정).** MTP에는
+        덮어쓰기가 없어서 한 글자 고칠 때마다 gamelist 전체를 지우고 다시 만든다 -
+        편집을 모아서 Apply 한 번에 쓰는 편이 안전하고 빠르다. 자세한 이유는
+        app/model/collection.py의 `Collection.is_device` 참고.
         """
         from adapters.base import GameEntry
 
@@ -857,6 +1073,12 @@ class Api:
             return blocked
 
         merged = {**row["fields"], **{k: v for k, v in (fields or {}).items()}}
+        if collection.is_device:
+            entry = builder.plan_metadata_edit(self._plan(collection_id), cache, int(rom_uid),
+                                               fields or {}, frontend_raw=frontend_raw)
+            title = (entry.payload.get("name") or "").strip() or Path(row["filename"]).stem
+            return ok({"title": title, "planned": True})
+
         # frontend_raw는 보통 읽은 그대로 다시 쓴다. 즐겨찾기처럼 사용자가 직접 바꾸는
         # Frontend 고유 값일 때만 새 것이 들어온다.
         raw = row["frontend_raw"] if frontend_raw is None else frontend_raw
@@ -907,13 +1129,16 @@ class Api:
 
     @staticmethod
     def _entry_summary(entry):
-        return {
+        summary = {
             "key": entry.key, "op": entry.op, "system": entry.system,
             "filename": entry.filename or entry.system,
             "status": entry.status, "error": entry.error,
             "resolution": entry.resolution,
             "conflicts": entry.conflicts,
         }
+        if entry.op == OP_TITLE_EDIT:
+            summary["oldTitle"], summary["newTitle"] = entry.old_title, entry.new_title
+        return summary
 
     @guarded
     def plan_resolve_conflict(self, collection_id, key, resolution):
@@ -944,8 +1169,9 @@ class Api:
     @guarded
     def plan_delete(self, collection_id, rom_uids):
         collection, cache, provider = self._plan_context(collection_id)
-        blocked = self._ensure_writable(collection, [(cache.get_row(int(uid)) or {}).get("system")
-                                                     for uid in rom_uids or []])
+        blocked = self._ensure_file_ops(collection) or self._ensure_writable(
+            collection, [(cache.get_row(int(uid)) or {}).get("system")
+                         for uid in rom_uids or []])
         if blocked:
             return blocked
         result = builder.plan_delete(self._plan(collection_id), collection, cache, rom_uids,
@@ -955,11 +1181,56 @@ class Api:
     @guarded
     def plan_storage_change(self, collection_id, system, storage_to):
         collection, cache, _ = self._plan_context(collection_id)
-        blocked = self._ensure_writable(collection, [system])
+        blocked = self._ensure_file_ops(collection) or self._ensure_writable(collection, [system])
         if blocked:
             return blocked
         result = builder.plan_storage_change(self._plan(collection_id), collection, cache,
                                              system, storage_to)
+        return ok(result)
+
+    # ------------------------------------------------------------------
+    # Title Prefix/Postfix (app/title_affix.py) - Plan을 거치는 예외(D1, app/model/plan.py)
+    # ------------------------------------------------------------------
+    def _title_affix_config(self):
+        stored = (self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {}).get("titleAffix") or {}
+        return title_affix.normalize_config(stored)
+
+    def _title_affix_rows(self, cache, rom_uids=None, system=None):
+        """대상 행. `rom_uids`가 있으면 Gamelist에서 고른 항목들, 없으면 System 전체다."""
+        if rom_uids:
+            rows = (cache.get_row(int(uid)) for uid in rom_uids)
+            return [row for row in rows if row is not None]
+        if system:
+            return cache.query_rows(systems=[system], order="title")
+        return []
+
+    @guarded
+    def title_affix_preview(self, collection_id, rom_uids=None, system=None):
+        """이 게임들에 실제로 적용될 새 제목 미리보기(Gamelist 우클릭 - 선택 항목,
+        System 우클릭 - 그 System 전체 중 하나를 넘긴다). 아직 아무것도 바꾸지 않는다."""
+        collection, cache, _provider = self._plan_context(collection_id)
+        rows = self._title_affix_rows(cache, rom_uids, system)
+        if not rows:
+            return err("대상을 찾을 수 없습니다.")
+        changes = title_affix.preview_titles(rows, self._title_affix_config())
+        return ok({"items": changes, "changed": sum(1 for c in changes if c["changed"])})
+
+    @guarded
+    def plan_title_edit(self, collection_id, rom_uids=None, system=None):
+        """미리보기에서 확인한 대로 Plan에 올린다. 실제 파일은 Apply를 눌러야 바뀐다(사용자 결정).
+
+        미리보기와 똑같은 대상 선택을 다시 받아 서버에서 새로 계산한다 - 클라이언트가
+        준 결과를 그대로 믿지 않는다(다른 Plan 만들기 메서드들과 같은 태도).
+        """
+        collection, cache, _provider = self._plan_context(collection_id)
+        rows = self._title_affix_rows(cache, rom_uids, system)
+        if not rows:
+            return err("대상을 찾을 수 없습니다.")
+        blocked = self._ensure_writable(collection, sorted({row["system"] for row in rows}))
+        if blocked:
+            return blocked
+        changes = title_affix.preview_titles(rows, self._title_affix_config())
+        result = builder.plan_title_edit(self._plan(collection_id), cache, changes)
         return ok(result)
 
     @guarded
@@ -993,7 +1264,8 @@ class Api:
         descriptor, items = clipboard.read_items(self.registry)
         if not items:
             return err("붙여넣을 항목이 없습니다.")
-        blocked = self._ensure_writable(collection, [item.get("system") for item in items])
+        blocked = self._ensure_file_ops(collection) or self._ensure_writable(
+            collection, [item.get("system") for item in items])
         if blocked:
             return blocked
         policy = self._transfer_policy()
@@ -1185,6 +1457,18 @@ class Api:
             "rows": out_rows,
             "total": self.archive.count_rows(**query), "offset": int(offset),
         })
+
+    @guarded
+    def archive_uids(self, systems=None):
+        """지금 필터(System)에 맞는 Archive 항목 전체의 romIdentityId.
+
+        HERO의 "메타데이터 가져오기"가 쓴다(§4) - Archive에서 이 Collection으로
+        당겨올 대상을 정할 때, 화면에 보이는 첫 페이지(archive_rows의 limit=200)만
+        가져오면 Archive가 그보다 크면 뒷부분이 조용히 빠진다. list_rows(limit=None)은
+        LIMIT 절 자체를 안 붙이므로 전부 온다.
+        """
+        rows = self.archive.list_rows(systems=systems or None, limit=None)
+        return ok([r["rom_identity_id"] for r in rows])
 
     @guarded
     def archive_systems(self):
@@ -1536,7 +1820,7 @@ class Api:
         return ok([{"id": a.id, "label": a.label} for a in adapter.extras()])
 
     @guarded
-    def run_adapter_action(self, collection_id, action_id):
+    def run_adapter_action(self, collection_id, action_id, storage_id=None):
         collection = self.registry.get_collection(collection_id)
         if collection is None:
             return err("Collection을 찾을 수 없습니다.")
@@ -1544,7 +1828,9 @@ class Api:
         if action_id not in {a.id for a in adapter.extras()}:
             return err("이 Frontend가 지원하지 않는 기능입니다.")
         if action_id == getattr(adapter, "CUSTOM_SYSTEMS_ACTION", None):
-            return ok(adapter.write_custom_systems(collection))
+            # storage_id를 주면 그 Storage만 대상으로 한다(실사용 피드백 - External이
+            # 여러 개일 때 어느 그룹에서 눌러도 전체를 다시 쓰는 것은 의도와 다르다).
+            return ok(adapter.write_custom_systems(collection, storage_id=storage_id))
         return err("아직 구현되지 않은 기능입니다.")
 
     # ------------------------------------------------------------------

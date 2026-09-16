@@ -115,5 +115,49 @@ class OrphanMetadataDeleteTests(unittest.TestCase):
         self.assertEqual(after, before - 1)
 
 
+class EditingAnEntryWithoutItsRomTests(unittest.TestCase):
+    """**ROM이 없어도 Metadata는 고칠 수 있어야 한다** (검증 리스트 #12-B).
+
+    ES-DE를 실제로 쓰면 흔한 상태다 - 기기에서 ROM만 지우고 gamelist는 남겨 두거나,
+    스크래핑을 먼저 해 두고 ROM을 나중에 넣는다. 그 항목을 «없는 것»으로 취급해
+    저장을 막으면, 사용자는 ROM을 넣기 전까지 정리를 못 한다.
+    """
+
+    def setUp(self):
+        self.dir = temp_root("rms_absent_")
+        self.root = build_esde_tree(self.dir / "esde")
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.cid = self.api.create_collection("C", "es-de", str(self.root))["data"]["id"]
+        wait_job(self.api, self.api.start_scan(self.cid)["data"]["jobId"])
+
+    def row(self, filename="MetadataOnly.iso"):
+        rows = self.api.list_rows(self.cid, limit=50)["data"]["rows"]
+        return next(r for r in rows if r["file"] == filename)
+
+    def test_the_entry_shows_up_in_the_list_marked_as_absent(self):
+        row = self.row()
+        self.assertFalse(row["present"], "ROM 없는 항목이 목록에서 빠졌다")
+        self.assertEqual(row["title"], "ROM 없는 항목")
+
+    def test_saving_metadata_succeeds_even_though_the_rom_is_missing(self):
+        result = self.api.save_fields(self.cid, self.row()["romUid"],
+                                      {"name": "고친 제목", "genre": "RPG"})
+        self.assertTrue(result["ok"], result.get("error"))
+
+    def test_the_edit_reaches_the_gamelist_on_disk(self):
+        self.api.save_fields(self.cid, self.row()["romUid"], {"name": "고친 제목"})
+        text = (self.root / "gamelists" / "ps2" / "gamelist.xml").read_text(encoding="utf-8")
+        self.assertIn("고친 제목", text)
+
+    def test_the_entry_stays_absent_after_the_edit(self):
+        """제목을 고쳤다고 ROM이 생긴 것처럼 보이면 안 된다."""
+        self.api.save_fields(self.cid, self.row()["romUid"], {"name": "고친 제목"})
+        wait_job(self.api, self.api.start_scan(self.cid, force=True)["data"]["jobId"])
+        row = self.row()
+        self.assertEqual(row["title"], "고친 제목")
+        self.assertFalse(row["present"], "ROM이 없는데 있는 것으로 바뀌었다")
+
+
 if __name__ == "__main__":
     unittest.main()

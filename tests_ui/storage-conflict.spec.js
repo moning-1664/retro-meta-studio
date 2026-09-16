@@ -95,16 +95,27 @@ test.describe("External Storage 설정과 연결", () => {
   });
 
   test("ES-DE XML 결과에 Storage ID가 없어 빠진 System을 알려준다", async ({ page }) => {
+    // XML 생성은 이제 Storage 설정 안에 있다(사용자 결정 - 그룹 머리의 아이콘이었을
+    // 때는 External이 여럿이면 "어느 그룹에서 눌러도 전체를 다시 쓴다"가 안 보였다).
     await page.evaluate(() => {
       window.api.runAdapterAction = async () => ({ ok: true, data: {
         path: "D:\\ES-DE\\custom_systems\\es_systems.xml", platform: "android", systems: [], written: false,
         needsDeviceId: ["ps2"], noTemplate: [], kept: [] } });
     });
-    await page.locator(".nav-group-head", { hasText: "EXTERNAL SD" }).locator(".icon-btn[title*='XML']").click();
-    await expect(page.locator(".xml-needs-id")).toContainText("ps2");
+    await page.locator(".nav-group-head", { hasText: "EXTERNAL SD" }).locator(".storage-settings-btn").click();
+    await page.locator(".modal-actions .btn", { hasText: "ES-DE XML 생성" }).click();
+    const row = page.locator(".xml-row", { hasText: "ps2" });
+    await expect(row).toHaveClass(/warn/);
+    await expect(row).toContainText("Storage ID 없음");
   });
 
-  test("External Storage를 추가하면 그 밑의 System을 연결한다", async ({ page }) => {
+  test("External Storage를 지우고 다시 추가하면 그 밑의 System을 연결한다", async ({ page }) => {
+    // Add External Storage는 External이 없을 때만 보인다(사용자 결정) - 이미
+    // 있는 것을 먼저 지운다.
+    await page.locator(".nav-group-head", { hasText: "EXTERNAL SD" }).locator(".storage-remove-btn").click();
+    await modalButton(page, "확인").click();
+    await expect(page.locator(".nav-action", { hasText: "Add External Storage" })).toBeVisible();
+
     await page.evaluate(() => {
       window.__attached = [];
       window.api.attachStorageSystems = async (id, storageId) => {

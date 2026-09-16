@@ -4,6 +4,12 @@ const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
+test("행 사이 구분선은 점선이다(사용자 요청)", async ({ page }) => {
+  const style = await page.locator(".lrow").first()
+    .evaluate((el) => getComputedStyle(el).borderBottomStyle);
+  expect(style).toBe("dotted");
+});
+
 test("행을 클릭하면 상세 패널이 그 게임으로 열린다", async ({ page }) => {
   await page.locator(".lrow", { hasText: "Final Fantasy X" }).click();
   const panel = page.locator("#detail-panel");
@@ -12,11 +18,13 @@ test("행을 클릭하면 상세 패널이 그 게임으로 열린다", async ({
   await expect(panel.locator(".detail-system")).toContainText("PS2");
 });
 
-test("Metadata 탭의 요약 카드가 필드 값을 채운다", async ({ page }) => {
+test("요약 카드가 큰 표지와 요약 정보를 보여주고, 그 아래가 제목·설명이다", async ({ page }) => {
   await page.locator(".lrow").first().click();
   const values = page.locator(".identity-field-value");
   await expect(values.first()).toHaveText("RPG");           // Genre
   await expect(page.locator(".title-input")).toHaveValue("Final Fantasy X");
+  // 폼에 없는 것(ROM/Media 상태)은 요약 맨 아래 한 줄로만 있다.
+  await expect(page.locator(".identity-facts")).toContainText("Media");
 });
 
 test("탭을 바꿔도 저장 버튼은 Metadata 탭에서만 보인다", async ({ page }) => {

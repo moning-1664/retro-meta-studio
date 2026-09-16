@@ -98,12 +98,48 @@ if exist RetroMetaStudio.spec del /q RetroMetaStudio.spec
 echo.
 
 REM --- 6. Build with PyInstaller (bundle gui_web/ and the native worker as data) ---
+REM
+REM  comtypes(storage/mtp_wpd.py, MTP 연결)는 --hidden-import로 직접 못 박는다.
+REM  PyInstaller는 comtypes.client가 필요로 하는 서브모듈(comtypes.persist,
+REM  comtypes.gen 등)을 pyinstaller-hooks-contrib 훅에 기대어 자동으로 찾는데,
+REM  이 훅은 별도 pip 설치 항목이라 이 스크립트가 명시적으로 깔지 않는다 -
+REM  pyinstaller가 그것을 의존성으로 끌어오지 못하는 환경(오프라인 pip 캐시,
+REM  버전 불일치 등)에서는 훅이 조용히 안 걸리고, comtypes 자체는 설치돼 있어도
+REM  실행 시 "pip install comtypes"라는 엉뚱한 안내가 뜬다(실제로 이렇게 겪었다) -
+REM  빠진 것은 comtypes가 아니라 comtypes.client가 딛고 선 서브모듈이기 때문이다.
+REM  훅이 하는 일과 정확히 같은 목록을 여기서도 직접 적어 그 훅에 기대지 않는다.
 echo [6/6] Building with PyInstaller (this may take a few minutes)...
-pyinstaller --noconfirm --onefile --windowed --name RetroMetaStudio --add-data "gui_web;gui_web" %WORKER_DATA% main.py
+pyinstaller --noconfirm --onefile --windowed --name RetroMetaStudio --add-data "gui_web;gui_web" %WORKER_DATA% ^
+    --hidden-import comtypes ^
+    --hidden-import comtypes.client ^
+    --hidden-import comtypes.gen ^
+    --hidden-import comtypes.persist ^
+    --hidden-import comtypes.typeinfo ^
+    --hidden-import comtypes.automation ^
+    --hidden-import comtypes.stream ^
+    --hidden-import ctypes.wintypes ^
+    main.py
 
 if errorlevel 1 (
     echo.
     echo [ERROR] Build failed. Check the log above.
+    pause
+    exit /b 1
+)
+
+REM comtypes가 실제로 exe 안에 들어갔는지 그 자리에서 확인한다. 빠졌으면
+REM "Build complete"라고 말한 뒤에야 기기에서 뒤늦게 알게 된다 - 그러면 밤에
+REM 실기 테스트를 하다가 원인도 모른 채 시간을 버린다. PyInstaller가 공개
+REM 제공하는 archive_viewer로 PYZ 안(pure-python 모듈이 압축되는 곳)까지
+REM 재귀적으로 들여다본다 - 내부 바이너리 포맷을 직접 읽는 것보다 버전이
+REM 바뀌어도 깨지지 않는다.
+echo [6/6] Verifying comtypes was bundled...
+python -m PyInstaller.utils.cliutils.archive_viewer -r --brief dist\RetroMetaStudio.exe 2>nul | findstr /C:"comtypes.client" >nul
+if errorlevel 1 (
+    echo.
+    echo [ERROR] comtypes.client was not bundled into the exe - MTP will fail
+    echo         with "pip install comtypes" even though it is installed here.
+    echo         Check that requirements.txt installed cleanly in [3/6] above.
     pause
     exit /b 1
 )

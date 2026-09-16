@@ -47,6 +47,18 @@ test.describe("미리보기 토글 (Detail 패널 상단, 레이아웃 재검토
     await expect(page.locator("#detail-panel-inner")).toHaveCount(1);
   });
 
+  test("우측 구석에 붙는다(왼쪽에 다른 버튼이 없어도)", async ({ page }) => {
+    // 일반 Collection에서는 "Archive로" 버튼이 HERO로 옮겨가서(§4·§6) 이 줄에
+    // 왼쪽 버튼이 없다 - space-between은 자식이 하나면 왼쪽에 두므로,
+    // margin-left: auto로 항상 오른쪽 끝에 붙게 한다(실사용 피드백).
+    // 아이콘 버튼이 아니라 (아이콘+"미리보기" 글자) 전체 상자의 위치를 본다 -
+    // 안쪽 버튼만 보면 그 옆 라벨 글자만큼 왼쪽으로 치우쳐 보인다.
+    const bar = page.locator("#detail-top .detail-topspace");
+    const barBox = await bar.boundingBox();
+    const toggleBox = await page.locator("#detail-top .detail-preview-toggle").boundingBox();
+    expect(toggleBox.x + toggleBox.width).toBeGreaterThan(barBox.x + barBox.width - 20);
+  });
+
   test("끄고 켠 상태를 저장한다", async ({ page }) => {
     const saved = [];
     await page.exposeFunction("__saved", (s) => saved.push(s));
@@ -89,6 +101,29 @@ test.describe("Favorite / Play", () => {
     await expect(page.locator("#detail-panel .detail-launch")).toBeDisabled();
     await expect(page.locator("#detail-panel .detail-launch")).toHaveAttribute("title", /RetroArch/);
   });
+
+  // 실사용 피드백 §6 - 순서는 Favorite(왼쪽), 제목, 파일명 복사, Play(맨 오른쪽)다.
+  // 예전엔 복사 버튼이 파일명 글자 바로 뒤에 있어서 파일명이 길면 말줄임과 겹쳤다.
+  test("순서는 Favorite, 제목, 파일명 복사, Play다", async ({ page }) => {
+    await openFirstGame(page);
+    const header = page.locator("#detail-panel .detail-header");
+    const classes = await header.evaluate((el) => [...el.children].map((c) => c.className));
+    const favIndex = classes.findIndex((c) => c.includes("fav-btn"));
+    const copyIndex = classes.findIndex((c) => c.includes("detail-copy"));
+    const playIndex = classes.findIndex((c) => c.includes("detail-launch"));
+    expect(favIndex).toBe(0);
+    expect(copyIndex).toBeLessThan(playIndex);
+    expect(playIndex).toBe(classes.length - 1);
+  });
+
+  test("파일명 복사 버튼은 Play 옆에 있다(파일명 글자에 붙어 있지 않다)", async ({ page }) => {
+    await openFirstGame(page);
+    // 파일명 자신의 다음 형제가 더 이상 복사 버튼이 아니다 - system 줄이다.
+    const next = await page.locator("#detail-panel .detail-filename")
+      .evaluate((el) => el.nextElementSibling.className);
+    expect(next).not.toContain("detail-copy");
+    expect(next).toContain("detail-system");
+  });
 });
 
 test.describe("Detail Header - 닫기 버튼 없음 (레이아웃 재검토 §19-20)", () => {
@@ -112,8 +147,10 @@ test.describe("Detail 상단 빈 공간 (레이아웃 재검토 §18-19)", () =>
     expect(Math.abs(filterBarTop - detailHeaderTop)).toBeLessThan(2);
   });
 
-  test("게임을 고르기 전에도 Archive 이동 버튼과 Preview 토글이 보인다", async ({ page }) => {
-    await expect(page.locator("#detail-top #archive-ingest-btn")).toBeVisible();
+  test("게임을 고르기 전에도 메타데이터 보내기(HERO)와 Preview 토글이 보인다", async ({ page }) => {
+    // "Archive로"는 이제 Detail이 아니라 HERO에 있다(§4·§6) - Detail의 선택
+    // 상태와 무관하게 항상 그 자리에 있어야 한다.
+    await expect(page.locator("#collection-header .icon-btn[title*='메타데이터 보내기']")).toBeVisible();
     await expect(page.locator("#detail-top .detail-preview-label")).toHaveText("미리보기");
   });
 
@@ -252,16 +289,18 @@ test.describe("Media 격자", () => {
     // 차지할 만큼 자주 보는 것이 아니다(사용자 결정).
     await openMedia(page);
     const video = page.locator(".media-flag-item", { hasText: "Video" });
-    await expect(video.locator(".media-flag")).toHaveText("v");
     await expect(video).toHaveClass(/on/);
+    // `v` / `x` 글자는 둘이 닮아서 멀리서 구분이 안 됐다(사용자 피드백) - 지금은
+    // media 종류를 뜻하는 아이콘 칩이고, 있고 없고는 밝기로 갈린다.
+    await expect(video.locator("svg")).toHaveCount(1);
   });
 
-  test("없으면 x로 말한다", async ({ page }) => {
+  test("없으면 흐리게 남는다", async ({ page }) => {
     await openMedia(page);
     await page.locator(".lrow").nth(2).locator(".lc-file").click();
     await page.locator(".detail-tab", { hasText: "Media" }).click();
-    const marks = await page.locator(".media-flag").allTextContents();
-    expect(marks.every((m) => m === "x")).toBe(true);
+    // 칸은 그대로 있고(자리가 흔들리지 않는다) 켜진 것만 없다.
+    await expect(page.locator(".media-flag-item")).toHaveCount(3);
     await expect(page.locator(".media-flag-item.on")).toHaveCount(0);
   });
 });
@@ -321,11 +360,16 @@ test.describe("Media 확대(lightbox)", () => {
 });
 
 test.describe("Description", () => {
-  test("기본 높이가 열 줄쯤이다", async ({ page }) => {
-    // 남는 공간을 전부 흡수하면 설명이 긴 게임에서 아래 필드가 화면 밖으로 밀린다.
+  test("12줄에서 멈추고 늘어나지 않는다(실사용 피드백)", async ({ page }) => {
+    // 예전엔 flex:1 1 auto라 남는 세로 공간을 전부 흡수해서, 창을 늘릴수록
+    // 한없이 길어졌다 - 지금은 12줄 고정이고 그 남는 공간은 패널이 넉넉히 클
+    // 때만 Screenshot/media 정보(.detail-extra-media)가 대신 쓴다.
     await openFirstGame(page);
-    const rows = await page.locator(".detail-body-desc-wrap textarea").getAttribute("rows");
-    expect(Number(rows)).toBe(10);
+    const textarea = page.locator(".detail-body-desc-wrap textarea");
+    await expect(textarea).toHaveAttribute("rows", "12");
+    const flexGrow = await page.locator(".detail-body-desc-wrap")
+      .evaluate((el) => getComputedStyle(el).flexGrow);
+    expect(flexGrow).toBe("0");
   });
 });
 

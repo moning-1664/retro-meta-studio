@@ -79,6 +79,27 @@ python -m unittest discover -s tests
 `native/MediaCopyWorker.exe`가 없으면 네이티브 워커 테스트는 skip된다. 워커를 빌드하려면
 `native/build_worker.bat`을 실행한다.
 
+### ES-DE 외 Frontend 호환성
+
+`tests/test_frontend_compat.py`는 "우리 왕복이 맞는가"가 아니라 **"각 Frontend의 공식
+포맷 규칙에 맞는가"**를 본다. 둘은 다르다 - Pegasus의 rating 스케일이 틀렸을 때
+`test_adapters.py`의 ES-DE → Pegasus → ES-DE 왕복은 통과했다. 읽기와 쓰기가 **같은
+방식으로 틀려서** 대칭으로 상쇄됐기 때문이다. 아직 못 고친 것은 `expectedFailure`로
+박혀 있어서, 고치면 unexpected success로 suite가 실패해 알려준다.
+
+그래도 "우리 코드가 포맷 문서대로인가"까지다. **그 결과를 Frontend가 실제로 화면에
+띄우는가**는 물려 봐야 안다:
+
+```
+python -m tools.make_test_pack <출력 폴더>
+```
+
+4개 Frontend의 공식 배치대로 작은 라이브러리를 만든다. ROM은 내용이 `TEST ROM`인
+텍스트 파일이라 실행되지 않고, 검증 대상도 파일 발견 / 메타데이터 / media 표시까지다.
+각 이미지에 게임 이름과 media 종류가 그려져 있어서 `Box - Front` 자리에 `COVERS`가
+보이는지로 슬롯이 맞게 붙었는지 눈으로 판정한다. 케이스별로 무엇을 왜 보는지는 생성된
+`CHECKLIST.md`에 있다.
+
 GUI (Playwright, 헤드리스 Chromium):
 
 ```

@@ -59,8 +59,9 @@ test.describe("빈 System은 자기 그룹 안에서 뒤로 정렬될 뿐 따로
   });
 
   test("'Empty Systems' 같은 별도 묶음을 만들지 않는다", async ({ page }) => {
-    await expect(page.locator(".nav-eyebrow")).toHaveCount(1);
-    await expect(page.locator(".nav-eyebrow")).toHaveText("SYSTEMS");
+    // System 구역은 하나뿐이다 - 비었다는 사실은 개수(0)가 이미 말해 준다.
+    await expect(page.locator(".nav-eyebrow-label")).toHaveCount(1);
+    await expect(page.locator(".nav-eyebrow-label")).toHaveText("SYSTEMS");
   });
 
   test("빈 System도 목록에 남아 있다", async ({ page }) => {

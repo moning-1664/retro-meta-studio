@@ -80,17 +80,27 @@ test.describe("기준선", () => {
     const size = await page.locator(".nav-eyebrow").evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
     expect(size).toBeGreaterThanOrEqual(10);
   });
+
+  test("Gamelist 머리글 글씨가 본문(게임 목록 행)만큼 크다(실사용 피드백 §5)", async ({ page }) => {
+    // 글자 크기 슬라이더 작업 중에 9px로 줄어든 채 굳었다 - 본문보다 작으면 안 된다.
+    const headSize = await page.locator("#list-head").evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    const rowSize = await page.locator(".lrow").first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    expect(headSize).toBeGreaterThanOrEqual(rowSize - 0.5);
+  });
 });
 
 test.describe("버튼 크기", () => {
   test.beforeEach(async ({ page }) => { await openApp(page); });
 
-  test("Archive 수집 버튼은 짧은 문구의 작은 버튼이고, 전체 설명은 툴팁에 있다", async ({ page }) => {
-    const btn = page.locator("#archive-ingest-btn");
-    await expect(btn.locator(".ingest-label")).toHaveText(/^수집 · /);
-    await expect(btn).toHaveAttribute("title", /Archive에 수집합니다/);
-    const box = await btn.boundingBox();
-    expect(box.height).toBeLessThanOrEqual(24);
+  test("메타데이터 보내기/가져오기는 아이콘 하나뿐이고, 설명은 툴팁에 있다(§4·§6)", async ({ page }) => {
+    // "Archive로"는 Detail에서 HERO로 옮겨오며 글자 라벨 버튼에서 아이콘 버튼이
+    // 됐다 - 폭이 출렁이던 문제 자체가 없어졌다.
+    const send = page.locator("#collection-header .cheader-right .icon-btn[title*='메타데이터 보내기']");
+    await expect(send).toHaveAttribute("title", /Archive로/);
+    expect((await send.boundingBox()).height).toBeLessThanOrEqual(24);
+    const receive = page.locator("#collection-header .cheader-right .icon-btn[title*='메타데이터 가져오기']");
+    await expect(receive).toHaveAttribute("title", /Archive에서/);
+    expect((await receive.boundingBox()).height).toBeLessThanOrEqual(24);
   });
 
   test("Chromium과 Detail 윗부분의 아이콘 버튼은 24px 이하다", async ({ page }) => {

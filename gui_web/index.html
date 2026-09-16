@@ -27,6 +27,11 @@
         </div>
         <div id="main-row">
           <div id="list-column">
+            <!-- Chromium을 펼쳤을 때 나오는 System 카드. **#header-row가 아니라 여기
+                 있어야 한다** - 저 줄에 있으면 헤더가 커질 때 줄 전체가 같이 커져서
+                 옆의 Detail 패널까지 아래로 밀렸다(사용자 피드백). 여기 있으면 밀리는
+                 것은 목록뿐이고, Detail은 제자리를 지킨다. -->
+            <div id="collection-expanded"></div>
             <div id="filter-bar"></div>
             <div id="list-wrap">
               <div id="list-head"></div>
@@ -55,6 +60,7 @@
   <script src="icons.js"></script>
   <script src="system-icons.js"></script>
   <script src="system-icons-pack.js"></script>
+  <script src="title-affix.js"></script>
   <script src="api-client.js"></script>
   <script src="settings.js"></script>
   <script src="dashboard.js"></script>

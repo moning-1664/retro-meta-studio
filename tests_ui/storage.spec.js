@@ -16,7 +16,22 @@ test("External Storage가 있으면 내비가 Storage별로 그룹을 나눈다"
   await expect(page.locator(".nav-system")).toHaveCount(3);
 });
 
-test("External Storage를 추가하면 그룹이 하나 늘어난다", async ({ page }) => {
+test("Add External Storage 버튼은 이미 External이 있으면 숨는다(사용자 결정)", async ({ page }) => {
+  // 기본 mock에 이미 External SD(ext-1)가 있다 - 이 Collection은 External을
+  // 하나만 쓴다고 본다. 더 필요하면 먼저 지우고 다시 추가한다.
+  await expect(page.locator(".nav-action", { hasText: "Add External Storage" })).toHaveCount(0);
+});
+
+test("External Storage를 지우면 버튼이 다시 나타나고, 다시 추가하면 그룹이 늘어난다", async ({ page }) => {
+  const externalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "EXTERNAL SD" }) });
+  await externalGroup.locator(".storage-remove-btn").click();
+  await modalButton(page, "확인").click();
+  // External이 하나도 없으면 System 목록은 평평하다 - Storage 그룹 자체가 없다
+  // ("System 목록은 기본적으로 평평하다").
+  await expect(page.locator(".nav-group")).toHaveCount(0);
+  await expect(page.locator(".nav-system")).toHaveCount(3);
+  await expect(page.locator(".nav-action", { hasText: "Add External Storage" })).toBeVisible();
+
   await page.locator(".nav-action", { hasText: "Add External Storage" }).click();
   await expect(page.locator(".modal-title")).toHaveText("External Storage 추가");
 
@@ -26,9 +41,7 @@ test("External Storage를 추가하면 그룹이 하나 늘어난다", async ({ 
 
   await page.locator(".modal-body .field-row .field-input").fill("F:\ROMs");
   await modalButton(page, "추가").click();
-  // 용량 표시(하단 상태바)는 Storage마다 하나씩 늘어난다 - 그쪽이 Storage의 자리다.
-  await expect(page.locator(".sb-storage")).toHaveCount(3);
-  await expect(page.locator(".nav-group")).toHaveCount(3);
+  await expect(page.locator(".nav-group")).toHaveCount(2);
 });
 
 test("Storage 정보는 System 메뉴에서 볼 수 있다", async ({ page }) => {
