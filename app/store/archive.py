@@ -432,7 +432,11 @@ class ArchiveStore:
             # media가 실제로 수집돼 있는지. 목록이 이 값을 안 세면 UI가 "media 없음"을
             # 하드코딩하게 되고, 저장은 됐는데 화면에는 영영 안 나오는 상태가 된다.
             "       (SELECT COUNT(*) FROM archive_media"
-            "         WHERE rom_identity_id = r.rom_identity_id) AS media_count"
+            "         WHERE rom_identity_id = r.rom_identity_id) AS media_count,"
+            # ROM 위치가 기록돼 있는지(실제 파일 존재는 실행할 때 확인한다 - 목록에서
+            # 수천 개를 NAS까지 조회하면 목록이 멈춘다).
+            "       (SELECT COUNT(*) FROM archive_rom_sources"
+            "         WHERE rom_identity_id = r.rom_identity_id) AS rom_count"
             f" FROM rom_identities r JOIN games g ON g.game_id = r.game_id{where}"
             " ORDER BY g.title_norm, r.filename"
         )

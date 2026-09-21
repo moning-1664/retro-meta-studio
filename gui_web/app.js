@@ -2088,8 +2088,10 @@
   const retroarchVerified = (system) => !retroarchUnverified.has(String(system || "").toLowerCase());
 
   /** 이 행을 RetroArch로 실행할 수 있는 상태인지. 안 되면 사유 문자열, 되면 null. */
+  /** 실행 API에 넘기는 대상 ID. Archive 항목은 Collection이 아니라 "archive"다. */
+  const launchTargetId = () => (isArchive() ? "archive" : S.activeId);
+
   function launchBlockReason(target) {
-    if (isArchive()) return "Archive 항목은 실행할 수 없습니다.";
     if (isCompare()) return "Compare 중에는 실행할 수 없습니다.";
     if (!target || !target.present) return "ROM 파일이 없습니다.";
     if (!retroarchVerified(target.system)) return `'${target.system}' 시스템은 RetroArch 실행이 아직 검증되지 않았습니다.`;
@@ -2100,7 +2102,7 @@
   async function launchGame(target) {
     const blocked = launchBlockReason(target);
     if (blocked) { showToast(blocked, "warning"); return; }
-    const r = await api.launchGame(S.activeId, target.romUid);
+    const r = await api.launchGame(launchTargetId(), target.romUid);
     // ok는 "바로 죽지 않았다"는 뜻일 뿐이다 - 게임 화면까지 떴다고 단정하지 않는다.
     if (r.ok) { showToast("RetroArch 실행을 요청했습니다."); return; }
     if (r.errorKind === "core_unset" || r.errorKind === "core_missing") {
@@ -2117,7 +2119,7 @@
 
   /** Core 선택 - System 기본값으로 저장하거나 이 게임에만 지정한다. */
   async function openCoreDialog(target, opts = {}) {
-    const collectionId = S.activeId;
+    const collectionId = launchTargetId();
     const info = await api.retroarchGameInfo(collectionId, target.romUid);
     if (!info.ok) { showToast(info.error, "error"); return; }
     const d = info.data;
@@ -4831,7 +4833,40 @@
       preview.appendChild(icon("imageOff", IC.lg));
     }
     zone.appendChild(preview);
+    zone.addEventListener("contextmenu", (e) => openMediaMenu(e, slot, has));
     return zone;
+  }
+
+  /** 복사해 둔 media 하나(다음 붙여넣기 대상). 그림 한 장만 옮길 때 쓴다 -
+   * 상대 cover가 더 마음에 들 때 메타데이터는 그대로 두고 그것만 가져온다. */
+  let mediaClip = null;
+
+  function openMediaMenu(e, slot, has) {
+    const state = S.detailState;
+    if (!state || state.compare) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const pasteOk = !!mediaClip && state.archive;
+    showContextMenu(menuPoint(e), slot.label, mediaClip
+      ? `복사해 둔 것: ${mediaClip.label} (${mediaClip.title})` : null, [
+      { label: "미디어 복사", icon: "copy", disabled: !has, onSelect: () => {
+        mediaClip = state.archive
+          ? { kind: "archive", uid: state.romIdentityId, key: slot.key }
+          : { kind: "collection", id: S.activeId, uid: state.romUid, key: slot.key };
+        mediaClip.label = slot.label;
+        mediaClip.title = (state.fields && state.fields.name) || state.file || "";
+        showToast(`${slot.label}을(를) 복사했습니다.`);
+      } },
+      { label: "미디어 붙여넣기", icon: "upload", disabled: !pasteOk,
+        title: !state.archive ? "Collection에는 Plan과 함께 지원합니다" : (mediaClip ? null : "복사한 미디어가 없습니다"),
+        onSelect: async () => {
+          const r = await api.archiveMediaPaste(state.romIdentityId, slot.key, mediaClip);
+          if (!r.ok) { showToast(r.error, "error"); return; }
+          state.media = { ...(state.media || {}), [slot.key]: true };
+          renderDetailPanel();
+          showToast(`${slot.label}을(를) 붙여넣었습니다.`);
+        } },
+    ]);
   }
 
   //: 그림으로 보여줄 수 없는 media의 아이콘. 영상은 재생, 설명서는 문서다.
@@ -5086,11 +5121,11 @@
     }
     const content = h("div", { class: "rom-core-body" }, [h("div", { class: "rom-core-note" }, ["불러오는 중…"])]);
     section.appendChild(content);
-    const collectionId = S.activeId;
+    const collectionId = launchTargetId();
     const draw = async () => {
       const info = await api.retroarchGameInfo(collectionId, state.romUid);
       // 그 사이 다른 게임이나 탭으로 넘어갔으면 그리지 않는다.
-      if (S.detailState !== state || S.activeId !== collectionId) return;
+      if (S.detailState !== state || launchTargetId() !== collectionId) return;
       clear(content);
       if (!info.ok) { content.appendChild(h("div", { class: "rom-core-note" }, [info.error])); return; }
       const d = info.data;
@@ -5691,6 +5726,12 @@
    */
   async function refreshActive() {
     if (isArchive()) {
+      // 디렉토리가 진실이다 - 직접 넣은 ROM이나 고친 gamelist를 먼저 읽어 들인다.
+      // 설정이 없으면(configured 아님) 읽을 디렉토리가 없으므로 조용히 넘어간다.
+      const synced = await api.archiveRefresh();
+      if (synced.ok && synced.data && (synced.data.added || synced.data.romsLinked)) {
+        showToast(`Archive 디렉토리에서 ${synced.data.added}개 추가, ROM ${synced.data.romsLinked}개 연결`);
+      }
       await ensureDetail(ARCHIVE_ID);
       resetList();
       renderAll();

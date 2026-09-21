@@ -58,3 +58,18 @@ test("버전을 고르면 뱃지가 사라진다", async ({ page }) => {
   await page.locator(".match-option").nth(1).click();
   await expect(page.locator(".match-badge")).toHaveCount(0);
 });
+
+test("미디어를 우클릭하면 복사/붙여넣기 메뉴가 나온다", async ({ page }) => {
+  await openArchive(page);
+  await page.evaluate(() => {
+    window.api.archiveDetail = () => Promise.resolve({ ok: true, data: {
+      romIdentityId: "rid2", gameId: "g", system: "ps2", filename: "FFX.iso", title: "Final Fantasy X",
+      fields: { name: "Final Fantasy X" }, frontendRaw: {}, sources: [], media: [{ media_type: "covers" }],
+      romSources: [], edited: false, preferredRecordId: null } });
+  });
+  await page.locator(".lrow", { hasText: "Final Fantasy X" }).locator(".lc-title").click();
+  await page.locator(".detail-tab", { hasText: "Media" }).click();
+  await page.locator(".media-tile.cover").click({ button: "right" });
+  await expect(page.locator(".ctx-item", { hasText: "미디어 복사" })).toBeVisible();
+  await expect(page.locator(".ctx-item", { hasText: "미디어 붙여넣기" })).toBeVisible();
+});

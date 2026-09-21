@@ -391,3 +391,114 @@ class ArchiveConflictTests(unittest.TestCase):
         self._put("a", name="Game", desc="Same")
         self._put("b", name="Game", desc="Same")
         self.assertEqual(self._count(), 0)
+
+
+class ArchiveMediaPasteTests(unittest.TestCase):
+    """Archive 안에서(또는 Collection에서) media 하나만 골라 붙인다."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_mpaste_"))
+        self.source_root = build_esde_tree(self.dir / "source")
+        self.archive_dir = self.dir / "Archives"
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.src = self.api.create_collection("Master", "es-de", str(self.source_root))["data"]["id"]
+        self.api.start_scan(self.src)
+        wait_idle(self.api)
+        self.api.save_archive_config({"archiveDir": str(self.archive_dir)})
+        self.api.start_archive_ingest(self.src, {"kind": "all"})
+        wait_idle(self.api)
+        rows = {r["file"]: r["romIdentityId"] for r in self.api.archive_rows()["data"]["rows"]}
+        self.ffx, self.mgs = rows["FFX.iso"], rows["MGS2.iso"]
+
+    def tearDown(self):
+        self.api.close()
+
+    def _cover_row_uid(self, filename):
+        return next(r["romUid"] for r in self.api.list_rows(self.src, limit=50)["data"]["rows"]
+                    if r["file"] == filename)
+
+    def test_pasting_a_cover_from_a_collection_replaces_only_that_media(self):
+        (self.source_root / "downloaded_media" / "ps2" / "covers" / "MGS2.png").write_bytes(b"MGS2-COVER!")
+        self.api.start_scan(self.src, True)
+        wait_idle(self.api)
+        result = self.api.archive_media_paste(
+            self.ffx, "Covers", {"kind": "collection", "id": self.src, "uid": self._cover_row_uid("MGS2.iso"), "key": "Covers"})
+        self.assertTrue(result["ok"], result.get("error"))
+        dest = self.archive_dir / "downloaded_media" / "ps2" / "covers" / "FFX.png"
+        self.assertEqual(dest.read_bytes(), b"MGS2-COVER!")
+        # 다른 media와 메타데이터는 그대로다.
+        self.assertTrue((self.archive_dir / "downloaded_media" / "ps2" / "videos" / "FFX.mp4").exists())
+        self.assertEqual(self.api.archive_detail(self.ffx)["data"]["fields"].get("desc"), "A role-playing game.")
+
+    def test_pasting_between_archive_items_works(self):
+        (self.archive_dir / "downloaded_media" / "ps2" / "covers" / "MGS2.png").write_bytes(b"ARCH-MGS2")
+        self.api.archive_project()
+        self.api.archive.put_media_ref(self.mgs, "covers", "__archive__",
+                                       str(self.archive_dir / "downloaded_media" / "ps2" / "covers" / "MGS2.png"), 9)
+        result = self.api.archive_media_paste(
+            self.ffx, "Covers", {"kind": "archive", "uid": self.mgs, "key": "Covers"})
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual((self.archive_dir / "downloaded_media" / "ps2" / "covers" / "FFX.png").read_bytes(),
+                         b"ARCH-MGS2")
+
+    def test_missing_source_media_is_refused(self):
+        r = self.api.archive_media_paste(self.ffx, "Covers", {"kind": "archive", "uid": self.mgs, "key": "3DBoxes"})
+        self.assertFalse(r["ok"])
+
+
+class ArchiveDirectoryRefreshTests(unittest.TestCase):
+    """디렉토리가 진실이다 - ROM을 넣고 새로고침하면 Archive에 나타난다."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_refresh_"))
+        self.archive_dir = self.dir / "Archives"
+        self.rom_dir = self.dir / "ArchiveRoms"
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.api.save_archive_config({"archiveDir": str(self.archive_dir), "romDir": str(self.rom_dir)})
+
+    def tearDown(self):
+        self.api.close()
+
+    def _rows(self):
+        return {r["file"]: r for r in self.api.archive_rows()["data"]["rows"]}
+
+    def test_added_rom_shows_up_as_rom_only_after_refresh(self):
+        (self.rom_dir / "snes").mkdir(parents=True)
+        (self.rom_dir / "snes" / "Zelda.sfc").write_bytes(b"rom")
+        self.assertEqual(self._rows(), {})
+        result = self.api.archive_refresh()["data"]
+        self.assertEqual(result["added"], 1)
+        row = self._rows()["Zelda.sfc"]
+        self.assertTrue(row["present"])
+        self.assertEqual(row["title"], "Zelda")
+
+    def test_refresh_is_idempotent(self):
+        (self.rom_dir / "snes").mkdir(parents=True)
+        (self.rom_dir / "snes" / "Zelda.sfc").write_bytes(b"rom")
+        self.api.archive_refresh()
+        self.assertEqual(self.api.archive_refresh()["data"]["added"], 0)
+        self.assertEqual(len(self._rows()), 1)
+
+    def test_gamelist_only_entry_is_metadata_only(self):
+        gl = self.archive_dir / "gamelists" / "snes"
+        gl.mkdir(parents=True)
+        (gl / "gamelist.xml").write_text(
+            "<gameList><game><path>./Mario.sfc</path><name>Super Mario</name></game></gameList>",
+            encoding="utf-8")
+        self.api.archive_refresh()
+        row = self._rows()["Mario.sfc"]
+        self.assertFalse(row["present"])
+        self.assertEqual(self.api.archive_detail(row["romIdentityId"])["data"]["fields"]["name"], "Super Mario")
+
+    def test_rom_added_for_existing_metadata_links_without_new_row(self):
+        gl = self.archive_dir / "gamelists" / "snes"
+        gl.mkdir(parents=True)
+        (gl / "gamelist.xml").write_text(
+            "<gameList><game><path>./Mario.sfc</path><name>Super Mario</name></game></gameList>",
+            encoding="utf-8")
+        self.api.archive_refresh()
+        (self.rom_dir / "snes").mkdir(parents=True)
+        (self.rom_dir / "snes" / "Mario.sfc").write_bytes(b"rom")
+        result = self.api.archive_refresh()["data"]
+        self.assertEqual((result["added"], result["romsLinked"]), (0, 1))
+        self.assertTrue(self._rows()["Mario.sfc"]["present"])

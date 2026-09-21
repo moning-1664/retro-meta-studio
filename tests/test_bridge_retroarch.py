@@ -116,3 +116,44 @@ class BridgeRetroarchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ArchiveLaunchTests(BridgeRetroarchTests):
+    """Archive 항목도 ROM 위치가 기록돼 있으면 실행된다 - 화면이 막을 이유가 없었다."""
+
+    def _ingest(self):
+        self.api.start_archive_ingest(self.cid, {"kind": "all"})
+        from tests.fixtures import wait_idle
+        wait_idle(self.api)
+        return next(r["romIdentityId"] for r in self.api.archive_rows()["data"]["rows"]
+                    if r["file"] == "Super Mario World (USA).sfc")
+
+    def _launch_archive(self, rid):
+        def popen(command, **kwargs):
+            self.calls.append(command)
+            return FakeProc()
+        with mock.patch.object(retroarch.subprocess, "Popen", popen), mock.patch.object(retroarch.time, "sleep"):
+            return self.api.launch_game("archive", rid)
+
+    def test_archive_row_reports_whether_a_rom_is_recorded(self):
+        self._ingest()
+        rows = {r["file"]: r for r in self.api.archive_rows()["data"]["rows"]}
+        self.assertTrue(rows["Super Mario World (USA).sfc"]["present"])
+        self.assertFalse(rows["Ghost.sfc"]["present"])
+
+    def test_archive_item_launches_from_recorded_rom_path(self):
+        rid = self._ingest()
+        self.configure()
+        self.api.set_system_core("snes", "snes9x_libretro.dll")
+        r = self._launch_archive(rid)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(Path(self.calls[0][-1]), self.root / "snes" / "Super Mario World (USA).sfc")
+
+    def test_archive_item_without_rom_says_so(self):
+        self._ingest()
+        rid = next(r["romIdentityId"] for r in self.api.archive_rows()["data"]["rows"]
+                   if r["file"] == "Ghost.sfc")
+        self.configure()
+        r = self._launch_archive(rid)
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["errorKind"], "rom_missing")

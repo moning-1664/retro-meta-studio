@@ -50,7 +50,7 @@ def collection_for(config) -> Collection:
         storages=[StorageLocation(STORAGE_INTERNAL, STORAGE_INTERNAL, "Archive", root)])
 
 
-def project(archive, config, rom_identity_ids=None) -> dict:
+def project(archive, config, rom_identity_ids=None, *, overwrite_media=None) -> dict:
     """Archive의 (resolve된) 메타데이터와 media를 디렉토리에 쓴다.
 
     `rom_identity_ids=None`이면 전체. gamelist는 System 단위로 **한 번만** 쓴다 -
@@ -85,7 +85,8 @@ def project(archive, config, rom_identity_ids=None) -> dict:
                 filename=filename, fields=fields,
                 frontend_raw=raw if adapter.raw_is_mine(raw) else {}))
             if cfg["mediaInternal"]:
-                got, lost = _copy_media(archive, adapter, layout, rid, filename, fields)
+                got, lost = _copy_media(archive, adapter, layout, rid, filename, fields,
+                                        overwrite=(overwrite_media or {}).get(rid, ()))
                 copied += got
                 missing += lost
         adapter.write_index(layout, batch)
@@ -94,31 +95,39 @@ def project(archive, config, rom_identity_ids=None) -> dict:
             "systems": len(by_system)}
 
 
-def _copy_media(archive, adapter, layout, rid, filename, fields) -> tuple[int, int]:
-    refs = archive.media_refs(rid)
-    # 같은 type이 여러 출처에서 오면 가장 최근 것 하나만 쓴다.
-    # 사용자가 버전을 골랐으면(Preferred) 그 출처의 media를 우선한다 - 메타데이터만
-    # 고른 버전이고 그림은 다른 버전 것이면 고른 의미가 없다.
+def effective_media(archive, rid) -> dict[str, dict]:
+    """이 항목에서 실제로 쓰는 media(type -> ref). 화면 표시와 디렉토리 쓰기가 같은 규칙을 쓴다.
+
+    사용자가 버전을 골랐으면(Preferred) 그 출처의 것을 우선하고, 그다음은 가장 최근 것이다.
+    메타데이터만 고른 버전이고 그림은 다른 버전 것이면 고른 의미가 없다."""
     preferred = archive.get_preferred(rid)
     chosen = preferred["source_collection_id"] if preferred else None
     latest: dict[str, dict] = {}
-    for ref in refs:
+    for ref in archive.media_refs(rid):
         cur = latest.get(ref["media_type"])
         rank = (ref["source_collection_id"] == chosen, ref["updated_at"])
         if cur is None or rank >= (cur["source_collection_id"] == chosen, cur["updated_at"]):
             latest[ref["media_type"]] = ref
-    files = [MediaFile(media_type=t, path=r["abs_path"], size=r["size"])
-             for t, r in latest.items()]
+    return latest
+
+
+def _copy_media(archive, adapter, layout, rid, filename, fields, *, overwrite=()) -> tuple[int, int]:
+    """없는 것만 복사한다. `overwrite`에 든 media type은 이미 있어도 덮어쓴다(사용자가
+    직접 바꾼 그림을 Frontend 트리에 반영할 때)."""
     title = (fields.get("name") or "").strip() or Path(filename).stem
     copied = missing = 0
-    for src, dest in adapter.media_pairs(layout, filename, files, title=title):
-        dest_path = Path(dest)
-        if dest_path.exists():
-            continue
-        if not Path(src).exists():
-            missing += 1
-            continue
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest_path)
-        copied += 1
+    for media_type, ref in effective_media(archive, rid).items():
+        mf = MediaFile(media_type=media_type, path=ref["abs_path"], size=ref["size"])
+        for src, dest in adapter.media_pairs(layout, filename, [mf], title=title):
+            dest_path = Path(dest)
+            if dest_path.exists() and media_type not in overwrite:
+                continue
+            if not Path(src).exists():
+                missing += 1
+                continue
+            if dest_path.exists() and Path(src).resolve() == dest_path.resolve():
+                continue
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest_path)
+            copied += 1
     return copied, missing

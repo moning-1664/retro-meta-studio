@@ -37,6 +37,7 @@ from app.plan import builder, clipboard
 from app.plan.applier import apply_plan
 from app.plan.validator import check_capacity, validate
 from app.archive import conflicts as conflict_service
+from app.archive import directory as archive_directory
 from app.archive import legacy as archive_legacy
 from app.archive import projection as archive_projection
 from app.archive import service as archive_service
@@ -45,7 +46,7 @@ from app.convert import service as convert_service
 from app.match import service as match_service
 from app.metadata import service as metadata_service
 import storage
-from app.store.archive import ArchiveStore
+from app.store.archive import ARCHIVE_EDIT_SOURCE, ArchiveStore
 from app.store.registry import CHANGE_APPLIED, RegistryError, RegistryStore
 from app.workspace import Workspace, WorkspaceError
 from bridge.jobs import JobManager
@@ -1502,7 +1503,9 @@ class Api:
                 # 예전에는 False로 박아뒀다. Archive에 media가 저장돼 있어도
                 # 목록에서는 영영 없는 것으로 보였다.
                 "hasMetadata": True, "hasMedia": bool(r["media_count"]),
-                "present": True, "size": 0,
+                # ROM 위치가 기록돼 있으면 있는 것으로 본다. 없으면 메타데이터만 있는
+                # 항목이다(ROM only/Metadata only 표시는 화면이 이 값으로 가른다).
+                "present": bool(r["rom_count"]), "size": 0,
                 "storageId": "archive",
                 "desc": fields.get("desc") or "",
                 "region": r["region"] or fields.get("region") or "",
@@ -1548,8 +1551,7 @@ class Api:
         사라졌으면 그 media만 건너뛴다.
         """
         media_type = MEDIA_KEYS.get(media_label, str(media_label).lower())
-        item = next((m for m in self.archive.media_refs(rom_identity_id)
-                     if m["media_type"] == media_type), None)
+        item = archive_projection.effective_media(self.archive, rom_identity_id).get(media_type)
         if item is None:
             return ok(None)
         return ok(self._encode_image(item["abs_path"], THUMBNAIL_MAX if thumbnail else None))
@@ -1631,6 +1633,52 @@ class Api:
         result = archive_service.set_preferred(self.archive, rom_identity_id, int(record_id))
         self._project_archive(result, [rom_identity_id])
         return ok(result)
+
+    def _media_source_path(self, source) -> str | None:
+        """복사할 media 파일의 위치. source: {"kind": "archive"|"collection", "id", "uid", "key"}"""
+        media_type = MEDIA_KEYS.get(source.get("key"), str(source.get("key") or "").lower())
+        if source.get("kind") == "archive":
+            item = archive_projection.effective_media(self.archive, str(source.get("uid"))).get(media_type)
+            return item["abs_path"] if item else None
+        row = self.workspace.open(source.get("id")).get_row(int(source.get("uid")))
+        item = next((m for m in (row["media"] if row else []) if m["media_type"] == media_type), None)
+        return item["rel_path"] if item else None
+
+    @guarded
+    def archive_media_paste(self, rom_identity_id, media_key, source):
+        """다른 항목(Collection 또는 Archive)의 media 하나를 이 Archive 항목에 붙인다.
+
+        cover 등 일부만 상대 것이 더 마음에 들 때 쓴다. 이 항목의 **다른 media와 메타데이터는
+        그대로**다. 붙인 것은 "Archive에서 직접 고른 값"이라서 버전 충돌(`[n]`)도 해소된다.
+        """
+        identity = self.archive.get_identity(rom_identity_id)
+        if identity is None:
+            return err("Archive 항목을 찾을 수 없습니다.")
+        media_type = MEDIA_KEYS.get(media_key, str(media_key or "").lower())
+        src = self._media_source_path(source or {})
+        if not src or not Path(src).is_file():
+            return err("복사할 media를 찾을 수 없습니다.")
+        cfg = self._archive_config()
+        # Archive 디렉토리가 있으면 거기에 두고 그것을 참조한다 - 원본 Collection이 사라져도
+        # 남는다. 없으면 원본 위치를 그대로 가리킨다(Archive는 기본적으로 참조다).
+        self.archive.put_media_ref(rom_identity_id, media_type, ARCHIVE_EDIT_SOURCE, src,
+                                   Path(src).stat().st_size)
+        fields, _raw = self.archive.resolve_fields(rom_identity_id)
+        self.archive.put_record(rom_identity_id, ARCHIVE_EDIT_SOURCE, fields, {})
+        projection = None
+        if archive_projection.is_configured(cfg):
+            projection = archive_projection.project(
+                self.archive, cfg, [rom_identity_id], overwrite_media={rom_identity_id: {media_type}})
+        return ok({"romIdentityId": rom_identity_id, "mediaType": media_type, "projection": projection})
+
+    @guarded
+    def archive_refresh(self):
+        """Archive 디렉토리를 다시 읽어 DB에 없는 항목(직접 넣은 ROM, 고친 gamelist)을 채운다."""
+        cfg = self._archive_config()
+        if not archive_projection.is_configured(cfg):
+            return err("Archive 디렉토리가 설정되지 않았습니다.")
+        provider = storage.for_path(cfg["archiveDir"])
+        return ok(archive_directory.sync_from_directory(self.archive, cfg, provider))
 
     @guarded
     def archive_project(self):
@@ -2053,25 +2101,46 @@ class Api:
             self.save_app_settings({"emulator": {"systemCores": {**emulator["systemCores"], **applied}}})
         return ok({"applied": applied, "count": len(applied)})
 
+    #: Archive 항목을 실행할 때 collection_id 자리에 쓰는 값.
+    ARCHIVE_TARGET = "archive"
+
     def _launch_target(self, collection_id, rom_uid):
+        """실행 대상 하나를 (frontend, system, filename, rom_path, present)로 푼다.
+
+        **Archive 항목도 ROM 위치가 기록돼 있으면 실행할 수 있다** - 예전에는 화면이
+        Archive라는 이유만으로 막았다. 실행에 필요한 것은 ROM 파일이 실제로 있느냐뿐이고
+        그것은 항목이 어디 속하든 같다.
+        """
+        if collection_id == self.ARCHIVE_TARGET:
+            identity = self.archive.get_identity(str(rom_uid))
+            if identity is None:
+                raise WorkspaceError("항목을 찾을 수 없습니다.")
+            filename = identity["filename"] or identity["filename_norm"]
+            rom_path = next((Path(src["abs_path"]) for src in self.archive.rom_sources(identity["rom_identity_id"])
+                             if Path(src["abs_path"]).is_file()), None)
+            return {"frontend": self._archive_config()["frontend"], "system": identity["system"],
+                    "filename": filename, "rom_path": rom_path, "present": rom_path is not None}
         collection = self.registry.get_collection(collection_id)
         if collection is None:
             raise WorkspaceError("Collection을 찾을 수 없습니다.")
         row = self.workspace.open(collection_id).get_row(int(rom_uid))
         if row is None:
             raise WorkspaceError("항목을 찾을 수 없습니다.")
-        return collection, row
+        layout = get_adapter(collection.frontend).layout(collection, row["system"])
+        return {"frontend": collection.frontend, "system": row["system"],
+                "filename": row["filename"], "rom_path": Path(layout.rom_dir) / row["filename"],
+                "present": bool(row["present"])}
 
     @guarded
     def retroarch_game_info(self, collection_id, rom_uid):
         """Core 선택 창에 필요한 것 - 이 게임의 System 기본값/게임 지정/설치된 Core 목록."""
-        collection, row = self._launch_target(collection_id, rom_uid)
+        target = self._launch_target(collection_id, rom_uid)
         emulator = self._emulator()
-        system_core = self._system_core(emulator, collection.frontend, row["system"])
-        game_core = emulator["gameCores"].get(self._game_core_key(row["system"], row["filename"]))
+        system_core = self._system_core(emulator, target["frontend"], target["system"])
+        game_core = emulator["gameCores"].get(self._game_core_key(target["system"], target["filename"]))
         return ok({
-            "system": row["system"], "file": row["filename"], "present": bool(row["present"]),
-            "verified": retroarch.is_verified(row["system"]),
+            "system": target["system"], "file": target["filename"], "present": target["present"],
+            "verified": retroarch.is_verified(target["system"]),
             "systemCore": system_core, "gameCore": game_core, "effectiveCore": game_core or system_core,
             "cores": retroarch.list_cores(emulator["coresDir"]), "coresDir": emulator["coresDir"],
         })
@@ -2080,21 +2149,20 @@ class Api:
     def launch_game(self, collection_id, rom_uid):
         """게임을 RetroArch로 실행한다. 실패하면 화면이 다음 동작을 고를 수 있게 errorKind를 준다
         (core_unset/core_missing이면 Core 선택 창, retroarch_missing이면 Settings)."""
-        collection, row = self._launch_target(collection_id, rom_uid)
+        target = self._launch_target(collection_id, rom_uid)
         emulator = self._emulator()
-        if not row["present"]:
+        system, filename, rom_path = target["system"], target["filename"], target["rom_path"]
+        if not target["present"]:
             return {"ok": False, "error": "ROM 파일이 없는 항목입니다.", "errorKind": "rom_missing",
-                    "system": row["system"]}
-        layout = get_adapter(collection.frontend).layout(collection, row["system"])
-        rom_path = Path(layout.rom_dir) / row["filename"]
-        core = (emulator["gameCores"].get(self._game_core_key(row["system"], row["filename"]))
-                or self._system_core(emulator, collection.frontend, row["system"]))
-        result = retroarch.launch(emulator["retroarchPath"], emulator["coresDir"], core, rom_path, row["system"])
-        log.info("RETROARCH_LAUNCH system=%s rom=%s core=%s ok=%s %s", row["system"], rom_path, core,
+                    "system": system}
+        core = (emulator["gameCores"].get(self._game_core_key(system, filename))
+                or self._system_core(emulator, target["frontend"], system))
+        result = retroarch.launch(emulator["retroarchPath"], emulator["coresDir"], core, rom_path, system)
+        log.info("RETROARCH_LAUNCH system=%s rom=%s core=%s ok=%s %s", system, rom_path, core,
                  result.ok, result.error or "")
         if result.ok:
             return ok({"launched": True, "core": core})
-        return {"ok": False, "error": result.error, "errorKind": result.error_kind, "system": row["system"]}
+        return {"ok": False, "error": result.error, "errorKind": result.error_kind, "system": system}
 
     @guarded
     def pick_file(self, title="", file_types=None, directory=""):
