@@ -1931,6 +1931,7 @@ class Api:
 
     @staticmethod
     def _compare_row_summary(row):
+        left, right = row["left"] or {}, row["right"] or {}
         side = row["left"] or row["right"] or {}
         return {
             # 좌우 어느 쪽에만 있을 수 있으므로 romUid는 목록의 키로 쓰지 않는다 -
@@ -1941,8 +1942,12 @@ class Api:
             "size": side.get("size") or 0,
             "status": row["status"], "mediaDiff": row["mediaDiff"],
             "changedFields": row["changedFields"],
-            "leftRomUid": (row["left"] or {}).get("romUid"),
-            "rightRomUid": (row["right"] or {}).get("romUid"),
+            "leftRomUid": left.get("romUid"), "rightRomUid": right.get("romUid"),
+            # 가운데 목록이 좌/우를 **각자의** 파일명/제목으로 그린다. 짝이 이름 정규화로 맺어진
+            # 경우 양쪽 파일명이 다를 수 있는데, 한 쌍만 주면 양쪽에 같은 값이 찍혔다.
+            "leftFile": left.get("filename"), "rightFile": right.get("filename"),
+            "leftTitle": left.get("title") or "", "rightTitle": right.get("title") or "",
+            "leftPresent": bool(left.get("present")), "rightPresent": bool(right.get("present")),
         }
 
     @guarded
@@ -1958,10 +1963,74 @@ class Api:
         return ok({
             "key": key, "system": row["system"], "file": row["file"],
             "status": row["status"], "changedFields": row["changedFields"],
-            "mediaDiff": row["mediaDiff"],
+            "mediaDiff": row["mediaDiff"], "mediaChanged": row.get("mediaChanged", []),
             "baseName": state["baseName"], "otherName": state["otherName"],
-            "left": row["left"], "right": row["right"],
+            "left": self._compare_side_detail(row["left"], state["baseId"], row["system"]),
+            "right": self._compare_side_detail(row["right"], state["otherId"], row["system"]),
         })
+
+    def _compare_side_detail(self, side, collection_id, system):
+        """한쪽의 Detail에 필요한 것. 그림을 읽을 수 있게 collectionId/romUid를 함께 준다."""
+        if side is None:
+            return None
+        collection = self.registry.get_collection(collection_id)
+        rom_path = None
+        if collection is not None:
+            layout = get_adapter(collection.frontend).layout(collection, system)
+            rom_path = str(Path(layout.rom_dir) / side["filename"]) if layout.rom_dir else None
+        return {**side, "collectionId": collection_id, "romPath": rom_path}
+
+    @guarded
+    def compare_copy_row(self, key, direction, metadata_only=False):
+        """Compare 한 행을 반대쪽 Collection의 **Plan에 올린다**(사용자 결정 - "모든 변경은
+        PLAN 기준 / 실제 Apply를 눌러야 적용").
+
+        `direction`: "toRight"(기준 -> 상대) 또는 "toLeft"(상대 -> 기준).
+        `metadata_only`: `≠`(양쪽에 ROM이 있는데 내용이 다름)에서 쓴다 - ROM은 이미 있으므로
+        옮기지 않고 메타데이터/media만 보낸다.
+
+        Compare 결과는 시작 시점의 스냅샷이라 여기서 Plan에 올려도 그 스냅샷은 그대로 둔다 -
+        다시 비교(Refresh)하는 것이 "지금 상태"를 보는 정직한 방법이다.
+        """
+        if not self._compare:
+            return err("Compare Mode가 아닙니다.")
+        if direction not in ("toLeft", "toRight"):
+            return err(f"알 수 없는 방향입니다: {direction}")
+        row = next((r for r in self._compare["rows"]
+                    if f"{r['system']}|{r['file']}" == key), None)
+        if row is None:
+            return err("항목을 찾을 수 없습니다.")
+        to_right = direction == "toRight"
+        side = row["left"] if to_right else row["right"]
+        if side is None:
+            return err("보낼 쪽에 그 항목이 없습니다.")
+        source_id = self._compare["baseId"] if to_right else self._compare["otherId"]
+        target_id = self._compare["otherId"] if to_right else self._compare["baseId"]
+
+        source = self.registry.get_collection(source_id)
+        target, _cache, provider = self._plan_context(target_id)
+        if source is None or target is None:
+            return err("Collection을 찾을 수 없습니다.")
+        blocked = self._ensure_file_ops(target) or self._ensure_writable(target, [row["system"]])
+        if blocked:
+            return blocked
+
+        items, _bytes = clipboard.build_items(source, self.workspace.open(source_id), [side["romUid"]])
+        if not items:
+            return err("원본 항목을 읽지 못했습니다.")
+        if metadata_only:
+            items = [{**item, "rom": None} for item in items]
+        elif not side.get("present"):
+            # ROM이 없는 쪽에서 "ROM + 메타데이터"를 보낼 수는 없다 - 메타데이터만 간다.
+            items = [{**item, "rom": None} for item in items]
+        # 짝이 이름 정규화로 맺어졌으면 상대 쪽 파일명으로 맞춘다 - 그래야 새 항목이 생기지 않고
+        # 이미 있는 그 항목에 들어간다.
+        other = row["right"] if to_right else row["left"]
+        if other is not None and other["filename"] != side["filename"]:
+            items = [{**item, "filename": other["filename"]} for item in items]
+        result = builder.plan_add(self._plan(target_id), target, provider, items)
+        return ok({**result, "targetId": target_id, "targetName": target.name,
+                   "direction": direction, "metadataOnly": bool(metadata_only)})
 
     @guarded
     def exit_compare(self):

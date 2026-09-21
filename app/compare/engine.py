@@ -139,12 +139,32 @@ def _pair(left_entries, right_entries) -> tuple[list[tuple], set, set]:
     return pairs, used_left, used_right
 
 
+def media_changes(left, right) -> list[str]:
+    """Media 종류 중 양쪽이 다른 것. 한쪽에만 있거나, 양쪽에 있어도 파일 크기가 다르면 다르다."""
+    lsizes = left.get("media_sizes") or {t: 0 for t in left.get("media_types") or []}
+    rsizes = right.get("media_sizes") or {t: 0 for t in right.get("media_types") or []}
+    changed = []
+    for media_type in sorted(set(lsizes) | set(rsizes)):
+        if media_type not in lsizes or media_type not in rsizes or lsizes[media_type] != rsizes[media_type]:
+            changed.append(media_type)
+    return changed
+
+
+def _has_rom(entry) -> bool:
+    return bool(entry.get("present", True))
+
+
 def compare(left_entries, right_entries) -> list[dict]:
     """두 Collection의 항목을 맞대어 행 목록을 만든다.
 
     entry는 `CacheStore.all_entries()`가 주는 모양을 그대로 받는다.
-    반환 행: {system, file, status, mediaDiff, changedFields, left, right}
-    left/right는 각각 {romUid, filename, title, size, present, mediaTypes, fields} 또는 None.
+    반환 행: {system, file, status, mediaDiff, mediaChanged, changedFields, left, right}
+    left/right는 각각 {romUid, filename, title, size, present, mediaTypes, mediaSizes, fields} 또는 None.
+
+    **존재 여부의 기준은 ROM 파일이다**(사용자 결정). gamelist에 항목만 있고 ROM이 없는 쪽은
+    "없는 것"으로 본다:
+      - 왼쪽에만 ROM이 있으면 `only_a`(`>`), 오른쪽에만 있으면 `only_b`(`<`)
+      - 양쪽에 ROM이 있고 Metadata와 Media가 모두 같으면 `same`(`=`), 하나라도 다르면 `conflict`(`≠`)
     """
     pairs, used_left, used_right = _pair(left_entries, right_entries)
 
@@ -152,13 +172,21 @@ def compare(left_entries, right_entries) -> list[dict]:
     for i, j in pairs:
         left, right = left_entries[i], right_entries[j]
         changed = fields_differ(left.get("fields"), right.get("fields"))
-        media_diff = set(left.get("media_types") or []) != set(right.get("media_types") or [])
+        media_changed = media_changes(left, right)
+        left_rom, right_rom = _has_rom(left), _has_rom(right)
+        if left_rom and not right_rom:
+            status = STATUS_ONLY_A
+        elif right_rom and not left_rom:
+            status = STATUS_ONLY_B
+        else:
+            status = STATUS_CONFLICT if (changed or media_changed) else STATUS_SAME
         rows.append({
             "system": left["system"],
             "file": left["filename"],
-            "status": STATUS_CONFLICT if changed else STATUS_SAME,
+            "status": status,
             "changedFields": changed,
-            "mediaDiff": media_diff,
+            "mediaDiff": bool(media_changed),
+            "mediaChanged": media_changed,
             "left": _side(left),
             "right": _side(right),
         })
@@ -168,14 +196,14 @@ def compare(left_entries, right_entries) -> list[dict]:
             continue
         rows.append({"system": left["system"], "file": left["filename"],
                      "status": STATUS_ONLY_A, "changedFields": [], "mediaDiff": False,
-                     "left": _side(left), "right": None})
+                     "mediaChanged": [], "left": _side(left), "right": None})
 
     for j, right in enumerate(right_entries):
         if j in used_right:
             continue
         rows.append({"system": right["system"], "file": right["filename"],
                      "status": STATUS_ONLY_B, "changedFields": [], "mediaDiff": False,
-                     "left": None, "right": _side(right)})
+                     "mediaChanged": [], "left": None, "right": _side(right)})
 
     rows.sort(key=lambda r: (r["system"], r["file"].lower()))
     return rows
@@ -189,6 +217,7 @@ def _side(entry) -> dict:
         "size": entry.get("size") or 0,
         "present": bool(entry.get("present", True)),
         "mediaTypes": list(entry.get("media_types") or []),
+        "mediaSizes": dict(entry.get("media_sizes") or {}),
         "fields": entry.get("fields") or {},
     }
 

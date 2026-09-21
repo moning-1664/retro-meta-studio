@@ -465,6 +465,7 @@ class CacheStore:
             entry = dict(row)
             entry["fields"] = {}
             entry["media_types"] = []
+            entry["media_sizes"] = {}
             rows[entry["rom_uid"]] = entry
 
         if not rows:
@@ -473,10 +474,13 @@ class CacheStore:
             entry = rows.get(meta["rom_uid"])
             if entry is not None:
                 entry["fields"] = json.loads(meta["fields_json"])
-        for media in self._conn.execute("SELECT rom_uid,media_type FROM media"):
+        for media in self._conn.execute("SELECT rom_uid,media_type,size FROM media"):
             entry = rows.get(media["rom_uid"])
             if entry is not None:
                 entry["media_types"].append(media["media_type"])
+                # 같은 종류라도 파일이 다른지 알아야 Media 차이를 말할 수 있다 - 크기가 다르면
+                # 다른 그림이다(같은 파일의 복사본은 크기가 같다).
+                entry["media_sizes"][media["media_type"]] = int(media["size"] or 0)
         for entry in rows.values():
             entry["media_types"].sort()
         return list(rows.values())

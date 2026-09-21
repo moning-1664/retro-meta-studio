@@ -32,10 +32,11 @@ CLIPBOARD_KEY = "clipboard"
 HANDOFF_TTL_SECONDS = 7 * 24 * 3600
 
 
-def copy_selection(registry, collection, cache, rom_uids, clipboard_dir) -> dict:
-    """선택 항목을 핸드오프 파일로 내보내고 registry에 위치를 기록한다.
+def build_items(collection, cache, rom_uids) -> tuple[list, int]:
+    """`plan_add()`가 받는 모양의 항목을 만든다. 반환: (items, 총 바이트)
 
-    수천 개를 복사해도 registry에는 짧은 요약만 들어간다 - 실제 payload는 파일에 있다.
+    붙여넣기(핸드오프 파일)와 Compare의 한쪽 -> 다른쪽 복사가 **같은 함수를 쓴다** - 둘이 각자
+    만들면 한쪽만 media를 빠뜨리는 식으로 조용히 갈라진다.
     """
     adapter = get_adapter(collection.frontend)
     items, total_bytes = [], 0
@@ -58,6 +59,15 @@ def copy_selection(registry, collection, cache, rom_uids, clipboard_dir) -> dict
             "system": row["system"], "filename": row["filename"], "rom": rom, "media": media,
             "fields": row["fields"], "frontend_raw": row["frontend_raw"],
         })
+    return items, total_bytes
+
+
+def copy_selection(registry, collection, cache, rom_uids, clipboard_dir) -> dict:
+    """선택 항목을 핸드오프 파일로 내보내고 registry에 위치를 기록한다.
+
+    수천 개를 복사해도 registry에는 짧은 요약만 들어간다 - 실제 payload는 파일에 있다.
+    """
+    items, total_bytes = build_items(collection, cache, rom_uids)
 
     clipboard_dir = Path(clipboard_dir)
     clipboard_dir.mkdir(parents=True, exist_ok=True)

@@ -3,7 +3,7 @@
 이 파일이 지키는 것:
 - 짝짓기는 **1:1**이다. 한쪽 항목이 상대 두 개에 동시에 붙지 않는다.
 - 상대가 여럿이라 모호하면 짝짓지 않는다(§88) - 각자 "한쪽에만 있음"으로 남는다.
-- Media 차이는 Conflict가 아니다. Conflict는 Metadata가 다른 경우다.
+- 존재 여부의 기준은 ROM 파일이다. 양쪽에 ROM이 있을 때 Metadata 또는 Media가 다르면 Conflict(≠)다.
 """
 
 import unittest
@@ -58,12 +58,33 @@ class CompareEngineTests(unittest.TestCase):
         self.assertIsNotNone(rows[0]["left"])
         self.assertIsNotNone(rows[0]["right"])
 
-    def test_media_difference_is_not_a_conflict(self):
+    def test_media_difference_makes_a_pair_differ(self):
+        """사용자 결정 - `≠`는 "ROM은 같고 메타데이터 **또는 미디어**가 다르다"."""
         left = [entry(1, "FFX.iso", media=["covers"])]
         right = [entry(9, "FFX.iso", media=["covers", "videos"])]
         rows = engine.compare(left, right)
-        self.assertEqual(rows[0]["status"], engine.STATUS_SAME)
+        self.assertEqual(rows[0]["status"], engine.STATUS_CONFLICT)
         self.assertTrue(rows[0]["mediaDiff"])
+        self.assertEqual(rows[0]["mediaChanged"], ["videos"])
+
+    def test_same_media_type_with_a_different_file_is_a_difference(self):
+        left = [{**entry(1, "FFX.iso", media=["covers"]), "media_sizes": {"covers": 100}}]
+        right = [{**entry(9, "FFX.iso", media=["covers"]), "media_sizes": {"covers": 200}}]
+        row = engine.compare(left, right)[0]
+        self.assertEqual(row["status"], engine.STATUS_CONFLICT)
+        self.assertEqual(row["mediaChanged"], ["covers"])
+
+    def test_existence_is_decided_by_the_rom_not_the_gamelist_entry(self):
+        """사용자 결정 - gamelist에 항목만 있고 ROM이 없는 쪽은 "없는 것"이다."""
+        with_rom = entry(1, "FFX.iso", fields={"name": "FFX"})
+        without_rom = {**entry(9, "FFX.iso", fields={"name": "FFX"}), "present": 0}
+        rows = engine.compare([with_rom], [without_rom])
+        self.assertEqual(rows[0]["status"], engine.STATUS_ONLY_A)      # >  ROM은 왼쪽에만
+        rows = engine.compare([without_rom], [with_rom])
+        self.assertEqual(rows[0]["status"], engine.STATUS_ONLY_B)      # <  ROM은 오른쪽에만
+        # 두 쪽 모두 ROM이 있으면 메타데이터/미디어만 본다.
+        rows = engine.compare([with_rom], [{**with_rom, "rom_uid": 9}])
+        self.assertEqual(rows[0]["status"], engine.STATUS_SAME)
 
     def test_pairing_is_one_to_one(self):
         """왼쪽 하나가 오른쪽 둘에 동시에 붙으면 개수가 맞지 않게 된다."""
@@ -111,13 +132,13 @@ class CompareEngineTests(unittest.TestCase):
         rows = engine.compare(left, right)
         counts = engine.summarize(rows)
         self.assertEqual(counts["all"], 5)
-        self.assertEqual(counts[engine.STATUS_SAME], 2)      # Same, MediaOnly
-        self.assertEqual(counts[engine.STATUS_CONFLICT], 1)
+        self.assertEqual(counts[engine.STATUS_SAME], 1)
+        self.assertEqual(counts[engine.STATUS_CONFLICT], 2)  # Conflict, MediaOnly(미디어도 ≠)
         self.assertEqual(counts[engine.STATUS_ONLY_A], 1)
         self.assertEqual(counts[engine.STATUS_ONLY_B], 1)
         self.assertEqual(counts["media"], 1)
 
-        self.assertEqual(len(engine.filter_rows(rows, "conflict")), 1)
+        self.assertEqual(len(engine.filter_rows(rows, "conflict")), 2)
         self.assertEqual(len(engine.filter_rows(rows, "media")), 1)
         self.assertEqual(len(engine.filter_rows(rows, "all")), 5)
         self.assertEqual(len(engine.filter_rows(rows, None)), 5)
@@ -202,6 +223,63 @@ class CompareApiTests(unittest.TestCase):
         self.assertIsNone(self.api.compare_state()["data"])
 
 
+    # ------------------------------------------------- 가운데 연산자: 한쪽 -> 다른 쪽 (Plan)
+    # 사용자 결정 - "> < 를 누르면 한쪽 롬+메타데이터가 다른 쪽으로 / ≠는 메타데이터만 /
+    # 모든 변경은 PLAN 기준, 실제 Apply를 눌러야 적용".
+    def test_row_summary_carries_each_sides_own_file_and_title(self):
+        self.api.start_compare(self.base, self.other)
+        rows = {r["file"]: r for r in self.api.compare_rows()["data"]["rows"]}
+        row = rows["OnlyBase.iso"]
+        self.assertEqual((row["leftFile"], row["leftTitle"]), ("OnlyBase.iso", "Only Base"))
+        self.assertIsNone(row["rightFile"])
+        self.assertTrue(row["leftPresent"])
+        self.assertFalse(row["rightPresent"])
+
+    def test_detail_gives_what_the_panels_need_to_load_images(self):
+        self.api.start_compare(self.base, self.other)
+        detail = self.api.compare_detail("ps2|Conflict.iso")["data"]
+        self.assertEqual(detail["left"]["collectionId"], self.base)
+        self.assertEqual(detail["right"]["collectionId"], self.other)
+        self.assertTrue(detail["left"]["romPath"].endswith("Conflict.iso"))
+        self.assertIn("mediaSizes", detail["left"])
+
+    def test_copying_a_one_sided_row_plans_it_on_the_other_side_only(self):
+        self.api.start_compare(self.base, self.other)
+        result = self.api.compare_copy_row("ps2|OnlyBase.iso", "toRight")
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual((result["data"]["added"], result["data"]["targetId"]), (1, self.other))
+        # 파일은 아직 그대로다 - Plan에만 올라간다.
+        self.assertFalse((self.dir / "other" / "ps2" / "OnlyBase.iso").exists())
+        self.assertEqual(self.api.plan_state(self.other)["data"]["added"], 1)
+        self.assertEqual(self.api.plan_state(self.base)["data"]["total"], 0)
+
+    def test_metadata_only_copy_carries_no_rom(self):
+        """≠는 양쪽에 ROM이 이미 있다 - 다시 복사하면 같은 파일을 두고 충돌만 만든다."""
+        self.api.start_compare(self.base, self.other)
+        result = self.api.compare_copy_row("ps2|Conflict.iso", "toRight", metadata_only=True)
+        self.assertTrue(result["ok"], result.get("error"))
+        state = self.api.plan_state(self.other)["data"]
+        self.assertEqual((state["added"], state["addedBytes"], state["conflicts"]), (1, 0, 0))
+
+    def test_copy_direction_decides_which_plan_it_lands_in(self):
+        self.api.start_compare(self.base, self.other)
+        result = self.api.compare_copy_row("ps2|OnlyOther.iso", "toLeft")
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(result["data"]["targetId"], self.base)
+        self.assertEqual(self.api.plan_state(self.other)["data"]["total"], 0)
+
+    def test_copying_from_the_side_that_has_nothing_is_refused(self):
+        self.api.start_compare(self.base, self.other)
+        result = self.api.compare_copy_row("ps2|OnlyBase.iso", "toLeft")
+        self.assertFalse(result["ok"])
+
+    def test_copy_needs_compare_mode_a_known_row_and_a_direction(self):
+        self.assertFalse(self.api.compare_copy_row("ps2|Same.iso", "toRight")["ok"])
+        self.api.start_compare(self.base, self.other)
+        self.assertFalse(self.api.compare_copy_row("ps2|Nope.iso", "toRight")["ok"])
+        self.assertFalse(self.api.compare_copy_row("ps2|Same.iso", "sideways")["ok"])
+
+
 class CompareContractTests(unittest.TestCase):
     """Compare의 의미를 못박는 계약 테스트.
 
@@ -238,11 +316,12 @@ class CompareContractTests(unittest.TestCase):
         self.assertTrue(row["mediaDiff"])                          # Media도 다르다
         self.assertNotEqual(row["left"]["size"], row["right"]["size"])  # 크기도 다르다
 
-    def test_media_difference_alone_never_becomes_a_conflict(self):
+    def test_media_difference_alone_is_shown_as_different(self):
         left = [entry(1, "Game.iso", fields={"name": "Game"}, media=["covers"])]
         right = [entry(9, "Game.iso", fields={"name": "Game"}, media=["covers", "videos"])]
         row = engine.compare(left, right)[0]
-        self.assertEqual(row["status"], engine.STATUS_SAME)
+        self.assertEqual(row["status"], engine.STATUS_CONFLICT)
+        self.assertEqual(row["changedFields"], [])    # 메타데이터는 같다 - 미디어만 다르다
         self.assertTrue(row["mediaDiff"])
 
 
