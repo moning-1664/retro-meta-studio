@@ -44,31 +44,51 @@ _REGION_KEYWORDS: dict[str, set[str]] = {
     "global": {"w", "world", "global", "int", "intl", "international"},
 }
 
-#: 괄호/대괄호로 감싼 태그 - `(KR)`, `[Kor]`, `(USA)`. 안이 전부 글자일 때만 인정하므로
-#: `(Disc 1)`, `(2/2)`, `(Rev A)`, `(En,Fr,De)` 같은 것은 지역 태그로 오인하지 않는다.
-_TAG_BRACKET_RE = re.compile(r"[\(\[]\s*([A-Za-z]{1,12})\s*[\)\]]")
+#: 괄호/대괄호로 감싼 덩어리 - 안에 무엇이 들어 있든 일단 잡고, 아래에서 **전부 지역 표기일 때만** 인정한다.
+_GROUP_RE = re.compile(r"[\(\[]\s*([^()\[\]]{1,40}?)\s*[\)\]]")
+#: 한 괄호 안의 여러 지역을 가르는 구분 - `(Japan, Europe)`, `(USA/Europe)`, `(Japan & USA)`.
+_GROUP_SPLIT_RE = re.compile(r"\s*(?:,|/|\+|&|\band\b)\s*", re.IGNORECASE)
+_WORD_RE = re.compile(r"[A-Za-z]{1,12}")
 #: 구분자로 붙인 태그 - `Game_k`, `Game-kr`, `global_Game`. **공백은 구분자로 치지
 #: 않는다** - 공백까지 받으면 제목 속 평범한 단어("Global Defense"의 Global)가 걸린다.
 _TAG_DELIMITED_RE = re.compile(r"(?:^|[_\-])([A-Za-z]{1,12})(?=[_\-]|$)")
 
+_ALL_KEYWORDS = set().union(*_REGION_KEYWORDS.values())
 
-def classify_region(filename: str | None) -> str | None:
-    """**파일명**에 붙은 지역 태그로 5개 구역 중 하나를 고른다(사용자 결정).
 
-    `Final Fantasy X (KR).iso`, `Zelda [Kor].zip`, `Game_k.gba`, `global_Game.bin`처럼
-    접두/접미로 붙은 표시를 읽는다. gamelist의 `region` 필드는 보지 않는다 - 비어 있는
-    Collection이 흔해서 기준이 되지 못한다.
+def _region_tokens(stem: str) -> set[str]:
+    tokens: set[str] = set()
+    for group in _GROUP_RE.findall(stem):
+        parts = [p for p in _GROUP_SPLIT_RE.split(group) if p]
+        if not parts or not all(_WORD_RE.fullmatch(p) for p in parts):
+            continue                        # (Disc 1), (2/2), (Rev A) 같은 것은 지역 표기가 아니다
+        lowered = [p.lower() for p in parts]
+        # **여럿이 들어 있으면 전부 지역 표기일 때만** 인정한다. `(En,Fr,De)`는 언어 목록이라
+        # En 하나만 걸려 영어권으로 분류되면 안 된다. 하나뿐이면 예전처럼 걸리는 것만 본다.
+        if len(lowered) > 1 and not all(t in _ALL_KEYWORDS for t in lowered):
+            continue
+        tokens.update(lowered)
+    tokens.update(t.lower() for t in _TAG_DELIMITED_RE.findall(stem))
+    return tokens
 
-    태그가 없으면 **None(미분류)** 이다 - 미분류는 자동 적용 대상에서 통째로 빠진다.
+
+def classify_regions(filename: str | None) -> list[str]:
+    """**파일명**에 붙은 지역 태그로 해당하는 구역을 **모두** 돌려준다(REGIONS 순서).
+
+    `Game (Japan, Europe).zip`은 일본과 유럽 둘 다다 - 예전에는 괄호 안에 쉼표가 있으면 통째로
+    무시해서 미분류가 됐다(실사용 질문 - "롬이름에 (Japan, Europe)은 어떻게 적용되나?").
     """
     stem = str(filename or "")
     stem = stem[:stem.rfind(".")] if "." in stem else stem
-    tokens = {t.lower() for t in _TAG_BRACKET_RE.findall(stem)}
-    tokens.update(t.lower() for t in _TAG_DELIMITED_RE.findall(stem))
-    for bucket in REGIONS:
-        if tokens & _REGION_KEYWORDS[bucket]:
-            return bucket
-    return None
+    tokens = _region_tokens(stem)
+    return [bucket for bucket in REGIONS if tokens & _REGION_KEYWORDS[bucket]]
+
+
+def classify_region(filename: str | None) -> str | None:
+    """대표 구역 하나(여럿이면 앞선 것). 태그가 없으면 **None(미분류)** - 미분류는 자동 적용
+    대상에서 통째로 빠진다. 여러 구역을 다루려면 `classify_regions()`를 쓴다."""
+    found = classify_regions(filename)
+    return found[0] if found else None
 
 
 # ----------------------------------------------------------------------
@@ -205,30 +225,54 @@ def normalize_config(config: dict | None) -> dict:
     return out
 
 
+_WRAPPED_RE = re.compile(r"^(\s*)([\(\[\{])(.*)([\)\]\}])(\s*)$")
+
+
+def _merge_texts(texts: list[str]) -> str:
+    """여러 지역의 장식 문구를 하나로 합친다.
+
+    모두 **같은 괄호**로 감싼 `[JP]` `[EU]`면 `[JP,EU]`로 하나로 묶는다(사용자 질문 - "[Jp][Eu]로
+    따로 넣었으면 [Jp,Eu]도 가능?"). 괄호가 다르거나 없으면(`JP_`, `EU_`) 이어 붙인다."""
+    if len(texts) == 1:
+        return texts[0]
+    wrapped = [_WRAPPED_RE.match(t) for t in texts]
+    if all(wrapped) and len({(m.group(2), m.group(4)) for m in wrapped}) == 1:
+        first, last = wrapped[0], wrapped[-1]
+        inner = ",".join(m.group(3).strip() for m in wrapped)
+        return f"{first.group(1)}{first.group(2)}{inner}{last.group(4)}{last.group(5)}"
+    return "".join(texts)
+
+
 def compute_new_title(current_title: str, filename: str | None, config: dict | None) -> dict:
     """이 게임에 실제로 적용될 새 제목을 계산한다. 구역은 **파일명**으로 정한다.
 
-    반환: {"oldTitle", "newTitle", "changed", "regionBucket", "diskMarker"}
+    파일명에 지역이 여럿이면(`(Japan, Europe)`) 켜져 있는 구역의 문구를 모두 붙인다 - 같은
+    괄호면 `[JP,EU]`로 합치고 아니면 이어 붙인다.
+
+    반환: {"oldTitle", "newTitle", "changed", "regionBucket", "regionBuckets", "diskMarker"}
     """
     current_title = current_title or ""
-    bucket = classify_region(filename)
-    if bucket is None:
+    buckets = classify_regions(filename)
+    if not buckets:
         # 미분류 - 장식을 떼지도, 붙이지도 않는다(사용자 결정: 자동 적용 대상에서 제외).
         return {"oldTitle": current_title, "newTitle": current_title, "changed": False,
-                "regionBucket": None, "diskMarker": None}
+                "regionBucket": None, "regionBuckets": [], "diskMarker": None}
 
     base, disk_marker = strip_existing_title_affix(current_title)
     core = f"{base} {disk_marker}" if disk_marker else base
 
-    cfg = normalize_config(config)[bucket]
-    if cfg["enabled"] and cfg["text"].strip():
-        new_title = (_join_postfix(core, cfg["text"]) if cfg["mode"] == "postfix"
-                    else _join_prefix(cfg["text"], core))
-    else:
-        new_title = core
+    config = normalize_config(config)
+    active = [config[b] for b in buckets if config[b]["enabled"] and config[b]["text"].strip()]
+    prefixes = [c["text"] for c in active if c["mode"] != "postfix"]
+    postfixes = [c["text"] for c in active if c["mode"] == "postfix"]
+    new_title = core
+    if postfixes:
+        new_title = _join_postfix(new_title, _merge_texts(postfixes))
+    if prefixes:
+        new_title = _join_prefix(_merge_texts(prefixes), new_title)
 
     return {"oldTitle": current_title, "newTitle": new_title, "changed": new_title != current_title,
-            "regionBucket": bucket, "diskMarker": disk_marker}
+            "regionBucket": buckets[0], "regionBuckets": buckets, "diskMarker": disk_marker}
 
 
 def preview_titles(rows: list[dict], config: dict | None) -> list[dict]:

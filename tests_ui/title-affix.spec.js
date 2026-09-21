@@ -180,7 +180,7 @@ test.describe("공유 계산 모듈(gui_web/title-affix.js)", () => {
       "[EU] Chrono Trigger (2/2)", "Chrono (K) (2 of 2).iso",
       { kr: { enabled: true, mode: "prefix", text: "KR" } }));
     expect(r).toEqual({ oldTitle: "[EU] Chrono Trigger (2/2)", newTitle: "KR_Chrono Trigger (Disk 2 of 2)",
-      changed: true, regionBucket: "kr", diskMarker: "(Disk 2 of 2)" });
+      changed: true, regionBucket: "kr", regionBuckets: ["kr"], diskMarker: "(Disk 2 of 2)" });
   });
 
   test("파일명의 태그로 구역을 정하고, 태그가 없으면 미분류다", async ({ page }) => {
@@ -212,5 +212,33 @@ test.describe("Apply로 실제 반영", () => {
 
     await expect(page.locator(".lrow", { hasText: "KR_Final Fantasy X" })).toBeVisible();
     await expect(page.locator(".lrow", { hasText: "KR_Final Fantasy X" }).locator(".status-mark.edit")).toHaveCount(0);
+  });
+});
+
+// 화면의 계산(RMSTitleAffix)은 app/title_affix.py와 같은 결과를 내야 한다 - 메뉴 활성 판단과 목업이 쓴다.
+test.describe("공백과 여러 지역 (화면 쪽 계산이 Python과 같다)", () => {
+  const compute = (page, title, filename, config) =>
+    page.evaluate(([t, f, c]) => window.RMSTitleAffix.compute(t, f, c), [title, filename, config]);
+  const on = (mode, text) => ({ enabled: true, mode, text });
+
+  test("문구 앞뒤 공백을 지우지 않는다", async ({ page }) => {
+    await openApp(page);
+    expect((await compute(page, "Game", "Game (KR).iso", { kr: on("postfix", " (KR)") })).newTitle).toBe("Game (KR)");
+    expect((await compute(page, "Game", "Game (KR).iso", { kr: on("prefix", "(KR) ") })).newTitle).toBe("(KR) Game");
+  });
+
+  test("(Japan, Europe)는 두 지역이고 같은 괄호는 하나로 합쳐진다", async ({ page }) => {
+    await openApp(page);
+    const cfg = { jp: on("postfix", " [JP]"), eu: on("postfix", " [EU]") };
+    const r = await compute(page, "Zelda", "Zelda (Japan, Europe).zip", cfg);
+    expect(r.regionBuckets).toEqual(["jp", "eu"]);
+    expect(r.newTitle).toBe("Zelda [JP,EU]");
+  });
+
+  test("언어 목록 (En,Fr,De)는 지역이 아니다", async ({ page }) => {
+    await openApp(page);
+    const r = await compute(page, "Game", "Game (En,Fr,De).zip", { en: on("prefix", "EN_") });
+    expect(r.regionBuckets).toEqual([]);
+    expect(r.changed).toBe(false);
   });
 });

@@ -3,7 +3,7 @@
 import unittest
 
 from app.title_affix import (
-    DEFAULT_CONFIG, classify_region, compute_new_title, normalize_config,
+    DEFAULT_CONFIG, classify_region, classify_regions, compute_new_title, normalize_config,
     strip_existing_title_affix,
 )
 
@@ -170,6 +170,87 @@ class ComputeNewTitleTests(unittest.TestCase):
         config = normalize_config({"jp": {"enabled": True, "mode": "postfix", "text": "JP"}})
         r = compute_new_title("Dragon Quest", "DQ (J).sfc", config)
         self.assertEqual(r["newTitle"], "Dragon Quest_JP")
+
+
+class MultiRegionTests(unittest.TestCase):
+    """`(Japan, Europe)`처럼 지역이 여럿인 파일명(실사용 질문 - 어떻게 적용되나? [Jp][Eu]는 [Jp,Eu]로 합칠 수 있나?)."""
+
+    def test_a_comma_separated_group_names_every_region(self):
+        self.assertEqual(classify_regions("Game (Japan, Europe).zip"), ["jp", "eu"])
+        self.assertEqual(classify_regions("Game (USA, Europe).zip"), ["en", "eu"])
+        self.assertEqual(classify_regions("Game (Japan & USA).zip"), ["en", "jp"])
+        self.assertEqual(classify_regions("Game (Japan and Europe).zip"), ["jp", "eu"])
+
+    def test_separate_groups_are_read_too(self):
+        self.assertEqual(classify_regions("Game (Japan) (Europe).zip"), ["jp", "eu"])
+
+    def test_a_language_list_is_not_a_region_list(self):
+        """`(En,Fr,De)`는 언어 목록이다 - En 하나만 걸려 영어권이 되면 안 된다."""
+        self.assertEqual(classify_regions("Game (En,Fr,De).zip"), [])
+        self.assertEqual(classify_regions("Game (Japan) (En,Ja).zip"), ["jp"])
+
+    def test_the_representative_region_is_the_first_one(self):
+        self.assertEqual(classify_region("Game (Japan, Europe).zip"), "jp")
+
+    def test_single_region_behaviour_is_unchanged(self):
+        self.assertEqual(classify_regions("Game (Japan).zip"), ["jp"])
+        self.assertEqual(classify_regions("Game (Disc 1).zip"), [])
+        self.assertEqual(classify_regions("Game (Rev A).zip"), [])
+
+    def test_matching_brackets_are_merged_into_one(self):
+        config = normalize_config({"jp": {"enabled": True, "mode": "postfix", "text": " [JP]"},
+                                   "eu": {"enabled": True, "mode": "postfix", "text": " [EU]"}})
+        r = compute_new_title("Zelda", "Zelda (Japan, Europe).zip", config)
+        self.assertEqual(r["newTitle"], "Zelda [JP,EU]")
+        self.assertEqual(r["regionBuckets"], ["jp", "eu"])
+
+    def test_different_wrappers_are_simply_joined(self):
+        config = normalize_config({"jp": {"enabled": True, "mode": "prefix", "text": "JP_"},
+                                   "eu": {"enabled": True, "mode": "prefix", "text": "EU_"}})
+        self.assertEqual(compute_new_title("Zelda", "Zelda (Japan, Europe).zip", config)["newTitle"],
+                         "JP_EU_Zelda")
+
+    def test_only_enabled_regions_contribute(self):
+        config = normalize_config({"jp": {"enabled": True, "mode": "postfix", "text": " [JP]"}})
+        self.assertEqual(compute_new_title("Zelda", "Zelda (Japan, Europe).zip", config)["newTitle"], "Zelda [JP]")
+
+    def test_prefix_and_postfix_regions_can_mix(self):
+        config = normalize_config({"jp": {"enabled": True, "mode": "prefix", "text": "(JP) "},
+                                   "eu": {"enabled": True, "mode": "postfix", "text": " [EU]"}})
+        self.assertEqual(compute_new_title("Zelda", "Zelda (Japan, Europe).zip", config)["newTitle"],
+                         "(JP) Zelda [EU]")
+
+    def test_applying_again_is_stable(self):
+        config = normalize_config({"jp": {"enabled": True, "mode": "postfix", "text": " [JP]"},
+                                   "eu": {"enabled": True, "mode": "postfix", "text": " [EU]"}})
+        once = compute_new_title("Zelda", "Zelda (Japan, Europe).zip", config)["newTitle"]
+        again = compute_new_title(once, "Zelda (Japan, Europe).zip", config)
+        self.assertEqual(again["newTitle"], once)
+        self.assertFalse(again["changed"])
+
+
+class WhitespaceTests(unittest.TestCase):
+    """공백을 넣은 문구는 그대로 적용된다(실사용 피드백 - " (KR)"이 "(KR)"로 들어갔다)."""
+
+    def test_a_leading_space_in_a_postfix_is_kept(self):
+        config = normalize_config({"kr": {"enabled": True, "mode": "postfix", "text": " (KR)"}})
+        self.assertEqual(compute_new_title("Game", "Game (KR).iso", config)["newTitle"], "Game (KR)")
+
+    def test_a_trailing_space_in_a_prefix_is_kept(self):
+        config = normalize_config({"kr": {"enabled": True, "mode": "prefix", "text": "(KR) "}})
+        self.assertEqual(compute_new_title("Game", "Game (KR).iso", config)["newTitle"], "(KR) Game")
+
+    def test_the_saved_setting_keeps_its_spaces(self):
+        self.assertEqual(normalize_config({"kr": {"text": " (KR)"}})["kr"]["text"], " (KR)")
+
+    def test_a_setting_can_be_changed_and_reapplied(self):
+        """한 번 적용한 뒤 문구를 바꾸면 다시 적용할 수 있다(실사용 피드백 - 한 번 적용하면 다음에 활성화가 안 됨)."""
+        first = normalize_config({"kr": {"enabled": True, "mode": "postfix", "text": " (KR)"}})
+        applied = compute_new_title("Game", "Game (KR).iso", first)["newTitle"]
+        second = normalize_config({"kr": {"enabled": True, "mode": "prefix", "text": "[KR] "}})
+        r = compute_new_title(applied, "Game (KR).iso", second)
+        self.assertTrue(r["changed"])
+        self.assertEqual(r["newTitle"], "[KR] Game")
 
 
 class NormalizeConfigTests(unittest.TestCase):
