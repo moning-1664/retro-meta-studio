@@ -153,15 +153,20 @@ def _validate_delete(entry, collection, cache, provider, adapter):
             entry.status, entry.error = "invalid", "항목이 이미 사라졌습니다."
             return
         entry.rom_uid = row["rom_uid"]
-    if not row["present"]:
-        return  # metadata만 있는 항목. 지울 ROM 파일이 없다.
+    parts = entry.delete_parts
+    if "rom" in parts and row["present"]:
+        layout = adapter.layout(collection, row["system"])
+        rom_path = Path(layout.rom_dir) / row["filename"]
+        if provider.stat(rom_path) is None:
+            entry.status, entry.error = "invalid", "ROM 파일이 이미 사라졌습니다."
+            return
+        _check_rom_snapshot(entry, row, provider, rom_path)
+        if entry.status == "invalid":
+            return
+    _check_media_snapshots(entry, provider)
 
-    layout = adapter.layout(collection, row["system"])
-    rom_path = Path(layout.rom_dir) / row["filename"]
-    if provider.stat(rom_path) is None:
-        entry.status, entry.error = "invalid", "ROM 파일이 이미 사라졌습니다."
-        return
 
+def _check_rom_snapshot(entry, row, provider, rom_path):
     # **ADD와 같은 계약으로 본다**(size + mtime + volume_file_id). 삭제가 ADD보다
     # 약한 검증을 쓸 이유가 없다 - 되돌릴 수 없는 쪽이 오히려 삭제다.
     saved_rom = (entry.source or {}).get("romSnapshot") or {
@@ -170,8 +175,9 @@ def _validate_delete(entry, collection, cache, provider, adapter):
     if not snapshot_matches(provider, rom_path, saved_rom):
         entry.status = "invalid"
         entry.error = "ROM 파일이 외부에서 변경되었습니다. 다시 스캔한 뒤 삭제해주세요."
-        return
 
+
+def _check_media_snapshots(entry, provider):
     # media도 지운다. 삭제는 되돌릴 수 없으므로 ROM만 확인하고 넘어가면, Plan을 만든
     # 뒤 밖에서 교체된 커버를 사용자 승인 없이 지우게 된다.
     #

@@ -1252,15 +1252,22 @@ class Api:
         return ok({"resolved": len(keys), "resolution": resolution})
 
     @guarded
-    def plan_delete(self, collection_id, rom_uids):
+    def plan_delete(self, collection_id, rom_uids, parts=None):
+        """삭제 예정으로 올린다. `parts`(rom/metadata/media/video의 목록)로 무엇을 지울지 고른다.
+        정하지 않으면 전부다."""
+        if parts is not None and not isinstance(parts, (list, tuple)):
+            return err("삭제 대상 형식이 올바르지 않습니다.")
         collection, cache, provider = self._plan_context(collection_id)
         blocked = self._ensure_file_ops(collection) or self._ensure_writable(
             collection, [(cache.get_row(int(uid)) or {}).get("system")
                          for uid in rom_uids or []])
         if blocked:
             return blocked
-        result = builder.plan_delete(self._plan(collection_id), collection, cache, rom_uids,
-                                     provider)
+        try:
+            result = builder.plan_delete(self._plan(collection_id), collection, cache, rom_uids,
+                                         provider, parts)
+        except builder.PlanBuildError as e:
+            return err(str(e))
         return ok(result)
 
     @guarded

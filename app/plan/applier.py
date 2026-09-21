@@ -455,11 +455,16 @@ def _apply_delete(entry, collection, adapter, cache, provider, errors):
     """
     layout = adapter.layout(collection, entry.system)
     row = cache.get_row(entry.rom_uid) if entry.rom_uid is not None else None
+    # 고른 부분만 지운다(롬 삭제 / 메타데이터 삭제 / 미디어 삭제를 따로 - 사용자 결정).
+    parts = entry.delete_parts
     targets = []
     if row:
-        if row["present"]:
+        if "rom" in parts and row["present"]:
             targets.append(Path(layout.rom_dir) / row["filename"])
-        targets.extend(Path(m["rel_path"]) for m in row["media"])
+        for m in row["media"]:
+            is_video = m["media_type"] == "videos"
+            if "video" in parts if is_video else "media" in parts:
+                targets.append(Path(m["rel_path"]))
 
     existing = [p for p in targets if provider.exists(p)]
     if existing:
@@ -471,7 +476,7 @@ def _apply_delete(entry, collection, adapter, cache, provider, errors):
             return
 
     remove = getattr(adapter, "remove_entries", None)
-    if remove is not None:
+    if remove is not None and "metadata" in parts:
         try:
             remove(layout, [entry.filename])
         except Exception as e:  # noqa: BLE001

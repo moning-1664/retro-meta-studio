@@ -20,7 +20,7 @@ from pathlib import Path
 from adapters import get_adapter
 from app.model.collection import STORAGE_INTERNAL
 from app.model.plan import (
-    OP_ADD, OP_DELETE, OP_METADATA_EDIT, OP_STORAGE_CHANGE, OP_TITLE_EDIT,
+    DELETE_PARTS, OP_ADD, OP_DELETE, OP_METADATA_EDIT, OP_STORAGE_CHANGE, OP_TITLE_EDIT,
     RESOLVE_OVERWRITE, RESOLVE_SKIP, STATUS_CONFLICT, STATUS_PENDING, PlanEntry,
 )
 
@@ -326,7 +326,7 @@ class _MediaRef:
         self.size = int(data.get("size") or 0)
 
 
-def plan_delete(plan, collection, cache, rom_uids, provider=None):
+def plan_delete(plan, collection, cache, rom_uids, provider=None, parts=None):
     """선택한 항목을 삭제 예정으로 올린다. 실제 파일은 그대로 둔다(스펙 §29).
 
     **삭제는 되돌릴 수 없으므로 ADD와 같은 수준으로 대상을 특정한다.** ROM과 media
@@ -335,7 +335,14 @@ def plan_delete(plan, collection, cache, rom_uids, provider=None):
     확률이 낮아도 파괴적 작업에서 ADD보다 약한 계약을 쓸 이유가 없다.
 
     provider를 주지 않으면 Cache의 값만 쓴다(예전 동작). 호출부는 주는 것이 맞다.
+
+    `parts`로 **무엇을 지울지** 고른다(rom/metadata/media/video). 정하지 않으면 전부다.
+    고르지 않은 부분의 크기와 스냅샷은 계산하지 않는다 - 지우지 않을 파일이 Plan의
+    용량 변화나 "외부에서 변경됨" 검증에 끼면 안 된다.
     """
+    parts = tuple(p for p in DELETE_PARTS if p in (parts or DELETE_PARTS))
+    if not parts:
+        raise PlanBuildError("삭제할 대상이 없습니다.")
     adapter = get_adapter(collection.frontend)
     entries = []
     for rom_uid in rom_uids:
@@ -348,13 +355,16 @@ def plan_delete(plan, collection, cache, rom_uids, provider=None):
         media_storage = collection.storage_for_path(layout.media_dir) if layout.media_dir else rom_storage
 
         delta, estimated = {}, 0
-        if row["present"]:
+        if "rom" in parts and row["present"]:
             estimated += int(row["size"] or 0)
             _bump(delta, rom_storage, -int(row["size"] or 0))
         # 지울 media의 모습도 함께 들고 간다. 삭제는 되돌릴 수 없으므로, Plan을 만든
         # 뒤 밖에서 바뀐 파일을 승인 없이 지우면 안 된다.
         media_snapshots = {}
         for media in row["media"]:
+            is_video = media["media_type"] == "videos"
+            if not ("video" in parts if is_video else "media" in parts):
+                continue
             estimated += int(media["size"] or 0)
             _bump(delta, media_storage, -int(media["size"] or 0))
             path = str(media["rel_path"])
@@ -367,11 +377,13 @@ def plan_delete(plan, collection, cache, rom_uids, provider=None):
         rom_snapshot = (snapshot(provider, rom_path) if provider is not None else None) or {
             "size": int(row["size"] or 0), "mtimeNs": int(row["mtime_ns"] or 0),
             "fileId": row.get("volume_file_id")}
+        if "rom" not in parts:
+            rom_snapshot = None
 
         entry = PlanEntry(op=OP_DELETE, system=system, filename=row["filename"],
                           rom_uid=int(rom_uid), storage_from=rom_storage,
                           source={"mediaSnapshots": media_snapshots,
-                                  "romSnapshot": rom_snapshot},
+                                  "romSnapshot": rom_snapshot, "parts": list(parts)},
                           estimated_bytes=estimated, physical_delta=delta)
         plan.add(entry)
         entries.append(entry)

@@ -9,7 +9,10 @@ const { openApp } = require("./_helpers");
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
 const rightClick = (page, text) => page.locator(".lrow", { hasText: text }).click({ button: "right" });
-const menuItem = (page, label) => page.locator(".ctx-menu .ctx-item", { hasText: label });
+// 라벨이 정확히 같은 항목 - "삭제"가 "ROM 삭제"/"메타데이터 삭제"까지 잡으면 안 된다.
+const menuItem = (page, label) => page.locator(".ctx-menu .ctx-item").filter({
+  has: page.locator(".ctx-label", { hasText: new RegExp(`^${label}$`) }),
+});
 
 test("Delete 상시 버튼은 없다", async ({ page }) => {
   await expect(page.locator("#filter-bar", { hasText: "Delete" })).toHaveCount(0);
@@ -43,6 +46,67 @@ test("메뉴의 삭제를 고르면 삭제를 요청하고 메뉴를 닫는다",
   await expect(page.locator(".ctx-menu")).toHaveCount(0);
   await expect.poll(() => deleted.length).toBeGreaterThan(0);
   expect(deleted[0]).toHaveLength(1);
+});
+
+// 사용자 결정 - "삭제 / ROM 삭제 / 메타데이터 삭제"를 따로, 무엇이 지워지는지 알 수 있게.
+test.describe("부분 삭제", () => {
+  async function spy(page) {
+    await page.evaluate(() => {
+      window.__parts = [];
+      const original = window.api.planDelete;
+      window.api.planDelete = (id, uids, parts) => { window.__parts.push(parts); return original(id, uids, parts); };
+    });
+  }
+
+  test("삭제 메뉴가 세 가지로 갈리고 무엇이 지워지는지 툴팁이 말한다", async ({ page }) => {
+    await rightClick(page, "Final Fantasy X");
+    await expect(menuItem(page, "삭제")).toHaveAttribute("title", /ROM \+ 메타데이터 \+ 미디어/);
+    await expect(menuItem(page, "ROM 삭제")).toHaveAttribute("title", /ROM 파일만/);
+    await expect(menuItem(page, "메타데이터 삭제")).toHaveAttribute("title", /ROM은 남습니다/);
+  });
+
+  test("각 항목이 서로 다른 범위로 삭제를 요청한다", async ({ page }) => {
+    await spy(page);
+    await rightClick(page, "Final Fantasy X");
+    await menuItem(page, "삭제").click();
+    await rightClick(page, "Final Fantasy X");
+    await menuItem(page, "ROM 삭제").click();
+    await rightClick(page, "Final Fantasy X");
+    await menuItem(page, "메타데이터 삭제").click();
+    await expect.poll(() => page.evaluate(() => window.__parts.length)).toBe(3);
+    expect(await page.evaluate(() => window.__parts)).toEqual([
+      ["rom", "metadata", "media", "video"], ["rom"], ["metadata", "media", "video"]]);
+  });
+
+  test("Status 아이콘을 우클릭하면 그 칸만 지우는 메뉴가 뜬다", async ({ page }) => {
+    await spy(page);
+    const ffx = page.locator(".lrow", { hasText: "Final Fantasy X" });
+    await ffx.locator(".status-icon[data-status='mediaLevel']").click({ button: "right" });
+    await expect(page.locator(".ctx-menu .ctx-item")).toHaveCount(1);       // 행 메뉴가 같이 뜨지 않는다
+    await page.locator(".ctx-menu .ctx-item", { hasText: "미디어 삭제" }).click();
+    await expect.poll(() => page.evaluate(() => window.__parts.length)).toBe(1);
+    expect(await page.evaluate(() => window.__parts)).toEqual([["media"]]);
+  });
+
+  test("각 Status 아이콘이 자기 부분만 가리킨다", async ({ page }) => {
+    await spy(page);
+    const expected = { rom: "rom", metaLevel: "metadata", mediaLevel: "media", videoLevel: "video" };
+    for (const [status, part] of Object.entries(expected)) {
+      await page.locator(".lrow", { hasText: "Final Fantasy X" })
+        .locator(`.status-icon[data-status='${status}']`).click({ button: "right" });
+      await page.locator(".ctx-menu .ctx-item").click();
+      await expect.poll(() => page.evaluate(() => window.__parts.length)).toBeGreaterThan(0);
+      const last = await page.evaluate(() => window.__parts[window.__parts.length - 1]);
+      expect(last).toEqual([part]);
+    }
+  });
+
+  test("없는 칸(회색)의 삭제는 흐리게 막혀 있다", async ({ page }) => {
+    await page.locator(".nav-system", { hasText: "SNES" }).click();
+    await page.locator(".lrow", { hasText: "Super Mario World" })
+      .locator(".status-icon[data-status='videoLevel']").click({ button: "right" });
+    await expect(page.locator(".ctx-menu .ctx-item")).toBeDisabled();
+  });
 });
 
 test("이미 여러 개를 선택한 상태로 그중 하나를 우클릭하면 선택 전체가 대상이다", async ({ page }) => {

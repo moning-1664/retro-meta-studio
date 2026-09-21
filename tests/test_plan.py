@@ -185,6 +185,76 @@ class PlanIntegrationTests(unittest.TestCase):
         self.assertFalse((self.target_root / "ps2" / "MGS2.iso").exists())
 
     # ------------------------------------------------------------------
+    # 부분 삭제 (사용자 결정 - 롬 삭제 / 메타데이터 삭제 / 미디어 삭제를 따로)
+    # ------------------------------------------------------------------
+    def _gamelist_paths(self):
+        import xml.etree.ElementTree as ET
+        root = ET.parse(self.target_root / "gamelists" / "ps2" / "gamelist.xml").getroot()
+        return [g.findtext("path") for g in root.findall("game")]
+
+    def _apply(self):
+        self.api.start_apply(self.dst)
+        wait_idle(self.api)
+
+    def _give_cover(self, filename="MGS2"):
+        """대상 Collection의 이 게임에 커버를 만들어 준다(기본 트리에는 FFX만 media가 있다)."""
+        path = self.target_root / "downloaded_media" / "ps2" / "covers" / f"{filename}.png"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"c" * 50)
+        self.api.start_scan(self.dst, True)
+        wait_idle(self.api)
+        return path
+
+    def test_rom_only_delete_keeps_metadata_and_media(self):
+        media = self._give_cover()
+        self.api.plan_delete(self.dst, [self._uid(self.dst, "MGS2.iso")], ["rom"])
+        state = self.api.plan_state(self.dst)["data"]
+        self.assertEqual(state["marks"]["rows"]["ps2|MGS2.iso"], "◐")      # 통째로 사라지는 - 가 아니다
+        self.assertEqual(state["marks"]["deleteParts"]["ps2|MGS2.iso"], ["rom"])
+        self._apply()
+        self.assertFalse((self.target_root / "ps2" / "MGS2.iso").exists())
+        self.assertTrue(media.exists(), "롬만 지우기로 했는데 media까지 지웠다")
+        self.assertIn("./MGS2.iso", self._gamelist_paths(), "롬만 지우기로 했는데 메타데이터까지 지웠다")
+
+    def test_metadata_delete_removes_gamelist_entry_and_media_but_keeps_the_rom(self):
+        media = self._give_cover()
+        self.api.plan_delete(self.dst, [self._uid(self.dst, "MGS2.iso")], ["metadata", "media", "video"])
+        self._apply()
+        self.assertTrue((self.target_root / "ps2" / "MGS2.iso").exists(), "메타데이터 삭제가 롬을 지웠다")
+        self.assertFalse(media.exists())
+        self.assertNotIn("./MGS2.iso", self._gamelist_paths())
+
+    def test_media_only_delete_touches_neither_rom_nor_gamelist(self):
+        media = self._give_cover()
+        self.api.plan_delete(self.dst, [self._uid(self.dst, "MGS2.iso")], ["media"])
+        self._apply()
+        self.assertFalse(media.exists())
+        self.assertTrue((self.target_root / "ps2" / "MGS2.iso").exists())
+        self.assertIn("./MGS2.iso", self._gamelist_paths())
+
+    def test_partial_delete_only_counts_the_bytes_it_will_free(self):
+        self._give_cover()
+        uid = self._uid(self.dst, "MGS2.iso")
+        self.api.plan_delete(self.dst, [uid], ["media"])
+        media_only = self.api.plan_state(self.dst)["data"]["deletedBytes"]
+        self.api.plan_clear(self.dst)
+        self.api.plan_delete(self.dst, [uid], ["rom"])
+        rom_only = self.api.plan_state(self.dst)["data"]["deletedBytes"]
+        self.api.plan_clear(self.dst)
+        self.api.plan_delete(self.dst, [uid])
+        everything = self.api.plan_state(self.dst)["data"]["deletedBytes"]
+        self.assertEqual(everything, media_only + rom_only)
+
+    def test_full_delete_still_uses_the_plain_minus_mark(self):
+        self.api.plan_delete(self.dst, [self._uid(self.dst, "MGS2.iso")])
+        marks = self.api.plan_state(self.dst)["data"]["marks"]
+        self.assertEqual(marks["rows"]["ps2|MGS2.iso"], "-")
+
+    def test_delete_needs_at_least_one_part(self):
+        result = self.api.plan_delete(self.dst, [self._uid(self.dst, "MGS2.iso")], ["nothing"])
+        self.assertFalse(result["ok"])
+
+    # ------------------------------------------------------------------
     # Storage 이동
     # ------------------------------------------------------------------
     def test_storage_change_moves_only_roms(self):

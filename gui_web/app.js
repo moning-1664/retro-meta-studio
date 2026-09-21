@@ -3427,26 +3427,54 @@
   //   없는 것이 오류는 아니다.
   //   Metadata: Title+Description이 다 있으면 ok. Media: cover/screenshot/marquee/miximage가 다 있으면 ok.
   const STATUS_ICON_DEFS = [
-    { key: "rom", icon: "gamepad", label: "ROM" },
-    { key: "metaLevel", icon: "fileText", label: "Metadata",
+    { key: "rom", icon: "gamepad", label: "ROM", part: "rom" },
+    { key: "metaLevel", icon: "fileText", label: "Metadata", part: "metadata",
       partial: "Title 또는 Description이 비어 있음" },
-    { key: "mediaLevel", icon: "image", label: "Media",
+    { key: "mediaLevel", icon: "image", label: "Media", part: "media",
       partial: "주요 미디어(cover/screenshot/marquee/miximage) 중 일부가 없음" },
-    { key: "videoLevel", icon: "play", label: "Video" },
+    { key: "videoLevel", icon: "play", label: "Video", part: "video" },
   ];
+
+  /** Status 아이콘 우클릭 - 그 칸에 해당하는 것만 지운다.
+   * 없는 칸(회색)은 지울 것이 없으므로 흐리게 둔다. */
+  function openStatusMenu(row, def, event) {
+    if (isCompare() || isArchive()) return;
+    if (!S.selected.has(row.romUid)) {
+      S.selected = new Set([row.romUid]);
+      S.selectAnchor = row.romUid;
+      updateSelectionVisual();
+      renderStatusBar();
+    }
+    const count = S.selected.size;
+    const names = { rom: "ROM 삭제", metadata: "메타데이터 삭제(gamelist 항목)",
+                    media: "미디어 삭제(영상 제외)", video: "영상 삭제" };
+    showContextMenu(menuPoint(event), def.label,
+      count > 1 ? `${formatCount(count)}개 선택됨` : (row.title || row.file), [
+        { label: names[def.part], icon: "trash", danger: true, disabled: def.level === "none",
+          title: def.level === "none" ? `${def.label}이(가) 없습니다.` : null,
+          onSelect: () => deleteSelection([def.part]) },
+      ]);
+  }
 
   function statusIcons(row) {
     // Metadata 전용 Collection(ROM 폴더를 주지 않은 기기)에서는 ROM이 없는 것이
     // 정상이다 - 그 칸만 빨갛게 켜지 않는다(자리는 그대로 유지해 칸 정렬이 흔들리지
     // 않게 한다).
     const metaOnly = !!(activeDetail() && activeDetail().metadataOnly);
-    return STATUS_ICON_DEFS.map(({ key, icon: name, label, partial }) => {
+    return STATUS_ICON_DEFS.map(({ key, icon: name, label, partial, part }) => {
       // 예전 응답(수준 값 없음)도 견디도록 불리언 필드로 떨어진다.
       let level = row[key] || (row.present !== undefined && key === "rom" ? (row.present ? "ok" : "none") : "none");
       if (key === "rom" && metaOnly && level === "none") level = "ok";
       const text = level === "ok" ? label : level === "partial" ? `${label}: ${partial || "일부만 있음"}` : `${label} 없음`;
-      return h("span", { class: `status-icon lv-${level}`, title: text,
-                         "data-status": key }, [icon(name, 12)]);
+      const el = h("span", { class: `status-icon lv-${level}`, title: text,
+                             "data-status": key }, [icon(name, 12)]);
+      // 아이콘을 우클릭하면 **그 칸만** 지우는 메뉴가 뜬다(사용자 결정) - 행 우클릭 메뉴가 뜨지 않게 막는다.
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openStatusMenu(row, { key, label, part, level }, e);
+      });
+      return el;
     });
   }
 
@@ -3458,6 +3486,11 @@
     const mark = marks.rows[`${row.system}|${row.file}`];
     if (mark === "+") return [h("span", { class: "status-mark add", title: "추가 예정" }, ["+"])];
     if (mark === "-") return [h("span", { class: "status-mark del", title: "삭제 예정" }, ["−"])];
+    if (mark === "\u25d0") {
+      const parts = ((marks.deleteParts || {})[`${row.system}|${row.file}`] || [])
+        .map((p) => DELETE_PART_LABEL[p]).join(" + ");
+      return [h("span", { class: "status-mark del", title: `일부 삭제 예정: ${parts}` }, ["\u25d0"])];
+    }
     if (mark === "✎") return [h("span", { class: "status-mark edit", title: "편집 예정 (Apply해야 반영)" }, ["✎"])];
     if ((marks.systems || []).includes(row.system)) {
       return [h("span", { class: "status-mark warn", title: "Storage 이동 예정" }, ["△"])];
@@ -3753,6 +3786,7 @@
     // 문서 아이콘으로 구분한다(사용자 결정 - "정보가 덮어질 항목은 +-말고
     // 문서아이콘으로 파란색으로").
     const NO_MARK = { "+": ["plus", "add", "추가 예정"], "-": ["minus", "del", "삭제 예정"],
+                      "\u25d0": ["minus", "del partial", "일부 삭제 예정(ROM/메타데이터/미디어 중 일부)"],
                       "✎": ["fileText", "edit", "정보 편집 예정"] };
     const cells = {};
     const noMark = NO_MARK[mark];
@@ -3955,7 +3989,13 @@
           onSelect: () => copyTextToClipboard(files.join("\n"),
             files.length > 1 ? `파일명 ${formatCount(files.length)}개를 복사했습니다.` : "파일명을 복사했습니다.") },
         "separator",
-        { label: "삭제", icon: "trash", hint: "Del", danger: true, disabled: locked, onSelect: deleteSelection },
+        { label: "삭제", icon: "trash", hint: "Del", danger: true, disabled: locked,
+          title: "ROM + 메타데이터 + 미디어를 모두 지웁니다", onSelect: () => deleteSelection(DELETE_ALL) },
+        { label: "ROM 삭제", icon: "gamepad", danger: true, disabled: locked,
+          title: "ROM 파일만 지웁니다 - 메타데이터와 미디어는 남습니다", onSelect: () => deleteSelection(["rom"]) },
+        { label: "메타데이터 삭제", icon: "fileText", danger: true, disabled: locked,
+          title: "메타데이터와 미디어를 지웁니다 - ROM은 남습니다",
+          onSelect: () => deleteSelection(DELETE_META_AND_MEDIA) },
         ...rowFolderItems(row, single),
       ]);
   }
@@ -5538,21 +5578,30 @@
     else showToast("붙여넣을 새 내용이 없습니다(전부 이미 있음).", "info");
   }
 
-  async function deleteSelection() {
+  //: 삭제할 수 있는 부분과 그 이름(사용자 결정 - 무엇이 지워지는지 메뉴에서 알 수 있어야 한다).
+  const DELETE_PART_LABEL = { rom: "ROM", metadata: "메타데이터", media: "미디어", video: "영상" };
+  //: 우클릭 메뉴의 세 가지 삭제. "메타데이터 삭제"는 gamelist 항목과 미디어(영상 포함)를 함께 지운다.
+  const DELETE_ALL = ["rom", "metadata", "media", "video"];
+  const DELETE_META_AND_MEDIA = ["metadata", "media", "video"];
+
+  /** `parts`를 지운다(정하지 않으면 전부). 무엇이 지워지는지 확인창과 토스트가 그대로 말한다. */
+  async function deleteSelection(parts) {
     if (blockedInCompare("삭제")) return;
     if (!S.selected.size) { showToast("삭제할 항목을 선택하세요.", "warning"); return; }
     const count = S.selected.size;
+    const chosen = Array.isArray(parts) && parts.length ? parts : DELETE_ALL;
+    const what = chosen.map((p) => DELETE_PART_LABEL[p]).join(" + ");
     const run = async () => {
-      const r = await api.planDelete(S.activeId, [...S.selected]);
+      const r = await api.planDelete(S.activeId, [...S.selected], chosen);
       if (!r.ok) { showToast(r.error, "error"); return; }
       S.selected.clear();
       await refreshPlan();
-      if (S.autoPlan) showToast(`${formatCount(count)}개를 삭제 예정으로 표시했습니다.`);
+      if (S.autoPlan) showToast(`${formatCount(count)}개의 ${what}을(를) 삭제 예정으로 표시했습니다.`);
       else await applyPlan();
     };
     // Auto Plan이 켜져 있으면 아직 파일이 지워지지 않으므로 확인창까지 띄우지 않는다.
     if (S.autoPlan) run();
-    else showConfirm("삭제", `${formatCount(count)}개를 즉시 삭제합니다. 되돌릴 수 없습니다.`, true, run);
+    else showConfirm("삭제", `${formatCount(count)}개의 ${what}을(를) 즉시 삭제합니다. 되돌릴 수 없습니다.`, true, run);
   }
 
   /** 충돌 하나의 종류 라벨 - ROM이면 "ROM 파일", media면 그 종류(Covers 등). */

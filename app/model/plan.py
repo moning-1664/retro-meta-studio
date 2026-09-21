@@ -41,6 +41,15 @@ OP_METADATA_EDIT = "metadata_edit"    # 기기(MTP) Collection의 메타데이�
 MARKS = {OP_ADD: "+", OP_DELETE: "-", OP_STORAGE_CHANGE: "△",
          OP_TITLE_EDIT: "✎", OP_METADATA_EDIT: "✎"}
 
+#: 삭제할 수 있는 부분(사용자 결정 - "롬 삭제 / 메타데이터 삭제 / 미디어 삭제"를 따로).
+#:   rom      ROM 파일
+#:   metadata gamelist 항목(메타데이터)
+#:   media    영상을 뺀 media 파일
+#:   video    영상 파일
+DELETE_PARTS = ("rom", "metadata", "media", "video")
+#: 부분 삭제의 기호 - 게임 항목이 통째로 사라지는 `-`와 구별한다.
+MARK_PARTIAL_DELETE = "◐"
+
 
 #: 충돌 해결 방식. 미해결(None) 상태에서는 Apply가 그 항목을 건드리지 않는다.
 RESOLVE_SKIP = "skip"
@@ -92,7 +101,15 @@ class PlanEntry:
         return f"{self.op}|{self.system}|{self.filename}"
 
     @property
+    def delete_parts(self) -> tuple:
+        """삭제 대상 부분. 정하지 않았으면 전부(예전 동작)."""
+        parts = (self.source or {}).get("parts")
+        return tuple(p for p in DELETE_PARTS if p in parts) if parts else DELETE_PARTS
+
+    @property
     def mark(self) -> str:
+        if self.op == OP_DELETE and not {"rom", "metadata"} <= set(self.delete_parts):
+            return MARK_PARTIAL_DELETE
         return MARKS.get(self.op, "△")
 
     @property
@@ -169,14 +186,17 @@ class Plan:
         System 단위 이동은 그 System의 모든 항목에 △로 나타난다 - 개별 행에도
         변화가 예정되어 있다는 사실이 보여야 한다.
         """
-        result = {}
+        result, parts = {}, {}
         moved_systems = set()
         for entry in self._entries.values():
             if entry.op == OP_STORAGE_CHANGE:
                 moved_systems.add(entry.system)
             else:
                 result[f"{entry.system}|{entry.filename}"] = entry.mark
-        return {"rows": result, "systems": sorted(moved_systems)}
+                if entry.op == OP_DELETE:
+                    parts[f"{entry.system}|{entry.filename}"] = list(entry.delete_parts)
+        # `parts`는 삭제 예정 행이 무엇을 지우는지 - 화면이 툴팁으로 말해 준다.
+        return {"rows": result, "systems": sorted(moved_systems), "deleteParts": parts}
 
     def summary(self) -> dict:
         added = [e for e in self._entries.values() if e.op == OP_ADD]

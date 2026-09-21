@@ -812,7 +812,7 @@
     saveFields: (id, romUid, fields) => call("save_fields", id, romUid, fields),
 
     planState: (id) => call("plan_state", id),
-    planDelete: (id, romUids) => call("plan_delete", id, romUids),
+    planDelete: (id, romUids, parts) => call("plan_delete", id, romUids, parts || null),
     planStorageChange: (id, system, storageId) => call("plan_storage_change", id, system, storageId),
     titleAffixPreview: (id, romUids, system) => call("title_affix_preview", id, romUids, system),
     planTitleEdit: (id, romUids, system) => call("plan_title_edit", id, romUids, system),
