@@ -1774,6 +1774,22 @@ class Api:
         return ok(self._encode_image(item["abs_path"], THUMBNAIL_MAX if thumbnail else None))
 
     @guarded
+    def get_archive_version_media_image(self, rom_identity_id, source_collection_id, media_label,
+                                        thumbnail=False):
+        """`get_archive_media_image()`와 같지만 **정해진(preferred) 것이 아니라 특정
+        출처의 것**을 돌려준다. 서로 다른 버전(§16)을 고르는 화면에서 "그 출처가 가진
+        그림"을 실제로 보여줘야 문장(크기/일치율)만으로 못 하는 판단(둘이 진짜 같은
+        그림인지)을 사람이 눈으로 할 수 있다(실사용 피드백 - "conflict 내용을 보니
+        크기도 같다"는데도 문장만으로는 확인할 방법이 없었다)."""
+        media_type = MEDIA_KEYS.get(media_label, str(media_label).lower())
+        item = next((m for m in self.archive.media_refs(rom_identity_id)
+                     if m["media_type"] == media_type
+                     and m["source_collection_id"] == source_collection_id), None)
+        if item is None:
+            return ok(None)
+        return ok(self._encode_image(item["abs_path"], THUMBNAIL_MAX if thumbnail else None))
+
+    @guarded
     def get_archive_media_video_url(self, rom_identity_id):
         """Archive 항목의 영상 URL. Archive는 원본 경로만 들고 있으므로 그 파일이 사라졌으면 None."""
         item = next((m for m in self.archive.media_refs(rom_identity_id)

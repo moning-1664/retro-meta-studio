@@ -77,7 +77,7 @@ def snapshot_matches(provider, path, saved) -> bool:
     return True
 
 
-def classify_destination(provider, src_path, src_size, dest_path) -> tuple[str, dict | None]:
+def classify_destination(provider, src_path, src_size, dest_path, *, size_only=False) -> tuple[str, dict | None]:
     """목적지 상태를 보고 이 파일을 어떻게 다뤄야 하는지 판정한다.
 
     **용량 계산과 충돌 판정은 별개다.** 예전에는 "목적지에 같은 크기의 파일이 있으면
@@ -85,8 +85,8 @@ def classify_destination(provider, src_path, src_size, dest_path) -> tuple[str, 
     `같은 이름 + 같은 크기 + 다른 CRC`는 흔히 있는 일이라, 크기가 같다는 이유로
     남의 파일을 덮어쓰면 안 된다.
 
-    "이미 같은 파일"로 인정하는 조건은 **크기와 수정 시각이 정확히 일치**하는 것뿐이다.
-    복사 도구는 원본의 타임스탬프를 보존하므로, 우리가(또는 다른 도구가) 복사해둔
+    "이미 같은 파일"로 인정하는 조건은 기본적으로 **크기와 수정 시각이 정확히 일치**하는
+    것이다. 복사 도구는 원본의 타임스탬프를 보존하므로, 우리가(또는 다른 도구가) 복사해둔
     파일이면 시각이 정확히 같다.
 
     허용오차를 두지 않는 이유가 있다. 파일 시스템 시각 해상도(FAT32 2초)를 감안해
@@ -94,6 +94,14 @@ def classify_destination(provider, src_path, src_size, dest_path) -> tuple[str, 
     ROM 관리에서 `같은 이름 + 같은 크기 + 다른 내용`은 흔하고, 잘못 판정하면 남의
     파일을 조용히 덮어쓴다. 확신할 수 없으면 충돌로 올려 사용자가 정하게 하는 것이
     맞다(스펙 §85 - 모호한 상황에서 자동으로 결정하지 않는다).
+
+    **`size_only=True`는 Media 전용이다**(사용자 결정, 번복). 서로 다른 Collection/기기
+    사이를 옮기면(특히 MTP) mtime이 원본과 똑같이 보존되지 않는 경우가 흔해서, 픽셀 하나
+    안 다른 같은 그림도 mtime만 달라 매번 충돌로 떴다("비슷한 A와 B를 붙여넣었는데
+    Conflict가 뜨고, 크기도 같더라"는 리포트). ROM은 여전히 크기+시각을 둘 다 본다 -
+    같은 크기의 다른 리전/리비전 덤프가 실제로 있는, 더 위험한 자료이기 때문이다. Media는
+    크기가 같으면 같은 그림으로 본다(같은 크기의 다른 그림도 이론상 있을 수 있지만, ROM의
+    다른 리전 덤프만큼 흔하지도 위험하지도 않다).
 
     (같은 시각 비교라도 "우리가 방금 복사한 게 실제로 도착했는가"를 보는
     `engines/robocopy_engine.py`의 검증은 목적이 달라서 허용오차를 쓴다.)
@@ -103,11 +111,16 @@ def classify_destination(provider, src_path, src_size, dest_path) -> tuple[str, 
         return ACTION_COPY, None
 
     source = provider.stat(src_path)
-    if (source is not None and existing.size == source.size
+    if size_only:
+        if existing.size == int(src_size or 0):
+            return ACTION_IDENTICAL, None
+    elif (source is not None and existing.size == source.size
             and existing.mtime_ns == source.mtime_ns):
         return ACTION_IDENTICAL, None
 
-    reason = ("크기가 다릅니다" if existing.size != int(src_size or 0)
+    # size_only인데 여기까지 왔다면 크기 자체가 다른 경우뿐이다(크기가 같으면 위에서 이미
+    # ACTION_IDENTICAL로 반환한다) - "크기는 같지만"이라는 문구는 그 경우엔 나올 일이 없다.
+    reason = ("크기가 다릅니다" if size_only or existing.size != int(src_size or 0)
               else "크기는 같지만 같은 파일이라고 확신할 수 없습니다")
     return ACTION_CONFLICT, {
         "source": str(src_path), "dest": str(dest_path),
@@ -174,7 +187,7 @@ def plan_add(plan, collection, provider, items):
             dest = pairs[0][1] if pairs else None
             if dest is None:
                 continue
-            action, conflict = classify_destination(provider, media["path"], size, dest)
+            action, conflict = classify_destination(provider, media["path"], size, dest, size_only=True)
             if action == ACTION_COPY:
                 _bump(delta, media_storage, size)
             elif action == ACTION_CONFLICT:

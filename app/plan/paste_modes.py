@@ -98,16 +98,21 @@ def prepare(items, cache, mode) -> tuple[list, list]:
 
 
 def _same_media(media, existing) -> bool:
-    """원본 미디어가 대상의 그것과 같은 파일인가(크기와 수정시각이 모두 같을 때만).
-    크기만 같은 것은 다른 그림일 수 있다 - 같은 크기의 서로 다른 커버는 흔하다."""
+    """원본 미디어가 대상의 그것과 같은 파일인가.
+
+    **크기만 본다**(사용자 결정, 번복 - `app/plan/builder.classify_destination()`의
+    `size_only`와 같은 이유). 예전엔 크기+수정시각을 요구했는데, Collection/기기를
+    옮기면(특히 MTP) mtime이 원본 그대로 보존되지 않는 경우가 흔해서 똑같은 그림도
+    매번 "다른 파일"로 보여 붙여넣을 때마다 Conflict가 떴다. ROM은 여전히 크기+시각을
+    같이 보는 `_same_file()`을 쓴다 - 같은 크기의 다른 리전/리비전 덤프가 실제로 있는,
+    더 위험한 자료이기 때문이다."""
     if existing is None:
         return False
     try:
         stat = Path(media["path"]).stat()
     except (OSError, KeyError, TypeError):
         return False
-    return (stat.st_size == int(existing.get("size") or 0)
-            and stat.st_mtime_ns == int(existing.get("mtime_ns") or 0))
+    return stat.st_size == int(existing.get("size") or 0)
 
 
 def _same_file(rom, existing) -> bool:

@@ -330,6 +330,19 @@ class ArchiveDirectoryTests(unittest.TestCase):
         self.assertTrue((self.archive_dir / "gamelists" / "ps2" / "gamelist.xml").exists())
         self.assertFalse((self.archive_dir / "downloaded_media").exists())
 
+    def test_pointing_at_an_existing_es_de_archive_picks_up_its_media(self):
+        """실사용 버그 리포트 - 이미 ES-DE 형식으로 채워져 있는(이 앱으로 수집한 적 없는)
+        외부 Archive 디렉토리를 가리키면 gamelist/ROM은 읽히는데 media는 하나도 안
+        잡혔다("가지고 있는데 없다고 나온다"). `sync_from_directory()`가 media를 아예
+        읽지 않았던 것이 원인이다.
+        """
+        existing = build_esde_tree(self.dir / "existing-archive")   # FFX는 covers+videos가 있다
+        configure(self.api, {"archiveDir": str(existing)})
+        rows = {r["file"]: r for r in self.api.archive_rows()["data"]["rows"]}
+        self.assertIn("FFX.iso", rows)
+        self.assertTrue(rows["FFX.iso"]["hasMedia"], "media가 있는데도 없다고 나왔다")
+        self.assertFalse(rows["MGS2.iso"]["hasMedia"], "media가 없는 게임은 그대로 없어야 한다")
+
     def test_archive_edit_is_projected(self):
         configure(self.api, {"archiveDir": str(self.archive_dir)})
         self._ingest_all()

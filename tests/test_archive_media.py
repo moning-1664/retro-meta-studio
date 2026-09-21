@@ -21,7 +21,7 @@
 import unittest
 
 from bridge.api import Api
-from tests.fixtures import build_esde_tree, temp_root, wait_idle
+from tests.fixtures import build_esde_tree, temp_root, wait_idle, write_file
 
 
 class ArchiveMediaPipelineTests(unittest.TestCase):
@@ -98,6 +98,37 @@ class ArchiveMediaPipelineTests(unittest.TestCase):
         self.api.archive_ingest(self.cid, scope={"kind": "all"})
         result = self.api.get_archive_media_image(self._rid("MGS2.iso"), "Covers")
         self.assertTrue(result["ok"])
+
+    def test_a_version_specific_image_can_be_fetched_per_source(self):
+        """버전(서로 다른 출처) 고르기 화면이 각 출처의 그림을 실제로 보여줄 수 있어야
+        한다(실사용 피드백 - work-mtp-0917에 있던 미리보기를 다시 가져옴). preferred
+        하나만 주는 `get_archive_media_image()`와 달리, 지정한 출처의 것을 그대로
+        준다."""
+        other_root = build_esde_tree(self.dir / "esde2")
+        write_file(other_root / "downloaded_media" / "ps2" / "covers" / "FFX.png", b"y" * 20)
+        other_cid = self.api.create_collection("C2", "es-de", str(other_root))["data"]["id"]
+        self.api.start_scan(other_cid)
+        wait_idle(self.api)
+
+        self.api.archive_ingest(self.cid, scope={"kind": "all"})
+        self.api.archive_ingest(other_cid, scope={"kind": "all"})
+        rid = self._rid()
+
+        result = self.api.get_archive_version_media_image(rid, self.cid, "Covers")
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertTrue(str(result["data"] or "").startswith("data:image/"))
+
+        result2 = self.api.get_archive_version_media_image(rid, other_cid, "Covers")
+        self.assertTrue(result2["ok"], result2.get("error"))
+        self.assertTrue(str(result2["data"] or "").startswith("data:image/"))
+        # 두 출처의 그림 크기가 다르니(10바이트 vs 20바이트) data URL도 달라야 한다.
+        self.assertNotEqual(result["data"], result2["data"])
+
+    def test_an_unknown_source_returns_none_not_an_error(self):
+        self.api.archive_ingest(self.cid, scope={"kind": "all"})
+        result = self.api.get_archive_version_media_image(self._rid(), "not-a-real-source", "Covers")
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["data"])
         self.assertIsNone(result["data"])
 
     def test_a_missing_source_file_only_skips_that_one_media(self):

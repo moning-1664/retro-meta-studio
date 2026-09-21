@@ -299,6 +299,7 @@
       count: mockIngestCount(scope),
     }),
     get_archive_media_image: () => ok(null),
+    get_archive_version_media_image: () => ok(null),
     archive_rows: (search, systems, limit, offset, conflictsOnly) =>
       ok({ rows: [], total: 0, offset: 0, conflictsOnly: !!conflictsOnly }),
     archive_uids: () => ok([]),
@@ -867,6 +868,10 @@
     archiveIngestPreview: (id, scope) => call("archive_ingest_preview", id, scope),
     getArchiveMediaImage: (romIdentityId, label, thumbnail) =>
       call("get_archive_media_image", romIdentityId, label, !!thumbnail),
+    // 버전(출처)마다 다른 그림을 미리 보려는 것 - preferred 하나만 주는 위 호출과 달리
+    // sourceCollectionId를 지정한 그 출처의 것을 그대로 준다.
+    getArchiveVersionMediaImage: (romIdentityId, sourceCollectionId, label, thumbnail) =>
+      call("get_archive_version_media_image", romIdentityId, sourceCollectionId, label, !!thumbnail),
     archiveRows: (q) => call("archive_rows", q.search || null, q.systems || null,
                              q.limit || 200, q.offset || 0, !!q.conflictsOnly),
     archiveUids: (systems) => call("archive_uids", systems || null),

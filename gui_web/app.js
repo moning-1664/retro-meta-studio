@@ -4990,6 +4990,27 @@
   const TIER_LABEL = { exact: "정확", normalized: "이름 일치", metadata: "메타데이터",
                        heuristic: "유사", manual: "수동 연결" };
 
+  /** 버전 하나의 Cover/Screenshot 미리보기 - 문장(크기)만으로는 "진짜 같은 그림인지"를
+   * 눈으로 확인할 수 없었다(실사용 피드백 - work-mtp-0917에 있던 미리보기를 다시 가져옴).
+   * 그 버전에 실린 여러 출처 중 첫 번째 것을 대표로 보여준다. */
+  function archiveVersionTile(romIdentityId, sourceId, label, key) {
+    const tile = h("div", { class: "cmp-tile ver-tile" });
+    tile.appendChild(h("div", { class: "cmp-tile-label" }, [label]));
+    const box = h("div", { class: "cmp-tile-box" });
+    if (sourceId) {
+      const img = h("img", { alt: label });
+      box.appendChild(img);
+      api.getArchiveVersionMediaImage(romIdentityId, sourceId, label, true).then((r) => {
+        if (r.ok && r.data) img.src = r.data; else tile.classList.add("empty");
+      });
+    } else {
+      tile.classList.add("empty");
+      box.appendChild(icon("imageOff", IC.sm));
+    }
+    tile.appendChild(box);
+    return tile;
+  }
+
   /** Archive의 버전 목록. 하나를 고르면 그 버전이 쓰이고 `[n]`이 사라진다.
    *
    * 판단에 필요한 것(파일명/Title/Description/Cover/Screenshot)을 한 화면에 보여준다 -
@@ -4998,10 +5019,11 @@
     const r = await api.archiveVersions(row.romIdentityId || row.romUid);
     if (!r.ok) { showToast(r.error, "error"); return; }
     const versions = r.data.versions || [];
-    const list = h("div", { class: "match-list" });
+    const rid = row.romIdentityId || row.romUid;
+    const list = h("div", { class: "match-list ver-list" });
     const mediaText = (v, key) => (v.media[key] ? formatBytes(v.media[key]) : "—");
     versions.forEach((v, i) => {
-      const option = h("button", { class: "match-option" });
+      const option = h("button", { class: "match-option ver-option" });
       option.appendChild(h("span", { class: "match-radio" }, ["○"]));
       option.appendChild(h("div", { class: "match-option-main" }, [
         h("div", { class: "match-option-title truncate" }, [v.fields.name || row.file]),
@@ -5010,6 +5032,11 @@
         h("div", { class: "match-option-why truncate" }, [
           `${row.file} · Cover ${mediaText(v, "covers")} · Screenshot ${mediaText(v, "screenshots")}`
           + ` · 출처 ${(v.sourceNames || v.sources).join(", ")}`]),
+      ]));
+      const versionSource = (v.sources || [])[0] || null;
+      option.appendChild(h("div", { class: "ver-tiles" }, [
+        archiveVersionTile(rid, versionSource, "Covers", "covers"),
+        archiveVersionTile(rid, versionSource, "Screenshots", "screenshots"),
       ]));
       option.addEventListener("click", async () => {
         closeModal();
@@ -6600,8 +6627,10 @@
       // 디렉토리가 진실이다 - 직접 넣은 ROM이나 고친 gamelist를 먼저 읽어 들인다.
       // 설정이 없으면(configured 아님) 읽을 디렉토리가 없으므로 조용히 넘어간다.
       const synced = await api.archiveRefresh();
-      if (synced.ok && synced.data && (synced.data.added || synced.data.romsLinked)) {
-        showToast(`Archive 디렉토리에서 ${synced.data.added}개 추가, ROM ${synced.data.romsLinked}개 연결`);
+      if (synced.ok && synced.data
+          && (synced.data.added || synced.data.romsLinked || synced.data.mediaLinked)) {
+        showToast(`Archive 디렉토리에서 ${synced.data.added}개 추가, ROM ${synced.data.romsLinked}개, `
+          + `Media ${synced.data.mediaLinked || 0}개 연결`);
       }
       await ensureDetail(ARCHIVE_ID);
       resetList();

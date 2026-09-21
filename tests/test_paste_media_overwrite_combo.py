@@ -44,8 +44,12 @@ class RomKeptMediaOverwrittenTests(unittest.TestCase):
 
         self.dst = build_custom_esde_tree(self.dir / "dst", "ps2",
                                           [{"filename": "FFX.iso", "title": "Old Title"}])
+        # 크기까지 달라야 진짜 충돌이다 - Media 충돌 판정은 크기만 본다(사용자 결정,
+        # app/plan/builder.classify_destination의 size_only). 크기가 같으면 지금은
+        # 같은 파일로 보고 조용히 건너뛰므로, 이 테스트가 보려는 "진짜 충돌"을 만들려면
+        # Source와 크기 자체가 달라야 한다.
         self.dst_cover = write_file(
-            self.dst / "downloaded_media" / "ps2" / "covers" / "FFX.png", b"COVER-B" * 20)
+            self.dst / "downloaded_media" / "ps2" / "covers" / "FFX.png", b"COVER-BB" * 20)
         # Target ROM은 Source와 바이트가 다르다 - 진짜 충돌 상황을 만든다.
         self.dst_rom = write_file(self.dst / "ps2" / "FFX.iso", b"TARGET-ROM-BYTES" * 20)
         self.target_rom_before = self.dst_rom.read_bytes()
