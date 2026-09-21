@@ -324,7 +324,9 @@
     appearance: { theme: "stitch", density: "compact", scale: 100, previewDefault: true },
     navigation: { hideEmptySystems: false, defaultSortPriority: "none" },
     gamelist: { order: [], hidden: [] },
-    collections: { order: [] },
+    collections: { order: [], restoreTabs: true, rememberSystem: true },
+    //: 마지막으로 열어 둔 탭(앱을 다시 켜면 그대로 되살린다). 떼어 낸 창에서는 쓰지 않는다.
+    session: { tabs: [], active: null },
     transfer: { pasteMode: "patch", includeRom: true, includeMedia: true, conflict: "ask",
                 unmatchedRomMode: "skip", unmatchedRomMetadata: true, unmatchedRomMedia: true, unmatchedRomVideo: true },
     //: Media 탭의 영상(사용자 결정: 소리 켬, 반복 켬, 5초 뒤 자동 재생 - 전부 Settings에서 바꾼다).
@@ -379,6 +381,8 @@
     activeId: null,
     detail: {},          // collectionId -> collection_detail 응답
     scope: {},           // collectionId -> {kind:"all"|"storage"|"system", id}
+    //: Collection마다 마지막으로 보던 자리(Dashboard/목록, 선택, 스크롤). 탭을 오가도 그대로 돌아온다.
+    tabState: {},
     headerExpanded: false,
     search: "",
     order: "title",
@@ -490,6 +494,7 @@
     // "Card 상태가 저장되지 않았다"였다.
     if (r.data.viewMode === "card" || r.data.viewMode === "list") S.viewMode = r.data.viewMode;
     S.dashboardTargets = { ...(r.data.dashboardTargets || {}) };
+    if (r.data.scope && (S.settings.collections || {}).rememberSystem !== false) S.scope[collectionId] = r.data.scope;
   }
 
   let uiStateTimer = null;
@@ -503,6 +508,8 @@
       sort: { key: S.order, desc: !!S.descending },
       previewOn: S.previewOn !== false,
       viewMode: S.viewMode,
+      // 마지막으로 고른 System/Storage - 앱을 다시 켜도 그 자리에서 시작한다.
+      scope: S.scope[id] || null,
     };
     pendingUiStateFlush = () => api.saveUiState(id, payload);
     uiStateTimer = setTimeout(() => {
@@ -545,6 +552,7 @@
     S.tabs = S.tabs.filter((t) => t !== id);
     delete S.detail[id];
     delete S.scope[id];
+    delete S.tabState[id];
     if (S.activeId === id) {
       S.activeId = S.tabs[0] || null;
       resetList();
@@ -552,6 +560,7 @@
     }
     renderAll();
     if (S.activeId) await reloadList();
+    rememberSession();
   }
 
   async function detachTab(id) {
@@ -1118,10 +1127,44 @@
     setTimeout(() => input.focus(), 30);
   }
 
+  /** 떠나기 전에 지금 보던 자리를 기억한다(Dashboard/목록, 선택, 스크롤). 탭을 오가면 예전에는
+   * 이 모든 것이 처음으로 돌아갔다(실사용 피드백 - 선택한 위치가 리셋, Dashboard를 보다 다른
+   * Collection을 갔다 오면 System으로 돌아감). */
+  function rememberTabState() {
+    const id = S.activeId;
+    if (!id || id === ARCHIVE_ID) return;
+    const scroll = $("list-scroll");
+    S.tabState[id] = {
+      view: S.view, selected: [...S.selected], anchor: S.selectAnchor, focused: S.focused,
+      scrollTop: scroll ? scroll.scrollTop : 0,
+    };
+  }
+
+  /** 기억해 둔 자리로 돌아간다. 목록을 다 그린 뒤에 부른다. */
+  async function restoreTabState(id) {
+    const saved = S.tabState[id];
+    if (!saved || S.activeId !== id) return;
+    if (saved.view === "dashboard") { await showDashboard(); return; }
+    S.selected = new Set(saved.selected || []);
+    S.selectAnchor = saved.anchor == null ? null : saved.anchor;
+    S.focused = saved.focused == null ? null : saved.focused;
+    const scroll = $("list-scroll");
+    if (scroll) scroll.scrollTop = saved.scrollTop || 0;
+    updateSelectionVisual();
+    renderStatusBar();
+  }
+
+  /** 열어 둔 탭과 보던 탭을 저장한다 - 앱을 다시 켜면 그대로 되살린다. 떼어 낸 창은 쓰지 않는다. */
+  function rememberSession() {
+    if (isDetached()) return;
+    updateSettings("session", { tabs: S.tabs.filter((t) => t !== ARCHIVE_ID), active: S.activeId });
+  }
+
   async function selectTab(id) {
     if (S.activeId === id) return;
     if (isDetached() && id !== S.window.collectionId) return;
     if (id !== ARCHIVE_ID && !S.tabs.includes(id)) { await openTab(id); return; }
+    rememberTabState();
     S.activeId = id;
     S.view = "list";
     resetList();
@@ -1133,6 +1176,8 @@
     renderAll();
     await reloadList();
     await refreshPlan();
+    await restoreTabState(id);
+    rememberSession();
   }
 
   /** Archive 설정이 있는지 - 없으면 빈 화면이 [Archive 설정] 버튼을 보여준다. */
@@ -1158,6 +1203,8 @@
     }
     const r = await api.openCollection(id);
     if (!r.ok) { showToast(r.error, "error"); return; }
+    rememberTabState();
+    S.view = "list";           // 새로 연 탭은 목록에서 시작한다(Dashboard를 보던 채로 열어도)
     S.detail[id] = r.data;
     S.tabs.push(id);
     sortTabsByCollectionOrder();
@@ -1170,6 +1217,14 @@
     renderAll();
     await reloadList();
     await refreshPlan();
+    rememberSession();
+  }
+
+  /** 새 Collection의 기본 이름 - Frontend 이름이고, 겹치면 "Pegasus 2"처럼 번호가 붙는다. */
+  function defaultCollectionName(base) {
+    const taken = new Set((S.collections || []).map((c) => c.name));
+    if (!taken.has(base)) return base;
+    for (let n = 2; ; n += 1) if (!taken.has(`${base} ${n}`)) return `${base} ${n}`;
   }
 
   async function ensureDetail(id) {
@@ -1209,6 +1264,7 @@
     await loadCollections();
 
     const nameInput = h("input", { class: "field-input", placeholder: "예: Android ES-DE" });
+    const nameHint = h("div", { class: "modal-hint add-name-hint" });
     // **Metadata와 ROM은 서로 독립적인 두 경로다.**
     //
     // 예전에는 대표 폴더 한 칸만 받고 ROM은 "고급"에 숨겨 두었다. 그런데 ES-DE는 이
@@ -1262,9 +1318,8 @@
         const r = await api.pickFolder(title);
         if (!r.ok || !r.data) return;
         input.value = r.data;
-        if (alsoName && !nameInput.value.trim()) {
-          nameInput.value = String(r.data).split(/[\\/]/).filter(Boolean).pop() || "";
-        }
+        // 이름은 폴더 이름으로 채우지 않는다(사용자 결정 - ROM 폴더만 고르면 "Roms"가 이름이 됐다).
+        // 비워 두면 Frontend 이름이 쓰이고, 그 이름을 입력칸의 안내 문구로 미리 보여 준다.
       });
       return btn;
     }
@@ -1388,7 +1443,14 @@
 
     // 긴 설명을 필드 아래 줄줄이 적지 않는다 - hover하면 뜨는 title 툴팁 하나로
     // 충분하다. 항상 보이는 문장이 아니라 필요할 때만 보이는 문장으로 정책을 맞춘다.
+    /** 이름을 비워 두면 쓰일 이름을 입력칸 아래에 보여 준다. */
+    function syncNamePlaceholder() {
+      const label = (frontends.find((f) => f.id === frontendSel.value) || {}).label || frontendSel.value;
+      nameHint.textContent = `비워 두면 "${defaultCollectionName(label)}"(으)로 만듭니다.`;
+    }
+
     function syncFrontend() {
+      syncNamePlaceholder();
       const isEs = ES_STYLE_FRONTEND_IDS.has(frontendSel.value);
       pathLabel.textContent = isEs ? "Metadata 디렉토리" : "ROM 디렉토리";
       pathLabel.title = isEs
@@ -1444,7 +1506,7 @@
       romLabel, romRow,
       extRomLabel, extRomRow,
       browserBox,
-      h("div", { class: "field-label" }, ["이름"]), nameInput,
+      h("div", { class: "field-label" }, ["이름"]), nameInput, nameHint,
       advanced,
       history,
     ]);
@@ -1462,8 +1524,10 @@
           showToast("Metadata 디렉토리와 ROM 디렉토리 중 하나는 선택하세요.", "warning");
           return;
         }
-        const name = nameInput.value.trim() ||
-          String(metaPath || romPath).split(/[\\/]/).filter(Boolean).pop() || "Collection";
+        // 이름을 안 적었으면 **선택한 Frontend 이름**이 기본이다(사용자 결정 - Pegasus처럼 ROM 폴더만 고르면
+        // 폴더 이름("Roms")이 이름이 되어 무엇인지 알 수 없었다). 같은 이름이 이미 있으면 번호를 붙인다.
+        const name = nameInput.value.trim() || defaultCollectionName(
+          (frontends.find((f) => f.id === frontendSel.value) || {}).label || frontendSel.value);
         closeModal();
         // 기기 Collection의 Storage는 "Internal"이 아니라 기기 이름으로 보여야 한다.
         const device = source === "device"
@@ -1730,7 +1794,7 @@
             .filter((sys) => sys.storageId === storage.id).map((sys) => sys.system);
           head.addEventListener("contextmenu", (e) => {
             e.preventDefault();
-            if (systemNames.length) openMetadataBootstrap(S.activeId, systemNames);
+            openStorageGroupMenu(storage, systemNames, e);
           });
           group.addEventListener("dragover", (e) => { e.preventDefault(); group.classList.add("drop-target"); });
           group.addEventListener("dragleave", () => group.classList.remove("drop-target"));
@@ -1752,6 +1816,13 @@
     // 밖(고정 영역)에 둔다. **이미 External이 있으면 숨긴다**(사용자 결정) - 이
     // Collection이 쓰는 External은 하나뿐이라고 본다. 더 필요하면 먼저 지우고
     // 다시 추가한다(그룹 머리의 제거 버튼).
+    if (!isCompare() && detail && !detail.metadataOnly) {
+      // 빈 System을 만든다(사용자 결정) - 이름을 넣으면 그 이름의 빈 폴더가 생긴다.
+      const addSystem = h("button", { class: "nav-action nav-add-system" },
+        [icon("plus", IC.sm), h("span", {}, ["Add System"])]);
+      addSystem.addEventListener("click", openCreateSystem);
+      nav.appendChild(addSystem);
+    }
     if (!isCompare() && !externalStorages.length) {
       const add = h("button", { class: "nav-action" }, [icon("plus", IC.sm), h("span", {}, ["Add External Storage"])]);
       add.addEventListener("click", openAddStorage);
@@ -1788,6 +1859,7 @@
     renderFilterBar();
     // 선택 개수와 수집 대상 표시도 함께 맞춘다 - 선택을 비웠으니 화면도 그래야 한다.
     renderStatusBar();
+    saveUiState();
     await reloadList();
   }
 
@@ -1948,7 +2020,7 @@
       title: deviceOnly ? deviceTip : "Metadata/Media는 있는데 ROM 파일이 없는 항목을 찾아 지웁니다.",
       onSelect: () => confirmOrphanCleanup(sys),
     }, {
-      label: "System 전체 미디어 정리", icon: "imageOff", disabled: deviceOnly,
+      label: "System 미디어 선택 삭제", icon: "imageOff", disabled: deviceOnly,
       title: deviceOnly ? deviceTip : "Cover/Screenshot/Video 등 media 종류를 골라 이 System 전체에서 지웁니다.",
       onSelect: () => confirmMediaCleanup(sys),
     });
@@ -1981,11 +2053,16 @@
    * 확인받는 것까지만 한다. ROM 파일은 원래 없으므로 "전체 삭제"만큼 위험하지
    * 않다 - 확인 한 번(빈 System 삭제와 같은 무게)이면 된다. */
   async function confirmOrphanCleanup(sys) {
+    return confirmOrphanCleanupFor([sys.system], sys.system.toUpperCase());
+  }
+
+  /** ROM 없는 항목 정리 - System 하나 또는 Storage 그룹의 System 전부. */
+  async function confirmOrphanCleanupFor(systemNames, name) {
     const collectionId = S.activeId;
-    const preview = await api.orphanMetadataPreview(collectionId, sys.system);
-    if (!preview.ok) { showToast(preview.error, "error"); return; }
-    const items = preview.data.items;
-    const name = sys.system.toUpperCase();
+    const previews = await Promise.all(systemNames.map((s) => api.orphanMetadataPreview(collectionId, s)));
+    const failed = previews.find((p) => !p.ok);
+    if (failed) { showToast(failed.error, "error"); return; }
+    const items = previews.flatMap((p) => p.data.items);
     if (!items.length) { showToast(`${name}에 정리할 항목이 없습니다.`); return; }
 
     const list = h("div", { class: "sysdel-list" });
@@ -2026,11 +2103,22 @@
    * media 종류를 체크박스로 골라 그 System 전체에서 지운다. ROM·Metadata·고르지
    * 않은 타입은 건드리지 않는다. 실제로 파일이 있는 타입만 목록에 나온다. */
   async function confirmMediaCleanup(sys) {
+    return confirmMediaCleanupFor([sys.system], sys.system.toUpperCase());
+  }
+
+  /** 여러 System(Storage 그룹) 또는 하나의 media를 골라 지운다. 종류별 개수는 System들을 합쳐 보여준다. */
+  async function confirmMediaCleanupFor(systemNames, name) {
     const collectionId = S.activeId;
-    const preview = await api.mediaCleanupPreview(collectionId, sys.system);
-    if (!preview.ok) { showToast(preview.error, "error"); return; }
-    const types = preview.data.types;
-    const name = sys.system.toUpperCase();
+    const previews = await Promise.all(systemNames.map((s) => api.mediaCleanupPreview(collectionId, s)));
+    const failed = previews.find((p) => !p.ok);
+    if (failed) { showToast(failed.error, "error"); return; }
+    const merged = new Map();
+    previews.forEach((p) => p.data.types.forEach((t) => {
+      const cur = merged.get(t.type) || { type: t.type, label: t.label, count: 0, bytes: 0 };
+      cur.count += t.count; cur.bytes += t.bytes;
+      merged.set(t.type, cur);
+    }));
+    const types = [...merged.values()];
     if (!types.length) { showToast(`${name}에 정리할 media가 없습니다.`); return; }
 
     const checks = types.map((t) => {
@@ -2052,24 +2140,30 @@
       const selected = checks.filter((c) => c.input.checked).map((c) => c.type);
       if (!selected.length) return;
       closeModal();
-      const r = await api.mediaCleanup(collectionId, sys.system, selected);
-      if (!r.ok) { showToast(r.error, "error"); return; }
+      let removed = 0;
+      let failedFiles = [];
+      for (const system of systemNames) {
+        const r = await api.mediaCleanup(collectionId, system, selected);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        removed += r.data.removed || 0;
+        failedFiles = failedFiles.concat(r.data.failed || []);
+      }
       if (collectionId === S.activeId) {
         await ensureDetail(collectionId);
         resetList();
         renderAll();
         await reloadList();
       }
-      const failed = r.data.failed || [];
-      showToast(`${name}에서 media ${formatCount(r.data.removed)}개를 지웠습니다.`
-        + (failed.length ? ` (${formatCount(failed.length)}개 실패)` : ""), failed.length ? "warning" : "info");
+      showToast(`${name}에서 media ${formatCount(removed)}개를 지웠습니다.`
+        + (failedFiles.length ? ` (${formatCount(failedFiles.length)}개 실패)` : ""),
+        failedFiles.length ? "warning" : "info");
     });
 
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "modal-text" }, [`${name}에서 지울 media 종류를 고르세요. ROM과 Metadata는 지우지 않습니다.`]),
       h("div", { class: "media-clean-list" }, checks.map((c) => c.row)),
     ]);
-    showModal(`${name} - 미디어 정리`, body, [
+    showModal(`${name} - 미디어 선택 삭제`, body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       confirmBtn,
     ]);
@@ -2413,6 +2507,38 @@
     await refreshPlan();
   }
 
+  /** System 추가 - 이름을 넣으면 빈 폴더로 만든다. Storage가 여럿이면 어디에 만들지 고른다. */
+  function openCreateSystem() {
+    const detail = activeDetail();
+    if (!detail) return;
+    const input = h("input", { class: "field-input add-system-input", placeholder: "예: fbneo, psx" });
+    const storages = detail.storages || [];
+    const select = h("select", { class: "field-input add-system-storage" },
+      storages.map((s) => h("option", { value: s.id }, [s.label])));
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "field-label" }, ["System 이름"]), input,
+      storages.length > 1 ? h("div", { class: "field-label" }, ["만들 위치"]) : null,
+      storages.length > 1 ? select : null,
+      h("div", { class: "modal-hint" }, [
+        "이 이름의 빈 ROM 폴더를 만듭니다. ES-DE는 폴더 이름으로 System을 알아보므로 영문 소문자 이름(psx, snes …)을 쓰세요."]),
+    ]);
+    showModal("System 추가", body, [
+      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+      h("button", { class: "btn primary add-system-save", onClick: async () => {
+        const name = input.value.trim();
+        if (!name) { showToast("System 이름을 입력하세요.", "warning"); return; }
+        closeModal();
+        const r = await api.createSystem(S.activeId, name, select.value);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        await refreshAfterLayoutChange();
+        showToast(r.data.knownToEsde === false
+          ? `${name} System을 만들었습니다. ES-DE 기본 목록에 없는 이름이라 custom_systems XML이 필요할 수 있습니다.`
+          : `${name} System을 만들었습니다.`, r.data.knownToEsde === false ? "warning" : "info");
+      } }, ["만들기"]),
+    ]);
+    setTimeout(() => input.focus(), 30);
+  }
+
   /** 한 Storage 쪽 System 폴더 이름 바꾸기. side.path가 없으면 등록된 쪽 전체(ROM·gamelist·media 폴더). */
   function openRenameSystemFolder(sys, side) {
     const input = h("input", { class: "field-input rename-system-input", value: sys.system });
@@ -2470,6 +2596,40 @@
     showModal(`${sys.system.toUpperCase()} - ${d.label} 폴더 삭제`, body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]), confirmBtn,
     ]);
+  }
+
+  /** Storage 그룹(Internal/External) 우클릭 - System 우클릭 메뉴의 기능 중 **그룹 전체에 뜻이 있는 것**만
+   * 그 그룹의 System 전부에 적용한다(사용자 결정). 폴더 열기는 특정 System이 정해지지 않았으니 System
+   * 폴더들을 품은 **상위 폴더**를 연다. 예전에는 이 자리가 "이미 gamelist가 있습니다"라는 안내만 냈다. */
+  function openStorageGroupMenu(storage, systemNames, event) {
+    const none = !systemNames.length;
+    const deviceOnly = !!(activeDetail() && activeDetail().metadataOnly);
+    const noSystems = "이 Storage에 붙은 System이 없습니다.";
+    const label = storage.label;
+    const items = [
+      { label: "Title Prefix/Postfix 일괄 적용…", icon: "tag", disabled: none,
+        title: none ? noSystems : "이 그룹의 모든 System 제목에 Settings의 지역별 표시를 적용합니다.",
+        onSelect: () => openTitleAffixDialog({ system: systemNames, label: `${label} 전체` }) },
+      { label: "gamelist 만들기", icon: "fileWarning", disabled: none,
+        title: none ? noSystems : "gamelist가 없는 System에 ROM 파일명만 담아 만듭니다.",
+        onSelect: () => openMetadataBootstrap(S.activeId, systemNames) },
+      "separator",
+      { label: "ROM 없는 항목 정리", icon: "eraser", disabled: none || deviceOnly,
+        title: none ? noSystems : "Metadata/Media는 있는데 ROM 파일이 없는 항목을 이 그룹 전체에서 찾아 지웁니다.",
+        onSelect: () => confirmOrphanCleanupFor(systemNames, label.toUpperCase()) },
+      { label: "System 미디어 선택 삭제", icon: "imageOff", disabled: none || deviceOnly,
+        title: none ? noSystems : "media 종류를 골라 이 그룹의 모든 System에서 지웁니다.",
+        onSelect: () => confirmMediaCleanupFor(systemNames, label.toUpperCase()) },
+      "separator", { section: "폴더 열기 (상위 폴더)" },
+    ];
+    [["rom", "ROM 폴더"], ["metadata", "Metadata 폴더"], ["media", "Media 폴더"]].forEach(([kind, text]) =>
+      items.push({ label: text, icon: "folderOpen", disabled: none, title: none ? noSystems : null,
+        onSelect: async () => {
+          const r = await api.openStorageFolder(S.activeId, storage.id, kind);
+          if (!r.ok) showToast(r.error, "error");
+        } }));
+    showContextMenu(menuPoint(event), label.toUpperCase(),
+      none ? "붙은 System 없음" : `${formatCount(systemNames.length)}개 System`, items);
   }
 
   /** Storage 설정 - Internal/External 공통(사용자 결정: "External만 Setting이 있는
@@ -6356,6 +6516,18 @@
     // Collection이 하나도 없어도 선택을 강요하지 않는다 - 빈 메인 화면을 정상적으로
     // 띄우고, "+ Collection"을 사용자가 직접 누르게 한다.
     if (isDetached()) { if (S.window.collectionId) await openTab(S.window.collectionId); return; }
+    // 마지막에 열어 둔 탭을 모두 되살린다(예전에는 첫 Collection 하나만 열려서, 두 번째부터는 앱을
+    // 껐다 켤 때마다 다시 열어야 했다). 순서대로 열고 마지막에 보던 탭으로 돌아온다.
+    const known = new Set(S.collections.map((c) => c.id));
+    const session = S.settings.session || {};
+    const restore = (S.settings.collections || {}).restoreTabs !== false
+      ? (session.tabs || []).filter((id) => known.has(id)).slice(0, MAX_TABS) : [];
+    if (restore.length) {
+      for (const id of restore) await openTab(id);
+      if (session.active && session.active !== S.activeId
+          && (restore.includes(session.active) || session.active === ARCHIVE_ID)) await selectTab(session.active);
+      return;
+    }
     if (S.collections.length) await openTab(S.collections[0].id);
   }
 

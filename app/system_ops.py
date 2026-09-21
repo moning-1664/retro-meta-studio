@@ -38,6 +38,24 @@ def _inside(path, folder) -> bool:
     return p == f or p.startswith(f + os.sep)
 
 
+def storage_parent_folder(layout, system, kind) -> str | None:
+    """System 폴더들을 품은 **상위 폴더**. ES-DE는 `gamelists/<system>/gamelist.xml`,
+    `downloaded_media/<system>`, `<root>/<system>`이라 그 System 이름 폴더의 부모가 상위 폴더다.
+    System 이름 폴더가 없는 구조(Pegasus의 media 등)는 폴더 자체를 돌려준다."""
+    from pathlib import Path
+    if kind == "rom":
+        target = Path(layout.rom_dir) if layout.rom_dir else None
+    elif kind == "metadata":
+        target = Path(layout.metadata_file).parent if layout.metadata_file else None
+    elif kind == "media":
+        target = Path(layout.media_dir) if layout.media_dir else None
+    else:
+        raise SystemOpError(f"알 수 없는 폴더 종류입니다: {kind}")
+    if target is None:
+        return None
+    return str(target.parent if target.name.lower() == str(system).lower() else target)
+
+
 def folder_path(layout, kind) -> str | None:
     """System 폴더 열기에서 열 경로. metadata는 파일이 아니라 그 파일이 있는 폴더다."""
     if kind == "rom":

@@ -26,8 +26,9 @@ test("Dashboard/Add External/App Title/Settings는 스크롤 영역 밖에 있�
   // mock이 그 상태라 먼저 지워야 이 버튼이 보인다.
   await page.locator(".storage-remove-btn").click();
   await page.locator(".modal-actions .btn", { hasText: "확인" }).click();
-  await expect(page.locator(".nav-action")).toBeVisible();
+  await expect(page.locator(".nav-action", { hasText: "Add External" })).toBeVisible();
   expect(await outside(".nav-action")).toBe(true);
+  expect(await outside(".nav-add-system")).toBe(true);
 });
 
 test("Dashboard를 누르면 Dashboard 화면으로 바뀐다", async ({ page }) => {

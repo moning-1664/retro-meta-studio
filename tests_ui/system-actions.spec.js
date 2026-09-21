@@ -259,10 +259,10 @@ test.describe("ROM 없는 항목 정리", () => {
   });
 });
 
-// System 전체 미디어 정리 - System 우클릭 메뉴(사용자 결정, 2026-09). Cover/Screenshot/
+// System 미디어 선택 삭제 - System 우클릭 메뉴(사용자 결정, 2026-09). Cover/Screenshot/
 // Video 등 media 종류를 체크박스로 골라 그 System 전체에서만 지운다.
-test.describe("System 전체 미디어 정리", () => {
-  const mediaItem = (page) => page.locator(".ctx-menu .ctx-item", { hasText: "System 전체 미디어 정리" });
+test.describe("System 미디어 선택 삭제", () => {
+  const mediaItem = (page) => page.locator(".ctx-menu .ctx-item", { hasText: "System 미디어 선택 삭제" });
   const mockTypes = (page, types) => page.evaluate((data) => {
     window.api.mediaCleanupPreview = async (id, system) => ({ ok: true, data: { system, types: data } });
   }, types);
@@ -296,7 +296,7 @@ test.describe("System 전체 미디어 정리", () => {
     ]);
     await navSystem(page, "PS2").click({ button: "right" });
     await mediaItem(page).click();
-    await expect(page.locator(".modal-title")).toHaveText("PS2 - 미디어 정리");
+    await expect(page.locator(".modal-title")).toHaveText("PS2 - 미디어 선택 삭제");
     await expect(page.locator(".media-clean-row")).toHaveCount(2);
     await expect(page.locator(".media-clean-row", { hasText: "Covers" })).toContainText("3개");
     await expect(modalButton(page, "삭제")).toBeDisabled();
@@ -362,5 +362,97 @@ test.describe("System 전체 미디어 정리", () => {
     await mediaItem(page).click();
     await expect(page.locator(".toast-msg")).toHaveText("System을 찾을 수 없습니다.");
     await expect(page.locator(".modal-title")).toHaveCount(0);
+  });
+});
+
+// Internal/External 그룹 우클릭 - 예전에는 "이미 gamelist가 있습니다"만 나왔다. 이제 System 메뉴의 일부 기능을
+// 그 그룹의 System 전체에 적용한다(사용자 결정).
+test.describe("Storage 그룹 우클릭 메뉴", () => {
+  test.beforeEach(async ({ page }) => { await openApp(page); });
+  const groupMenu = async (page, name = "INTERNAL") =>
+    page.locator(".nav-group-head", { hasText: name }).click({ button: "right" });
+  const item = (page, label) => page.locator(".ctx-menu .ctx-item", { hasText: label });
+
+  test("System 메뉴의 그룹 단위 기능이 나온다", async ({ page }) => {
+    await groupMenu(page);
+    for (const label of ["Title Prefix/Postfix 일괄 적용", "gamelist 만들기", "ROM 없는 항목 정리",
+                         "System 미디어 선택 삭제", "ROM 폴더", "Metadata 폴더", "Media 폴더"]) {
+      await expect(item(page, label).first()).toBeVisible();
+    }
+  });
+
+  test("폴더 열기는 그 Storage의 상위 폴더를 부른다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.__opened = [];
+      window.api.openStorageFolder = async (id, storageId, kind) => { window.__opened.push([storageId, kind]); return { ok: true, data: {} }; };
+    });
+    await groupMenu(page);
+    await item(page, "Metadata 폴더").click();
+    expect(await page.evaluate(() => window.__opened)).toEqual([["internal", "metadata"]]);
+  });
+
+  test("Title Prefix/Postfix는 그 그룹의 System 전체를 대상으로 미리본다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.__preview = [];
+      const original = window.api.titleAffixPreview;
+      window.api.titleAffixPreview = (id, uids, system) => { window.__preview.push(system); return original(id, uids, system); };
+    });
+    await groupMenu(page);
+    await item(page, "Title Prefix/Postfix").click();
+    await expect.poll(() => page.evaluate(() => window.__preview.length)).toBeGreaterThan(0);
+    const system = (await page.evaluate(() => window.__preview))[0];
+    expect(Array.isArray(system)).toBe(true);
+    expect(system.length).toBeGreaterThan(1);
+  });
+
+  test("미디어 선택 삭제는 그룹의 모든 System에서 지운다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.__cleaned = [];
+      window.api.mediaCleanupPreview = async () => ({ ok: true, data: { types: [{ type: "covers", label: "Covers", count: 2, bytes: 100 }] } });
+      window.api.mediaCleanup = async (id, system, types) => { window.__cleaned.push([system, types]); return { ok: true, data: { removed: 2, failed: [] } }; };
+    });
+    await groupMenu(page);
+    await item(page, "System 미디어 선택 삭제").click();
+    await page.locator(".media-clean-row input").first().check();
+    await page.locator(".modal-actions .btn.danger", { hasText: "삭제" }).click();
+    await expect.poll(() => page.evaluate(() => window.__cleaned.length)).toBeGreaterThan(1);
+  });
+});
+
+// System 추가(사용자 결정) - 이름을 넣으면 빈 폴더로 만든다.
+test.describe("System 추가", () => {
+  test.beforeEach(async ({ page }) => { await openApp(page); });
+
+  test("Navigator에 버튼이 있고 이름을 넣어 만들 수 있다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.__created = [];
+      const original = window.api.createSystem;
+      window.api.createSystem = (id, name, storageId) => { window.__created.push([name, storageId]); return original(id, name, storageId); };
+    });
+    await page.locator(".nav-add-system").click();
+    await expect(page.locator(".modal-title")).toHaveText("System 추가");
+    await page.locator(".add-system-input").fill("fbneo");
+    await page.locator(".add-system-save").click();
+    await expect.poll(() => page.evaluate(() => window.__created.length)).toBe(1);
+    expect((await page.evaluate(() => window.__created))[0][0]).toBe("fbneo");
+    await expect(page.locator("#toast")).toContainText("fbneo System을 만들었습니다");
+  });
+
+  test("ES-DE가 모르는 이름이면 그렇다고 경고한다", async ({ page }) => {
+    await page.locator(".nav-add-system").click();
+    await page.locator(".add-system-input").fill("fbneo-action");
+    await page.locator(".add-system-save").click();
+    await expect(page.locator("#toast")).toContainText("custom_systems");
+  });
+
+  test("이름이 비어 있으면 만들지 않는다", async ({ page }) => {
+    await page.locator(".nav-add-system").click();
+    await page.locator(".add-system-save").click();
+    await expect(page.locator("#toast")).toContainText("이름을 입력");
+  });
+
+  test("Storage가 여럿이면 만들 위치를 고른다", async ({ page }) => {
+    await page.locator(".nav-add-system").click();
+    await expect(page.locator(".add-system-storage")).toBeVisible();
   });
 });

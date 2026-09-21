@@ -170,9 +170,17 @@ class EsDeAdapter(FrontendAdapter):
         storage = collection.storage(entry.storage_id) if entry else None
         rom_root = Path(storage.root_path) if storage else Path(collection.root_path)
         root = Path(collection.root_path)
+        rom_dir = Path(entry.rom_path) if entry and entry.rom_path else rom_root / system
+        if entry is None:
+            # **아직 없는 System의 ROM은 Collection의 ROM 폴더에 놓는다**(사용자 피드백 - 없는 System을 붙여넣으면
+            # ROM이 메타데이터 폴더로 들어갔다). ROM 폴더를 메타데이터 폴더와 따로 준 Collection은
+            # System마다 `rom_path`가 그 폴더 밑을 가리키므로, 형제 System의 rom_path가 곧 ROM 폴더의 위치다.
+            sibling = next((s for s in collection.systems if s.rom_path), None)
+            if sibling is not None:
+                rom_dir = Path(sibling.rom_path).parent / system
         return Layout(
             system=system,
-            rom_dir=str(Path(entry.rom_path) if entry and entry.rom_path else rom_root / system),
+            rom_dir=str(rom_dir),
             metadata_file=str(Path(entry.metadata_path) if entry and entry.metadata_path
                               else root / "gamelists" / system / "gamelist.xml"),
             media_dir=str(Path(entry.media_path) if entry and entry.media_path

@@ -709,6 +709,26 @@ class Api:
         return ok({"path": path})
 
     @guarded
+    def open_storage_folder(self, collection_id, storage_id, kind):
+        """Storage 그룹의 ROM/Metadata/Media **상위 폴더**를 연다(사용자 결정 - Internal/External를 우클릭하면
+        특정 System이 정해지지 않았으니 System 폴더들을 품은 폴더가 열려야 한다).
+
+        경로는 Adapter의 layout이 정한다 - 그 Storage의 System 하나를 골라 그 폴더의 부모를 계산한다."""
+        collection, _cache, provider, adapter = self._system_context(collection_id)
+        entries = [e for e in collection.systems if e.storage_id == storage_id]
+        if not entries:
+            return err("이 Storage에 붙은 System이 없습니다.")
+        try:
+            path = system_ops.storage_parent_folder(adapter.layout(collection, entries[0].system),
+                                                    entries[0].system, kind)
+        except system_ops.SystemOpError as e:
+            return err(e)
+        if not path or not provider.exists(path):
+            return err(f"폴더가 없습니다: {path}")
+        _reveal_path(path)
+        return ok({"path": path})
+
+    @guarded
     def open_row_folder(self, collection_id, rom_uid, kind):
         """게임 한 개의 ROM/Metadata/Media를 파일 탐색기에서 **그 파일을 고른 채로** 연다
         (실사용 피드백 §5 - "각 롬별로도 지원"). System 폴더 열기(open_system_folder)는
@@ -869,6 +889,49 @@ class Api:
             return ok(storage_layout.attach_storage(self.registry, collection, provider, adapter, storage_id))
         except storage_layout.StorageLayoutError as e:
             return err(e)
+
+    #: System 이름에 쓸 수 없는 것 - 폴더 이름이 곧 System 이름이라 경로 구분자와 예약어는 안 된다.
+    _SYSTEM_NAME_BAD = re.compile(r'[\\/:*?"<>|]')
+
+    @guarded
+    def create_system(self, collection_id, name, storage_id="internal"):
+        """빈 System을 만든다(사용자 결정 - "system 추가를 누르고 이름을 입력하면 빈 디렉토리로 추가").
+
+        ROM 폴더만 만든다. gamelist와 media 폴더는 게임이 생길 때 Frontend 규칙대로 만들어진다.
+        ROM 폴더를 메타데이터 폴더와 따로 쓰는 Collection이면 **형제 System과 같은 ROM 폴더 밑**에 만든다.
+
+        ES-DE는 System 이름을 폴더 이름으로 알아본다 - ES-DE 기본 목록에 없는 이름이면 만들기는 하되
+        `knownToEsde=False`로 알려, 화면이 custom_systems XML이 필요하다고 말할 수 있게 한다.
+        """
+        if self.jobs.busy_targets(collection_id):
+            return err("작업이 진행 중이라 지금은 System을 만들 수 없습니다.")
+        collection, _cache, provider, adapter = self._system_context(collection_id)
+        blocked = self._ensure_file_ops(collection)
+        if blocked:
+            return blocked
+        name = str(name or "").strip()
+        if not name or name in (".", "..") or name.startswith(".") or self._SYSTEM_NAME_BAD.search(name):
+            return err("System 이름이 올바르지 않습니다. 폴더 이름으로 쓸 수 있는 글자만 쓰세요.")
+        if any(e.system.lower() == name.lower() for e in collection.systems):
+            return err(f"이미 있는 System입니다: {name}")
+        if collection.storage(storage_id) is None:
+            return err("Storage를 찾을 수 없습니다.")
+        siblings = [e for e in collection.systems if e.storage_id == storage_id and e.rom_path]
+        rom_path = str(Path(siblings[0].rom_path).parent / name) if siblings else None
+        self.registry.upsert_system(collection_id, name, storage_id, rom_path=rom_path)
+        collection = self.registry.get_collection(collection_id)
+        layout = adapter.layout(collection, name)
+        try:
+            if layout.rom_dir:
+                Path(layout.rom_dir).mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            self.registry.remove_system(collection_id, name)
+            return err(f"폴더를 만들 수 없습니다: {e}")
+        known = True
+        template_of = getattr(adapter, "_template_systems", None)
+        if template_of is not None:
+            known = name.lower() in template_of(adapter.esde_platform(collection))
+        return ok({"system": name, "romDir": layout.rom_dir, "knownToEsde": known})
 
     @guarded
     def rename_system_folder(self, collection_id, system, storage_id, new_name):
@@ -1290,12 +1353,14 @@ class Api:
         return title_affix.normalize_config(stored)
 
     def _title_affix_rows(self, cache, rom_uids=None, system=None):
-        """대상 행. `rom_uids`가 있으면 Gamelist에서 고른 항목들, 없으면 System 전체다."""
+        """대상 행. `rom_uids`가 있으면 Gamelist에서 고른 항목들, 없으면 System 전체다.
+        `system`은 하나이거나 **여러 개**다(Storage 그룹 우클릭 - 그 그룹의 System 전부)."""
         if rom_uids:
             rows = (cache.get_row(int(uid)) for uid in rom_uids)
             return [row for row in rows if row is not None]
         if system:
-            return cache.query_rows(systems=[system], order="title")
+            systems = list(system) if isinstance(system, (list, tuple)) else [system]
+            return cache.query_rows(systems=systems, order="title")
         return []
 
     @guarded

@@ -15,8 +15,11 @@ const { openApp, modalButton } = require("./_helpers");
 
 // mock의 metadata_status가 missing으로 주는 것은 snes/gba뿐이고, 그 둘은 기본
 // fixture에서 INTERNAL Storage에 있다 - 그 그룹 머리를 우클릭한다.
-const openViaInternalGroup = (page) =>
-  page.locator(".nav-group-head", { hasText: "INTERNAL" }).click({ button: "right" });
+// 우클릭하면 메뉴가 뜨고(사용자 결정 - 예전에는 곧바로 이 창이 떴다) 거기서 "gamelist 만들기"를 고른다.
+const openViaInternalGroup = async (page) => {
+  await page.locator(".nav-group-head", { hasText: "INTERNAL" }).click({ button: "right" });
+  await page.locator(".ctx-menu .ctx-item", { hasText: "gamelist 만들기" }).click();
+};
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 

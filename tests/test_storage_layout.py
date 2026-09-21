@@ -301,3 +301,127 @@ class CustomSystemsWriteFailureTests(unittest.TestCase):
             result = api.run_adapter_action(cid, "esde-custom-systems")
         self.assertFalse(result["ok"])
         self.assertIn("쓰지 못했습니다", result["error"])
+
+
+class StorageFolderTests(unittest.TestCase):
+    """Storage 그룹 우클릭의 "폴더 열기"는 System 폴더들을 품은 **상위 폴더**를 가리킨다(사용자 결정)."""
+
+    def setUp(self):
+        self.dir = temp_root("rms_storage_folder_")
+        self.root = build_esde_tree(self.dir / "esde")
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.cid = self.api.create_collection("C", "es-de", str(self.root))["data"]["id"]
+        wait_job(self.api, self.api.start_scan(self.cid)["data"]["jobId"])
+
+    def _folder(self, kind):
+        from unittest import mock
+        from bridge import api as bridge_api
+        opened = []
+        with mock.patch.object(bridge_api, "_reveal_path", lambda path, select=False: opened.append(path)):
+            result = self.api.open_storage_folder(self.cid, "internal", kind)
+        return result, opened
+
+    def test_rom_folder_is_the_parent_of_the_system_folders(self):
+        result, opened = self._folder("rom")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(Path(opened[0]), self.root)
+
+    def test_metadata_folder_is_gamelists(self):
+        result, opened = self._folder("metadata")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(Path(opened[0]), self.root / "gamelists")
+
+    def test_media_folder_is_downloaded_media(self):
+        result, opened = self._folder("media")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(Path(opened[0]), self.root / "downloaded_media")
+
+    def test_unknown_kind_and_empty_storage_are_refused(self):
+        self.assertFalse(self._folder("nope")[0]["ok"])
+        self.assertFalse(self.api.open_storage_folder(self.cid, "no-such-storage", "rom")["ok"])
+
+
+class TitleAffixSeveralSystemsTests(unittest.TestCase):
+    """Storage 그룹 우클릭 - 그 그룹의 System 여러 개를 한 번에 대상으로 삼는다."""
+
+    def test_preview_accepts_a_list_of_systems(self):
+        dir_ = temp_root("rms_affix_multi_")
+        root = build_esde_tree(dir_ / "esde")
+        write_file(root / "gamelists" / "snes" / "gamelist.xml",
+                   '<?xml version="1.0"?>\n<gameList><game><path>./Zelda (Japan).sfc</path><name>Zelda</name></game></gameList>')
+        write_file(root / "snes" / "Zelda (Japan).sfc", b"z")
+        api = Api(registry_path=dir_ / "registry.db", cache_dir=dir_ / "cache")
+        self.addCleanup(api.close)
+        cid = api.create_collection("C", "es-de", str(root))["data"]["id"]
+        wait_job(api, api.start_scan(cid)["data"]["jobId"])
+        api.save_app_settings({"titleAffix": {"jp": {"enabled": True, "mode": "postfix", "text": " [JP]"}}})
+        one = api.title_affix_preview(cid, None, "snes")["data"]["items"]
+        both = api.title_affix_preview(cid, None, ["snes", "ps2"])["data"]["items"]
+        self.assertEqual(len(one), 1)
+        self.assertGreater(len(both), len(one), "여러 System을 주었는데 하나만 대상이 됐다")
+
+
+class CreateSystemAndMissingSystemPasteTests(unittest.TestCase):
+    """System 만들기(빈 폴더)와, 없는 System을 붙여넣을 때 ROM이 놓이는 곳."""
+
+    def setUp(self):
+        self.dir = temp_root("rms_newsys_")
+        self.src = build_esde_tree(self.dir / "src")
+        self.meta = build_esde_tree(self.dir / "meta")
+        self.roms = self.dir / "roms"
+        write_file(self.roms / "ps2" / "MGS2.iso", b"m")
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+
+    def _collection(self, with_separate_roms=False):
+        cid = self.api.create_collection("C", "es-de", str(self.meta),
+                                         rom_path=str(self.roms) if with_separate_roms else None)["data"]["id"]
+        wait_job(self.api, self.api.start_scan(cid)["data"]["jobId"])
+        return cid
+
+    def test_creating_a_system_makes_an_empty_rom_folder(self):
+        cid = self._collection()
+        result = self.api.create_system(cid, "fbneo")
+        self.assertTrue(result["ok"], result)
+        self.assertTrue((self.meta / "fbneo").is_dir())
+        self.assertEqual(list((self.meta / "fbneo").iterdir()), [])
+        systems = [s["system"] for s in self.api.collection_detail(cid)["data"]["systems"]]
+        self.assertIn("fbneo", systems)
+
+    def test_the_new_system_goes_next_to_the_existing_rom_folders(self):
+        cid = self._collection(with_separate_roms=True)
+        result = self.api.create_system(cid, "snes")
+        self.assertTrue(result["ok"], result)
+        self.assertTrue((self.roms / "snes").is_dir(), "ROM 폴더를 따로 쓰는 Collection인데 다른 곳에 만들었다")
+        self.assertFalse((self.meta / "snes").exists())
+
+    def test_bad_or_duplicate_names_are_refused(self):
+        cid = self._collection()
+        for bad in ("", "  ", "..", ".hidden", "a/b", "a\b", "x:y"):
+            self.assertFalse(self.api.create_system(cid, bad)["ok"], repr(bad))
+        self.assertFalse(self.api.create_system(cid, "PS2")["ok"], "대소문자만 다른 이름은 이미 있는 System이다")
+
+    def test_a_name_es_de_does_not_know_is_created_but_flagged(self):
+        cid = self._collection()
+        self.assertTrue(self.api.create_system(cid, "snes")["data"]["knownToEsde"])
+        self.assertFalse(self.api.create_system(cid, "fbneo-action")["data"]["knownToEsde"])
+
+    def test_pasting_a_system_the_target_lacks_puts_the_rom_in_the_rom_folder(self):
+        """예전에는 ROM이 메타데이터 폴더로 들어갔다(사용자 피드백)."""
+        cid = self._collection(with_separate_roms=True)
+        scid = self.api.create_collection("S", "es-de", str(self.src))["data"]["id"]
+        wait_job(self.api, self.api.start_scan(scid)["data"]["jobId"])
+        # 대상에는 ps2 System이 있으니 없는 System(snes)로 시험한다: 원본에 snes를 만든다.
+        write_file(self.src / "snes" / "Mario.sfc", b"s" * 20)
+        write_file(self.src / "gamelists" / "snes" / "gamelist.xml",
+                   '<?xml version="1.0"?>\n<gameList><game><path>./Mario.sfc</path><name>Mario</name></game></gameList>')
+        wait_job(self.api, self.api.start_scan(scid, True)["data"]["jobId"])
+        uid = next(r["romUid"] for r in self.api.list_rows(scid)["data"]["rows"] if r["file"] == "Mario.sfc")
+        self.api.copy_selection(scid, [uid])
+        self.api.paste(cid)
+        from tests.fixtures import wait_idle
+        self.api.start_apply(cid)
+        wait_idle(self.api)
+        self.assertTrue((self.roms / "snes" / "Mario.sfc").exists(), "ROM이 ROM 폴더로 가지 않았다")
+        self.assertFalse((self.meta / "snes" / "Mario.sfc").exists(), "ROM이 메타데이터 폴더로 들어갔다")

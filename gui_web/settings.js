@@ -224,8 +224,13 @@
         add(row("general.confirmDelete", "Confirm before delete", soonToggle(true), null, true));
       } else if (key === "collections") {
         add(...section("Collections", "Collection 자체의 경로가 아니라 열기/복원 동작을 설정합니다."));
-        add(row("collections.restoreTabs", "Restore open tabs", soonToggle(true), null, true));
-        add(row("collections.rememberSystem", "Remember last System", soonToggle(true), null, true));
+        const coll = { restoreTabs: true, rememberSystem: true, ...(s.collections || {}) };
+        add(row("collections.restoreTabs", "Restore open tabs",
+          toggle(coll.restoreTabs !== false, (v) => ctx.update("collections", { restoreTabs: v })),
+          "앱을 다시 켜면 마지막에 열어 둔 Collection 탭을 모두 되살립니다(끄면 첫 Collection만 엽니다)."));
+        add(row("collections.rememberSystem", "Remember last System",
+          toggle(coll.rememberSystem !== false, (v) => ctx.update("collections", { rememberSystem: v })),
+          "Collection마다 마지막으로 고른 System/Storage에서 시작합니다."));
         add(row("navigation.hideEmptySystems", "Hide empty systems",
           toggle(s.navigation && s.navigation.hideEmptySystems,
             (v) => ctx.update("navigation", { hideEmptySystems: v })),

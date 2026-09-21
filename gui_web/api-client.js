@@ -310,6 +310,8 @@
     archive_clear_preferred: (id) => ok({ romIdentityId: id, recordId: null }),
     archive_to_collection: () => ok({ updated: 0, planned: 0, skipped: [] }),
     plan_delete: () => ok({ deleted: 1 }),
+    open_storage_folder: () => ok({ path: "D:\ES-DE" }),
+    create_system: (id, name) => ok({ system: name, romDir: "D:\ES-DE\\" + name, knownToEsde: !/-/.test(name) }),
     plan_resolve_conflict: (id, key) => {
       mockConflictEntries = mockConflictEntries.filter((e) => e.key !== key);
       return ok({ resolution: "skip" });
@@ -783,6 +785,8 @@
     systemRemovalPreview: (id, system, force) => call("system_removal_preview", id, system, !!force),
     removeSystem: (id, system, force) => call("remove_system", id, system, !!force),
     openSystemFolder: (id, system, kind) => call("open_system_folder", id, system, kind),
+    openStorageFolder: (id, storageId, kind) => call("open_storage_folder", id, storageId, kind),
+    createSystem: (id, name, storageId) => call("create_system", id, name, storageId || "internal"),
     openRowFolder: (id, romUid, kind) => call("open_row_folder", id, romUid, kind),
     orphanMetadataPreview: (id, system) => call("orphan_metadata_preview", id, system),
     mediaCleanupPreview: (id, system) => call("media_cleanup_preview", id, system),
