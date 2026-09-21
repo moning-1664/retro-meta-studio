@@ -1070,6 +1070,10 @@ body { font-size: var(--fs-body); }
 
 #job-progress { position: fixed; right: 16px; bottom: 48px; z-index: 70; display: none; }
 #job-progress.show { display: block; }
+/* 작업마다 줄 하나 - 여러 작업이 동시에 있으면 위에서 아래로 쌓인다. 기다리는 중인 작업은 흐리게. */
+.job-progress-item + .job-progress-item { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.job-progress-item.waiting { opacity: .6; }
+.job-progress-item.waiting .job-progress-bar-fill { background: var(--muted); }
 
 /* 스크롤바 - 얇게. */
 ::-webkit-scrollbar { width: 7px; height: 7px; }

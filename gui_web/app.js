@@ -855,52 +855,71 @@
   // ------------------------------------------------------------------
   // 작업 진행률
   // ------------------------------------------------------------------
+  // **작업마다 자기 줄이 있다.** 예전에는 진행률 막대가 화면에 하나뿐이라, 복사가 도는 동안 새로고침을
+  // 누르면 (뒤에서 기다리는) 스캔 job과 복사 job이 **같은 막대를 번갈아 덮어썼다** - "막힌 작업
+  // 대기 중"과 복사 진행률이 번갈아 나타나며 막대가 요동쳤다(실사용 피드백). 이제 job 하나가 줄 하나다.
+  const jobRows = new Set();
+
+  /** 진행률 줄을 하나 만든다. 반환한 객체로 갱신하고 지운다. */
   function showJobProgress(title, jobId) {
     const bar = $("job-progress");
     bar.classList.add("show");
-    clear(bar);
+    const row = { jobId, el: null, fill: null, pct: null, label: null };
     const titleRow = h("div", { class: "job-progress-title-row" }, [
       h("div", { class: "job-progress-title" }, [title]),
     ]);
     if (jobId) {
       const cancel = h("button", { class: "job-progress-cancel" }, ["취소"]);
-      cancel.addEventListener("click", () => { cancel.disabled = true; api.cancelJob(jobId); });
+      // 단계가 넘어가며 jobId가 바뀌므로 눌린 시점의 값을 쓴다.
+      cancel.addEventListener("click", () => { cancel.disabled = true; api.cancelJob(row.jobId); });
       titleRow.appendChild(cancel);
     }
-    bar.appendChild(titleRow);
-    bar.appendChild(h("div", { class: "job-progress-row" }, [
-      h("div", { class: "job-progress-bar" }, [
-        h("div", { class: "job-progress-bar-fill", id: "job-progress-bar-fill", style: { width: "0%" } })]),
-      h("div", { class: "job-progress-pct", id: "job-progress-pct" }, ["0%"]),
-    ]));
-    bar.appendChild(h("div", { class: "job-progress-label", id: "job-progress-label" }, ["시작 중..."]));
+    row.fill = h("div", { class: "job-progress-bar-fill", style: { width: "0%" } });
+    row.pct = h("div", { class: "job-progress-pct" }, ["0%"]);
+    row.label = h("div", { class: "job-progress-label" }, ["시작 중..."]);
+    row.el = h("div", { class: "job-progress-item" }, [
+      titleRow,
+      h("div", { class: "job-progress-row" }, [h("div", { class: "job-progress-bar" }, [row.fill]), row.pct]),
+      row.label,
+    ]);
+    bar.appendChild(row.el);
+    jobRows.add(row);
+    return row;
   }
 
-  function updateJobProgress(current, total, label) {
+  function updateJobProgress(row, current, total, label) {
     const pct = total > 0 ? Math.round((current / total) * 100) : 0;
-    const fill = $("job-progress-bar-fill"), pctEl = $("job-progress-pct"), labelEl = $("job-progress-label");
-    if (fill) fill.style.width = pct + "%";
-    if (pctEl) pctEl.textContent = pct + "%";
-    if (labelEl) labelEl.textContent = label ? `${label} (${current}/${total})` : `${current}/${total}`;
+    row.fill.style.width = pct + "%";
+    row.pct.textContent = pct + "%";
+    // 문구가 이미 "n/m"으로 끝나면(복사 진행률이 그렇다) 개수를 또 붙이지 않는다 - 같은 숫자가 두 번,
+    // 그것도 서로 다른 기준으로 나오면 (1/3)이 무엇의 개수인지 알 수 없다.
+    const counted = /\d+\/\d+$/.test(String(label || ""));
+    row.label.textContent = !label ? `${current}/${total}` : counted ? label : `${label} (${current}/${total})`;
+    // 앞에서 막힌 job은 진행률이 아니라 기다리는 중이라는 것이 보이게 한다.
+    row.el.classList.toggle("waiting", /^대기 중/.test(String(label || "")));
   }
 
-  const hideJobProgress = () => $("job-progress").classList.remove("show");
+  function hideJobProgress(row) {
+    if (row && row.el) row.el.remove();
+    jobRows.delete(row);
+    if (!jobRows.size) $("job-progress").classList.remove("show");
+  }
 
   function pollJob(jobId, title) {
     return new Promise((resolve) => {          // jobId는 단계가 넘어가며 바뀐다
-      showJobProgress(title, jobId);
+      const row = showJobProgress(title, jobId);
       const tick = async () => {
         const r = await api.jobProgress(jobId);
-        if (!r.ok) { hideJobProgress(); resolve({ ok: false, error: r.error }); return; }
+        if (!r.ok) { hideJobProgress(row); resolve({ ok: false, error: r.error }); return; }
         const job = r.data;
-        updateJobProgress(job.current, job.total, job.label);
+        updateJobProgress(row, job.current, job.total, job.label);
         if (!job.done) { setTimeout(tick, 180); return; }
         // 여러 단계로 나뉜 작업은 단계마다 job이 새로 생긴다. 앞 단계가 끝났다고
         // 멈추면 뒤 단계가 아직 Cache를 쓰는 중에 목록을 그리게 된다 - 개수가
         // 실행할 때마다 달라진다. 후속 job이 있으면 끝까지 따라간다.
         const followUp = job.result && job.result.followUpJobId;
-        if (followUp && !job.error) { jobId = followUp; setTimeout(tick, 60); return; }
-        hideJobProgress();
+        if (followUp && !job.error) { jobId = followUp; row.jobId = followUp; setTimeout(tick, 60); return; }
+        hideJobProgress(row);
         if (job.error) { resolve({ ok: false, error: job.error, cancelled: job.cancelled }); return; }
         resolve({ ok: true, data: job.result });
       };

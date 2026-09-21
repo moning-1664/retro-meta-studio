@@ -185,6 +185,47 @@ class PlanIntegrationTests(unittest.TestCase):
         self.assertFalse((self.target_root / "ps2" / "MGS2.iso").exists())
 
     # ------------------------------------------------------------------
+    # 진행률 문구 (사용자 피드백 - 파일명이 나오고, 개수가 왜 그런지 알 수 없다)
+    # ------------------------------------------------------------------
+    def _apply_capturing_progress(self):
+        from app.plan.applier import apply_plan
+        collection, cache, provider = self.api._plan_context(self.dst)
+        seen = []
+        apply_plan(self.api._plan(self.dst), collection, cache, self.api.registry, provider,
+                   progress_cb=lambda done, total, label: seen.append((done, total, label)))
+        return seen
+
+    def test_progress_names_the_game_and_the_real_action(self):
+        self.api.copy_selection(self.src, [self._uid(self.src, "FFX.iso")])
+        self.api.paste(self.dst)
+        seen = self._apply_capturing_progress()
+        labels = [label for _d, _t, label in seen]
+        self.assertTrue(any(label.startswith("복사 중: Final Fantasy X") for label in labels), labels)
+        self.assertFalse(any("FFX.iso" in label for label in labels), "제목 대신 파일명이 나온다")
+
+    def test_progress_does_not_count_the_cleanup_step_as_an_item(self):
+        """항목이 하나인데 (1/2)로 보이면 둘째가 무엇인지 알 수 없다."""
+        self.api.copy_selection(self.src, [self._uid(self.src, "FFX.iso")])
+        self.api.paste(self.dst)
+        seen = self._apply_capturing_progress()
+        self.assertTrue(all(label.endswith("1/1") for _d, _t, label in seen), seen)
+
+    def test_metadata_only_item_is_not_described_as_a_rom_copy(self):
+        """ROM을 복사하지 않는 항목에 "복사 중"이라고 쓰면 거짓이다."""
+        from app.plan.applier import _describe
+        with_rom = PlanEntry(op=OP_ADD, system="ps2", filename="FFX.iso",
+                             source={"rom": {"path": "x", "size": 1}, "fields": {"name": "Final Fantasy X"}})
+        without = PlanEntry(op=OP_ADD, system="ps2", filename="FFX.iso",
+                            source={"rom": None, "fields": {"name": "Final Fantasy X"}})
+        self.assertEqual(_describe(with_rom), "복사 중: Final Fantasy X")
+        self.assertEqual(_describe(without), "메타데이터·미디어 반영 중: Final Fantasy X")
+
+    def test_partial_delete_is_described_as_partial(self):
+        self.api.plan_delete(self.dst, [self._uid(self.dst, "MGS2.iso")], ["rom"])
+        labels = [label for _d, _t, label in self._apply_capturing_progress()]
+        self.assertTrue(any(label.startswith("일부 삭제 중") for label in labels), labels)
+
+    # ------------------------------------------------------------------
     # 부분 삭제 (사용자 결정 - 롬 삭제 / 메타데이터 삭제 / 미디어 삭제를 따로)
     # ------------------------------------------------------------------
     def _gamelist_paths(self):

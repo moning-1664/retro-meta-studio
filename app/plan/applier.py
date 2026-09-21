@@ -35,7 +35,7 @@ from adapters import get_adapter
 from adapters.base import GameEntry
 from app.model.plan import (
     OP_ADD, OP_DELETE, OP_METADATA_EDIT, OP_STORAGE_CHANGE, OP_TITLE_EDIT,
-    RESOLVE_OVERWRITE, RESOLVE_SKIP, STATUS_APPLIED, STATUS_FAILED, STATUS_PARTIAL,
+    RESOLVE_OVERWRITE, RESOLVE_SKIP, STATUS_APPLIED, STATUS_FAILED, STATUS_PARTIAL, PlanEntry,
 )
 from app.plan.builder import ACTION_CONFLICT, ACTION_IDENTICAL, classify_destination
 from utils import normalize_title
@@ -72,11 +72,20 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
     done = 0
     errors = []
 
-    def step(label, amount=1):
+    def step(what, amount=1):
+        """진행률을 올린다. `what`은 PlanEntry(무엇을 하는 중인지 풀어서 적는다) 또는 문자열이다.
+
+        **표시하는 개수는 항목 수다.** total에는 마지막 정리 단계 몫(+1)이 들어 있는데, 그것까지 세어
+        "(1/4)"처럼 보이면 항목이 셋인데 왜 넷인지 알 수 없다(실사용 피드백). 화면에는 정리 몫을
+        뺀 개수를 적고, 문구는 `_describe()`가 실제로 하는 일로 만든다(ROM을 복사하지 않는
+        항목에 ROM 파일명이 나오면 거짓말이다).
+        """
         nonlocal done
         done += amount
         if progress_cb:
-            progress_cb(done, total, label)
+            items = max(1, total - 1)
+            label = _describe(what) if isinstance(what, PlanEntry) else str(what)
+            progress_cb(done, total, f"{label} · {min(done, items)}/{items}")
 
     # {system: {filename: [(media_type, dest), ...]}} - 항목별로 모았다가 System 단위로
     # 한 번에 기록한다. ROM 하나마다 gamelist.xml을 다시 쓰면 O(n^2)가 된다(계약 1).
@@ -85,14 +94,14 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
     prepared_adds = _apply_adds(adds, collection, adapter, provider, errors, media_links, step)
     for entry in deletes:
         _apply_delete(entry, collection, adapter, cache, provider, errors)
-        step(entry.filename)
+        step(entry)
     for entry in moves:
         reported = _apply_storage_change(entry, collection, adapter, cache, registry,
                                          provider, errors, step)
         # 이동이 도중에 멈췄어도 이 항목 몫은 끝까지 채운다 - 안 채우면 작업이 다
         # 끝났는데도 진행률이 중간에 걸린 채로 사라진다.
         if reported < move_units[entry.key]:
-            step(entry.system, move_units[entry.key] - reported)
+            step(f"이동 중: {entry.system}", move_units[entry.key] - reported)
 
     _apply_title_edits(retitles, collection, adapter, cache, errors, step)
 
@@ -123,6 +132,24 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
         "applied": len(applied), "failed": len(failed), "partial": len(partial),
         "skipped": len(blocked), "errors": errors, "systems": sorted(touched_systems),
     }
+
+
+def _describe(entry) -> str:
+    """진행률에 적을 한 줄 - **실제로 하는 일**과 사람이 읽는 이름(파일명이 아니라 제목)."""
+    source = entry.source or {}
+    fields = entry.payload or source.get("fields") or {}
+    name = (fields.get("name") or "").strip() or entry.new_title or entry.filename
+    if entry.op == OP_ADD:
+        rom = source.get("rom") or {}
+        if rom.get("path"):
+            return f"복사 중: {name}"
+        return f"메타데이터·미디어 반영 중: {name}"
+    if entry.op == OP_DELETE:
+        parts = entry.delete_parts
+        return f"삭제 중: {name}" if {"rom", "metadata"} <= set(parts) else f"일부 삭제 중: {name}"
+    if entry.op == OP_STORAGE_CHANGE:
+        return f"이동 중: {entry.system}"
+    return f"수정 중: {name}"
 
 
 def _write_media_links(adds, collection, adapter, media_links, errors):
@@ -330,7 +357,7 @@ def _copy_prepared(prepared, errors, step):
                  if item["entry"].status != STATUS_FAILED and _backup_replaced(item, errors)]
         for skipped in prepared[start:start + COPY_BATCH]:
             if skipped not in batch:
-                step(skipped["entry"].filename)   # 진행률은 항목 수 기준이라 빼먹지 않는다
+                step(skipped["entry"])   # 진행률은 항목 수 기준이라 빼먹지 않는다
         pairs = [pair for item in batch for pair in item["pairs"]]
         results = {}
         if pairs:
@@ -346,7 +373,7 @@ def _copy_prepared(prepared, errors, step):
                 _undo(item, errors)
                 entry.status, entry.error = STATUS_FAILED, f"{len(failed)}개 파일 복사 실패"
                 errors.append(f"{entry.filename}: 파일 복사 실패")
-            step(entry.filename)
+            step(entry)
 
 
 def _entry_to_write(entry, adapter):
@@ -526,7 +553,7 @@ def _apply_title_edits(entries, collection, adapter, cache, errors, step):
             if row is None:
                 entry.status, entry.error = STATUS_FAILED, "항목이 이미 사라졌습니다."
                 errors.append(f"{entry.filename}: {entry.error}")
-                step(entry.filename)
+                step(entry)
                 continue
             rows_by_key[entry.key] = row
             merged = _merged_fields(entry, row)
@@ -543,7 +570,7 @@ def _apply_title_edits(entries, collection, adapter, cache, errors, step):
                     continue
                 entry.status, entry.error = STATUS_FAILED, f"Metadata 기록 실패: {e}"
                 errors.append(f"{entry.filename}: {entry.error}")
-                step(entry.filename)
+                step(entry)
             continue
 
         for entry in group:
@@ -557,7 +584,7 @@ def _apply_title_edits(entries, collection, adapter, cache, errors, step):
                                   title_norm=normalize_title(title),
                                   frontend_raw=None if entry.op == OP_TITLE_EDIT else raw)
             entry.status = STATUS_APPLIED
-            step(entry.filename)
+            step(entry)
 
 
 # ----------------------------------------------------------------------
@@ -668,7 +695,7 @@ def _apply_storage_change(entry, collection, adapter, cache, registry, provider,
             done_here = [(src, dest) for src, dest in chunk if results.get(str(dest))]
             moved.extend(done_here)
             reported += len(chunk)
-            step(f"{entry.system} ({len(moved)}/{len(pairs)})", len(chunk))
+            step(f"이동 중: {entry.system}", len(chunk))
             if len(done_here) != len(chunk):
                 # 한 묶음이라도 실패하면 남은 묶음은 시작하지 않는다 - 어차피 아래에서
                 # 전부 되돌리므로, 옮기다 만 것을 더 늘릴 이유가 없다.
