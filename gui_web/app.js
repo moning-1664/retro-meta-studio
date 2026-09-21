@@ -606,12 +606,92 @@
       reset: () => updateSettings("appearance", { ...DEFAULT_SETTINGS.appearance }),
       renderColumns: columnSettingsEditor,
       renderEmulator: emulatorSettingsEditor,
+      renderArchive: () => archiveSettingsEditor(async () => { await loadArchiveConfigured(); if (isArchive()) refreshActive(); }),
       // 확인 버튼이 부른다(실사용 피드백 §7) - 값은 이미 바뀔 때마다 즉시
       // 적용돼 있지만(슬라이더 미리보기 등), 서버 저장은 300ms 묶어서 나간다.
       // "확인을 눌렀는데 화면은 닫혔고 저장은 아직 안 나갔다"가 없도록 그
       // 자리에서 바로 흘려보낸다.
       flush: flushPendingUiState,
     });
+  }
+
+  // ------------------------------------------------------------------
+  // Archive 설정 (Settings > Archive, Archive 첫 화면의 [Archive 설정])
+  // ------------------------------------------------------------------
+  /** Archive를 어디에 어떤 형식으로 둘지. **디렉토리가 진실이다** - 여기서 정한 폴더에 그 Frontend의
+   * 형식(gamelist/media)으로 항상 저장되고, archive.db는 Revision과 출처만 관리하는 색인이다.
+   * Settings 화면과 Archive 첫 화면이 같은 편집기를 쓴다 - 같은 값을 두 곳에서 다르게 다루지 않는다. */
+  function archiveSettingsEditor(onApplied) {
+    const wrap = h("div", { class: "stg-archive" });
+    const draw = async () => {
+      const [cfgR, feR] = await Promise.all([api.archiveConfig(), api.frontends()]);
+      clear(wrap);
+      if (!cfgR.ok) { wrap.appendChild(h("div", { class: "stg-info" }, [cfgR.error])); return; }
+      const cfg = cfgR.data;
+      const frontends = feR.ok ? feR.data : [{ id: "es-de", label: "ES-DE" }];
+
+      const frontendSel = h("select", { class: "stg-control archive-frontend" },
+        frontends.map((f) => h("option", { value: f.id }, [f.label])));
+      frontendSel.value = cfg.frontend;
+      const dirInput = h("input", { class: "stg-control stg-text archive-dir", value: cfg.archiveDir,
+                                    placeholder: "예: D:\Archives" });
+      const romInput = h("input", { class: "stg-control stg-text archive-rom-dir", value: cfg.romDir,
+                                    placeholder: "비워 두면 Archive 디렉토리 안에 둡니다" });
+      const media = h("input", { type: "checkbox", class: "archive-media-internal" });
+      media.checked = !!cfg.mediaInternal;
+      const browse = (input, title) => h("button", { class: "btn compact", onClick: async () => {
+        const r = await api.pickFolder(title);
+        if (r.ok && r.data) input.value = r.data;
+      } }, ["찾아보기"]);
+      const rowOf = (key, label, help, control) => h("div", { class: "stg-row", "data-key": key }, [
+        h("div", { class: "stg-label" }, [h("div", { class: "stg-name" }, [label]), h("div", { class: "stg-help" }, [help])]),
+        control,
+      ]);
+
+      wrap.appendChild(rowOf("archive.frontend", "저장 형식",
+        "Archive를 어떤 Frontend의 형식으로 둘지 정합니다. 바꾸면 그 형식으로 다시 배치합니다(이전 형식의 파일은 지우지 않습니다).",
+        frontendSel));
+      wrap.appendChild(rowOf("archive.archiveDir", "Archive 디렉토리",
+        "메타데이터(gamelist)와 미디어가 저장될 폴더입니다. 이전에 만든 Archive 폴더를 고르면 그 내용을 읽어 옵니다.",
+        h("div", { class: "stg-path" }, [dirInput, browse(dirInput, "Archive 디렉토리")])));
+      wrap.appendChild(rowOf("archive.romDir", "ROM 디렉토리 (선택)",
+        "ROM을 둘 폴더입니다. 지정하면 여기에 ROM을 넣고 새로고침해서 Archive에 올릴 수 있고, Collection으로 ROM까지 보낼 수 있습니다.",
+        h("div", { class: "stg-path" }, [romInput, browse(romInput, "ROM 디렉토리")])));
+      wrap.appendChild(rowOf("archive.mediaInternal", "미디어를 Archive에 보관",
+        "켜면 미디어 파일을 Archive 디렉토리로 복사해 둡니다(없는 파일만 복사). 끄면 원본 Collection의 파일을 참조만 합니다.",
+        h("label", { class: "stg-toggle-row" }, [media])));
+
+      const status = h("div", { class: "stg-help archive-apply-status" }, [
+        cfg.configured ? "" : "Archive 디렉토리를 정하면 사용할 수 있습니다."]);
+      const apply = h("button", { class: "btn primary archive-apply" }, ["저장하고 적용"]);
+      apply.addEventListener("click", async () => {
+        if (!dirInput.value.trim()) { showToast("Archive 디렉토리를 정하세요.", "warning"); return; }
+        const saved = await api.saveArchiveConfig({
+          frontend: frontendSel.value, archiveDir: dirInput.value.trim(),
+          romDir: romInput.value.trim(), mediaInternal: media.checked });
+        if (!saved.ok) { showToast(saved.error, "error"); return; }
+        const started = await api.startArchiveApply();
+        if (!started.ok) { showToast(started.error, "error"); return; }
+        const done = await pollJob(started.data.jobId, "Archive 정리 중");
+        if (!done.ok) { if (!done.cancelled) showToast(done.error, "error"); return; }
+        const d = done.data || {};
+        const p = d.projection || {};
+        showToast(`Archive에 ${formatCount(p.entries || 0)}개를 ${formatCount(p.systems || 0)}개 System으로 정리했습니다.`
+          + (d.imported && d.imported.identities ? ` (이전 Archive ${formatCount(d.imported.identities)}개 가져옴)` : ""));
+        if (onApplied) onApplied();
+        draw();
+      });
+      wrap.appendChild(h("div", { class: "stg-column-actions" }, [status, apply]));
+    };
+    draw();
+    return wrap;
+  }
+
+  function openArchiveSettings() {
+    const body = h("div", { class: "modal-body archive-settings" }, [
+      archiveSettingsEditor(async () => { closeModal(); await loadArchiveConfigured(); await refreshActive(); }),
+    ]);
+    showModal("Archive 설정", body, [h("button", { class: "btn", onClick: closeModal }, ["닫기"])]);
   }
 
   /** Settings > Metadata & Media > GameList Columns. 머리글 드래그/우클릭과 같은 값을 바꾼다.
@@ -1007,6 +1087,7 @@
     S.activeId = id;
     S.view = "list";
     resetList();
+    if (id === ARCHIVE_ID) await loadArchiveConfigured();
     await ensureDetail(id);
     // 사용자가 맞춰 놓은 컬럼 폭과 정렬을 먼저 되살린 뒤에 그린다 - 나중에 불러오면
     // 기본값으로 한 번 그렸다가 다시 그려서 화면이 흔들린다.
@@ -1014,6 +1095,12 @@
     renderAll();
     await reloadList();
     await refreshPlan();
+  }
+
+  /** Archive 설정이 있는지 - 없으면 빈 화면이 [Archive 설정] 버튼을 보여준다. */
+  async function loadArchiveConfigured() {
+    const r = await api.archiveConfig();
+    S.archiveConfigured = !!(r.ok && r.data && r.data.configured);
   }
 
   async function closeTab(id) {
@@ -3327,6 +3414,17 @@
       clear(win);
       spacer.style.height = "0px";
       win.style.transform = "";
+      if (isArchive() && !S.archiveConfigured) {
+        // 설정이 없을 때의 빈 화면 - 무엇을 해야 하는지 바로 누를 수 있게 한다.
+        const set = h("button", { class: "btn primary archive-setup" }, ["Archive 설정"]);
+        set.addEventListener("click", openArchiveSettings);
+        win.appendChild(h("div", { class: "empty-msg archive-empty" }, [
+          h("div", {}, ["Archive를 어디에 어떤 형식으로 저장할지 정하세요."]),
+          h("div", { class: "stg-help" }, ["폴더와 Frontend 형식을 정하면 그 폴더에 gamelist/미디어가 저장됩니다."]),
+          set,
+        ]));
+        return;
+      }
       win.appendChild(h("div", { class: "empty-msg" }, [
         activeDetail() ? "조건에 맞는 게임이 없습니다."
                        : "등록된 Collection이 없습니다. 상단의 \"+\"를 눌러 추가하세요.",

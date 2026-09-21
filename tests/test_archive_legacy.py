@@ -82,3 +82,36 @@ class LegacyArchiveTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ApplyConfigTests(unittest.TestCase):
+    """설정 화면이 쓰는 경로: 저장 -> 적용(job). 옛 Archive 디렉토리를 고르면 내용이 나타난다."""
+
+    def setUp(self):
+        from bridge.api import Api
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_apply_"))
+        self.arch = self.dir / "Archives"
+        self.rid = build_legacy_archive(self.arch)
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+
+    def tearDown(self):
+        self.api.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_saving_only_saves_and_reports_what_to_do_next(self):
+        saved = self.api.save_archive_config({"archiveDir": str(self.arch)})["data"]
+        self.assertTrue(saved["needsApply"])
+        self.assertTrue(saved["hasLegacy"])
+        self.assertEqual(self.api.archive_rows()["data"]["total"], 0)   # 아직 적용 전
+
+    def test_apply_job_imports_legacy_and_writes_the_frontend_tree(self):
+        from tests.fixtures import wait_job
+        self.api.save_archive_config({"archiveDir": str(self.arch)})
+        job = self.api.start_archive_apply()["data"]["jobId"]
+        result = wait_job(self.api, job)
+        self.assertEqual(self.api.archive_rows()["data"]["total"], 1)
+        self.assertTrue((self.arch / "gamelists" / "cps1" / "gamelist.xml").exists())
+        self.assertTrue((self.arch / "downloaded_media" / "cps1" / "covers" / "ghouls.png").exists())
+
+    def test_apply_needs_a_directory(self):
+        self.assertFalse(self.api.start_archive_apply()["ok"])

@@ -19,6 +19,7 @@
     ["collections", "Collections", "Collection 열기와 세션"],
     ["metadata", "Metadata & Media", "목록과 메타데이터 표시"],
     ["transfer", "Import / Export", "가져오기와 내보내기"],
+    ["archive", "Archive", "저장 형식과 위치"],
     ["emulator", "Emulator", "RetroArch 연동"],
     ["appearance", "Appearance", "테마와 화면 밀도"],
     ["advanced", "Advanced", "캐시와 진단"],
@@ -291,6 +292,10 @@
         add(h("div", { class: "stg-subsection-title" }, ["ROM 미매칭일 때"]));
         add(unmatchedRomPolicy(t));
         add(row("transfer.backup", "Backup before overwrite", soonToggle(false), null, true));
+      } else if (key === "archive") {
+        add(...section("Archive", "Archive를 어디에 어떤 형식으로 저장할지 정합니다."));
+        add(ctx.renderArchive ? ctx.renderArchive()
+          : h("div", { class: "stg-info" }, ["Archive 설정은 준비 중입니다."]));
       } else if (key === "emulator") {
         add(...section("Emulator", "외부 에뮬레이터 실행에 필요한 설정입니다."));
         add(ctx.renderEmulator ? ctx.renderEmulator()

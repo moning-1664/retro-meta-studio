@@ -16,7 +16,7 @@ const row = (page, key) => page.locator(`.stg-row[data-key='${key}']`);
 
 test("Navigator의 Settings 버튼으로 열리고 Esc로 닫힌다", async ({ page }) => {
   await openSettings(page);
-  await expect(page.locator(".stg-nav-item")).toHaveCount(7);
+  await expect(page.locator(".stg-nav-item")).toHaveCount(8);
   await page.keyboard.press("Escape");
   await expect(page.locator(".stg-panel")).toHaveCount(0);
 });

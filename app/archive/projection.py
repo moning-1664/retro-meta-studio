@@ -50,7 +50,7 @@ def collection_for(config) -> Collection:
         storages=[StorageLocation(STORAGE_INTERNAL, STORAGE_INTERNAL, "Archive", root)])
 
 
-def project(archive, config, rom_identity_ids=None, *, overwrite_media=None) -> dict:
+def project(archive, config, rom_identity_ids=None, *, overwrite_media=None, progress_cb=None) -> dict:
     """Archive의 (resolve된) 메타데이터와 media를 디렉토리에 쓴다.
 
     `rom_identity_ids=None`이면 전체. gamelist는 System 단위로 **한 번만** 쓴다 -
@@ -73,8 +73,11 @@ def project(archive, config, rom_identity_ids=None, *, overwrite_media=None) -> 
             continue
         by_system.setdefault(identity["system"], []).append((rid, identity))
 
+    total = sum(len(items) for items in by_system.values())
     entries = copied = missing = 0
     for system, items in by_system.items():
+        if progress_cb:
+            progress_cb(entries, total, system)
         layout = adapter.layout(collection, system)
         Path(layout.metadata_file).parent.mkdir(parents=True, exist_ok=True)
         batch = []

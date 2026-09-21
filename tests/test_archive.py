@@ -14,6 +14,14 @@ from bridge.api import Api
 from tests.fixtures import build_esde_tree, wait_idle
 
 
+def configure(api, patch):
+    """설정을 저장하고 곧바로 적용한다(화면이 저장 뒤에 start_archive_apply를 부르는 것과 같다)."""
+    saved = api.save_archive_config(patch)
+    assert saved["ok"], saved
+    api._apply_archive_config()
+    return saved
+
+
 class ArchiveTests(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix="rms_archive_"))
@@ -294,7 +302,7 @@ class ArchiveDirectoryTests(unittest.TestCase):
         self.assertFalse(self.archive_dir.exists())
 
     def test_ingest_writes_gamelist_and_media_into_configured_directory(self):
-        self.api.save_archive_config({"archiveDir": str(self.archive_dir)})
+        configure(self.api, {"archiveDir": str(self.archive_dir)})
         self._ingest_all()
         gamelist = self.archive_dir / "gamelists" / "ps2" / "gamelist.xml"
         self.assertTrue(gamelist.exists())
@@ -304,18 +312,18 @@ class ArchiveDirectoryTests(unittest.TestCase):
 
     def test_changing_directory_rewrites_everything_there(self):
         self._ingest_all()
-        self.api.save_archive_config({"archiveDir": str(self.archive_dir)})
+        configure(self.api, {"archiveDir": str(self.archive_dir)})
         # 이미 Archive에 있던 내용이 새 디렉토리에 통째로 나타난다.
         self.assertTrue((self.archive_dir / "gamelists" / "ps2" / "gamelist.xml").exists())
 
     def test_media_is_optional(self):
-        self.api.save_archive_config({"archiveDir": str(self.archive_dir), "mediaInternal": False})
+        configure(self.api, {"archiveDir": str(self.archive_dir), "mediaInternal": False})
         self._ingest_all()
         self.assertTrue((self.archive_dir / "gamelists" / "ps2" / "gamelist.xml").exists())
         self.assertFalse((self.archive_dir / "downloaded_media").exists())
 
     def test_archive_edit_is_projected(self):
-        self.api.save_archive_config({"archiveDir": str(self.archive_dir)})
+        configure(self.api, {"archiveDir": str(self.archive_dir)})
         self._ingest_all()
         rid = next(r["romIdentityId"] for r in self.api.archive_rows()["data"]["rows"]
                    if r["file"] == "FFX.iso")
@@ -404,7 +412,7 @@ class ArchiveMediaPasteTests(unittest.TestCase):
         self.src = self.api.create_collection("Master", "es-de", str(self.source_root))["data"]["id"]
         self.api.start_scan(self.src)
         wait_idle(self.api)
-        self.api.save_archive_config({"archiveDir": str(self.archive_dir)})
+        configure(self.api, {"archiveDir": str(self.archive_dir)})
         self.api.start_archive_ingest(self.src, {"kind": "all"})
         wait_idle(self.api)
         rows = {r["file"]: r["romIdentityId"] for r in self.api.archive_rows()["data"]["rows"]}
@@ -454,7 +462,7 @@ class ArchiveDirectoryRefreshTests(unittest.TestCase):
         self.archive_dir = self.dir / "Archives"
         self.rom_dir = self.dir / "ArchiveRoms"
         self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
-        self.api.save_archive_config({"archiveDir": str(self.archive_dir), "romDir": str(self.rom_dir)})
+        configure(self.api, {"archiveDir": str(self.archive_dir), "romDir": str(self.rom_dir)})
 
     def tearDown(self):
         self.api.close()

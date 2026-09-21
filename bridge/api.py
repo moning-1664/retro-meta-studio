@@ -1578,29 +1578,50 @@ class Api:
 
     @guarded
     def save_archive_config(self, patch):
-        """설정을 바꾼다. 디렉토리나 형식이 바뀌면 **새 위치/형식으로 다시 써 둔다**."""
+        """설정을 저장한다. **저장만 한다** - 디렉토리에 다시 쓰는 일은 오래 걸릴 수 있어
+        `start_archive_apply()`(진행률이 있는 job)로 따로 한다."""
         if not isinstance(patch, dict):
             return err("설정 형식이 올바르지 않습니다.")
         old = self._archive_config()
         new = archive_projection.normalize_config({**old, **patch})
         if new["frontend"] not in FRONTENDS:
             return err(f"알 수 없는 Frontend입니다: {new['frontend']}")
-        if new["archiveDir"]:
-            try:
-                Path(new["archiveDir"]).mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                return err(f"Archive 디렉토리를 만들 수 없습니다: {e}")
+        for key in ("archiveDir", "romDir"):
+            if new[key]:
+                try:
+                    Path(new[key]).mkdir(parents=True, exist_ok=True)
+                except OSError as e:
+                    return err(f"폴더를 만들 수 없습니다: {e}")
         self.registry.set_setting(self.ARCHIVE_CONFIG_KEY, new)
         moved = (new["frontend"], new["archiveDir"]) != (old["frontend"], old["archiveDir"])
-        projection = imported = None
-        if moved and archive_projection.is_configured(new):
-            # 이전 버전이 만든 Archive 디렉토리를 고르면 그 내용을 먼저 가져온다.
-            if archive_legacy.has_legacy(new["archiveDir"]):
-                imported = archive_legacy.import_legacy(self.archive, new["archiveDir"])
-                log.info("legacy archive imported: %s", imported)
-            projection = archive_projection.project(self.archive, new)
         return ok({**new, "configured": archive_projection.is_configured(new),
-                   "projection": projection, "imported": imported})
+                   # 화면이 "지금 적용할까요?"를 물을 근거
+                   "needsApply": bool(moved and archive_projection.is_configured(new)),
+                   "hasLegacy": archive_legacy.has_legacy(new["archiveDir"])})
+
+    def _apply_archive_config(self, progress_cb=None) -> dict:
+        """이전 버전 Archive가 있으면 가져오고, Archive 전체를 설정한 디렉토리/형식으로 쓴다."""
+        cfg = self._archive_config()
+        if not archive_projection.is_configured(cfg):
+            raise ValueError("Archive 디렉토리가 설정되지 않았습니다.")
+        imported = None
+        if archive_legacy.has_legacy(cfg["archiveDir"]):
+            imported = archive_legacy.import_legacy(self.archive, cfg["archiveDir"])
+            log.info("legacy archive imported: %s", imported)
+        # 디렉토리에 있는 것(직접 넣은 ROM, 고친 gamelist)도 함께 읽는다.
+        synced = archive_directory.sync_from_directory(
+            self.archive, cfg, storage.for_path(cfg["archiveDir"]))
+        projection = archive_projection.project(self.archive, cfg, progress_cb=progress_cb)
+        return {"imported": imported, "synced": synced, "projection": projection}
+
+    @guarded
+    def start_archive_apply(self):
+        """설정을 적용한다(job). media 수만 개를 복사할 수 있어 화면이 멈추지 않게 job으로 돈다."""
+        if not archive_projection.is_configured(self._archive_config()):
+            return err("Archive 디렉토리가 설정되지 않았습니다.")
+        job_id = self.jobs.run_heavy(lambda cb: self._apply_archive_config(cb), mutates_state=True,
+                                     target_ids=(), kind="archive-apply")
+        return ok({"jobId": job_id})
 
     def _project_archive(self, result, rom_identity_ids=None):
         """Archive가 바뀐 뒤 설정된 디렉토리에 반영한다. 설정이 없으면 아무것도 안 한다."""

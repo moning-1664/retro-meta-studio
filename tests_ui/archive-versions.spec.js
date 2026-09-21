@@ -73,3 +73,40 @@ test("미디어를 우클릭하면 복사/붙여넣기 메뉴가 나온다", asy
   await expect(page.locator(".ctx-item", { hasText: "미디어 복사" })).toBeVisible();
   await expect(page.locator(".ctx-item", { hasText: "미디어 붙여넣기" })).toBeVisible();
 });
+
+test("Archive 설정이 없으면 빈 화면에 [Archive 설정] 버튼이 나온다", async ({ page }) => {
+  await openApp(page);
+  await page.locator(".ctab.archive").click();
+  await expect(page.locator(".archive-empty")).toContainText("어디에 어떤 형식");
+  await page.locator(".archive-setup").click();
+  await expect(page.locator(".modal-title")).toHaveText("Archive 설정");
+  await expect(page.locator(".archive-frontend")).toBeVisible();
+  await expect(page.locator(".archive-dir")).toBeVisible();
+  await expect(page.locator(".archive-rom-dir")).toBeVisible();
+  await expect(page.locator(".archive-media-internal")).toBeChecked();
+});
+
+test("저장하고 적용하면 설정을 보내고 적용 job을 시작한다", async ({ page }) => {
+  await openApp(page);
+  await page.evaluate(() => {
+    window.__calls = [];
+    const save = window.api.saveArchiveConfig, apply = window.api.startArchiveApply;
+    window.api.saveArchiveConfig = (p) => { window.__calls.push(["save", p]); return save(p); };
+    window.api.startArchiveApply = () => { window.__calls.push(["apply"]); return apply(); };
+  });
+  await page.locator(".ctab.archive").click();
+  await page.locator(".archive-setup").click();
+  await page.locator(".archive-dir").fill("D:\Archives");
+  await page.locator(".archive-apply").click();
+  await expect.poll(() => page.evaluate(() => window.__calls.length)).toBe(2);
+  const calls = await page.evaluate(() => window.__calls);
+  expect(calls[0][1]).toMatchObject({ frontend: "es-de", archiveDir: "D:\Archives", mediaInternal: true });
+  expect(calls[1]).toEqual(["apply"]);
+});
+
+test("Settings에도 같은 Archive 설정이 있다", async ({ page }) => {
+  await openApp(page);
+  await page.locator("#btn-settings, [title='Settings'], .settings-btn").first().click();
+  await page.locator(".stg-nav-item, .stg-tab", { hasText: "Archive" }).first().click();
+  await expect(page.locator(".archive-dir")).toBeVisible();
+});

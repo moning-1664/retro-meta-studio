@@ -31,7 +31,9 @@ def _rom_root(cfg) -> Path:
 
 
 def _systems(provider, adapter, collection, cfg) -> list[str]:
-    systems = set(adapter.list_systems(provider, collection))
+    # 점으로 시작하는 폴더는 System이 아니다 - 앱 내부 폴더(`.rms`)의 DB 파일이 ROM으로 잡혀
+    # "archive.db" 항목이 생겼다.
+    systems = {s for s in adapter.list_systems(provider, collection) if not s.startswith(".")}
     if cfg["romDir"]:
         systems.update(e.name for e in provider.scandir(cfg["romDir"])
                        if e.is_dir and not e.name.startswith("."))
