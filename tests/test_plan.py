@@ -142,7 +142,7 @@ class PlanIntegrationTests(unittest.TestCase):
         전혀 다른 문제다.
         """
         self.api.copy_selection(self.src, [self._uid(self.src, "MGS2.iso")])
-        self.api.paste(self.dst)
+        self.api.paste(self.dst, "overwrite")
         state = self.api.plan_state(self.dst)["data"]
         self.assertEqual(state["added"], 1)
         self.assertEqual(state["conflicts"], 1, "같은 크기 파일이 충돌로 잡히지 않았다")

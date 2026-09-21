@@ -784,6 +784,10 @@ body { font-size: var(--fs-body); }
    묶어 보여준다(레이아웃 재검토). List/Card 토글과 달리 서로 다른 동작이라
    구분선을 넣었다. */
 .plan-actions .seg-btn { padding: 3px 9px; font-size: var(--fs-caption); color: var(--text); }
+/* 붙여넣기 모드 토글 - 툴바 한 줄에 들어가도록 글자와 여백을 줄였다(줄바꿈이 생기면 기준선이 어긋난다). */
+.paste-mode { flex: none; }
+.paste-mode .seg-btn { padding: 3px 6px; font-size: var(--fs-eyebrow); white-space: nowrap; }
+.paste-mode .seg-btn + .seg-btn { border-left: 1px solid var(--border); }
 .plan-actions .seg-btn + .seg-btn { border-left: 1px solid var(--border); }
 /* Apply 개수 뱃지가 이 상자 밖(대각선 위)으로 튀어나와야 하므로, 그룹을
    둥글게 보이려고 쓰던 overflow:hidden(.seg 기본값)을 여기서만 끈다 - 대신

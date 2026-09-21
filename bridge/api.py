@@ -33,7 +33,7 @@ from app import storage_layout
 from app import title_affix
 from app.launch import retroarch
 from app.model.plan import OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan
-from app.plan import builder, clipboard
+from app.plan import builder, clipboard, paste_modes
 from app.plan.applier import apply_plan
 from app.plan.validator import check_capacity, validate
 from app.archive import conflicts as conflict_service
@@ -453,6 +453,8 @@ class Api:
     #: 지워진다.
     TRANSFER_DEFAULTS = {
         "includeRom": True, "includeMedia": True, "conflict": "ask",
+        # 붙여넣기 모드(Patch/Overwrite/Replace) - app/plan/paste_modes.py
+        "pasteMode": paste_modes.DEFAULT_MODE,
         "unmatchedRomMode": "skip",
         "unmatchedRomMetadata": True, "unmatchedRomMedia": True, "unmatchedRomVideo": True,
     }
@@ -1342,8 +1344,11 @@ class Api:
                                            self._clipboard_dir))
 
     @guarded
-    def paste(self, collection_id):
+    def paste(self, collection_id, mode=None):
         """붙여넣기. **Settings의 복사 정책(transfer)을 따른다.**
+
+        `mode`(patch/overwrite/replace)가 이미 있는 항목을 어떻게 다룰지 정한다
+        (app/plan/paste_modes.py). 주지 않으면 저장된 모드를 쓴다.
 
         - ROM/Media를 빼기로 했으면 Plan에 올리기 전에 그 부분을 뺀다(메타데이터는 늘 간다).
         - **원본에 ROM 파일이 없는 항목**(unmatched - Archive처럼 메타데이터만 있는 항목)은
@@ -1361,6 +1366,8 @@ class Api:
         if blocked:
             return blocked
         policy = self._transfer_policy()
+        mode = paste_modes.normalize_mode(mode or policy["pasteMode"])
+        policy = {**policy, "pasteMode": mode}
         unmatched = policy["unmatchedRom"]
 
         prepared, extra_skipped = [], []
@@ -1385,6 +1392,12 @@ class Api:
                 continue
             prepared.append({**item, "fields": fields, "media": media})
 
+        # 모드는 **원본에 ROM이 없던 항목의 정책(위)을 거친 뒤에** 적용한다 - 모드가 대상에 이미 있는 ROM을
+        # 걷어 낸 항목은 "원본에 ROM이 없는" 항목이 아니다. 걷어 내고 나면 바뀔 것이 없는 항목은 Plan에
+        # 올리지 않고 이유를 알린다.
+        prepared, mode_skipped = paste_modes.prepare(prepared, self.workspace.open(collection_id), mode)
+        extra_skipped.extend(mode_skipped)
+
         if not prepared:
             return ok({"added": 0, "skipped": extra_skipped, "conflicts": 0,
                       "source": descriptor.get("sourceName"), "policy": policy})
@@ -1392,10 +1405,21 @@ class Api:
         plan = self._plan(collection_id)
         result = builder.plan_add(plan, collection, provider, prepared)
         keys = result.pop("conflictKeys", [])
+        if mode == paste_modes.MODE_OVERWRITE:
+            # 덮어쓰기 모드: **미디어만** 충돌한 항목은 덮어쓴다(원하는 그림으로 바꾸려는 것이므로).
+            # ROM이 충돌한 항목은 설정의 충돌 정책을 따른다 - 다른 ROM 파일을 덮어쓰는 것은
+            # 미디어 한 장을 바꾸는 것과 무게가 다르다.
+            auto = [k for k in keys
+                    if all(c.get("kind") != "rom" for c in (plan.get(k).conflicts or []))]
+            for key in auto:
+                builder.resolve_conflict(plan, collection, provider, key, RESOLVE_OVERWRITE)
+            keys = [k for k in keys if k not in auto]
+            result["autoResolved"] = len(auto)
+            result["conflicts"] = len(keys)
         if policy["conflict"] in (RESOLVE_SKIP, RESOLVE_OVERWRITE):
             for key in keys:
                 builder.resolve_conflict(plan, collection, provider, key, policy["conflict"])
-            result["autoResolved"] = len(keys)
+            result["autoResolved"] = result.get("autoResolved", 0) + len(keys)
             result["conflicts"] = 0
         result["skipped"] = [*extra_skipped, *result.get("skipped", [])]
         return ok({**result, "source": descriptor.get("sourceName"), "policy": policy})
@@ -1406,6 +1430,7 @@ class Api:
         conflict = merged["conflict"] if merged["conflict"] in ("ask", RESOLVE_SKIP, RESOLVE_OVERWRITE) else "ask"
         mode = merged["unmatchedRomMode"] if merged["unmatchedRomMode"] in ("skip", "copy") else "skip"
         return {
+            "pasteMode": paste_modes.normalize_mode(merged.get("pasteMode")),
             "includeRom": bool(merged["includeRom"]),
             "includeMedia": bool(merged["includeMedia"]),
             "conflict": conflict,

@@ -53,7 +53,7 @@ class MetadataOnlyPasteTests(unittest.TestCase):
 
     def _paste(self, filename="FFX.iso"):
         self.api.copy_selection(self.s, [self._uid(self.s, filename)])
-        return self.api.paste(self.d)["data"]
+        return self.api.paste(self.d, "overwrite")["data"]
 
     def _apply(self):
         job = self.api.start_apply(self.d)["data"]["jobId"]

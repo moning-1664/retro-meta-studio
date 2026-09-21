@@ -38,7 +38,7 @@ class TransferPolicyTests(unittest.TestCase):
             self.api.save_app_settings({"transfer": policy})
         uids = [r["romUid"] for r in self.api.list_rows(self.s, limit=50)["data"]["rows"]]
         self.api.copy_selection(self.s, uids)
-        r = self.api.paste(self.d)
+        r = self.api.paste(self.d, "overwrite")
         self.assertTrue(r["ok"], r.get("error"))
         return r["data"]
 
@@ -48,7 +48,7 @@ class TransferPolicyTests(unittest.TestCase):
     def test_default_policy_keeps_conflicts_for_the_user(self):
         result = self.paste_all()
         self.assertEqual(result["policy"], {
-            "includeRom": True, "includeMedia": True, "conflict": "ask",
+            "pasteMode": "overwrite", "includeRom": True, "includeMedia": True, "conflict": "ask",
             "unmatchedRom": {"mode": "skip", "metadata": True, "media": True, "video": True},
         })
         self.assertEqual(result["conflicts"], 1)
@@ -70,7 +70,7 @@ class TransferPolicyTests(unittest.TestCase):
         self.api.save_app_settings({"transfer": {"conflict": "skip"}})
         self.api.copy_selection(self.s, [r["romUid"] for r in self.api.list_rows(self.s, limit=50)["data"]["rows"]
                                          if r["file"] == "MGS2.iso"])
-        self.api.paste(self.d)
+        self.api.paste(self.d, "overwrite")
         self.assertEqual([e.filename for e in self.api._plan(self.d).conflict_entries()], ["FFX.iso"])
 
     def test_media_off_does_not_plan_media(self):
@@ -140,7 +140,7 @@ class UnmatchedRomPolicyTests(unittest.TestCase):
         row = self.api.list_rows(self.s, limit=10)["data"]["rows"][0]
         self.assertFalse(row["present"], "이 테스트는 원본에 ROM이 없는 항목을 전제로 한다")
         self.api.copy_selection(self.s, [row["romUid"]])
-        r = self.api.paste(self.d)
+        r = self.api.paste(self.d, "overwrite")
         self.assertTrue(r["ok"], r.get("error"))
         return r["data"]
 
@@ -197,7 +197,7 @@ class UnmatchedRomPolicyTests(unittest.TestCase):
         scan(self.api, self.s, force=True)
         rows = self.api.list_rows(self.s, limit=10)["data"]["rows"]
         self.api.copy_selection(self.s, [r["romUid"] for r in rows])
-        result = self.api.paste(self.d)["data"]
+        result = self.api.paste(self.d, "overwrite")["data"]
         self.assertEqual(result["added"], 1)   # RealGame만 (Ghost는 기본 정책으로 건너뜀)
         self.assertEqual([e.filename for e in self.api._plan(self.d).entries], ["RealGame.iso"])
         self.assertEqual([s["filename"] for s in result["skipped"]], ["Ghost.iso"])

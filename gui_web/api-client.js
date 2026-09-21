@@ -821,7 +821,7 @@
     planResolveAllConflicts: (id, resolution) => call("plan_resolve_all_conflicts", id, resolution),
     planClear: (id) => call("plan_clear", id),
     copySelection: (id, romUids) => call("copy_selection", id, romUids),
-    paste: (id) => call("paste", id),
+    paste: (id, mode) => call("paste", id, mode || null),
     validatePlan: (id) => call("validate_plan", id),
     startApply: (id) => call("start_apply", id),
 

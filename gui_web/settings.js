@@ -274,11 +274,17 @@
         // "transfer" 섹션 patch는 한 단계 깊이까지만 병합되므로, 중첩 객체로 두면 필드 하나만
         // 바꿔도 나머지가 지워진다.
         const t = {
-          includeRom: true, includeMedia: true, conflict: "ask",
+          pasteMode: "patch", includeRom: true, includeMedia: true, conflict: "ask",
           unmatchedRomMode: "skip", unmatchedRomMetadata: true, unmatchedRomMedia: true, unmatchedRomVideo: true,
           ...(s.transfer || {}),
         };
         add(h("div", { class: "stg-subsection-title" }, ["Collection → Collection 복사 (Ctrl+C / Ctrl+V)"]));
+        add(row("transfer.pasteMode", "붙여넣기 모드",
+          select(t.pasteMode, [["patch", "Patch - 없는 것만 채움"], ["overwrite", "Overwrite - 원본으로 덮어씀"],
+                               ["replace", "Replace - 원본을 무시"]],
+            (v) => ctx.update("transfer", { pasteMode: v })),
+          "Patch: 이미 있는 항목의 빈 값과 없는 미디어만 채웁니다. Overwrite: 원본의 값과 미디어가 대상 것을 대신합니다. "
+          + "Replace: 이미 있는 항목은 건드리지 않고 없는 항목만 붙입니다. 상단 Plan 버튼 옆에서도 바꿀 수 있습니다."));
         add(row("transfer.includeRom", "ROM 파일 복사",
           toggle(t.includeRom, (v) => ctx.update("transfer", { includeRom: v })),
           "끄면 ROM은 옮기지 않고 메타데이터(와 Media)만 붙여넣습니다. 이미 가진 ROM에 정보만 채울 때 씁니다."));

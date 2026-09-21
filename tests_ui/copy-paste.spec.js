@@ -69,3 +69,49 @@ test.describe("복사/붙여넣기", () => {
     }
   });
 });
+
+// 붙여넣기 모드(Patch / Overwrite / Replace) - 사용자 결정.
+test.describe("붙여넣기 모드", () => {
+  test("Plan 버튼 옆에 세 모드 토글이 있고 Patch가 기본이다", async ({ page }) => {
+    const modes = page.locator(".paste-mode .seg-btn");
+    await expect(modes).toHaveCount(3);
+    await expect(modes).toHaveText(["Patch", "Overwrite", "Replace"]);
+    await expect(page.locator(".paste-mode .seg-btn.on")).toHaveText("Patch");
+    // Plan 버튼(Apply/Cancel)보다 왼쪽에 있다.
+    const [mode, apply] = await Promise.all([
+      page.locator(".paste-mode").boundingBox(), page.locator(".plan-actions").boundingBox()]);
+    expect(mode.x + mode.width).toBeLessThanOrEqual(apply.x + 1);
+  });
+
+  test("각 모드가 무엇을 하는지 툴팁으로 설명한다", async ({ page }) => {
+    await expect(page.locator(".paste-mode [data-mode='patch']")).toHaveAttribute("title", /없는 것만 채웁니다/);
+    await expect(page.locator(".paste-mode [data-mode='overwrite']")).toHaveAttribute("title", /덮어씁니다/);
+    await expect(page.locator(".paste-mode [data-mode='replace']")).toHaveAttribute("title", /무시합니다/);
+  });
+
+  test("모드를 고르면 표시가 바뀌고 다음 붙여넣기가 그 모드로 요청된다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.__modes = [];
+      const original = window.api.paste;
+      window.api.paste = (id, mode) => { window.__modes.push(mode); return original(id, mode); };
+    });
+    await page.locator(".paste-mode [data-mode='overwrite']").click();
+    await expect(page.locator(".paste-mode .seg-btn.on")).toHaveText("Overwrite");
+    await expect(page.locator("#toast")).toContainText("다음 붙여넣기부터");
+    await page.locator(".lrow").first().click();
+    await page.keyboard.press("Control+c");
+    await page.keyboard.press("Control+v");
+    await expect.poll(() => page.evaluate(() => window.__modes)).toEqual(["overwrite"]);
+  });
+
+  test("올리지 않은 항목이 있으면 이유를 알려 준다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.api.paste = async () => ({ ok: true, data: { added: 0, conflicts: 0,
+        skipped: [{ filename: "FFX.iso", reason: "Patch 모드 - 대상이 이미 모두 가지고 있어 채울 것이 없습니다" }] } });
+    });
+    await page.locator(".lrow").first().click();
+    await page.keyboard.press("Control+c");
+    await page.keyboard.press("Control+v");
+    await expect(page.locator("#toast")).toContainText("채울 것이 없습니다");
+  });
+});

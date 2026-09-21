@@ -325,7 +325,7 @@
     navigation: { hideEmptySystems: false, defaultSortPriority: "none" },
     gamelist: { order: [], hidden: [] },
     collections: { order: [] },
-    transfer: { includeRom: true, includeMedia: true, conflict: "ask",
+    transfer: { pasteMode: "patch", includeRom: true, includeMedia: true, conflict: "ask",
                 unmatchedRomMode: "skip", unmatchedRomMetadata: true, unmatchedRomMedia: true, unmatchedRomVideo: true },
     //: Media 탭의 영상(사용자 결정: 소리 켬, 반복 켬, 5초 뒤 자동 재생 - 전부 Settings에서 바꾼다).
     media: { videoMode: "auto", videoDelay: 3, videoSound: true, videoLoop: true },
@@ -3070,6 +3070,38 @@
   /** Archive에 수집 / Delete / AutoPlan / Apply / Cancel. Gamelist 위 툴바 한 곳에
    * 모은다 - 예전에는 이 중 일부가 하단 상태바에도 똑같이 있어서 두 번 보였다.
    * Copy/Paste는 없앴다(QA 재검토 P1) - Collection 사이 이동은 Archive를 거친다. */
+  //: 붙여넣기 모드와 설명(사용자 결정 - 모드마다 무엇을 하는지 말해 줘야 한다).
+  const PASTE_MODES = [
+    ["patch", "Patch", "없는 것만 채웁니다",
+     "이미 있는 항목은 비어 있는 값과 없는 미디어만 원본에서 채웁니다. 대상에 있는 값과 미디어, ROM은 그대로 둡니다."],
+    ["overwrite", "Overwrite", "원본으로 덮어씁니다",
+     "원본의 메타데이터와 미디어가 대상 것을 대신합니다. 원본이 비어 있는 값으로 대상 값을 지우지는 않습니다."],
+    ["replace", "Replace", "원본을 무시합니다",
+     "이미 있는 항목은 아무것도 채우거나 바꾸지 않습니다. 대상에 없는 항목만 새로 붙입니다."],
+  ];
+  const currentPasteMode = () => (S.settings.transfer && S.settings.transfer.pasteMode) || "patch";
+
+  /** 붙여넣기 모드 토글(list/card 토글과 같은 모양). 다음 붙여넣기(Ctrl+V)부터 적용된다. */
+  function pasteModeToggle() {
+    const group = h("div", { class: "seg paste-mode",
+                             title: "붙여넣기 모드 - 다음 Ctrl+V부터 적용됩니다" });
+    PASTE_MODES.forEach(([mode, label, short, help]) => {
+      const btn = h("button", {
+        class: "seg-btn" + (currentPasteMode() === mode ? " on" : ""), "data-mode": mode,
+        title: `${label} - ${short}\n${help}`,
+      }, [label]);
+      btn.addEventListener("click", () => {
+        if (currentPasteMode() === mode) return;
+        updateSettings("transfer", { pasteMode: mode });
+        showToast(`${label} 모드 - ${short}. 다음 붙여넣기부터 적용됩니다.`);
+        renderStatusBar();
+        renderFilterBar();
+      });
+      group.appendChild(btn);
+    });
+    return group;
+  }
+
   function renderPlanActions(bar) {
     if (isCompare() || isArchive()) return;
     const plan = S.plan;
@@ -3084,6 +3116,9 @@
     // Apply/Cancel은 한 그룹이다 - 같은 Plan을 두고 하는 순간의 동작이라는 걸
     // 구분선으로 보여준다. Auto Plan 토글은 뺐다(실사용 시나리오가 확인될 때까지
     // 화면에서 감춘다, PENDING_DECISIONS.md) - 내부 값은 기본 ON을 유지한다.
+    // 붙여넣기 모드(사용자 결정) - Ctrl+V가 이미 있는 항목을 어떻게 다룰지. Plan 버튼 왼쪽에 둔다.
+    bar.appendChild(pasteModeToggle());
+
     const planGroup = h("div", { class: "seg plan-actions" });
     // **Apply는 실제로 처리될 수(runnable)를 말한다.** total에는 해결 안 된 충돌도
     // 들어 있는데 Apply는 그것을 건너뛰므로, total을 보여주면 누른 뒤에야 "12개
@@ -5563,7 +5598,7 @@
   async function pasteClipboard() {
     if (blockedInCompare("붙여넣기")) return;
     if (isArchive()) { showToast("Archive에는 붙여넣을 수 없습니다 - \"Archive에 수집\"을 쓰세요.", "warning"); return; }
-    const r = await api.paste(S.activeId);
+    const r = await api.paste(S.activeId, currentPasteMode());
     if (!r.ok) { showToast(r.error, "error"); return; }
     const d = r.data;
     await refreshPlan();
@@ -5574,8 +5609,12 @@
       openConflictDialog();
       return;
     }
-    if (d.added) showToast(`Plan에 ${formatCount(d.added)}개를 추가했습니다.`);
-    else showToast("붙여넣을 새 내용이 없습니다(전부 이미 있음).", "info");
+    // 올리지 않은 항목이 있으면 **이유를 말한다** - Plan에 올라갔는데 적용해 보니 아무 일도 없던 것이
+    // 아니라, 올릴 때 왜 올리지 않았는지를 알려 준다(사용자 결정).
+    const left = (d.skipped || []).filter((s) => s.reason);
+    const why = left.length ? ` (${formatCount(left.length)}개 제외: ${left[0].reason})` : "";
+    if (d.added) showToast(`Plan에 ${formatCount(d.added)}개를 추가했습니다.${why}`);
+    else showToast(left.length ? `붙여넣을 내용이 없습니다 - ${left[0].reason}` : "붙여넣을 새 내용이 없습니다(전부 이미 있음).", "info");
   }
 
   //: 삭제할 수 있는 부분과 그 이름(사용자 결정 - 무엇이 지워지는지 메뉴에서 알 수 있어야 한다).
