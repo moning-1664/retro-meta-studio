@@ -50,7 +50,7 @@ from app.store.archive import ARCHIVE_EDIT_SOURCE, ArchiveStore
 from app.store.cache import KEY_MEDIA_TYPES
 from app.store.registry import CHANGE_APPLIED, RegistryError, RegistryStore
 from app.workspace import Workspace, WorkspaceError
-from bridge.jobs import JobManager
+from bridge.jobs import JobCancelled, JobManager
 from bridge.media_server import MediaServer
 import file_ops
 from utils import normalize_title
@@ -1682,7 +1682,12 @@ class Api:
                 self.archive, collection, cache, uids, progress_cb=cb)
             log.info("archive ingest done: scope=%s requested=%d ingested=%d",
                      kind, len(uids), len(result["ingestedRomUids"]))
-            return {**result, "scope": kind, "projection": self._project_archive(result, result["romIdentityIds"])}
+            # **cb를 여기도 넘긴다.** 안 넘기면 DB 수집이 끝나 진행률이 100%를 찍은 뒤에도
+            # gamelist.xml/media 쓰기가 조용히 이어져서(전송량이 큰 Archive는 이 단계가
+            # 더 오래 걸린다), 막대는 100%에서 멈춘 것처럼 보이고 취소도 다음 progress_cb
+            # 호출까지 반영되지 않아 안 먹는 것처럼 보였다(실사용 버그 리포트).
+            projection = self._project_archive(result, result["romIdentityIds"], progress_cb=cb)
+            return {**result, "scope": kind, "projection": projection}
 
         job_id = self.jobs.run_heavy(run, mutates_state=True, target_ids=(collection_id,),
                                      kind="archive-ingest")
@@ -1835,13 +1840,19 @@ class Api:
                                      target_ids=(), kind="archive-apply")
         return ok({"jobId": job_id})
 
-    def _project_archive(self, result, rom_identity_ids=None):
+    def _project_archive(self, result, rom_identity_ids=None, progress_cb=None):
         """Archive가 바뀐 뒤 설정된 디렉토리에 반영한다. 설정이 없으면 아무것도 안 한다."""
         cfg = self._archive_config()
         if not archive_projection.is_configured(cfg):
             return None
         try:
-            return archive_projection.project(self.archive, cfg, rom_identity_ids)
+            return archive_projection.project(self.archive, cfg, rom_identity_ids,
+                                              progress_cb=progress_cb)
+        except JobCancelled:
+            # job의 progress_cb가 던진다(bridge/jobs.py) - 그대로 올려보내야
+            # worker()가 "취소되었습니다"로 끝낸다. 여기서 삼키면 media 복사 중
+            # 취소를 눌러도 job이 그냥 성공한 것처럼 끝나 보였다(실사용 버그 리포트).
+            raise
         except Exception:  # noqa: BLE001 - 수집 자체는 성공했으므로 실패는 알리기만 한다
             log.exception("Archive 디렉토리에 쓰지 못했습니다")
             return {"error": "Archive 디렉토리에 쓰지 못했습니다. 로그를 확인하세요."}

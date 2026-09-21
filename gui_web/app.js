@@ -1096,13 +1096,22 @@
     items.push("separator");
     items.push({ label: "Convert…", icon: "arrowLeftRight", onSelect: () => openConvert(collection) });
     // Compare는 두 단계다(§54): 한 탭에서 기준을 정하고, 다른 탭에서 그 기준과 비교한다.
+    // 기준을 정한 뒤 두 번째 탭을 고르기 전까지는 취소할 방법이 없었다(실사용 버그
+    // 리포트) - 기준이 남아 있는 동안은 어느 탭을 우클릭하든 "기준 해제"를 같이 보여준다.
     if (S.compareBase && S.compareBase !== collection.id) {
       const baseName = (S.collections.find((c) => c.id === S.compareBase) || {}).name || "기준";
       items.push({ label: `${baseName}와 비교`, icon: "scale", onSelect: () => runCompare(S.compareBase, collection.id) });
-    } else {
+    } else if (!S.compareBase) {
       items.push({ label: "Compare 기준으로 지정", icon: "scale", onSelect: () => {
         S.compareBase = collection.id;
         showToast("비교 기준으로 지정했습니다. 다른 Collection 탭을 우클릭해 비교를 시작하세요.");
+      } });
+    }
+    if (S.compareBase) {
+      const baseName = (S.collections.find((c) => c.id === S.compareBase) || {}).name || "기준";
+      items.push({ label: `Compare 기준 해제 (${baseName})`, icon: "x", onSelect: () => {
+        S.compareBase = null;
+        showToast("비교 기준을 해제했습니다.");
       } });
     }
     items.push("separator");
@@ -1356,8 +1365,15 @@
     const deviceRow = h("div", { class: "field-block", hidden: true }, [
       h("div", { class: "field-label" }, ["기기"]), deviceSel, deviceNote,
     ]);
-    const browserList = h("div", { class: "picker-list", id: "mtp-browser" });
-    const browserBox = h("div", { class: "field-block", hidden: true }, [browserList]);
+    // **탐색기 주소창처럼**(실사용 피드백 - "explorer처럼 더 직관적인 선택을 원한다").
+    // 예전엔 "위로" 한 단계씩만 갈 수 있었다 - 세 단계 위로 가려면 세 번 눌러야 했다.
+    // 지금은 지나온 경로 전체를 조각(breadcrumb)으로 보여줘서 아무 조상 폴더나 한 번에
+    // 누를 수 있고, 현재 폴더 목록도 폴더 먼저 - 파일 - 이름 순으로 정렬해 익숙하게 만든다.
+    const breadcrumb = h("div", { class: "mtp-breadcrumb" });
+    const upBtn = h("button", { class: "mtp-up-btn", title: "위 폴더로" }, [icon("cornerUpLeft", 14)]);
+    const browserList = h("div", { class: "picker-list mtp-list", id: "mtp-browser" });
+    const browserHead = h("div", { class: "mtp-browser-head" }, [upBtn, breadcrumb]);
+    const browserBox = h("div", { class: "field-block", hidden: true }, [browserHead, browserList]);
     let browseTarget = null, browsePath = null;
 
     function rowButton(name, sub, iconName, onClick) {
@@ -1368,18 +1384,43 @@
       return row;
     }
 
+    /** `mtp://키/a/b` -> 주소창 조각들. 조각을 누르면 그 자리로 바로 이동한다. */
+    function renderBreadcrumb(fullPath) {
+      breadcrumb.replaceChildren();
+      const parts = fullPath.replace(/^mtp:[\\/]{1,2}/i, "").split("/").filter(Boolean);
+      if (!parts.length) return;
+      const device = (S.mtpDevices || []).find((d) => d.key === parts[0]);
+      const labels = [device ? device.name : parts[0], ...parts.slice(1)];
+      let acc = "mtp://" + parts[0];
+      labels.forEach((label, i) => {
+        if (i > 0) { acc += "/" + parts[i]; }
+        const target = acc;
+        const isLast = i === labels.length - 1;
+        const seg = h("button", { class: "mtp-crumb" + (isLast ? " current" : ""), disabled: isLast }, [label]);
+        if (!isLast) seg.addEventListener("click", () => { browsePath = target; renderBrowser(); });
+        breadcrumb.appendChild(seg);
+        if (!isLast) breadcrumb.appendChild(h("span", { class: "mtp-crumb-sep" }, [icon("chevronRight", 11)]));
+      });
+    }
+
     async function renderBrowser() {
       browserList.replaceChildren();
+      browserList.appendChild(h("div", { class: "empty-msg mtp-loading" }, ["불러오는 중…"]));
+      upBtn.disabled = true;
       const r = await api.mtpBrowse(browsePath);
+      if (browsePath === null) return;   // 그 사이에 창이 닫혔다.
+      browserList.replaceChildren();
       if (!r.ok) { browserList.appendChild(h("div", { class: "empty-msg" }, [r.error])); return; }
       const data = r.data;
-      browserList.appendChild(h("div", { class: "picker-sub" }, [browsePath]));
-      if (data.parent) {
-        browserList.appendChild(rowButton("위로", data.parent, "cornerUpLeft", () => {
-          browsePath = data.parent; renderBrowser();
-        }));
+      renderBreadcrumb(data.path);
+      upBtn.disabled = !data.parent;
+      upBtn.onclick = () => { if (data.parent) { browsePath = data.parent; renderBrowser(); } };
+      const entries = [...(data.entries || [])].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+      if (!entries.length) {
+        browserList.appendChild(h("div", { class: "empty-msg" }, ["(하위 폴더가 없습니다)"]));
       }
-      (data.entries || []).forEach((entry) => browserList.appendChild(
+      entries.forEach((entry) => browserList.appendChild(
         rowButton(entry.name, entry.path, "folderOpen", () => { browsePath = entry.path; renderBrowser(); })));
       browserList.appendChild(h("button", { class: "btn primary", id: "mtp-pick-here",
         onClick: () => {
@@ -3149,11 +3190,12 @@
   // 있고, 그 차이는 상세의 Size 줄에서 본다.
   const COMPARE_FILTERS = [
     ["all", "All", "양쪽을 맞댄 전체 목록"],
-    ["diff", "Diffs", "다른 항목 전부(≠, >, <)"],
+    ["diff", "Diffs", "다른 항목 전부(≠, >, < - Similar(≒)는 빠진다)"],
     ["same", "Same", "양쪽에 있고 비교 대상 Metadata가 같음 (ROM 파일이 같다는 뜻은 아님 - 크기는 상세에서 확인)"],
     ["only_a", "Only A", "기준 Collection에만 있음"],
     ["only_b", "Only B", "상대 Collection에만 있음"],
-    ["conflict", "Conflict", "양쪽에 있는데 비교 대상 Metadata가 다름"],
+    ["conflict", "Conflict", "양쪽에 있는데 Metadata가 다름"],
+    ["similar", "Similar", "양쪽에 있고 Metadata는 같은데 Media만 다름"],
     ["media", "Media", "Media 구성이 다름 (상태와 별개 신호)"],
   ];
 
@@ -3184,7 +3226,8 @@
 
     // 자주 쓰는 세 가지는 아이콘 그룹으로도 둔다.
     const group = h("div", { class: "cmp-group" });
-    [["all", "*", "모든 항목"], ["diff", "≠", "다른 항목(≠ > <)"], ["same", "=", "같은 항목"]]
+    [["all", "*", "모든 항목"], ["diff", "≠", "메타데이터가 다른 항목(≠ > <)"],
+     ["similar", "≒", "메타데이터는 같고 미디어만 다른 항목"], ["same", "=", "같은 항목"]]
       .forEach(([key, glyph, tip]) => {
         const btn = h("button", {
           class: `cmp-group-btn g-${key}` + (S.compareFilter === key ? " active" : ""), title: tip,
@@ -3704,17 +3747,23 @@
       });
       return cell;
     }
-    if (row.status === "conflict") {
-      const cell = h("div", { class: "cmp-op diff",
-        title: row.changedFields.length ? "메타데이터가 다릅니다" : "미디어가 다릅니다" });
+    // `conflict`(Metadata가 다르다, ≠)와 `similar`(Metadata는 같고 Media만 다르다, ≒)는
+    // 예전엔 하나로 뭉쳐 있었다 - Cover/Screenshot이 겉보기엔 같은데 다른 Media 종류가
+    // 달라서 ≠가 뜨면 "메타데이터도 같은데 왜 다르지?"로 오해를 샀다(실사용 버그
+    // 리포트). 지금은 상태 자체를 갈라서 기호와 색으로 구분한다 - 둘 다 화살표로
+    // 메타데이터(+similar는 media도)를 반대쪽에 보낼 수 있는 건 같다.
+    if (row.status === "conflict" || row.status === "similar") {
+      const isSimilar = row.status === "similar";
+      const cell = h("div", { class: "cmp-op diff" + (isSimilar ? " similar" : ""),
+        title: isSimilar ? "미디어가 다릅니다(메타데이터는 같습니다)" : "메타데이터가 다릅니다" });
       const arrow = (dir, label, tip) => {
         const btn = h("button", { class: "cmp-op-arrow", title: tip }, [label]);
         btn.addEventListener("click", (e) => { e.stopPropagation(); compareCopyRow(row, dir, true); });
         return btn;
       };
-      cell.appendChild(arrow("toLeft", "<", "오른쪽 메타데이터를 왼쪽으로 보냅니다(Plan)"));
-      cell.appendChild(h("span", { class: "cmp-op-symbol" }, ["≠"]));
-      cell.appendChild(arrow("toRight", ">", "왼쪽 메타데이터를 오른쪽으로 보냅니다(Plan)"));
+      cell.appendChild(arrow("toLeft", "<", "오른쪽 내용을 왼쪽으로 보냅니다(Plan)"));
+      cell.appendChild(h("span", { class: "cmp-op-symbol" }, [isSimilar ? "≒" : "≠"]));
+      cell.appendChild(arrow("toRight", ">", "왼쪽 내용을 오른쪽으로 보냅니다(Plan)"));
       return cell;
     }
     return h("div", { class: "cmp-op same", title: "양쪽이 같습니다" }, ["="]);
@@ -3835,12 +3884,19 @@
       clear(win);
       spacer.style.height = "0px";
       win.style.transform = "";
+      win.style.width = "";
+      win.style.height = "";
       if (isArchive() && !S.archiveConfigured) {
         // 설정이 없을 때의 빈 화면 - 무엇을 해야 하는지 바로 누를 수 있게 한다.
+        // #list-window는 가상 스크롤을 위해 position:absolute라 너비가 없으면 내용
+        // 크기로 쪼그라들어 왼쪽 위에 붙어 보였다(실사용 버그 리포트) - 뷰포트를
+        // 그대로 채워야 .archive-empty의 flex 가운데 정렬이 뜻대로 동작한다.
+        win.style.width = scroll.clientWidth + "px";
+        win.style.height = scroll.clientHeight + "px";
         const set = h("button", { class: "btn primary archive-setup" }, ["Archive 설정"]);
         set.addEventListener("click", openArchiveSettings);
-        win.appendChild(h("div", { class: "empty-msg archive-empty" }, [
-          h("div", {}, ["Archive를 어디에 어떤 형식으로 저장할지 정하세요."]),
+        win.appendChild(h("div", { class: "archive-empty" }, [
+          h("div", { class: "archive-empty-title" }, ["Archive를 어디에 어떤 형식으로 저장할지 정하세요."]),
           h("div", { class: "stg-help" }, ["폴더와 Frontend 형식을 정하면 그 폴더에 gamelist/미디어가 저장됩니다."]),
           set,
         ]));

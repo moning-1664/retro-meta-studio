@@ -171,13 +171,13 @@
       leftFile: null, rightFile: "OnlyOther.iso", leftTitle: "", rightTitle: "Only Other",
       leftPresent: false, rightPresent: true },
     { key: "ps2|MediaOnly.iso", system: "ps2", file: "MediaOnly.iso", title: "Media Only",
-      size: 500, status: "conflict", mediaDiff: true, changedFields: [], mediaChanged: ["covers"],
+      size: 500, status: "similar", mediaDiff: true, changedFields: [], mediaChanged: ["covers"],
       leftFile: "MediaOnly.iso", rightFile: "MediaOnly (USA).iso", leftTitle: "Media Only", rightTitle: "Media Only (USA)",
       leftPresent: true, rightPresent: true },
   ];
   const mockCompareState = () => ({
     baseId: "c1", otherId: "c2", baseName: "Master Library", otherName: "Android ES-DE",
-    counts: { all: 5, diff: 4, same: 1, conflict: 2, only_a: 1, only_b: 1, media: 1 },
+    counts: { all: 5, diff: 3, same: 1, conflict: 1, similar: 1, only_a: 1, only_b: 1, media: 1 },
     systems: ["ps2"], takenAt: mockCompare.takenAt,
   });
 
@@ -628,7 +628,7 @@
       if (!mockCompare.on) return Promise.resolve({ ok: false, error: "Compare Mode가 아닙니다." });
       const rows = mockCompareRows.filter((r) =>
         !status || status === "all" ? true : status === "media" ? r.mediaDiff
-          : status === "diff" ? r.status !== "same" : r.status === status);
+          : status === "diff" ? (r.status !== "same" && r.status !== "similar") : r.status === status);
       return ok({ rows, total: rows.length, offset: 0 });
     },
     compare_detail: (key) => {

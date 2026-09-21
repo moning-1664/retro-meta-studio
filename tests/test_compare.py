@@ -3,7 +3,9 @@
 이 파일이 지키는 것:
 - 짝짓기는 **1:1**이다. 한쪽 항목이 상대 두 개에 동시에 붙지 않는다.
 - 상대가 여럿이라 모호하면 짝짓지 않는다(§88) - 각자 "한쪽에만 있음"으로 남는다.
-- 존재 여부의 기준은 ROM 파일이다. 양쪽에 ROM이 있을 때 Metadata 또는 Media가 다르면 Conflict(≠)다.
+- 있고 없고의 기준은 ROM 파일명이 짝지어졌는지다.
+- Metadata가 다르면 Conflict(≠). Metadata는 같은데 Media만 다르면 Similar(≒) - 둘은
+  구분되는 상태다(사용자 결정, 번복 - 예전엔 Media만 달라도 ≠였다).
 """
 
 import unittest
@@ -58,31 +60,50 @@ class CompareEngineTests(unittest.TestCase):
         self.assertIsNotNone(rows[0]["left"])
         self.assertIsNotNone(rows[0]["right"])
 
-    def test_media_difference_makes_a_pair_differ(self):
-        """사용자 결정 - `≠`는 "ROM은 같고 메타데이터 **또는 미디어**가 다르다"."""
+    def test_media_only_difference_is_similar_not_conflict(self):
+        """사용자 결정(번복) - Metadata가 같고 Media만 다르면 `≠`가 아니라 `≒`(similar)다.
+
+        Cover/Screenshot이 겉보기엔 같은데 다른 Media 종류(예: titlescreens)가 달라서
+        ≠가 뜨면 "메타데이터도 같은데 왜 다르다고 나오나"로 오해를 샀다(실사용 버그
+        리포트) - Metadata 충돌과 Media만 다른 것을 상태 자체로 가른다.
+        """
         left = [entry(1, "FFX.iso", media=["covers"])]
         right = [entry(9, "FFX.iso", media=["covers", "videos"])]
         rows = engine.compare(left, right)
-        self.assertEqual(rows[0]["status"], engine.STATUS_CONFLICT)
+        self.assertEqual(rows[0]["status"], engine.STATUS_SIMILAR)
         self.assertTrue(rows[0]["mediaDiff"])
         self.assertEqual(rows[0]["mediaChanged"], ["videos"])
 
-    def test_same_media_type_with_a_different_file_is_a_difference(self):
+    def test_same_media_type_with_a_different_file_is_similar(self):
         left = [{**entry(1, "FFX.iso", media=["covers"]), "media_sizes": {"covers": 100}}]
         right = [{**entry(9, "FFX.iso", media=["covers"]), "media_sizes": {"covers": 200}}]
         row = engine.compare(left, right)[0]
-        self.assertEqual(row["status"], engine.STATUS_CONFLICT)
+        self.assertEqual(row["status"], engine.STATUS_SIMILAR)
         self.assertEqual(row["mediaChanged"], ["covers"])
 
-    def test_existence_is_decided_by_the_rom_not_the_gamelist_entry(self):
-        """사용자 결정 - gamelist에 항목만 있고 ROM이 없는 쪽은 "없는 것"이다."""
+    def test_metadata_conflict_wins_over_media_difference(self):
+        """Metadata도 다르고 Media도 다르면 `≒`가 아니라 `≠`다 - Metadata 충돌이 우선한다."""
+        left = [entry(1, "FFX.iso", fields={"genre": "RPG"}, media=["covers"])]
+        right = [entry(9, "FFX.iso", fields={"genre": "JRPG"}, media=["covers", "videos"])]
+        row = engine.compare(left, right)[0]
+        self.assertEqual(row["status"], engine.STATUS_CONFLICT)
+        self.assertEqual(row["mediaChanged"], ["videos"])
+
+    def test_existence_is_decided_by_the_filename_not_the_rom_presence(self):
+        """사용자 결정(번복) - 있고 없고는 ROM 파일명이 짝지어졌는지로 정한다.
+
+        예전에는 파일명이 같아도 한쪽에 ROM 실물이 없으면(gamelist 항목만 있으면)
+        `only_a`/`only_b`로 갈랐다. 그러면 파일명이 완전히 같은데도 ROM 유무 차이만으로
+        "다른 파일"처럼 보였다(실사용 버그 리포트) - 지금은 파일명으로 이미 짝지어졌다면
+        ROM 실물 유무와 무관하게 Metadata/Media만 비교한다.
+        """
         with_rom = entry(1, "FFX.iso", fields={"name": "FFX"})
         without_rom = {**entry(9, "FFX.iso", fields={"name": "FFX"}), "present": 0}
         rows = engine.compare([with_rom], [without_rom])
-        self.assertEqual(rows[0]["status"], engine.STATUS_ONLY_A)      # >  ROM은 왼쪽에만
+        self.assertEqual(rows[0]["status"], engine.STATUS_SAME)        # 파일명이 같으므로 same
         rows = engine.compare([without_rom], [with_rom])
-        self.assertEqual(rows[0]["status"], engine.STATUS_ONLY_B)      # <  ROM은 오른쪽에만
-        # 두 쪽 모두 ROM이 있으면 메타데이터/미디어만 본다.
+        self.assertEqual(rows[0]["status"], engine.STATUS_SAME)
+        # 두 쪽 모두 ROM이 있으면 여전히 메타데이터/미디어만 본다.
         rows = engine.compare([with_rom], [{**with_rom, "rom_uid": 9}])
         self.assertEqual(rows[0]["status"], engine.STATUS_SAME)
 
@@ -133,12 +154,16 @@ class CompareEngineTests(unittest.TestCase):
         counts = engine.summarize(rows)
         self.assertEqual(counts["all"], 5)
         self.assertEqual(counts[engine.STATUS_SAME], 1)
-        self.assertEqual(counts[engine.STATUS_CONFLICT], 2)  # Conflict, MediaOnly(미디어도 ≠)
+        self.assertEqual(counts[engine.STATUS_CONFLICT], 1)  # Conflict(Metadata가 다르다)
+        self.assertEqual(counts[engine.STATUS_SIMILAR], 1)   # MediaOnly(Metadata는 같고 Media만 ≒)
         self.assertEqual(counts[engine.STATUS_ONLY_A], 1)
         self.assertEqual(counts[engine.STATUS_ONLY_B], 1)
         self.assertEqual(counts["media"], 1)
+        self.assertEqual(counts["diff"], 3)  # Conflict + OnlyLeft + OnlyRight (Similar는 안 낀다)
 
-        self.assertEqual(len(engine.filter_rows(rows, "conflict")), 2)
+        self.assertEqual(len(engine.filter_rows(rows, "conflict")), 1)
+        self.assertEqual(len(engine.filter_rows(rows, "similar")), 1)
+        self.assertEqual(len(engine.filter_rows(rows, "diff")), 3)
         self.assertEqual(len(engine.filter_rows(rows, "media")), 1)
         self.assertEqual(len(engine.filter_rows(rows, "all")), 5)
         self.assertEqual(len(engine.filter_rows(rows, None)), 5)
@@ -353,12 +378,12 @@ class CompareContractTests(unittest.TestCase):
         self.assertTrue(row["mediaDiff"])                          # Media도 다르다
         self.assertNotEqual(row["left"]["size"], row["right"]["size"])  # 크기도 다르다
 
-    def test_media_difference_alone_is_shown_as_different(self):
+    def test_media_difference_alone_is_shown_as_similar_not_conflict(self):
         left = [entry(1, "Game.iso", fields={"name": "Game"}, media=["covers"])]
         right = [entry(9, "Game.iso", fields={"name": "Game"}, media=["covers", "videos"])]
         row = engine.compare(left, right)[0]
-        self.assertEqual(row["status"], engine.STATUS_CONFLICT)
-        self.assertEqual(row["changedFields"], [])    # 메타데이터는 같다 - 미디어만 다르다
+        self.assertEqual(row["status"], engine.STATUS_SIMILAR)   # 메타데이터는 같다 - 미디어만 다르다
+        self.assertEqual(row["changedFields"], [])
         self.assertTrue(row["mediaDiff"])
 
 

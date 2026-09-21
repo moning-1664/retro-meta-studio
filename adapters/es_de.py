@@ -415,7 +415,16 @@ class EsDeAdapter(FrontendAdapter):
     @staticmethod
     def esde_platform(collection) -> str:
         target = str(collection.target or collection.os or "").lower()
-        return target if target in ("android", "linux") else "windows"
+        if target in ("android", "linux"):
+            return target
+        # Target을 안 정했어도 어떤 Storage에 기기 경로(device_root/device_id)가 있으면
+        # Android로 본다(사용자 결정) - 그 경로는 PC가 아니라 기기 위의 자리라서, 비워
+        # 둔 Target 때문에 PC용 경로(로컬 폴더)와 PC용 템플릿(RetroArch.exe 직접 실행)으로
+        # 잘못 나가면 안 된다(실사용 버그 리포트 - Target을 안 정한 채 만든 Collection이
+        # 정확히 이렇게 나왔다).
+        if target == "" and any(s.device_root or s.device_id for s in collection.storages):
+            return "android"
+        return "windows"
 
     @classmethod
     def _template_systems(cls, platform) -> dict:

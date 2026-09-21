@@ -177,9 +177,13 @@ body { font-size: var(--fs-body); }
   /* 가운데 네 칸을 기준으로 잡되, 조금 넘치는 만큼은 **비워 둔 오른쪽 한 칸**이 받아 준다
      (사용자 결정 - 그 칸은 여백이다). Navigator 밖으로는 나가지 않는다. */
   font-weight: 800; font-size: calc(15px * var(--font-scale));
-  /* 글자를 위아래로 20% 늘린다(사용자 결정 - "납작해 보인다"). 폭은 그대로 둬야 네 칸 안에
-     들어가므로 크기 대신 scaleY로 늘린다 - 레트로 간판 글자의 세로로 긴 비례이기도 하다. */
-  transform: scaleY(1.2); transform-origin: left center;
+  /* 글자를 위아래로 20% 늘린다(사용자 결정 - "납작해 보인다"). 크기(font-size) 대신
+     scale로 늘려야 레트로 간판 글자의 세로로 긴 비례가 난다.
+     가로도 20% 늘린다(사용자 결정 - "다시 작아졌다, 가로 길이만 20% 늘려라") - 원래
+     칸(4/6)을 넘치는 만큼은 비워 둔 오른쪽 칸이 받아 주므로, transform-origin을
+     왼쪽에 고정해 지금 있는 자리에서 오른쪽으로만 커지게 한다(왼쪽 시작 위치는
+     그대로 두고 폭만 늘린다). */
+  transform: scale(1.2); transform-origin: left center;
   line-height: 1.32; letter-spacing: .01em; white-space: nowrap;
   color: var(--app-title-ink);
   -webkit-text-stroke: calc(1.3px * var(--font-scale)) var(--app-title-outline);
@@ -1059,6 +1063,35 @@ body { font-size: var(--fs-body); }
   background: var(--card3); color: var(--muted); font-size: var(--fs-eyebrow);
 }
 
+/* MTP 폴더 탐색기 - 탐색기(Explorer) 주소창처럼 지나온 경로 전체를 조각으로 보여준다
+   (실사용 피드백 - "explorer처럼 더 직관적인 선택을 원한다"). 예전엔 "위로" 한 단계씩만
+   갈 수 있는 행 하나뿐이었다. */
+.mtp-browser-head {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+  padding: 5px 6px; background: var(--card2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.mtp-up-btn {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border: 1px solid var(--border); border-radius: var(--radius-xs);
+  background: var(--card); color: var(--text); cursor: pointer;
+}
+.mtp-up-btn:hover:not(:disabled) { border-color: var(--accent); }
+.mtp-up-btn:disabled { opacity: .35; cursor: default; }
+.mtp-breadcrumb {
+  flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 2px;
+}
+.mtp-crumb {
+  flex: none; max-width: 160px; padding: 3px 6px; border: 0; border-radius: var(--radius-xs);
+  background: none; color: var(--muted); font-size: var(--fs-caption); cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mtp-crumb:hover:not(:disabled) { background: var(--card3); color: var(--text); }
+.mtp-crumb.current { color: var(--text); font-weight: 600; cursor: default; }
+.mtp-crumb-sep { flex: none; display: flex; align-items: center; color: var(--muted); opacity: .6; }
+.mtp-list.picker-list { max-height: 38vh; }
+.mtp-loading { padding: 24px 0; }
+
 /* Collection 추가: "고급"과 "History"는 기본적으로 접혀 있다 - 자주 안 쓰는 것을
    펼쳐 놓으면 그 화면의 핵심(대표 폴더 하나 고르기)이 흐려진다. */
 .add-collection-advanced, .add-collection-history { margin-top: 12px; }
@@ -1604,7 +1637,11 @@ button.sb-badge { cursor: pointer; }
 .cmp-group-btn + .cmp-group-btn { border-left: 1px solid var(--border); }
 .cmp-group-btn:hover { color: var(--text); }
 .cmp-group-btn.active { background: var(--card); color: var(--text); }
-.cmp-group-btn.g-diff.active { color: var(--danger); }
+/* ≠/≒는 늘 색으로 구분한다(사용자 결정) - 눌러야만(active) 보이면 고르기 전엔
+   무엇이 다른 뜻인지 알 수 없다. */
+.cmp-group-btn.g-diff { color: var(--danger); }
+.cmp-group-btn.g-similar { color: var(--info); }
+.cmp-group-btn.g-diff.active, .cmp-group-btn.g-similar.active { filter: brightness(1.15); }
 .cmp-tool {
   display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px;
   border: 1px solid var(--border); border-radius: var(--radius-sm);
@@ -1660,6 +1697,11 @@ button.sb-badge { cursor: pointer; }
 .cmp-op.same { color: var(--muted); opacity: .55; font-weight: 400; }
 .cmp-op.planned { color: var(--success); }
 .cmp-op.diff { color: var(--warning); }
+/* `similar`(≒) - Metadata는 같고 Media만 다른 상태(사용자 결정). 흰색(평범한 글자색)으로
+   둬서 진짜 충돌(≠)과 한눈에 구분되게 한다. */
+.cmp-op.diff.similar { color: var(--text); }
+.cmp-op.diff.similar .cmp-op-arrow { color: var(--text); }
+.cmp-op.diff.similar .cmp-op-arrow:hover { background: color-mix(in srgb, var(--text) 18%, transparent); }
 .cmp-op.one-side { color: var(--info); cursor: pointer; border-radius: var(--radius-xs); }
 .cmp-op.one-side:hover { background: color-mix(in srgb, var(--info) 20%, transparent); }
 .cmp-op.one-side:focus-visible { outline: 2px solid var(--info); outline-offset: -2px; }

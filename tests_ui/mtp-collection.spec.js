@@ -53,8 +53,23 @@ test("위로 올라가면 한 단계 위 폴더가 보인다", async ({ page }) 
   await page.locator("#add-metadata-path").locator("xpath=..").getByText("찾아보기").click();
   await page.click("#mtp-browser .picker-row:has-text('Internal shared storage')");
   await expect(page.locator("#mtp-browser .picker-row:has-text('ES-DE')")).toBeVisible();
-  await page.click("#mtp-browser .picker-row:has-text('위로')");
+  // "위로"는 이제 목록 안 행이 아니라 탐색기 주소창처럼 생긴 헤더의 버튼이다
+  // (실사용 피드백 - "explorer처럼 더 직관적인 선택을 원한다").
+  await page.click(".mtp-up-btn");
   await expect(page.locator("#mtp-browser .picker-row:has-text('SD card')")).toBeVisible();
+});
+
+test("주소창 조각(breadcrumb)을 누르면 그 폴더로 바로 이동한다", async ({ page }) => {
+  await openAddDialog(page);
+  await page.click("#add-source .seg-btn:has-text('MTP')");
+  await page.locator("#add-metadata-path").locator("xpath=..").getByText("찾아보기").click();
+  await page.click("#mtp-browser .picker-row:has-text('Internal shared storage')");
+  await page.click("#mtp-browser .picker-row:has-text('ES-DE')");
+  await expect(page.locator(".mtp-crumb.current")).toHaveText("ES-DE");
+  // 세 단계 위(기기 이름 조각)를 한 번에 누른다 - "위로"를 여러 번 누를 필요가 없다.
+  await page.click(".mtp-crumb:has-text('Galaxy Test')");
+  await expect(page.locator("#mtp-browser .picker-row:has-text('Internal shared storage')")).toBeVisible();
+  await expect(page.locator(".mtp-crumb.current")).toHaveText("Galaxy Test");
 });
 
 test("찾아보기 버튼은 PC/Android 저장 위치마다 하나뿐이다", async ({ page }) => {

@@ -12,7 +12,7 @@ Retro Metadata Manager 버전 정보 (Semantic Versioning: MAJOR.MINOR.PATCH).
 버전을 올릴 때는 CHANGELOG.md에도 동일한 버전으로 항목을 추가한다.
 """
 
-__version__ = "0.4.1.5"
+__version__ = "0.4.1.6"
 
 
 def version_tuple():

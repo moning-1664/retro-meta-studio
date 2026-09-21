@@ -40,18 +40,28 @@ def detect_structure(rom_path, metadata_path, media_path):
 
 
 def list_systems(rom_path, metadata_path):
-    systems = set()
+    # 이름이 아니라 **소문자 키로** 합친다. gamelists/downloaded_media 쪽은 ES-DE
+    # 표준 짧은 이름(소문자, 예: "gba")을 쓰지만 ROM 폴더는 사람이나 다른 도구가 만들어서
+    # 대소문자가 다를 수 있다("GBA") - 그대로 set()에 넣으면 대소문자만 다른 두 System으로
+    # 갈라져 보였다(실사용 버그 리포트). metadata_path를 먼저 채우므로 표기가 갈리면
+    # gamelists/media 쪽 표기(ES-DE 표준)를 남긴다.
+    systems: dict[str, str] = {}
+
+    def add(names):
+        for name in names:
+            systems.setdefault(name.lower(), name)
+
     if metadata_path:
         root = Path(metadata_path)
         for child_name in ("gamelists", "downloaded_media"):
             child = root / child_name
             if child.exists():
-                systems.update(d.name for d in child.iterdir() if d.is_dir() and d.name.lower() not in ESDE_IGNORED_SYSTEMS)
+                add(d.name for d in child.iterdir() if d.is_dir() and d.name.lower() not in ESDE_IGNORED_SYSTEMS)
     if rom_path:
         root = Path(rom_path)
         if root.exists():
-            systems.update(d.name for d in root.iterdir() if d.is_dir() and d.name.lower() not in ESDE_IGNORED_SYSTEMS)
-    return sorted(systems)
+            add(d.name for d in root.iterdir() if d.is_dir() and d.name.lower() not in ESDE_IGNORED_SYSTEMS)
+    return sorted(systems.values())
 
 
 def list_roms(rom_path, system):

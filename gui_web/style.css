@@ -321,6 +321,17 @@ html[data-theme="light"] .raster-icon-pair img.for-dark { display: none; }
 
 .empty-msg { text-align: center; padding: 40px 0; color: var(--list-muted); font-size:calc(12px * var(--font-scale)); }
 
+/* Archive 설정이 없을 때의 빈 화면 - #list-window가 position:absolute라 너비 없이는
+   내용 크기로 쪼그라들어 왼쪽 위에 붙어 보였다(실사용 버그 리포트). 호출부(app.js)가
+   #list-window를 뷰포트 크기로 채운 뒤에 여기서 가운데로 정렬한다. */
+.archive-empty {
+  height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 20px; text-align: center; box-sizing: border-box;
+}
+/* 안내 문장을 .panel-empty-msg와 같은 크기로 - 아래 .stg-help(작은 보조 설명)와
+   대비되는 제목처럼 보여야 한다(실사용 버그 리포트 - "폰트 크기가 다르다"). */
+.archive-empty-title { font-size: var(--fs-body-lg); color: var(--text); }
+
 /* [신규] MasterDB 온보딩 */
 #masterdb-onboarding {
   flex: 1 1 0%; display: flex; flex-direction: column; align-items: center; justify-content: center;

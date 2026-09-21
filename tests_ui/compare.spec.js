@@ -39,7 +39,7 @@ test.describe("상단 막대", () => {
     await startCompare(page);
     const bar = page.locator("#filter-bar.compare");
     await expect(bar.locator(".compare-select")).toBeVisible();
-    await expect(bar.locator(".cmp-group-btn")).toHaveCount(3);
+    await expect(bar.locator(".cmp-group-btn")).toHaveCount(4);
     await expect(bar.locator(".cmp-send")).toHaveCount(2);
     await expect(bar.locator(".cmp-tool")).toHaveCount(2);
     await expect(bar.locator(".cmp-exit")).toBeVisible();
@@ -65,7 +65,11 @@ test.describe("상단 막대", () => {
     await expect(page.locator(".lrow")).toHaveCount(5);
 
     await page.locator(".compare-select").selectOption("conflict");
-    await expect(page.locator(".lrow")).toHaveCount(2);
+    await expect(page.locator(".lrow")).toHaveCount(1);
+    await expect(page.locator(".lrow").first()).toContainText("Conflict Game");
+    await page.locator(".compare-select").selectOption("similar");
+    await expect(page.locator(".lrow")).toHaveCount(1);
+    await expect(page.locator(".lrow").first()).toContainText("Media Only");
     await page.locator(".compare-select").selectOption("only_a");
     await expect(page.locator(".lrow").first()).toContainText("Only Base");
     await page.locator(".compare-select").selectOption("media");
@@ -73,8 +77,11 @@ test.describe("상단 막대", () => {
 
     await page.locator(".cmp-group-btn.g-same").click();     // =
     await expect(page.locator(".lrow")).toHaveCount(1);
-    await page.locator(".cmp-group-btn.g-diff").click();     // ≠ > <
-    await expect(page.locator(".lrow")).toHaveCount(4);
+    await page.locator(".cmp-group-btn.g-similar").click();  // ≒
+    await expect(page.locator(".lrow")).toHaveCount(1);
+    await expect(page.locator(".lrow").first()).toContainText("Media Only");
+    await page.locator(".cmp-group-btn.g-diff").click();     // ≠ > < (≒는 빠진다)
+    await expect(page.locator(".lrow")).toHaveCount(3);
     await page.locator(".cmp-group-btn.g-all").click();      // *
     await expect(page.locator(".lrow")).toHaveCount(5);
   });
@@ -126,14 +133,16 @@ test.describe("가운데 Gamelist", () => {
     await expect(row.locator(".lc-dstTitle")).toContainText("Media Only (USA)");
   });
 
-  test("연산자: = ≠ > < 가 행마다 다르게 붙는다", async ({ page }) => {
+  test("연산자: = ≠ ≒ > < 가 행마다 다르게 붙는다", async ({ page }) => {
     await startCompare(page);
     await expect(page.locator(".lrow.s-same .cmp-op.same")).toHaveText("=");
     await expect(page.locator(".lrow.s-only_a .cmp-op.one-side")).toHaveText(">");
     await expect(page.locator(".lrow.s-only_b .cmp-op.one-side")).toHaveText("<");
     await expect(page.locator(".lrow.s-conflict").first().locator(".cmp-op-symbol")).toHaveText("≠");
-    // 미디어만 다른 행도 ≠다.
-    await expect(page.locator(".lrow", { hasText: "Media Only" }).locator(".cmp-op-symbol")).toHaveText("≠");
+    // 메타데이터는 같고 미디어만 다른 행은 ≒(similar)다 - ≠와 구분된다(사용자 결정).
+    const mediaOnlyRow = page.locator(".lrow.s-similar", { hasText: "Media Only" });
+    await expect(mediaOnlyRow.locator(".cmp-op-symbol")).toHaveText("≒");
+    await expect(mediaOnlyRow.locator(".cmp-op")).toHaveClass(/similar/);
   });
 
   test("ROM이 없는 쪽 칸은 비어 있다", async ({ page }) => {

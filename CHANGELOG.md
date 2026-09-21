@@ -1,3 +1,75 @@
+## v0.4.1.6
+
+**MTP(안드로이드 기기) 버그 3종 수정 - 실기(Retroid Pocket Nova)로 검증**
+
+- **frozen exe에서 기기 목록/연결 자체가 실패하던 문제**: PyInstaller onefile exe에서
+  `comtypes.gen` 캐시 디렉터리를 만들지 못하면(백신이 임시 폴더 쓰기를 막는 등)
+  comtypes가 `__path__ = []`인 메모리 전용 스텁을 남기는데, `gen_dir=None` 경로가
+  그 빈 리스트를 인덱싱하다 `IndexError`로 죽었다. 존재하지 않아도 되는 자리표시자
+  하나로 채워 우회.
+- **기기를 열 때마다 실패하던 문제**: PROPERTYKEY 구조체를 `portabledevicetypes.dll`
+  쪽 클래스로 만들었는데, `IPortableDeviceValues.SetStringValue` 등은
+  `portabledeviceapi.dll` 쪽 클래스를 기대해서 자동 byref 변환이 거부됐다
+  (`expected LP__tagpropertykey instance`). api 모듈 클래스를 우선하도록 수정.
+- **폴더 목록이 항상 비어 보이던 문제**: comtypes가 `IEnumPortableDeviceObjectIDs.Next`의
+  `LPOLESTR*` 배열 out 파라미터를 배열이 아니라 문자열 하나로 잘못 마샬링해서, 실제로는
+  여러 개를 돌려줘도 한 글자씩 쪼개진 가짜 object id만 받았다. vtable을 직접 불러 우회
+  (기기 열거에 쓰던 것과 같은 패턴).
+- **ES-DE로 스캔해도 게임이 하나도 안 나오던 문제(근본 원인)**: 파일 읽기
+  (`IPortableDeviceResources.GetStream`)의 반환값 순서를 반대로 받고 있었다
+  (`stream, _optimal = ...`인데 실제로는 `_optimal, stream` 순서) - gamelist.xml이든
+  media든 MTP로 "읽는" 모든 호출이 매번 `AttributeError`로 조용히 실패했다. 순서를
+  바로잡아 실기로 76개 게임 정상 스캔 확인.
+- **MTP 폴더 선택 UI를 탐색기(Explorer)처럼 개편**: "위로"를 한 단계씩만 누르던 것을,
+  지나온 경로 전체를 주소창 조각(breadcrumb)으로 보여줘 아무 조상 폴더나 한 번에
+  누를 수 있게 했다. 폴더 목록도 이름순 정렬 + 로딩 표시를 추가.
+
+**ES-DE custom_systems.xml 생성 버그 수정**
+
+- **exe에 템플릿이 안 들어가 있던 문제(근본 원인)**: `build_web.bat`이
+  `adapters/esde_templates/`(ES-DE 공식 System 정의, Windows/Android/Linux 192개씩)를
+  `--add-data`에 안 넣고 있어서, frozen exe에서는 모든 System이 "이름 대문자,
+  extension/command 비어있음" 폴백으로 빠졌다. 빌드 스크립트에 추가.
+- **Target을 안 정했을 때 PC 경로/템플릿으로 잘못 나가던 문제**: Collection의
+  Target이 비어 있으면(Unknown) 무조건 Windows로 취급했는데, External Storage에
+  기기 경로(`device_root`)가 있으면 그건 분명히 Android 기기용이다. Target이 없어도
+  기기 경로가 있으면 Android로 보고, 그에 맞는 경로(`/storage/.../<system>`)와
+  Android 전용 템플릿(RetroArch intent/standalone 명령)을 쓰도록 수정.
+
+**Compare: Similar(≒) 상태 신설 - Conflict(≠)와 분리**
+
+- 예전엔 Metadata는 같고 Media(예: titlescreens)만 달라도 `≠`였다 - Cover/Screenshot이
+  겉보기엔 같아서 "메타데이터도 같은데 왜 다르다고 나오지?"로 오해를 샀다(실사용 버그
+  리포트). 지금은 Metadata가 다르면 `Conflict`(≠, 빨강), Metadata는 같고 Media만
+  다르면 `Similar`(≒, 흰색 - 필터 아이콘에서는 파랑)로 상태 자체를 가른다. 상단 필터
+  아이콘도 `* ≠ ≒ =` 순으로 하나 늘었고, `≒`도 `≠`처럼 좌우 화살표로 반대쪽에 보낼 수
+  있다.
+- Compare "있고 없고"의 기준을 ROM 파일명(짝지어졌는지)으로 바꿈 - 파일명이 같으면
+  한쪽에 ROM 실물이 없어도(gamelist 항목만 있어도) 더 이상 `>`/`<`로 갈리지 않는다.
+- Compare 기준을 정한 뒤 취소할 방법이 없던 것을 고침 - 어느 탭을 우클릭해도
+  "Compare 기준 해제"가 뜬다.
+
+**Systems: ES-DE 대소문자 다른 폴더가 System 두 개로 갈리던 문제**
+
+- ROM 폴더(`GBA`)와 gamelists/media 폴더(`gba`)의 대소문자가 다르면 같은 System이
+  둘로 보였다. 소문자 키로 합치도록 수정(`importers/es_de.py`, `adapters/emulationstation.py`).
+
+**Archive**
+
+- 수집(ingest) job이 DB 쓰기 단계에서만 진행률을 보고해서, media 복사/gamelist 쓰기
+  단계에선 막대가 100%에서 멈춘 것처럼 보이고 취소도 반영되지 않았다. 그 단계에도
+  progress_cb를 넘기고, job 취소 예외(`JobCancelled`)가 삼켜지지 않도록 수정.
+- Archive 설정이 없을 때의 빈 화면이 왼쪽 위에 작은 글씨로 붙어 있던 것을 중앙 정렬 +
+  적절한 폰트 크기로 수정.
+
+**앱 타이틀**
+
+- 제목 글자를 현재 위치(왼쪽 기준)에서 가로로 20% 더 키움(기존 세로 20% 확대는 유지).
+
+**아이콘**
+
+- ROM/앱 아이콘을 새 이미지로 교체(배경 제거).
+
 ## v0.4.1.5
 
 **시스템 사이드바/상세패널 아이콘 리워크**

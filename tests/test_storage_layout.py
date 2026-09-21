@@ -187,6 +187,19 @@ class StorageSettingsAndXmlTests(unittest.TestCase):
         self.assertTrue(result["written"], result)
         self.assertEqual(self.xml_systems()["snes"].findtext("path"), "/storage/1234-ABCD/Roms/snes")
 
+    def test_target_left_unset_still_uses_the_device_path_if_one_is_set(self):
+        """실사용 버그 리포트 - Target을 "Unknown"으로 둔 채 만든 Collection이 기기 경로를
+        입력해 뒀는데도 PC 경로(윈도우 템플릿)로 나왔다. 기기 경로가 있으면 Target을
+        안 정했어도 Android로 본다."""
+        cid, ext = self.make(None)
+        self.api.update_storage(cid, ext, None, None, "", "/storage/1234-ABCD/Roms")
+        result = self.api.run_adapter_action(cid, "esde-custom-systems")["data"]
+        self.assertTrue(result["written"], result)
+        self.assertEqual(result["platform"], "android")
+        snes = self.xml_systems()["snes"]
+        self.assertEqual(snes.findtext("path"), "/storage/1234-ABCD/Roms/snes")
+        self.assertIn("snes9x", ET.tostring(snes, encoding="unicode"))   # 안드로이드 템플릿(명령)을 썼다
+
     def test_empty_result_says_why(self):
         cid, _ext = self.make("windows")
         # 아직 System을 안 붙인 새 Storage에는 쓸 것이 없고, 그 이유가 "붙은 System이 없다"다.

@@ -116,16 +116,24 @@ class EmulationStationAdapter(FrontendAdapter):
         return Detection(0.9, systems, f"{len(systems)}개 시스템을 찾았습니다.")
 
     def list_systems(self, provider, collection) -> list[str]:
-        systems = set()
+        # 소문자 키로 합친다 - gamelists/ROM 폴더의 대소문자가 다르면(예: "gba"와 "GBA")
+        # 그대로 set()에 넣었을 때 같은 System이 둘로 갈라져 보였다(실사용 버그 리포트).
+        # 먼저 채운 쪽(gamelists, ES-DE 표준 표기)의 표기를 남긴다.
+        systems: dict[str, str] = {}
+
+        def add(names):
+            for name in names:
+                systems.setdefault(name.lower(), name)
+
         root = Path(collection.root_path)
-        systems.update(e.name for e in provider.scandir(root / "gamelists")
-                       if e.is_dir and e.name.lower() not in ESDE_IGNORED_SYSTEMS)
-        systems.update(self._romfolder_systems(provider, root))
+        add(e.name for e in provider.scandir(root / "gamelists")
+            if e.is_dir and e.name.lower() not in ESDE_IGNORED_SYSTEMS)
+        add(self._romfolder_systems(provider, root))
         for storage in collection.storages:
-            systems.update(e.name for e in provider.scandir(storage.root_path)
-                           if e.is_dir and e.name.lower() not in ESDE_IGNORED_SYSTEMS
-                           and e.name.lower() not in RESERVED_DIRS)
-        return sorted(systems)
+            add(e.name for e in provider.scandir(storage.root_path)
+                if e.is_dir and e.name.lower() not in ESDE_IGNORED_SYSTEMS
+                and e.name.lower() not in RESERVED_DIRS)
+        return sorted(systems.values())
 
     def layout(self, collection, system) -> Layout:
         entry = next((s for s in collection.systems if s.system == system), None)

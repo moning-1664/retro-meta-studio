@@ -29,6 +29,7 @@ import logging
 import queue
 import re
 import sys
+import tempfile
 import threading
 
 from storage.mtp import MtpBackend, MtpDeviceInfo, MtpError, MtpObject
@@ -293,6 +294,42 @@ def _raw_enumerate() -> list[tuple[str, str]]:
             pass
 
 
+# IEnumPortableDeviceObjectIDs의 vtable 위치(IUnknown 0-2 다음). Next만 있으면 된다 -
+# Skip/Reset/Clone은 이 파일이 쓰지 않는다.
+_VT_ENUM_NEXT = 3
+
+
+def _raw_enum_next(enumerator, count: int) -> list[str]:
+    """`IEnumPortableDeviceObjectIDs.Next`를 vtable로 직접 부른다.
+
+    comtypes가 만든 래퍼로 그냥 `enumerator.Next(count)`를 부르면 `[out, size_is(cObjects)]
+    LPOLESTR *pObjIDs`(문자열 배열)를 배열이 아니라 **문자열 하나**로 마샬링한다 - 실제
+    기기는 스토리지 2개를 돌려줘도(fetched=2) 파이썬에는 문자열 한 개만 왔고, 그 문자열을
+    `list(...)`로 펼치면 한 글자씩 쪼개진 가짜 object id가 나왔다(`"s10001"` ->
+    `['s','1']`) - `_describe()`가 전부 실패해 목록이 통째로 비어 보였다. `_raw_enumerate()`가
+    기기 열거에서 쓴 것과 같은 이유로, 같은 방식(vtable 직접 호출)으로 우회한다.
+    """
+    import ctypes
+    table = ctypes.cast(enumerator, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+    next_fn = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_ulong,
+                                  ctypes.POINTER(ctypes.c_void_p),
+                                  ctypes.POINTER(ctypes.c_ulong))(table[_VT_ENUM_NEXT])
+    buf = (ctypes.c_void_p * count)()
+    fetched = ctypes.c_ulong(0)
+    hr = next_fn(enumerator, count, buf, ctypes.byref(fetched))
+    if hr not in (0, 1):  # S_OK(전부 채움) / S_FALSE(끝에 닿아 일부만 채움) 둘 다 정상이다.
+        raise MtpError(f"목록을 읽지 못했습니다: 0x{hr & 0xFFFFFFFF:08X}")
+    ole32 = ctypes.WinDLL("ole32.dll")
+    ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+    ids = []
+    for pointer in list(buf)[:fetched.value]:
+        if not pointer:
+            continue
+        ids.append(ctypes.wstring_at(pointer))
+        ole32.CoTaskMemFree(pointer)          # 문서: 호출자가 해제한다(복사한 뒤에)
+    return ids
+
+
 class WpdBackend(MtpBackend):
     def __init__(self):
         self._com = _ComThread(on_restart=self._forget_com_state)
@@ -333,6 +370,17 @@ class WpdBackend(MtpBackend):
         # 생성한다 - 매번 새로 만드느라 조금 느리지만(수십 ms) 확실하다.
         if getattr(sys, "frozen", False):
             comtypes.client.gen_dir = None
+            # `import comtypes.client`(바로 위)가 모듈 적재 시점에 이미
+            # `comtypes.gen`을 만들려고 시도했다가 실패해 `__path__ = []`인
+            # 메모리 전용 스텁을 남겨 둔다(comtypes/client/_code_cache.py의
+            # _create_comtypes_gen_package). gen_dir=None 경로는 그래도
+            # `g.__path__[0]`을 읽으므로 빈 리스트면 IndexError가 난다 - 실제로
+            # 그 경로에 쓰지는 않으므로(메모리에서만 코드를 만든다) 존재하지
+            # 않는 자리표시자 하나만 채워 두면 된다.
+            import comtypes.gen as _gen
+
+            if not list(getattr(_gen, "__path__", ())):
+                _gen.__path__ = [tempfile.gettempdir()]
 
         try:
             self._api = comtypes.client.GetModule("portabledeviceapi.dll")
@@ -342,8 +390,16 @@ class WpdBackend(MtpBackend):
             raise MtpError(f"Windows Portable Devices를 불러오지 못했습니다: {e}") from e
         log.info("WPD 타입 라이브러리 적재 완료")
 
+        # **portabledeviceapi.dll 쪽 클래스를 우선한다.** 두 타입 라이브러리가 REFPROPERTYKEY를
+        # 구조적으로는 똑같이 정의해도, comtypes는 typelib마다 별도의 Python 클래스를
+        # 만든다 - `api._tagpropertykey is not types._tagpropertykey`. IPortableDeviceValues/
+        # IPortableDeviceKeyCollection(SetStringValue, keys.Add 등 이 파일이 쓰는 메서드들)은
+        # portabledeviceapi.dll 쪽 인터페이스이므로, 그 메서드의 POINTER(_tagpropertykey)
+        # 인자는 api 모듈의 클래스가 아니면 자동 byref 변환이 거부된다("expected
+        # LP__tagpropertykey instance instead of _tagpropertykey") - 기기를 여는 첫
+        # 호출(Open, _client_info)에서 바로 터져서 기기 목록은 보여도 폴더를 못 열었다.
         for name in ("_tagpropertykey", "tagPROPERTYKEY", "PROPERTYKEY", "_PROPERTYKEY"):
-            self._key_type = getattr(self._types, name, None) or getattr(self._api, name, None)
+            self._key_type = getattr(self._api, name, None) or getattr(self._types, name, None)
             if self._key_type is not None:
                 break
         if self._key_type is None:
@@ -500,10 +556,10 @@ class WpdBackend(MtpBackend):
                 raise MtpError(f"목록을 읽지 못했습니다: {e}") from e
             out = []
             while True:
-                ids, fetched = enumerator.Next(32)
-                if not fetched:
+                ids = _raw_enum_next(enumerator, 32)
+                if not ids:
                     break
-                for child_id in list(ids)[:fetched]:
+                for child_id in ids:
                     try:
                         out.append(self._describe(device, child_id))
                     except Exception:  # noqa: BLE001 - 하나가 이상해도 목록 전체를 버리지 않는다
@@ -516,7 +572,12 @@ class WpdBackend(MtpBackend):
             import ctypes
             self._load()
             device = self._device(device_key)
-            stream, _optimal = device.Content().Transfer().GetStream(
+            # IPortableDeviceResources.GetStream은 [in,out] 최적 버퍼 크기를 **먼저**,
+            # IStream을 **나중에** 돌려준다 - 반대로 받으면(`stream, _optimal = ...`)
+            # stream 자리에 그 DWORD 포인터가 들어가 `.RemoteRead()`가 없다며 죽는다
+            # (`AttributeError: 'LP_c_ulong' object has no attribute 'RemoteRead'`) -
+            # gamelist/media를 읽는 모든 MTP 호출이 이 한 줄 때문에 실패했다.
+            _optimal, stream = device.Content().Transfer().GetStream(
                 object_id, self._key(_FMT_RESOURCE, 0), _STGM_READ, ctypes.pointer(ctypes.c_ulong(0)))
             chunks = []
             while True:
