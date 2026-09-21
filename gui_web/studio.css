@@ -831,8 +831,11 @@ body { font-size: var(--fs-body); }
 /* ROM/Media/Description/Cover 네 칸(실사용 피드백) - 문제 없는 칸은 흐리게 자리만
    지키고, 없는 항목만 빨갛게 켜진다. 두 개 이상 없어도 각자의 칸에 독립적으로
    나타난다 - 예전 단일 기호는 우선순위가 높은 것 하나만 보여줬다. */
-.status-icon { display: inline-flex; color: var(--muted); opacity: .3; }
-.status-icon.missing { color: var(--danger); opacity: 1; }
+/* Status 네 칸: 흰색=다 있음, 노란색=일부만, 회색=없음. 빨간색은 쓰지 않는다(없는 것은 오류가 아니다). */
+.status-icon { display: inline-flex; }
+.status-icon.lv-ok { color: var(--text); opacity: 1; }
+.status-icon.lv-partial { color: var(--warning); opacity: 1; }
+.status-icon.lv-none { color: var(--muted); opacity: .3; }
 .skeleton {
   display: block; width: 45%; height: 9px; border-radius: var(--radius-pill);
   background: linear-gradient(90deg, var(--card2), var(--card3), var(--card2));

@@ -93,6 +93,12 @@ MIGRATIONS = (
 )
 
 
+#: 목록 Status의 "주요 media"(사용자 결정 - cover/screenshot/marquee/miximage). 이 넷이 모두 있으면
+#: Media 칸이 정상이고, 다른 것만 있거나 일부만 있으면 "부분"이다.
+KEY_MEDIA_TYPES = ("covers", "screenshots", "marquees", "miximages")
+KEY_MEDIA_SQL = ",".join(f"'{t}'" for t in KEY_MEDIA_TYPES)
+
+
 class CacheStore:
     def __init__(self, path):
         self.path = Path(path)
@@ -351,8 +357,15 @@ class CacheStore:
                # 아이콘을 독립적으로") 중 Cover만 has_media로는 못 가린다 - has_media는
                # "media가 하나라도 있는가"라 스크린샷만 있어도 켜진다. covers 타입만
                # 따로 있는지는 media 테이블을 직접 봐야 한다.
+               f" json_extract(m.fields_json,'$.name') AS name_text,"
                f" EXISTS(SELECT 1 FROM media mc WHERE mc.rom_uid = r.rom_uid"
-               f" AND mc.media_type = 'covers') AS has_cover"
+               f" AND mc.media_type = 'covers') AS has_cover,"
+               # Status의 Media/Video 칸(사용자 결정): 주요 media가 몇 종류 있는지, 영상이 있는지.
+               f" (SELECT COUNT(*) FROM media mk WHERE mk.rom_uid = r.rom_uid"
+               f"   AND mk.media_type IN ({KEY_MEDIA_SQL})) AS key_media_count,"
+               f" (SELECT COUNT(*) FROM media ma WHERE ma.rom_uid = r.rom_uid) AS any_media_count,"
+               f" EXISTS(SELECT 1 FROM media mv WHERE mv.rom_uid = r.rom_uid"
+               f" AND mv.media_type = 'videos') AS has_video"
                f" FROM roms r LEFT JOIN metadata m ON m.rom_uid = r.rom_uid{where}"
                f" ORDER BY {self._order_sql(order, descending, priority)}")
         if limit is not None:

@@ -78,6 +78,39 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(mgs2["hasCover"])
         self.assertFalse(mgs2["hasMedia"])
 
+    def test_status_levels_are_ok_partial_or_none(self):
+        """사용자 결정 - Status는 ROM/Metadata/Media/Video 네 칸이고 각 칸이 ok(다 있음) /
+        partial(일부만) / none(없음)이다. 없는 것이 빨간색이 아니라 회색이 되는 근거다."""
+        rows = {r["file"]: r for r in self.api.list_rows(self.cid)["data"]["rows"]}
+        ffx = rows["FFX.iso"]
+        self.assertEqual(ffx["rom"], "ok")
+        self.assertEqual(ffx["metaLevel"], "ok")          # Title + Description
+        self.assertEqual(ffx["mediaLevel"], "partial")    # cover만 있고 screenshot/marquee/miximage는 없다
+        self.assertEqual(ffx["videoLevel"], "ok")
+
+        mgs2 = rows["MGS2.iso"]
+        self.assertEqual(mgs2["metaLevel"], "partial")    # Title만 있고 Description이 없다
+        self.assertEqual(mgs2["mediaLevel"], "none")
+        self.assertEqual(mgs2["videoLevel"], "none")
+
+    def test_media_is_ok_only_when_all_key_media_exist(self):
+        media = self.root / "downloaded_media" / "ps2"
+        for kind in ("screenshots", "marquees", "miximages"):
+            (media / kind).mkdir(parents=True, exist_ok=True)
+            (media / kind / "FFX.png").write_bytes(b"x" * 10)
+        wait_job(self.api, self.api.start_scan(self.cid, True)["data"]["jobId"])
+        rows = {r["file"]: r for r in self.api.list_rows(self.cid)["data"]["rows"]}
+        self.assertEqual(rows["FFX.iso"]["mediaLevel"], "ok")
+
+    def test_non_key_media_alone_is_partial_not_none(self):
+        """cover 없이 다른 media만 있으면 "없음"이 아니라 "일부만"이다(노란색)."""
+        wheel = self.root / "downloaded_media" / "ps2" / "wheel"
+        wheel.mkdir(parents=True, exist_ok=True)
+        (wheel / "MGS2.png").write_bytes(b"x" * 10)
+        wait_job(self.api, self.api.start_scan(self.cid, True)["data"]["jobId"])
+        rows = {r["file"]: r for r in self.api.list_rows(self.cid)["data"]["rows"]}
+        self.assertEqual(rows["MGS2.iso"]["mediaLevel"], "partial")
+
     def test_media_image_returns_data_uri(self):
         uid = self._uid("FFX.iso")
         data = self.api.get_media_image(self.cid, uid, "Covers")["data"]

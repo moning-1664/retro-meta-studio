@@ -3422,11 +3422,17 @@
   //: 해당되어도 각 위치에 아이콘이 표기"). 예전엔 우선순위대로 기호 하나만
   //: 보여줬다("·"/"△") - 문제가 두 개 이상이면 하나만 보이고 나머지는 숨겨졌다.
   //: 이제 네 칸이 각자의 자리를 차지하고, 없는 항목만 빨갛게 켜진다.
+  // 사용자 결정(2026-09-17/20): ROM / Metadata / Media / Video 네 칸. 상태는 세 가지다.
+  //   ok(흰색) 다 있음 · partial(노란색) 일부만 있음 · none(회색) 없음. **빨간색은 쓰지 않는다** -
+  //   없는 것이 오류는 아니다.
+  //   Metadata: Title+Description이 다 있으면 ok. Media: cover/screenshot/marquee/miximage가 다 있으면 ok.
   const STATUS_ICON_DEFS = [
-    { key: "present", icon: "gamepad", label: "ROM" },
-    { key: "hasMedia", icon: "disc", label: "Media" },
-    { key: "hasDescription", icon: "fileText", label: "Description" },
-    { key: "hasCover", icon: "image", label: "Cover" },
+    { key: "rom", icon: "gamepad", label: "ROM" },
+    { key: "metaLevel", icon: "fileText", label: "Metadata",
+      partial: "Title 또는 Description이 비어 있음" },
+    { key: "mediaLevel", icon: "image", label: "Media",
+      partial: "주요 미디어(cover/screenshot/marquee/miximage) 중 일부가 없음" },
+    { key: "videoLevel", icon: "play", label: "Video" },
   ];
 
   function statusIcons(row) {
@@ -3434,12 +3440,13 @@
     // 정상이다 - 그 칸만 빨갛게 켜지 않는다(자리는 그대로 유지해 칸 정렬이 흔들리지
     // 않게 한다).
     const metaOnly = !!(activeDetail() && activeDetail().metadataOnly);
-    return STATUS_ICON_DEFS.map(({ key, icon: name, label }) => {
-      const missing = !row[key] && !(key === "present" && metaOnly);
-      return h("span", {
-        class: "status-icon" + (missing ? " missing" : ""),
-        title: missing ? `${label} 없음` : label,
-      }, [icon(name, 12)]);
+    return STATUS_ICON_DEFS.map(({ key, icon: name, label, partial }) => {
+      // 예전 응답(수준 값 없음)도 견디도록 불리언 필드로 떨어진다.
+      let level = row[key] || (row.present !== undefined && key === "rom" ? (row.present ? "ok" : "none") : "none");
+      if (key === "rom" && metaOnly && level === "none") level = "ok";
+      const text = level === "ok" ? label : level === "partial" ? `${label}: ${partial || "일부만 있음"}` : `${label} 없음`;
+      return h("span", { class: `status-icon lv-${level}`, title: text,
+                         "data-status": key }, [icon(name, 12)]);
     });
   }
 

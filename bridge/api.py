@@ -47,6 +47,7 @@ from app.match import service as match_service
 from app.metadata import service as metadata_service
 import storage
 from app.store.archive import ARCHIVE_EDIT_SOURCE, ArchiveStore
+from app.store.cache import KEY_MEDIA_TYPES
 from app.store.registry import CHANGE_APPLIED, RegistryError, RegistryStore
 from app.workspace import Workspace, WorkspaceError
 from bridge.jobs import JobManager
@@ -954,6 +955,27 @@ class Api:
                                         favorites_only=bool(favorites_only), priority=priority or None))
 
     @staticmethod
+    def _meta_level(row) -> str:
+        """Title과 Description이 다 있으면 ok, 하나만 있으면 partial, 둘 다 없으면 none."""
+        if "name_text" not in row.keys():
+            return "ok" if row["has_metadata"] else "none"
+        has_title = bool((row["name_text"] or "").strip())
+        has_desc = bool((row["desc_text"] or "").strip()) if "desc_text" in row.keys() else False
+        if has_title and has_desc:
+            return "ok"
+        return "partial" if (has_title or has_desc) else "none"
+
+    @staticmethod
+    def _media_level(row) -> str:
+        """주요 media(cover/screenshot/marquee/miximage) 넷이 다 있으면 ok. 다른 것만 있거나
+        일부만 있으면 partial, 아무것도 없으면 none."""
+        if "any_media_count" not in row.keys():
+            return "ok" if row["has_media"] else "none"
+        if row["key_media_count"] >= len(KEY_MEDIA_TYPES):
+            return "ok"
+        return "partial" if row["any_media_count"] else "none"
+
+    @staticmethod
     def _row_summary(row):
         """Gamelist 한 행. 이전 프로젝트의 컬럼을 그리는 데 필요한 것을 전부 싣는다.
 
@@ -974,6 +996,12 @@ class Api:
             # 하나만 따로, Description은 desc 필드 유무로 판정해야 한다.
             "hasDescription": bool(desc and desc.strip()),
             "hasCover": bool(row["has_cover"]) if "has_cover" in row.keys() else bool(row["has_media"]),
+            # Status 네 칸의 상태(사용자 결정): "ok"(다 있음) / "partial"(일부만) / "none"(없음).
+            # 없는 것을 빨갛게 하지 않고 회색으로, 일부만 있으면 노랗게 알린다.
+            "rom": "ok" if row["present"] else "none",
+            "metaLevel": Api._meta_level(row),
+            "mediaLevel": Api._media_level(row),
+            "videoLevel": "ok" if ("has_video" in row.keys() and row["has_video"]) else "none",
             "region": row["region"] if "region" in row.keys() else "",
             "genre": row["genre"] if "genre" in row.keys() else "",
             "rating": row["rating"] if "rating" in row.keys() else "",

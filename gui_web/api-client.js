@@ -35,6 +35,13 @@
   // hasDescription은 desc 필드에서 직접 계산한다 - 실제 백엔드(_row_summary)와
   // 같은 규칙이고, mockRows를 고칠 때마다 따로 값을 맞춰 둘 필요가 없어진다.
   mockRows.forEach((r) => { r.hasDescription = !!(r.desc && r.desc.trim()); });
+  // Status 네 칸의 상태(실제 백엔드의 _row_summary와 같은 규칙): ok / partial / none.
+  mockRows.forEach((r) => {
+    r.rom = r.present ? "ok" : "none";
+    r.metaLevel = r.hasDescription && r.title ? "ok" : (r.hasDescription || r.title ? "partial" : "none");
+    r.mediaLevel = r.hasMedia ? "ok" : "none";
+    r.videoLevel = r.hasMedia ? "ok" : "none";
+  });
   // 우선 정렬(rom/metadata/media) - 있음(0)이 없음(1)보다 먼저 오게 안정 정렬한다.
   // 실제 SQL 정렬 규칙(2차 기준까지)은 Python 쪽 테스트가 본다 - 여기서는 화면이
   // 값을 제대로 실어 보내는지만 확인할 수 있으면 된다.
