@@ -33,7 +33,7 @@ from app import storage_layout
 from app import title_affix
 from app.launch import retroarch
 from app.model.plan import OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan
-from app.plan import builder, clipboard, paste_modes
+from app.plan import builder, clipboard, transfer
 from app.plan.applier import apply_plan
 from app.plan.validator import check_capacity, validate
 from app.archive import conflicts as conflict_service
@@ -453,8 +453,10 @@ class Api:
     #: 지워진다.
     TRANSFER_DEFAULTS = {
         "includeRom": True, "includeMedia": True, "conflict": "ask",
-        # 붙여넣기 모드(Patch/Overwrite/Replace) - app/plan/paste_modes.py
-        "pasteMode": paste_modes.DEFAULT_MODE,
+        # 붙여넣기 모드(Patch/Overwrite/Replace) - app/plan/transfer.py
+        "pasteMode": transfer.DEFAULT_MODE,
+        #: ROM도 원본으로 교체할까(명시적 선택일 때만 - 기본은 대상 ROM을 지킨다)
+        "replaceRom": False,
         "unmatchedRomMode": "skip",
         "unmatchedRomMetadata": True, "unmatchedRomMedia": True, "unmatchedRomVideo": True,
     }
@@ -1477,11 +1479,11 @@ class Api:
         })
 
     @guarded
-    def paste(self, collection_id, mode=None, system_map=None):
+    def paste(self, collection_id, mode=None, system_map=None, replace_rom=None):
         """붙여넣기. **Settings의 복사 정책(transfer)을 따른다.**
 
         `mode`(patch/overwrite/replace)가 이미 있는 항목을 어떻게 다룰지 정한다
-        (app/plan/paste_modes.py). 주지 않으면 저장된 모드를 쓴다.
+        (app/plan/transfer.py). 주지 않으면 저장된 모드를 쓴다.
 
         `system_map`({원본 System: 이 Collection의 System})으로 **System 이름이 달라도 붙여넣는다**
         (사용자 결정 - "페가수스의 FBNEO ACT를 ES-DE로 가져올 때 system을 선택해서 붙여넣기").
@@ -1508,8 +1510,9 @@ class Api:
         if blocked:
             return blocked
         policy = self._transfer_policy()
-        mode = paste_modes.normalize_mode(mode or policy["pasteMode"])
-        policy = {**policy, "pasteMode": mode}
+        mode = transfer.normalize_mode(mode or policy["pasteMode"])
+        replace_rom = policy["replaceRom"] if replace_rom is None else bool(replace_rom)
+        policy = {**policy, "pasteMode": mode, "replaceRom": replace_rom}
         unmatched = policy["unmatchedRom"]
 
         prepared, extra_skipped = [], []
@@ -1537,7 +1540,8 @@ class Api:
         # 모드는 **원본에 ROM이 없던 항목의 정책(위)을 거친 뒤에** 적용한다 - 모드가 대상에 이미 있는 ROM을
         # 걷어 낸 항목은 "원본에 ROM이 없는" 항목이 아니다. 걷어 내고 나면 바뀔 것이 없는 항목은 Plan에
         # 올리지 않고 이유를 알린다.
-        prepared, mode_skipped = paste_modes.prepare(prepared, self.workspace.open(collection_id), mode)
+        prepared, mode_skipped = transfer.prepare(prepared, self.workspace.open(collection_id), mode,
+                                                 replace_rom=replace_rom)
         extra_skipped.extend(mode_skipped)
 
         if not prepared:
@@ -1547,7 +1551,7 @@ class Api:
         plan = self._plan(collection_id)
         result = builder.plan_add(plan, collection, provider, prepared)
         keys = result.pop("conflictKeys", [])
-        if mode == paste_modes.MODE_OVERWRITE:
+        if mode in (transfer.MODE_OVERWRITE, transfer.MODE_REPLACE):
             # 덮어쓰기 모드: **미디어만** 충돌한 항목은 덮어쓴다(원하는 그림으로 바꾸려는 것이므로).
             # ROM이 충돌한 항목은 설정의 충돌 정책을 따른다 - 다른 ROM 파일을 덮어쓰는 것은
             # 미디어 한 장을 바꾸는 것과 무게가 다르다.
@@ -1572,7 +1576,8 @@ class Api:
         conflict = merged["conflict"] if merged["conflict"] in ("ask", RESOLVE_SKIP, RESOLVE_OVERWRITE) else "ask"
         mode = merged["unmatchedRomMode"] if merged["unmatchedRomMode"] in ("skip", "copy") else "skip"
         return {
-            "pasteMode": paste_modes.normalize_mode(merged.get("pasteMode")),
+            "pasteMode": transfer.normalize_mode(merged.get("pasteMode")),
+            "replaceRom": bool(merged.get("replaceRom")),
             "includeRom": bool(merged["includeRom"]),
             "includeMedia": bool(merged["includeMedia"]),
             "conflict": conflict,
@@ -2254,7 +2259,8 @@ class Api:
         return {**side, "collectionId": collection_id, "romPath": rom_path}
 
     @guarded
-    def compare_copy_rows(self, keys, direction, metadata_only=True, overwrite=True):
+    def compare_copy_rows(self, keys, direction, metadata_only=True, overwrite=True, mode=None,
+                          replace_rom=False):
         """**고른 여러 행**을 한 번에 반대쪽 Plan에 올린다(사용자 결정 - Compare 상단의 `<` `>`는
         "선택된 항목들의 메타데이터+미디어를 좌/우측으로 overwrite").
 
@@ -2272,7 +2278,7 @@ class Api:
         planned, skipped, target_name, target_id = 0, [], None, None
         for key in keys:
             result = self.compare_copy_row(key, direction, metadata_only=metadata_only,
-                                           overwrite=overwrite)
+                                           overwrite=overwrite, mode=mode, replace_rom=replace_rom)
             if not result["ok"]:
                 skipped.append({"key": key, "reason": result["error"]})
                 continue
@@ -2287,7 +2293,8 @@ class Api:
                    "metadataOnly": bool(metadata_only)})
 
     @guarded
-    def compare_copy_row(self, key, direction, metadata_only=False, overwrite=False):
+    def compare_copy_row(self, key, direction, metadata_only=False, overwrite=False, mode=None,
+                         replace_rom=False):
         """Compare 한 행을 반대쪽 Collection의 **Plan에 올린다**(사용자 결정 - "모든 변경은
         PLAN 기준 / 실제 Apply를 눌러야 적용").
 
@@ -2324,24 +2331,35 @@ class Api:
         items, _bytes = clipboard.build_items(source, self.workspace.open(source_id), [side["romUid"]])
         if not items:
             return err("원본 항목을 읽지 못했습니다.")
-        if metadata_only:
-            items = [{**item, "rom": None} for item in items]
-        elif not side.get("present"):
-            # ROM이 없는 쪽에서 "ROM + 메타데이터"를 보낼 수는 없다 - 메타데이터만 간다.
-            items = [{**item, "rom": None} for item in items]
-        # 짝이 이름 정규화로 맺어졌으면 상대 쪽 파일명으로 맞춘다 - 그래야 새 항목이 생기지 않고
-        # 이미 있는 그 항목에 들어간다.
+        # Compare는 **이미 같은 게임임을 안다**(짝이 이름 정규화로 맺어져 파일명이 달라도). 그러니 붙여넣기처럼
+        # 파일명으로 다시 찾지 않고 짝이 알려 준 상대 행을 그대로 게임 단위 전송 계층에 넘긴다.
+        # 의도(Metadata/Media/ROM)는 여기서 정하고, 파일 안전 검사는 그 뒤 plan_add()가 바뀔 것에만 한다.
         other = row["right"] if to_right else row["left"]
-        if other is not None and other["filename"] != side["filename"]:
+        if metadata_only or not side.get("present"):
+            # 내용을 맞추는 버튼이거나 ROM이 없는 쪽이다 - ROM은 옮기지 않는다.
+            items = [{**item, "rom": None} for item in items]
+        if other is not None:
+            target_cache = self.workspace.open(target_id)
+            existing = target_cache.get_row(int(other["romUid"]))
             items = [{**item, "filename": other["filename"]} for item in items]
+            out, reason = transfer.decide(items[0], existing, transfer.normalize_mode(mode or "overwrite"),
+                                          replace_rom=bool(replace_rom))
+            if out is None:
+                return ok({"added": 0, "skipped": [{"filename": other["filename"], "reason": reason}],
+                           "conflicts": 0, "targetId": target_id, "targetName": target.name,
+                           "direction": direction, "metadataOnly": bool(metadata_only)})
+            items = [out]
         plan = self._plan(target_id)
         result = builder.plan_add(plan, target, provider, items)
         keys = result.pop("conflictKeys", [])
         if overwrite and keys:
             # 덮어쓰라고 누른 버튼이다 - 이번에 생긴 충돌을 다시 묻지 않는다(사용자 결정).
-            for conflict_key in keys:
+            # ROM 충돌은 예외다 - ROM 교체는 명시적으로 고른 것이고, 다른 파일을 덮는 일은 사용자가 정한다.
+            auto = [k for k in keys
+                    if all(c.get("kind") != "rom" for c in (plan.get(k).conflicts or []))]
+            for conflict_key in auto:
                 builder.resolve_conflict(plan, target, provider, conflict_key, RESOLVE_OVERWRITE)
-            result["conflicts"] = 0
+            result["conflicts"] = len(keys) - len(auto)
         return ok({**result, "targetId": target_id, "targetName": target.name,
                    "direction": direction, "metadataOnly": bool(metadata_only)})
 

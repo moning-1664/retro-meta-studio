@@ -65,7 +65,7 @@ class RomKeptMediaOverwrittenTests(unittest.TestCase):
         u = next(r["romUid"] for r in self.api.list_rows(self.s)["data"]["rows"]
                  if r["file"] == "FFX.iso")
         self.api.copy_selection(self.s, [u])
-        paste = self.api.paste(self.d, "overwrite")["data"]
+        paste = self.api.paste(self.d, "overwrite", None, True)["data"]  # ROM 교체를 명시해야 ROM 충돌이 잡힌다
         self.assertEqual(paste["conflicts"], 1, "ROM과 Cover 둘 다 달라야 충돌로 잡힌다")
         self.api.plan_resolve_all_conflicts(self.d, "skip")
         job = self.api.start_apply(self.d)["data"]["jobId"]

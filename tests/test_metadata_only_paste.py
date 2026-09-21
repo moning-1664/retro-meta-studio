@@ -53,7 +53,7 @@ class MetadataOnlyPasteTests(unittest.TestCase):
 
     def _paste(self, filename="FFX.iso"):
         self.api.copy_selection(self.s, [self._uid(self.s, filename)])
-        return self.api.paste(self.d, "overwrite")["data"]
+        return self.api.paste(self.d, "overwrite", None, True)["data"]  # ROM 교체를 명시해야 파일 충돌 판정이 걸린다
 
     def _apply(self):
         job = self.api.start_apply(self.d)["data"]["jobId"]

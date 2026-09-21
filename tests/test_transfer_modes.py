@@ -117,15 +117,26 @@ class PasteModeTests(unittest.TestCase):
         self.assertEqual(self._ffx()["genre"], "Action")
 
     # ---------------------------------------------------------------- Replace
-    def test_replace_ignores_the_source_for_items_that_already_exist(self):
-        result = self._paste("replace")
+    def test_replace_rebuilds_the_game_from_the_source(self):
+        """완전 교체 - 원본을 무시하는 것이 아니라 게임의 Metadata/Media를 원본 것으로 다시 만든다."""
+        self._paste("replace")
         self._apply()
         ffx = self._ffx()
-        self.assertEqual(ffx["desc"], "", "Replace가 없던 설명을 채웠다")
-        self.assertEqual(ffx["genre"], "Action")
-        self.assertEqual(self._cover(), b"TARGET-COVER-DIFFERENT" * 3)
-        reasons = [s["reason"] for s in result["skipped"] if s["filename"] == "FFX.iso"]
-        self.assertTrue(reasons and "Replace" in reasons[0])
+        self.assertEqual(ffx["desc"], "A role-playing game.")
+        self.assertEqual(ffx["genre"], "RPG")
+        self.assertEqual(self._cover(), b"x" * 10)
+
+    def test_rom_is_kept_unless_replacing_it_is_asked_for(self):
+        """대상 ROM이 다른 파일이어도 기본은 ROM을 건드리지 않는다 - ROM 충돌은 명시했을 때만."""
+        (self.dst_root / "ps2" / "FFX.iso").write_bytes(b"DIFFERENT-ROM-BYTES")
+        scan(self.api, self.dst)
+        self._copy_all()
+        kept = self.api.paste(self.dst, "overwrite")["data"]
+        self.assertEqual(kept["conflicts"], 0)
+        self.assertEqual([e.filename for e in self.api._plan(self.dst).conflict_entries()], [])
+        self.api.plan_clear(self.dst)
+        asked = self.api.paste(self.dst, "overwrite", None, True)["data"]
+        self.assertEqual(asked["conflicts"], 1, "ROM 교체를 골랐는데 파일 충돌 확인이 걸리지 않았다")
 
     # --------------------------------------------------------------- 공통
     def test_items_missing_from_the_target_are_added_in_every_mode(self):

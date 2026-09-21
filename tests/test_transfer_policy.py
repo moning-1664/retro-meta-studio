@@ -38,7 +38,8 @@ class TransferPolicyTests(unittest.TestCase):
             self.api.save_app_settings({"transfer": policy})
         uids = [r["romUid"] for r in self.api.list_rows(self.s, limit=50)["data"]["rows"]]
         self.api.copy_selection(self.s, uids)
-        r = self.api.paste(self.d, "overwrite")
+        # ROM 충돌은 "ROM 교체"를 명시했을 때만 생긴다(게임 단위 전송 - app/plan/transfer.py)
+        r = self.api.paste(self.d, "overwrite", None, True)
         self.assertTrue(r["ok"], r.get("error"))
         return r["data"]
 
@@ -48,7 +49,7 @@ class TransferPolicyTests(unittest.TestCase):
     def test_default_policy_keeps_conflicts_for_the_user(self):
         result = self.paste_all()
         self.assertEqual(result["policy"], {
-            "pasteMode": "overwrite", "includeRom": True, "includeMedia": True, "conflict": "ask",
+            "pasteMode": "overwrite", "replaceRom": True, "includeRom": True, "includeMedia": True, "conflict": "ask",
             "unmatchedRom": {"mode": "skip", "metadata": True, "media": True, "video": True},
         })
         self.assertEqual(result["conflicts"], 1)
@@ -70,7 +71,7 @@ class TransferPolicyTests(unittest.TestCase):
         self.api.save_app_settings({"transfer": {"conflict": "skip"}})
         self.api.copy_selection(self.s, [r["romUid"] for r in self.api.list_rows(self.s, limit=50)["data"]["rows"]
                                          if r["file"] == "MGS2.iso"])
-        self.api.paste(self.d, "overwrite")
+        self.api.paste(self.d, "overwrite", None, True)
         self.assertEqual([e.filename for e in self.api._plan(self.d).conflict_entries()], ["FFX.iso"])
 
     def test_media_off_does_not_plan_media(self):

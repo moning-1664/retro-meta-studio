@@ -312,7 +312,10 @@ class CompareApiTests(unittest.TestCase):
         result = self.api.compare_copy_rows(["ps2|Same.iso", "ps2|Conflict.iso"], "toRight")
         self.assertTrue(result["ok"], result.get("error"))
         self.assertEqual(result["data"]["requested"], 2)
-        self.assertEqual(self.api.plan_state(self.other)["data"]["added"], 2)
+        # 이미 같은 게임(Same)은 바뀔 것이 없으므로 Plan에 올리지 않고 이유를 알린다(게임 단위 전송).
+        self.assertEqual(self.api.plan_state(self.other)["data"]["added"], 1)
+        self.assertTrue(any(s["reason"] and "Same.iso" in str(s.get("filename", ""))
+                            for s in result["data"]["skipped"]), result["data"]["skipped"])
         self.assertEqual(self.api.plan_state(self.base)["data"]["total"], 0)
 
     def test_bulk_copy_carries_no_rom_by_default(self):

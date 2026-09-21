@@ -85,8 +85,8 @@ test.describe("붙여넣기 모드", () => {
 
   test("각 모드가 무엇을 하는지 툴팁으로 설명한다", async ({ page }) => {
     await expect(page.locator(".paste-mode [data-mode='patch']")).toHaveAttribute("title", /없는 것만 채웁니다/);
-    await expect(page.locator(".paste-mode [data-mode='overwrite']")).toHaveAttribute("title", /덮어씁니다/);
-    await expect(page.locator(".paste-mode [data-mode='replace']")).toHaveAttribute("title", /무시합니다/);
+    await expect(page.locator(".paste-mode [data-mode='overwrite']")).toHaveAttribute("title", /덮어쓰기/);
+    await expect(page.locator(".paste-mode [data-mode='replace']")).toHaveAttribute("title", /완전 교체/);
   });
 
   test("모드를 고르면 표시가 바뀌고 다음 붙여넣기가 그 모드로 요청된다", async ({ page }) => {
