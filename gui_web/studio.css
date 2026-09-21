@@ -144,14 +144,29 @@ body { font-size: var(--fs-body); }
      없었다. Settings 아이콘만 예외로 아래쪽에 고정한다(아래 참고). */
   display: flex; align-items: center; gap: 8px; flex-shrink: 0;
   height: var(--header-row-h); box-sizing: border-box;
-  margin: 0 -7px; padding: 0 10px;
+  /* 안쪽 여백 - 아이콘을 창 왼쪽 끝과 제목 사이 한가운데 두는 계산에도 쓴다(.nav-app-icon-cell). */
+  --nav-top-inset: 10px;
+  margin: 0 -7px; padding: 0 var(--nav-top-inset);
   border-bottom: 1px solid var(--border);
 }
-.nav-app-title { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; }
+/* **가로로 6등분한다**(사용자 결정): 왼쪽 한 칸은 아이콘, 오른쪽 한 칸은 비우고,
+   가운데 네 칸(66%)에 제목 한 줄과 그 아래 부제를 둔다. */
+.nav-app-title {
+  display: grid; grid-template-columns: repeat(6, 1fr); align-items: center;
+  flex: 1; min-width: 0;
+}
+/* 아이콘은 **창 왼쪽 끝과 제목 시작 위치의 한가운데**다(사용자 결정 - 칸 가운데보다 조금 왼쪽).
+   칸 가운데에 두면 왼쪽 여백(--nav-top-inset)만큼 오른쪽으로 치우쳐 보인다 - 그 절반을 당긴다. */
+.nav-app-icon-cell {
+  grid-column: 1; display: flex; align-items: center; justify-content: center;
+  /* margin이 아니라 transform이다 - margin을 주면 칸 폭이 그만큼 줄어 아이콘은 절반만 움직인다. */
+  transform: translateX(calc(var(--nav-top-inset) / -2));
+}
 /* 사용자가 만든 카트리지 그림(라벨 안에 안드로메다 은하) - tools/make_branding.py.
-   **제목+부제를 합친 높이에 맞춘다**(사용자 결정 - 아이콘이 너무 크면 안 된다). */
-.nav-app-icon { flex: none; height: calc(46px * var(--font-scale)); width: auto; }
-.nav-app-title-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+   **칸의 절반 크기 정사각형**이다 - 카트리지는 가로가 길어서 그 안에 맞춰 넣는다. */
+.nav-app-icon { width: 69.5%; aspect-ratio: 1; height: auto; object-fit: contain; }
+/* 가운데 네 칸. 오른쪽 한 칸(6번째)은 비워 둔다. */
+.nav-app-title-text { grid-column: 2 / span 4; min-width: 0; display: flex; flex-direction: column; gap: 0; }
 
 /* 제목은 **글자다**(사용자 결정) - 구워 둔 그림은 배율이 바뀔 때마다 열화됐다.
    레트로 간판처럼 보이도록 폭이 좁고 두꺼운 서체에 자간을 주고, 밝은 테마에서도
@@ -159,13 +174,15 @@ body { font-size: var(--fs-body); }
    안 그러면 획이 외곽선에 먹힌다). */
 .nav-app-title-name {
   font-family: "Arial Narrow", "Franklin Gothic Medium", Tahoma, Impact, sans-serif;
-  font-weight: 800; font-size: calc(24px * var(--font-scale));
-  line-height: 1; letter-spacing: .02em; white-space: nowrap;
+  /* 가운데 네 칸을 기준으로 잡되, 조금 넘치는 만큼은 **비워 둔 오른쪽 한 칸**이 받아 준다
+     (사용자 결정 - 그 칸은 여백이다). Navigator 밖으로는 나가지 않는다. */
+  font-weight: 800; font-size: calc(15px * var(--font-scale));
+  line-height: 1.15; letter-spacing: .01em; white-space: nowrap;
   color: var(--app-title-ink);
-  -webkit-text-stroke: calc(2px * var(--font-scale)) var(--app-title-outline);
+  -webkit-text-stroke: calc(1.3px * var(--font-scale)) var(--app-title-outline);
   paint-order: stroke fill;
   /* 흐림 없는 그림자 한 겹 - 오락실 간판처럼 글자가 한 칸 떠 보인다(레트로 느낌). */
-  text-shadow: calc(2px * var(--font-scale)) calc(2px * var(--font-scale)) 0 var(--app-title-shade);
+  text-shadow: calc(1px * var(--font-scale)) calc(1px * var(--font-scale)) 0 var(--app-title-shade);
 }
 .nav-app-title-name .apt-r { color: var(--app-title-red); }
 .nav-app-title-name .apt-m { color: var(--app-title-yellow); }
@@ -175,12 +192,12 @@ body { font-size: var(--fs-body); }
 .apt-i { position: relative; display: inline-block; }
 .apt-i::after {
   content: ""; position: absolute; left: 50%; top: .13em;
-  width: .21em; height: .21em; margin-left: -.105em;
+  width: .22em; height: .22em; margin-left: -.11em;
   background: var(--app-title-blue);
-  box-shadow: 0 0 0 calc(1.5px * var(--font-scale)) var(--app-title-outline);
+  box-shadow: 0 0 0 calc(1px * var(--font-scale)) var(--app-title-outline);
 }
 .nav-app-subtitle {
-  color: var(--muted); font-size: calc(8.5px * var(--font-scale));
+  color: var(--muted); font-size: calc(8px * var(--font-scale));
   letter-spacing: .04em; line-height: 1.2; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis;
 }
@@ -785,6 +802,8 @@ body { font-size: var(--fs-body); }
    낫다). */
 /* Plan 예정 표시는 **No. 칸에만** 둔다(사용자 결정) - 추가는 노랑, 삭제는 빨강.
    행 전체를 물들이면 선택/포커스 색과 겹쳐 무엇을 고른 것인지 흐려진다. */
+/* 게임을 끌어다 놓을 수 있는 System 행 - 그룹 드롭 표시(.drop-target)와 같은 모양이다. */
+.nav-system.drop-target { outline: 1px dashed var(--accent); outline-offset: -1px; }
 .lno-mark { display: inline-flex; }
 .lno-mark.add { color: var(--warning); }
 .lno-mark.del { color: var(--danger); }

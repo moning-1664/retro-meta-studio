@@ -456,3 +456,61 @@ test.describe("System 추가", () => {
     await expect(page.locator(".add-system-storage")).toBeVisible();
   });
 });
+
+// 사용자 결정 - "특정 system내 선택된 게임을 드래그 하면 롬+메타데이터가 해당 디렉토리로 이동".
+test.describe("게임을 끌어 다른 System으로", () => {
+  test.beforeEach(async ({ page }) => { await openApp(page); });
+
+  test("Gamelist 행을 끌 수 있다", async ({ page }) => {
+    await expect(page.locator(".lrow").first()).toHaveAttribute("draggable", "true");
+  });
+
+  test("System 행에 떨어뜨리면 그 System으로 옮기도록 Plan에 올린다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.__moved = [];
+      const original = window.api.planMoveToSystem;
+      window.api.planMoveToSystem = (id, uids, system) => {
+        window.__moved.push({ uids, system });
+        return original(id, uids, system);
+      };
+    });
+    // 끌어다 놓기는 DataTransfer를 직접 만들어 흉내 낸다(Playwright의 dragTo는 HTML5 DnD를 못 쓴다).
+    await page.locator(".lrow").first().click();
+    await page.evaluate(() => {
+      const row = document.querySelector(".lrow");
+      const target = [...document.querySelectorAll(".nav-system")]
+        .find((el) => el.textContent.toUpperCase().includes("SNES"));
+      const dt = new DataTransfer();
+      row.dispatchEvent(new DragEvent("dragstart", { dataTransfer: dt, bubbles: true }));
+      target.dispatchEvent(new DragEvent("dragover", { dataTransfer: dt, bubbles: true }));
+      target.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true }));
+    });
+    await expect.poll(() => page.evaluate(() => window.__moved.length)).toBe(1);
+    const moved = (await page.evaluate(() => window.__moved))[0];
+    expect(moved.system).toBe("snes");
+    expect(moved.uids).toHaveLength(1);
+    await expect(page.locator("#toast")).toContainText("Plan에 올렸습니다");
+  });
+
+  test("고른 여러 개가 함께 간다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.__moved = [];
+      window.api.planMoveToSystem = (id, uids, system) => {
+        window.__moved.push(uids);
+        return Promise.resolve({ ok: true, data: { moved: uids.length, target: system, conflicts: 0, skipped: [] } });
+      };
+    });
+    await page.locator(".lrow").nth(0).click();
+    await page.locator(".lrow").nth(1).click({ modifiers: ["Control"] });
+    await page.evaluate(() => {
+      const row = document.querySelector(".lrow");
+      const target = [...document.querySelectorAll(".nav-system")]
+        .find((el) => el.textContent.toUpperCase().includes("SNES"));
+      const dt = new DataTransfer();
+      row.dispatchEvent(new DragEvent("dragstart", { dataTransfer: dt, bubbles: true }));
+      target.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true }));
+    });
+    await expect.poll(() => page.evaluate(() => window.__moved.length)).toBe(1);
+    expect((await page.evaluate(() => window.__moved))[0]).toHaveLength(2);
+  });
+});

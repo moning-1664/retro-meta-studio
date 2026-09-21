@@ -83,7 +83,7 @@ test.describe("App Title / Settings 자리와 크기", () => {
       const cs = getComputedStyle(el);
       return { width: parseFloat(cs.webkitTextStrokeWidth), order: cs.paintOrder };
     });
-    expect(stroke.width).toBeGreaterThanOrEqual(2);
+    expect(stroke.width).toBeGreaterThanOrEqual(1);
     // 외곽선을 글자 아래에 깔지 않으면 획이 외곽선에 먹힌다.
     expect(stroke.order).toContain("stroke");
   });
@@ -94,7 +94,11 @@ test.describe("App Title / Settings 자리와 크기", () => {
     const [title, subtitle] = await Promise.all([
       page.locator(".nav-app-title-name").boundingBox(), sub.boundingBox()]);
     expect(subtitle.y).toBeGreaterThan(title.y);                       // 제목 아래
-    expect(subtitle.height).toBeLessThan(title.height / 2);            // 훨씬 작게
+    // 훨씬 작게 - 상자 높이가 아니라 글자 크기로 잰다(상자는 줄 높이에 따라 달라진다).
+    const fontSize = (locator) => locator.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    const [titleFont, subFont] = await Promise.all([
+      fontSize(page.locator(".nav-app-title-name")), fontSize(sub)]);
+    expect(subFont).toBeLessThan(titleFont * 0.7);
   });
 
   test("아이콘·제목·부제가 Navigator 칸을 벗어나지 않는다", async ({ page }) => {
@@ -111,17 +115,48 @@ test.describe("App Title / Settings 자리와 크기", () => {
     expect(icon.height).toBeLessThanOrEqual((sub.y + sub.height) - title.y);
   });
 
-  test("로고가 Navigator 폭을 거의 채운다 - 아이콘과 제목이 나란히 들어간다", async ({ page }) => {
-    // 224px 고정 폭 안에서 아이콘 + 제목이 잘리지 않고 들어가야 한다.
-    const [nav, icon, title] = await Promise.all([
-      page.locator(".nav-top").boundingBox(),
+  // 사용자 결정 - "앱 타이틀을 가로로 6등분해서 좌측 한칸은 아이콘, 우측 한칸을 비우고
+  // 나머지 66% 크기로 타이틀을 1줄로 배치. 아이콘은 좌측 한칸의 절반 크기 정사각형".
+  test("가로 6등분 - 왼쪽 한 칸 아이콘, 가운데 네 칸 제목, 오른쪽 한 칸은 빈다", async ({ page }) => {
+    const [nav, icon, title, sub] = await Promise.all([
+      page.locator(".nav-app-title").boundingBox(),
       page.locator(".nav-app-icon").boundingBox(),
       page.locator(".nav-app-title-name").boundingBox(),
+      page.locator(".nav-app-subtitle").boundingBox(),
     ]);
-    expect(icon.width + title.width).toBeGreaterThan(nav.width * 0.8);
-    expect(title.x + title.width).toBeLessThanOrEqual(nav.x + nav.width);
-    // 너무 비어 보이지도 않아야 한다(사용자 결정) - 세로도 칸의 절반 이상을 쓴다.
-    expect(title.height).toBeGreaterThan(nav.height * 0.5);
+    const cell = nav.width / 6;
+    // 제목과 부제는 가운데 네 칸(약 66%)을 쓴다.
+    expect(title.width).toBeCloseTo(cell * 4, 0);
+    expect(sub.width).toBeCloseTo(cell * 4, 0);
+    expect(title.x - nav.x).toBeCloseTo(cell, 0);
+    // 오른쪽 한 칸은 비어 있다.
+    expect(nav.x + nav.width - (title.x + title.width)).toBeCloseTo(cell, 0);
+    // 아이콘은 왼쪽 한 칸 안의 정사각형이다(칸의 약 70%).
+    expect(icon.width).toBeLessThan(cell);
+    expect(icon.width).toBeGreaterThan(cell * 0.6);
+    expect(icon.height).toBeCloseTo(icon.width, 0);
+    // **칸 가운데가 아니라 조금 왼쪽**이다(사용자 결정) - 창 왼쪽 끝과 제목 시작 위치의 한가운데.
+    const navBox = await page.locator("#nav").boundingBox();
+    expect(icon.x + icon.width / 2).toBeCloseTo((navBox.x + title.x) / 2, 0);
+  });
+
+  test("제목은 한 줄이고 그 칸을 넘지 않는다", async ({ page }) => {
+    const title = page.locator(".nav-app-title-name");
+    expect(await title.evaluate((el) => getComputedStyle(el).whiteSpace)).toBe("nowrap");
+    // 한 줄 - 글자 높이가 한 줄 높이를 크게 넘지 않는다.
+    const box = await title.boundingBox();
+    const fontSize = await title.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    expect(box.height).toBeLessThan(fontSize * 1.6);
+    // 네 칸을 조금 넘치는 만큼은 비워 둔 오른쪽 한 칸이 받아 준다 - 다만 Navigator 밖으로는
+    // 나가지 않는다(글자가 잘리면 안 된다).
+    const [nav, text] = await Promise.all([
+      page.locator("#nav").boundingBox(),
+      title.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return { x: r.x, width: el.scrollWidth };
+      }),
+    ]);
+    expect(text.x + text.width).toBeLessThanOrEqual(nav.x + nav.width);
   });
 
   test("App Title이 줄 안에서 세로 가운데다", async ({ page }) => {

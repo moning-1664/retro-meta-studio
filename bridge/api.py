@@ -1335,6 +1335,51 @@ class Api:
             return err(str(e))
         return ok(result)
 
+    #: System 이름이 고정 목록인 Frontend - 폴더를 옮기면 Frontend가 그 System을 못 읽는다.
+    #: 사용자 결정: "System 간 파일 이동은 non-esde only".
+    _FIXED_SYSTEM_FRONTENDS = {"es-de", "emulationstation"}
+
+    @guarded
+    def plan_move_to_system(self, collection_id, rom_uids, target_system):
+        """고른 게임을 **다른 System으로 옮긴다**(ROM+메타데이터+미디어).
+
+        사용자 결정 - "FBNEO ACT는 FBNEO 중 action 장르를 모은 디렉토리인데, FBNEO로 모으고 싶을 때
+        옮기는 기능이 필요하다". Pegasus처럼 metadata가 ROM 폴더에 딸린 Frontend가 대상이고,
+        ES-DE 계열은 System 이름이 정해진 목록이라 받지 않는다.
+
+        "옮기기"는 **대상에 추가 + 원본 삭제**로 Plan에 올린다 - 둘 다 이미 검증·충돌·적용 경로를
+        갖고 있어서 옮기기만을 위한 길을 새로 낼 이유가 없다. Apply가 추가를 먼저 하고 삭제를
+        나중에 하므로(app/plan/applier.py) 순서도 맞다.
+        """
+        collection, cache, provider = self._plan_context(collection_id)
+        if collection.frontend in self._FIXED_SYSTEM_FRONTENDS:
+            return err(f"{collection.frontend}는 System 이름이 정해져 있어 게임을 다른 System으로 "
+                       "옮길 수 없습니다. 폴더를 옮기면 Frontend가 그 System을 읽지 못합니다.")
+        target = str(target_system or "").strip()
+        if not target:
+            return err("옮길 System을 고르세요.")
+        if not any(e.system == target for e in collection.systems):
+            return err(f"System을 찾을 수 없습니다: {target}")
+        rows = [cache.get_row(int(uid)) for uid in (rom_uids or [])]
+        rows = [r for r in rows if r is not None and r["system"] != target]
+        if not rows:
+            return err("옮길 항목이 없습니다.")
+        blocked = self._ensure_file_ops(collection) or self._ensure_writable(
+            collection, sorted({target, *(r["system"] for r in rows)}))
+        if blocked:
+            return blocked
+
+        uids = [r["rom_uid"] for r in rows]
+        items, _bytes = clipboard.build_items(collection, cache, uids)
+        items = [{**item, "system": target} for item in items]
+        plan = self._plan(collection_id)
+        added = builder.plan_add(plan, collection, provider, items)
+        # 대상에 이미 같은 파일이 있으면 사용자가 정해야 한다 - 옮기기가 조용히 덮어쓰지 않는다.
+        conflicts = added.pop("conflictKeys", [])
+        builder.plan_delete(plan, collection, cache, uids, provider)
+        return ok({"moved": added["added"], "target": target, "conflicts": len(conflicts),
+                   "skipped": added.get("skipped", [])})
+
     @guarded
     def plan_storage_change(self, collection_id, system, storage_to):
         collection, cache, _ = self._plan_context(collection_id)
@@ -1644,7 +1689,7 @@ class Api:
         return ok({"jobId": job_id, "count": len(uids), "scope": kind})
 
     @guarded
-    def archive_rows(self, search=None, systems=None, limit=200, offset=0):
+    def archive_rows(self, search=None, systems=None, limit=200, offset=0, conflicts_only=False):
         """Archive Gamelist. Collection 목록과 같은 모양으로 돌려준다(§43).
 
         Description/Genre/Rating은 `rom_identities`가 아니라 Revision의
@@ -1654,6 +1699,11 @@ class Api:
         Archive 편집 → Latest)를 쓴다.
         """
         query = {"search": search or None, "systems": systems or None}
+        if conflicts_only:
+            # 사용자 결정 - "유사롬만 골라서 볼 수 있는 filter". 내용이 실제로 다른 것(=`[n]`이 붙는 것)만
+            # 남긴다 - 고를 것이 있는 항목만 보여야 정리할 때 뜻이 있다.
+            query["only_ids"] = list(conflict_service.conflict_counts(
+                self.archive, systems=systems or None))
         rows = self.archive.list_rows(**query, limit=int(limit), offset=int(offset))
         out_rows = []
         for r in rows:

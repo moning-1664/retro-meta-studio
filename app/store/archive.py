@@ -416,12 +416,13 @@ class ArchiveStore:
     # ------------------------------------------------------------------
     # 목록 조회 (Archive Gamelist - 스펙 §43)
     # ------------------------------------------------------------------
-    def list_rows(self, *, search=None, systems=None, limit=None, offset=0) -> list[dict]:
+    def list_rows(self, *, search=None, systems=None, limit=None, offset=0,
+                  only_ids=None) -> list[dict]:
         """Archive도 일반 Collection과 같은 Gamelist로 보여준다(§43).
 
         Collection 목록과 같은 모양으로 돌려줘서 UI가 같은 렌더링을 쓰게 한다.
         """
-        where, params = self._row_filter(search, systems)
+        where, params = self._row_filter(search, systems, only_ids)
         sql = (
             "SELECT r.rom_identity_id, r.game_id, r.system, r.filename, r.region,"
             "       g.title, g.title_norm,"
@@ -445,16 +446,23 @@ class ArchiveStore:
             params = [*params, int(limit), int(offset)]
         return [dict(r) for r in self._conn.execute(sql, params)]
 
-    def count_rows(self, *, search=None, systems=None) -> int:
-        where, params = self._row_filter(search, systems)
+    def count_rows(self, *, search=None, systems=None, only_ids=None) -> int:
+        where, params = self._row_filter(search, systems, only_ids)
         row = self._conn.execute(
             "SELECT COUNT(*) AS n FROM rom_identities r"
             f" JOIN games g ON g.game_id = r.game_id{where}", params).fetchone()
         return int(row["n"])
 
     @staticmethod
-    def _row_filter(search, systems):
+    def _row_filter(search, systems, only_ids=None):
         clauses, params = [], []
+        if only_ids is not None:
+            # 빈 목록이면 **아무것도 없다** - 조건을 빼 버리면 전체가 나와서 필터가 거꾸로 동작한다.
+            ids = list(only_ids)
+            if not ids:
+                return " WHERE 1=0", []
+            clauses.append(f"r.rom_identity_id IN ({','.join('?' * len(ids))})")
+            params.extend(ids)
         if systems:
             clauses.append(f"r.system IN ({','.join('?' * len(systems))})")
             params.extend(systems)

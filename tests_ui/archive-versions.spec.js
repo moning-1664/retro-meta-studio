@@ -161,3 +161,35 @@ test("Collection에서도 미디어 한 장만 붙여넣을 수 있다 - Plan으
   expect((await page.evaluate(() => window.__pasted))[0].key).toBe("Covers");
   await expect(page.locator("#toast")).toContainText("Plan에 올렸습니다");
 });
+
+// 사용자 결정 - "유사롬만 골라서 볼 수 있는 filter 옵션 추가".
+test.describe("다른 버전이 있는 항목만 보기", () => {
+  test("Archive 툴바에만 있고 눌러서 켜고 끈다", async ({ page }) => {
+    await openApp(page);
+    await expect(page.locator(".archive-conflicts-only")).toHaveCount(0);   // Collection에는 없다
+    await page.locator(".ctab.archive").click();
+    const btn = page.locator(".archive-conflicts-only");
+    await expect(btn).toBeVisible();
+    // 켜짐 표시는 "on" 클래스다 - 정규식 대신 classList로 본다(다른 클래스에 on이 섞여도 안전).
+    const isOn = () => btn.evaluate((el) => el.classList.contains("on"));
+    expect(await isOn()).toBe(false);
+    await btn.click();
+    await expect.poll(isOn).toBe(true);
+    await btn.click();
+    await expect.poll(isOn).toBe(false);
+  });
+
+  test("켜면 목록 조회에 그대로 전달된다", async ({ page }) => {
+    await openApp(page);
+    await page.evaluate(() => {
+      window.__queries = [];
+      const original = window.api.archiveRows;
+      window.api.archiveRows = (q) => { window.__queries.push(!!q.conflictsOnly); return original(q); };
+    });
+    await page.locator(".ctab.archive").click();
+    await expect.poll(() => page.evaluate(() => window.__queries.length)).toBeGreaterThan(0);
+    await page.locator(".archive-conflicts-only").click();
+    await expect.poll(() => page.evaluate(() =>
+      window.__queries[window.__queries.length - 1])).toBe(true);
+  });
+});

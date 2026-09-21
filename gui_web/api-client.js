@@ -299,7 +299,8 @@
       count: mockIngestCount(scope),
     }),
     get_archive_media_image: () => ok(null),
-    archive_rows: () => ok({ rows: [], total: 0, offset: 0 }),
+    archive_rows: (search, systems, limit, offset, conflictsOnly) =>
+      ok({ rows: [], total: 0, offset: 0, conflictsOnly: !!conflictsOnly }),
     archive_uids: () => ok([]),
     archive_conflicts: () => ok({}),
     // 저장하면 "정해졌다"로 바뀐다 - 디렉토리를 정하기 전에는 수집이 거절되므로(사용자 결정)
@@ -323,6 +324,8 @@
     archive_clear_preferred: (id) => ok({ romIdentityId: id, recordId: null }),
     archive_to_collection: () => ok({ updated: 0, planned: 0, skipped: [] }),
     plan_delete: () => ok({ deleted: 1 }),
+    plan_move_to_system: (id, romUids, system) =>
+      ok({ moved: (romUids || []).length, target: system, conflicts: 0, skipped: [] }),
     open_storage_folder: () => ok({ path: "D:\ES-DE" }),
     create_system: (id, name) => ok({ system: name, romDir: "D:\ES-DE\\" + name, knownToEsde: !/-/.test(name) }),
     plan_resolve_conflict: (id, key) => {
@@ -843,6 +846,7 @@
 
     planState: (id) => call("plan_state", id),
     planDelete: (id, romUids, parts) => call("plan_delete", id, romUids, parts || null),
+    planMoveToSystem: (id, romUids, system) => call("plan_move_to_system", id, romUids, system),
     planStorageChange: (id, system, storageId) => call("plan_storage_change", id, system, storageId),
     titleAffixPreview: (id, romUids, system) => call("title_affix_preview", id, romUids, system),
     planTitleEdit: (id, romUids, system) => call("plan_title_edit", id, romUids, system),
@@ -864,7 +868,7 @@
     getArchiveMediaImage: (romIdentityId, label, thumbnail) =>
       call("get_archive_media_image", romIdentityId, label, !!thumbnail),
     archiveRows: (q) => call("archive_rows", q.search || null, q.systems || null,
-                             q.limit || 200, q.offset || 0),
+                             q.limit || 200, q.offset || 0, !!q.conflictsOnly),
     archiveUids: (systems) => call("archive_uids", systems || null),
     archiveSystems: () => call("archive_systems"),
     archiveDetail: (romIdentityId) => call("archive_detail", romIdentityId),

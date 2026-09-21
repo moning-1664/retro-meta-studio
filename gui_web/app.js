@@ -436,6 +436,8 @@
     comparePlanned: new Set(),
     //: 좌/우 Detail이 함께 쓰는 탭(Metadata/Media/ROM) - 한쪽을 바꾸면 반대쪽도 바뀐다.
     compareTab: "metadata",
+    //: Archive 목록에서 "다른 버전이 있는 것만" 보고 있는가(사용자 결정 - 유사롬 filter).
+    archiveConflictsOnly: false,
   };
 
   //: Archive는 Collection이 아니지만 같은 Gamelist/Detail UI를 쓴다(스펙 §43).
@@ -1586,13 +1588,16 @@
     top.appendChild(h("div", { class: "nav-app-title" }, [
       // 카트리지 그림은 사용자가 만든 것을 그대로 쓴다(tools/make_branding.py) -
       // 제목+부제를 합친 높이에 맞춘다(CSS의 .nav-app-icon).
-      h("img", { class: "nav-app-icon", src: "app-icon.png", alt: "" }),
+      // 6등분한 칸 중 **맨 왼쪽 한 칸**이 아이콘 자리다(사용자 결정) - 그 칸의 절반 크기로
+      // 가운데 맞춘 정사각형이다. 카트리지는 가로가 길어서 정사각형 안에 맞춰 넣는다(object-fit).
+      h("div", { class: "nav-app-icon-cell" },
+        [h("img", { class: "nav-app-icon", src: "app-icon.png", alt: "" })]),
       h("div", { class: "nav-app-title-text" }, [
         h("div", { class: "nav-app-title-name", "aria-label": "RetroMeta Studio" }, [
           letter("R", "apt-r"), letter("etro"), letter("M", "apt-m"), letter("eta"),
-          // **두 줄이다.** Navigator 폭은 224px 고정이라 한 줄에 넣으면 글자를 크게 키울 수 없다 -
-          // 줄을 나누면 같은 폭에서 글자가 훨씬 커진다(사용자 결정 - "제목은 크게").
-          h("br"),
+          // **한 줄이다**(사용자 결정 - 두 줄로 키웠더니 글씨가 너무 컸다). 가운데 네 칸(66%)에
+          // 들어갈 크기로 줄인다.
+          letter(" "),
           letter("S", "apt-s"), letter("tud"),
           // i의 **꼭지만** 파랗게 칠한다 - 꼭지 없는 ı(U+0131)를 쓰고 네모 점을 따로 얹는다.
           // 서체 안의 점은 따로 색을 줄 수 없기 때문이다. 읽어 주는 이름은 위 aria-label이 맡는다.
@@ -1767,6 +1772,23 @@
           e.dataTransfer.setData("text/plain", sys.system);
           e.dataTransfer.effectAllowed = "move";
         });
+        // Gamelist에서 끌어온 게임을 이 System으로 옮긴다(Storage 이동 드래그와 섞이지 않게
+        // 게임 쪽만의 데이터 종류를 쓴다).
+        row.addEventListener("dragover", (e) => {
+          if (![...e.dataTransfer.types].includes(GAME_DRAG_TYPE)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          row.classList.add("drop-target");
+        });
+        row.addEventListener("dragleave", () => row.classList.remove("drop-target"));
+        row.addEventListener("drop", (e) => {
+          const raw = e.dataTransfer.getData(GAME_DRAG_TYPE);
+          if (!raw) return;
+          e.preventDefault();
+          e.stopPropagation();
+          row.classList.remove("drop-target");
+          dropGamesOnSystem(raw, sys.system);
+        });
       }
       return row;
     }
@@ -1889,6 +1911,26 @@
     S.selected.clear();
     S.selectAnchor = null;
     S.focused = null;
+  }
+
+  //: Gamelist에서 끌어온 게임임을 알리는 데이터 종류. Storage 이동 드래그("text/plain")와
+  //: 섞이면 System 행에 System을 떨어뜨렸을 때 게임 이동으로 오인한다.
+  const GAME_DRAG_TYPE = "application/x-rms-games";
+
+  /** 끌어온 게임들을 그 System으로 옮긴다 - ROM+메타데이터+미디어가 함께 간다(Plan 경유). */
+  async function dropGamesOnSystem(raw, targetSystem) {
+    let uids = [];
+    try { uids = JSON.parse(raw) || []; } catch (_) { return; }
+    if (!uids.length) return;
+    const r = await api.planMoveToSystem(S.activeId, uids, targetSystem);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    const d = r.data;
+    await refreshPlan();
+    renderListWindow();
+    showToast(`${formatCount(d.moved)}개를 ${String(targetSystem).toUpperCase()}(으)로 옮기도록 `
+      + `Plan에 올렸습니다. Apply를 누르면 반영됩니다.`
+      + (d.conflicts ? ` (충돌 ${formatCount(d.conflicts)}개는 직접 정하세요)` : ""),
+      d.conflicts ? "warning" : "info");
   }
 
   async function moveSystemToStorage(system, storageId) {
@@ -3232,6 +3274,22 @@
     });
     bar.appendChild(fav);
 
+    // Archive에만 있는 필터 - **다른 버전이 있는 항목만** 본다(사용자 결정 - "유사롬만 골라서 볼 수
+    // 있는 filter 옵션"). 고를 것이 있는 항목만 남으므로 정리할 때 그것만 훑으면 된다.
+    if (isArchive()) {
+      const onlyDiff = h("button", {
+        class: "icon-btn archive-conflicts-only" + (S.archiveConflictsOnly ? " on" : ""),
+        title: S.archiveConflictsOnly ? "전체 보기" : "다른 버전이 있는 항목만 보기",
+      }, [icon("copy", IC.md)]);
+      onlyDiff.addEventListener("click", async () => {
+        S.archiveConflictsOnly = !S.archiveConflictsOnly;
+        renderFilterBar();
+        resetList();
+        await reloadList();
+      });
+      bar.appendChild(onlyDiff);
+    }
+
     // **예전 "상태 필터"는 실제로 아무것도 걸러내지 못했다** - currentQuery()가
     // 그 값을 끝내 읽지 않아서, 셀렉트를 바꿔도 목록은 그대로였다(실사용 피드백).
     // 그 자리를 필터가 아니라 **1차 정렬 기준**으로 바꿨다 - "있는 항목"이
@@ -3566,7 +3624,8 @@
 
   function fetchRows(query) {
     if (isCompare()) return api.compareRows({ ...query, status: S.compareFilter });
-    return isArchive() ? api.archiveRows(query) : api.listRows(S.activeId, query);
+    if (isArchive()) return api.archiveRows({ ...query, conflictsOnly: S.archiveConflictsOnly });
+    return api.listRows(S.activeId, query);
   }
 
   async function reloadList() {
@@ -4101,6 +4160,21 @@
     el.addEventListener("click", (e) => handleRowClick(e, row, index));
     el.addEventListener("dblclick", (e) => { if (!e.target.closest("button")) launchGame(row); });
     el.addEventListener("contextmenu", (e) => { e.preventDefault(); openRowMenu(row, e); });
+    // **게임을 끌어 다른 System으로 옮긴다**(사용자 결정, ES-DE 계열 제외 - 아래 dropGamesOnSystem).
+    // 끌기 시작한 행이 선택에 없으면 그 행 하나만 대상이다(탐색기와 같다).
+    if (!isCompare() && !isArchive()) {
+      el.draggable = true;
+      el.addEventListener("dragstart", (e) => {
+        if (!S.selected.has(row.romUid)) {
+          S.selected = new Set([row.romUid]);
+          S.selectAnchor = row.romUid;
+          updateSelectionVisual();
+          renderStatusBar();
+        }
+        e.dataTransfer.setData(GAME_DRAG_TYPE, JSON.stringify([...S.selected]));
+        e.dataTransfer.effectAllowed = "move";
+      });
+    }
     return el;
   }
 

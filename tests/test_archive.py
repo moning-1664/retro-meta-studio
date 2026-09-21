@@ -618,3 +618,40 @@ class CollectionMediaPasteTests(unittest.TestCase):
                                       {"kind": "collection", "id": self.src,
                                        "uid": self._uid(self.src, "FFX.iso"), "key": "3DBoxes"})
         self.assertFalse(result["ok"])
+
+
+class ArchiveConflictsOnlyFilterTests(unittest.TestCase):
+    """Archive 목록에서 **다른 버전이 있는 항목만** 보는 필터(사용자 결정 - 유사롬 filter)."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_onlydiff_"))
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        store = self.api.archive
+        game = store.ensure_game("Game", "game")
+        self.same = store.ensure_rom_identity(game, "ps2", "same", filename="Same.iso")
+        self.diff = store.ensure_rom_identity(game, "ps2", "diff", filename="Diff.iso")
+        store.put_record(self.same, "a", {"name": "Same", "desc": "One"}, {})
+        store.put_record(self.same, "b", {"name": "Same", "desc": "One"}, {})
+        store.put_record(self.diff, "a", {"name": "Diff", "desc": "One"}, {})
+        store.put_record(self.diff, "b", {"name": "Diff", "desc": "Two"}, {})
+
+    def tearDown(self):
+        self.api.close()
+
+    def _files(self, **kwargs):
+        data = self.api.archive_rows(**kwargs)["data"]
+        return sorted(r["file"] for r in data["rows"]), data["total"]
+
+    def test_off_shows_everything(self):
+        self.assertEqual(self._files(), (["Diff.iso", "Same.iso"], 2))
+
+    def test_on_shows_only_rows_that_have_another_version(self):
+        self.assertEqual(self._files(conflicts_only=True), (["Diff.iso"], 1))
+
+    def test_choosing_a_version_takes_it_out_of_the_filter(self):
+        versions = self.api.archive_versions(self.diff)["data"]["versions"]
+        self.api.archive_choose_version(self.diff, versions[0]["recordIds"][0])
+        self.assertEqual(self._files(conflicts_only=True), ([], 0))
+
+    def test_the_filter_combines_with_a_system_filter(self):
+        self.assertEqual(self._files(conflicts_only=True, systems=["snes"]), ([], 0))

@@ -397,3 +397,67 @@ class PlanIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MoveGamesToAnotherSystemTests(unittest.TestCase):
+    """고른 게임을 다른 System으로 옮긴다(사용자 결정 - "FBNEO ACT를 FBNEO로 모으고 싶을 때").
+
+    옮기기는 **대상에 추가 + 원본 삭제**로 Plan에 올린다 - 둘 다 이미 검증/적용 경로를 갖고 있다.
+    """
+
+    def setUp(self):
+        from tests.fixtures import write_file
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_movesys_"))
+        self.root = self.dir / "pegasus"
+        # Pegasus는 metadata가 ROM 폴더에 딸린다 - System 이름 제약이 없다.
+        for system, game in (("fbneo act", "1941.zip"), ("fbneo", "1942.zip")):
+            write_file(self.root / system / game, b"r" * 50)
+            write_file(self.root / system / "metadata.pegasus.txt",
+                       f"collection: {system}\nextensions: zip\n\ngame: {Path(game).stem}\nfile: {game}\n")
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.cid = self.api.create_collection("P", "pegasus", str(self.root))["data"]["id"]
+        scan(self.api, self.cid)
+
+    def _uid(self, filename):
+        return next(r["romUid"] for r in self.api.list_rows(self.cid, limit=50)["data"]["rows"]
+                    if r["file"] == filename)
+
+    def _apply(self):
+        self.api.start_apply(self.cid)
+        wait_idle(self.api)
+
+    def test_the_rom_lands_in_the_target_system_and_leaves_the_old_one(self):
+        result = self.api.plan_move_to_system(self.cid, [self._uid("1941.zip")], "fbneo")
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(result["data"]["moved"], 1)
+        # Apply 전에는 그대로다.
+        self.assertTrue((self.root / "fbneo act" / "1941.zip").exists())
+        self._apply()
+        self.assertTrue((self.root / "fbneo" / "1941.zip").exists())
+        self.assertFalse((self.root / "fbneo act" / "1941.zip").exists())
+
+    def test_the_metadata_follows(self):
+        self.api.plan_move_to_system(self.cid, [self._uid("1941.zip")], "fbneo")
+        self._apply()
+        scan(self.api, self.cid, force=True)
+        rows = {r["file"]: r for r in self.api.list_rows(self.cid, limit=50)["data"]["rows"]}
+        self.assertEqual(rows["1941.zip"]["system"], "fbneo")
+
+    def test_moving_onto_its_own_system_is_refused(self):
+        result = self.api.plan_move_to_system(self.cid, [self._uid("1941.zip")], "fbneo act")
+        self.assertFalse(result["ok"])
+
+    def test_an_unknown_target_is_refused(self):
+        self.assertFalse(self.api.plan_move_to_system(self.cid, [self._uid("1941.zip")], "nope")["ok"])
+        self.assertFalse(self.api.plan_move_to_system(self.cid, [self._uid("1941.zip")], " ")["ok"])
+
+    def test_es_de_is_refused_because_its_system_names_are_fixed(self):
+        from tests.fixtures import build_esde_tree
+        root = build_esde_tree(self.dir / "esde")
+        cid = self.api.create_collection("E", "es-de", str(root))["data"]["id"]
+        scan(self.api, cid)
+        uid = next(r["romUid"] for r in self.api.list_rows(cid, limit=50)["data"]["rows"])
+        result = self.api.plan_move_to_system(cid, [uid], "snes")
+        self.assertFalse(result["ok"])
+        self.assertIn("System 이름", result["error"])
