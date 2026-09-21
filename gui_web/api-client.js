@@ -278,6 +278,9 @@
     get_archive_media_image: () => ok(null),
     archive_rows: () => ok({ rows: [], total: 0, offset: 0 }),
     archive_uids: () => ok([]),
+    archive_conflicts: () => ok({}),
+    archive_versions: () => ok({ romIdentityId: "", versions: [] }),
+    archive_choose_version: () => ok({}),
     archive_systems: () => ok([]),
     archive_detail: () => ok(null),
     archive_edit: () => ok({ revision: 1, changed: true }),
@@ -801,6 +804,10 @@
       call("archive_set_preferred", romIdentityId, recordId),
     archiveClearPreferred: (romIdentityId) =>
       call("archive_clear_preferred", romIdentityId),
+    archiveConflicts: (systems) => call("archive_conflicts", systems || null),
+    archiveVersions: (romIdentityId) => call("archive_versions", romIdentityId),
+    archiveChooseVersion: (romIdentityId, recordId) =>
+      call("archive_choose_version", romIdentityId, recordId),
     archiveToCollection: (id, ids) => call("archive_to_collection", id, ids),
 
     matchCandidates: (id, romUid) => call("match_candidates", id, romUid),

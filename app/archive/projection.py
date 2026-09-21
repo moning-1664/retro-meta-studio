@@ -97,10 +97,15 @@ def project(archive, config, rom_identity_ids=None) -> dict:
 def _copy_media(archive, adapter, layout, rid, filename, fields) -> tuple[int, int]:
     refs = archive.media_refs(rid)
     # 같은 type이 여러 출처에서 오면 가장 최근 것 하나만 쓴다.
+    # 사용자가 버전을 골랐으면(Preferred) 그 출처의 media를 우선한다 - 메타데이터만
+    # 고른 버전이고 그림은 다른 버전 것이면 고른 의미가 없다.
+    preferred = archive.get_preferred(rid)
+    chosen = preferred["source_collection_id"] if preferred else None
     latest: dict[str, dict] = {}
     for ref in refs:
         cur = latest.get(ref["media_type"])
-        if cur is None or ref["updated_at"] >= cur["updated_at"]:
+        rank = (ref["source_collection_id"] == chosen, ref["updated_at"])
+        if cur is None or rank >= (cur["source_collection_id"] == chosen, cur["updated_at"]):
             latest[ref["media_type"]] = ref
     files = [MediaFile(media_type=t, path=r["abs_path"], size=r["size"])
              for t, r in latest.items()]

@@ -3212,19 +3212,19 @@
     loadMatchCounts(r.data.rows, token);
   }
 
-  /** Match 뱃지 개수는 목록 렌더링을 막지 않고 뒤따라 채운다(§49의 [n] 표시). */
+  /** `[n]` 뱃지는 목록 렌더링을 막지 않고 뒤따라 채운다.
+   *
+   * **Archive에서만 나온다**(사용자 결정) - 같은 ROM에 Title/Description/주요 Media가 다른
+   * 버전이 둘 이상 있고 아직 고르지 않았을 때만 개수를 보여준다. Collection에는 Matching이
+   * 없다: 같은 것만 같은 것으로 다루고, 여러 후보를 고르게 하지 않는다. */
   async function loadMatchCounts(rows, token) {
-    // Compare 행은 좌우 어느 쪽 romUid인지가 정해져 있지 않고, 애초에 Archive Match와
-    // 무관한 화면이다.
-    if (isArchive() || isCompare() || !rows.length) return;
-    const uids = rows.map((row) => row.romUid);
-    const r = await api.matchCounts(S.activeId, uids);
+    if (!isArchive() || !rows.length) return;
+    const scope = activeScope();
+    const r = await api.archiveConflicts(scope.kind === "system" ? [scope.id] : null);
     if (!r.ok || token !== S.queryToken) return;
-    let changed = false;
-    Object.entries(r.data || {}).forEach(([uid, count]) => {
-      if (S.matchCounts[uid] !== count) { S.matchCounts[uid] = count; changed = true; }
-    });
-    if (changed) renderListWindow();
+    // 고른 System 전체를 한 번에 받으므로 이전 값과 통째로 바꾼다 - 고른 버전은 사라져야 한다.
+    S.matchCounts = { ...(r.data || {}) };
+    renderListWindow();
   }
 
   async function ensurePages(startIndex, endIndex) {
@@ -3589,9 +3589,9 @@
     // 아무것도 일어나지 않는다(§49 - 자동 병합 금지).
     const matchCount = S.matchCounts[row.romUid];
     if (matchCount) {
-      const badge = h("button", { class: "match-badge", title: "Match 후보 보기" },
+      const badge = h("button", { class: "match-badge", title: "서로 다른 버전 보기" },
         [`[${matchCount}]`]);
-      badge.addEventListener("click", (e) => { e.stopPropagation(); openMatchDialog(row); });
+      badge.addEventListener("click", (e) => { e.stopPropagation(); openVersionDialog(row); });
       titleCell.appendChild(badge);
     }
     cells.title = titleCell;
@@ -4245,6 +4245,46 @@
   // ------------------------------------------------------------------
   const TIER_LABEL = { exact: "정확", normalized: "이름 일치", metadata: "메타데이터",
                        heuristic: "유사", manual: "수동 연결" };
+
+  /** Archive의 버전 목록. 하나를 고르면 그 버전이 쓰이고 `[n]`이 사라진다.
+   *
+   * 판단에 필요한 것(파일명/Title/Description/Cover/Screenshot)을 한 화면에 보여준다 -
+   * 파일명과 점수만으로는 어느 쪽이 맞는지 알 수 없다. */
+  async function openVersionDialog(row) {
+    const r = await api.archiveVersions(row.romIdentityId || row.romUid);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    const versions = r.data.versions || [];
+    const list = h("div", { class: "match-list" });
+    const mediaText = (v, key) => (v.media[key] ? formatBytes(v.media[key]) : "—");
+    versions.forEach((v, i) => {
+      const option = h("button", { class: "match-option" });
+      option.appendChild(h("span", { class: "match-radio" }, ["○"]));
+      option.appendChild(h("div", { class: "match-option-main" }, [
+        h("div", { class: "match-option-title truncate" }, [v.fields.name || row.file]),
+        h("div", { class: "match-option-sub" },
+          [(v.fields.desc || "설명 없음").replace(/\s+/g, " ").slice(0, 160)]),
+        h("div", { class: "match-option-why truncate" }, [
+          `${row.file} · Cover ${mediaText(v, "covers")} · Screenshot ${mediaText(v, "screenshots")}`
+          + ` · 출처 ${(v.sourceNames || v.sources).join(", ")}`]),
+      ]));
+      option.addEventListener("click", async () => {
+        closeModal();
+        const chosen = await api.archiveChooseVersion(row.romIdentityId || row.romUid,
+                                                      v.recordIds[0]);
+        if (!chosen.ok) { showToast(chosen.error, "error"); return; }
+        delete S.matchCounts[row.romUid];
+        renderListWindow();
+        showToast(`버전 ${i + 1}을 선택했습니다.`);
+      });
+      list.appendChild(option);
+    });
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "modal-hint" },
+        ["Title / Description / Cover / Screenshot이 다른 버전입니다. 쓸 버전을 고르세요."]),
+      list,
+    ]);
+    showModal("서로 다른 버전", body, [h("button", { class: "btn", onClick: closeModal }, ["Cancel"])]);
+  }
 
   /** 후보 목록. 고르기 전까지 아무것도 반영되지 않는다 - 그것이 이 화면의 요점이다. */
   async function openMatchDialog(row) {

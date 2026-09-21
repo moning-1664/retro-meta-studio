@@ -326,3 +326,68 @@ class ArchiveDirectoryTests(unittest.TestCase):
 
     def test_rejects_unknown_frontend(self):
         self.assertFalse(self.api.save_archive_config({"frontend": "nope"})["ok"])
+
+
+class ArchiveConflictTests(unittest.TestCase):
+    """`[n]`은 Archive 안에서 **중요한 값이 실제로 다를 때만** 뜬다."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_conf_"))
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        store = self.api.archive
+        game = store.ensure_game("Game", "game")
+        self.rid = store.ensure_rom_identity(game, "ps2", "game", filename="game.iso")
+        self.store = store
+
+    def tearDown(self):
+        self.api.close()
+
+    def _put(self, source, **fields):
+        self.store.put_record(self.rid, source, fields, {})
+
+    def _count(self):
+        return self.api.archive_conflicts()["data"].get(self.rid, 0)
+
+    def test_identical_sources_are_not_a_conflict(self):
+        self._put("a", name="Game", desc="Same text", players="1")
+        self._put("b", name="Game", desc="Same text", players="1")
+        self.assertEqual(self._count(), 0)
+
+    def test_unimportant_difference_is_ignored(self):
+        self._put("a", name="Game", desc="Same text", players="1", genre="RPG")
+        self._put("b", name="Game", desc="Same text", players="4", genre="Action")
+        self.assertEqual(self._count(), 0)
+
+    def test_field_missing_on_one_side_is_filled_not_conflicted(self):
+        self._put("a", name="Game", desc="")
+        self._put("b", name="Game", desc="Has a description")
+        self.assertEqual(self._count(), 0)
+
+    def test_different_description_is_a_conflict_and_choosing_clears_it(self):
+        self._put("a", name="Game", desc="One")
+        self._put("b", name="Game", desc="Two")
+        self.assertEqual(self._count(), 2)
+        versions = self.api.archive_versions(self.rid)["data"]["versions"]
+        self.assertEqual(len(versions), 2)
+        self.api.archive_choose_version(self.rid, versions[0]["recordIds"][0])
+        self.assertEqual(self._count(), 0)
+
+    def test_different_cover_is_a_conflict(self):
+        self._put("a", name="Game", desc="Same")
+        self._put("b", name="Game", desc="Same")
+        self.store.put_media_ref(self.rid, "covers", "a", "x.png", 100)
+        self.store.put_media_ref(self.rid, "covers", "b", "y.png", 200)
+        self.assertEqual(self._count(), 2)
+
+    def test_same_cover_copied_from_two_collections_is_not_a_conflict(self):
+        self._put("a", name="Game", desc="Same")
+        self._put("b", name="Game", desc="Same")
+        self.store.put_media_ref(self.rid, "covers", "a", "x.png", 100)
+        self.store.put_media_ref(self.rid, "covers", "b", "y.png", 100)
+        self.assertEqual(self._count(), 0)
+
+    def test_old_revisions_do_not_count_only_latest_per_source(self):
+        self._put("a", name="Game", desc="Old")
+        self._put("a", name="Game", desc="Same")
+        self._put("b", name="Game", desc="Same")
+        self.assertEqual(self._count(), 0)

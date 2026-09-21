@@ -36,6 +36,7 @@ from app.model.plan import OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE, 
 from app.plan import builder, clipboard
 from app.plan.applier import apply_plan
 from app.plan.validator import check_capacity, validate
+from app.archive import conflicts as conflict_service
 from app.archive import legacy as archive_legacy
 from app.archive import projection as archive_projection
 from app.archive import service as archive_service
@@ -1609,6 +1610,27 @@ class Api:
         except Exception:  # noqa: BLE001 - 수집 자체는 성공했으므로 실패는 알리기만 한다
             log.exception("Archive 디렉토리에 쓰지 못했습니다")
             return {"error": "Archive 디렉토리에 쓰지 못했습니다. 로그를 확인하세요."}
+
+    @guarded
+    def archive_conflicts(self, systems=None):
+        """`[n]` 뱃지용. **버전이 둘 이상이고 아직 고르지 않은 Identity만** 돌려준다."""
+        return ok(conflict_service.conflict_counts(self.archive, systems=systems or None))
+
+    @guarded
+    def archive_versions(self, rom_identity_id):
+        """`[n]`을 눌렀을 때 보여줄 버전 목록(Title/Description/Media 크기/출처)."""
+        versions = conflict_service.versions_of(self.archive, rom_identity_id)
+        names = {c.id: c.name for c in self.registry.list_collections()}
+        for v in versions:
+            v["sourceNames"] = [names.get(s, s) for s in v["sources"]]
+        return ok({"romIdentityId": rom_identity_id, "versions": versions})
+
+    @guarded
+    def archive_choose_version(self, rom_identity_id, record_id):
+        """버전 하나를 고른다 - 이후 그 버전이 쓰이고 `[n]`은 사라진다."""
+        result = archive_service.set_preferred(self.archive, rom_identity_id, int(record_id))
+        self._project_archive(result, [rom_identity_id])
+        return ok(result)
 
     @guarded
     def archive_project(self):
