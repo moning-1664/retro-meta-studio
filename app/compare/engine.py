@@ -225,10 +225,12 @@ def _side(entry) -> dict:
 def summarize(rows) -> dict:
     """필터 버튼에 붙일 개수. 화면이 [All][Same][Only A][Only B][Conflict][Media]를
     한 줄로 보여주므로, 목록을 다시 훑지 않아도 되게 여기서 같이 센다."""
-    counts = {"all": len(rows), STATUS_SAME: 0, STATUS_CONFLICT: 0,
+    counts = {"all": len(rows), "diff": 0, STATUS_SAME: 0, STATUS_CONFLICT: 0,
               STATUS_ONLY_A: 0, STATUS_ONLY_B: 0, "media": 0}
     for row in rows:
         counts[row["status"]] += 1
+        if row["status"] != STATUS_SAME:
+            counts["diff"] += 1
         if row["mediaDiff"]:
             counts["media"] += 1
     return counts
@@ -240,4 +242,6 @@ def filter_rows(rows, status=None):
         return rows
     if status == "media":
         return [r for r in rows if r["mediaDiff"]]
+    if status == "diff":       # `≠`, `>`, `<` 전부 - "다른 것만 보기"
+        return [r for r in rows if r["status"] != STATUS_SAME]
     return [r for r in rows if r["status"] == status]

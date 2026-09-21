@@ -148,19 +148,29 @@
   const mockCompare = { on: false, takenAt: 0 };
   const mockCompareRows = [
     { key: "ps2|Same.iso", system: "ps2", file: "Same.iso", title: "Same Game",
-      size: 100, status: "same", mediaDiff: false, changedFields: [] },
+      size: 100, status: "same", mediaDiff: false, changedFields: [],
+      leftFile: "Same.iso", rightFile: "Same.iso", leftTitle: "Same Game", rightTitle: "Same Game",
+      leftPresent: true, rightPresent: true },
     { key: "ps2|Conflict.iso", system: "ps2", file: "Conflict.iso", title: "Conflict Game",
-      size: 200, status: "conflict", mediaDiff: false, changedFields: ["genre"] },
+      size: 200, status: "conflict", mediaDiff: false, changedFields: ["genre"],
+      leftFile: "Conflict.iso", rightFile: "Conflict.iso", leftTitle: "Conflict Game", rightTitle: "Conflict Game",
+      leftPresent: true, rightPresent: true },
     { key: "ps2|OnlyBase.iso", system: "ps2", file: "OnlyBase.iso", title: "Only Base",
-      size: 300, status: "only_a", mediaDiff: false, changedFields: [] },
+      size: 300, status: "only_a", mediaDiff: false, changedFields: [],
+      leftFile: "OnlyBase.iso", rightFile: null, leftTitle: "Only Base", rightTitle: "",
+      leftPresent: true, rightPresent: false },
     { key: "ps2|OnlyOther.iso", system: "ps2", file: "OnlyOther.iso", title: "Only Other",
-      size: 400, status: "only_b", mediaDiff: false, changedFields: [] },
+      size: 400, status: "only_b", mediaDiff: false, changedFields: [],
+      leftFile: null, rightFile: "OnlyOther.iso", leftTitle: "", rightTitle: "Only Other",
+      leftPresent: false, rightPresent: true },
     { key: "ps2|MediaOnly.iso", system: "ps2", file: "MediaOnly.iso", title: "Media Only",
-      size: 500, status: "same", mediaDiff: true, changedFields: [] },
+      size: 500, status: "conflict", mediaDiff: true, changedFields: [], mediaChanged: ["covers"],
+      leftFile: "MediaOnly.iso", rightFile: "MediaOnly (USA).iso", leftTitle: "Media Only", rightTitle: "Media Only (USA)",
+      leftPresent: true, rightPresent: true },
   ];
   const mockCompareState = () => ({
     baseId: "c1", otherId: "c2", baseName: "Master Library", otherName: "Android ES-DE",
-    counts: { all: 5, same: 2, conflict: 1, only_a: 1, only_b: 1, media: 1 },
+    counts: { all: 5, diff: 4, same: 1, conflict: 2, only_a: 1, only_b: 1, media: 1 },
     systems: ["ps2"], takenAt: mockCompare.takenAt,
   });
 
@@ -588,23 +598,39 @@
     compare_rows: (status) => {
       if (!mockCompare.on) return Promise.resolve({ ok: false, error: "Compare Mode가 아닙니다." });
       const rows = mockCompareRows.filter((r) =>
-        !status || status === "all" ? true : status === "media" ? r.mediaDiff : r.status === status);
+        !status || status === "all" ? true : status === "media" ? r.mediaDiff
+          : status === "diff" ? r.status !== "same" : r.status === status);
       return ok({ rows, total: rows.length, offset: 0 });
     },
     compare_detail: (key) => {
       const row = mockCompareRows.find((r) => r.key === key) || mockCompareRows[0];
       const has = (side) => side === "left" ? row.status !== "only_b" : row.status !== "only_a";
-      const side = (name, genre, size) => has(name) ? {
-        romUid: 1, filename: row.file, title: row.title, size, present: true,
-        mediaTypes: ["covers"], fields: { name: row.title, genre, desc: "설명" },
+      const side = (name, collectionId, file, genre, size) => has(name) ? {
+        romUid: 1, filename: file || row.file, title: row.title, size, present: true,
+        collectionId, romPath: "D:\\ROMs\\ps2\\" + (file || row.file),
+        mediaTypes: ["covers", "screenshots"], mediaSizes: { covers: 1000, screenshots: 2000 },
+        fields: { name: row.title, genre, desc: "설명 ".repeat(60), developer: "Dev", region: "JP" },
       } : null;
       return ok({
         key: row.key, system: row.system, file: row.file, status: row.status,
-        changedFields: row.changedFields, mediaDiff: row.mediaDiff,
+        changedFields: row.changedFields, mediaDiff: row.mediaDiff, mediaChanged: row.mediaChanged || [],
         baseName: "Master Library", otherName: "Android ES-DE",
-        left: side("left", "RPG", row.size),
-        right: side("right", row.changedFields.length ? "Action" : "RPG",
+        left: side("left", "c1", row.leftFile, "RPG", row.size),
+        right: side("right", "c2", row.rightFile, row.changedFields.length ? "Action" : "RPG",
                     row.changedFields.length ? row.size + 50 : row.size),
+      });
+    },
+    // 연산자(> < \u2260)를 눌러 반대쪽 Plan에 올리는 것 - 목업은 "몇 개를 올렸는지"만 돌려준다.
+    // 실제로 무엇이 Plan에 들어가는지는 Python 쪽 테스트가 본다.
+    compare_copy_row: (key, direction, metadataOnly) => {
+      if (!mockCompare.on) return Promise.resolve({ ok: false, error: "Compare Mode가 아닙니다." });
+      const row = mockCompareRows.find((r) => r.key === key);
+      if (!row) return Promise.resolve({ ok: false, error: "항목을 찾을 수 없습니다." });
+      return ok({
+        added: 1, skipped: [],
+        targetId: direction === "toRight" ? "c2" : "c1",
+        targetName: direction === "toRight" ? "Android ES-DE" : "Master Library",
+        direction, metadataOnly: !!metadataOnly,
       });
     },
     exit_compare: () => { mockCompare.on = false; return ok(true); },
@@ -837,6 +863,8 @@
     compareRows: (q) => call("compare_rows", q.status || null, q.systems || null,
                              q.search || null, q.limit || 200, q.offset || 0),
     compareDetail: (key) => call("compare_detail", key),
+    compareCopyRow: (key, direction, metadataOnly) =>
+      call("compare_copy_row", key, direction, !!metadataOnly),
     exitCompare: () => call("exit_compare"),
 
     startScan: (id, force) => call("start_scan", id, !!force),

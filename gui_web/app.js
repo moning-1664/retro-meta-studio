@@ -44,6 +44,7 @@
   }
 
   function gridTemplate() {
+    if (isCompare()) return COMPARE_COLUMNS.map((c) => c.grid).join(" ");
     return visibleColumns().map((c) => `${S.colWidths[c.id] || c.width}px`).join(" ");
   }
 
@@ -70,7 +71,21 @@
     return { order: ["no", ...order], hidden };
   }
 
+  //: Compare는 **한 행이 좌/우 두 항목의 짝**이라 일반 Gamelist와 컬럼 구성이 다르다
+  //  (사용자 결정 - "가운데 Gamelist: Source의 File|Title <icon> Target의 File|Title").
+  //  폭은 `fr`이다 - 창을 늘리면 Detail이 아니라 **목록이 늘어나** 더 많은 글자가 보인다.
+  const COMPARE_COLUMNS = [
+    { id: "no", label: "No.", width: 40, grid: "40px" },
+    { id: "srcFile", label: "File", width: 110, grid: "minmax(90px, 1fr)" },
+    { id: "srcTitle", label: "Title", width: 170, grid: "minmax(120px, 1.6fr)" },
+    { id: "op", label: "", width: 64, grid: "64px" },
+    { id: "dstFile", label: "File", width: 110, grid: "minmax(90px, 1fr)" },
+    { id: "dstTitle", label: "Title", width: 170, grid: "minmax(120px, 1.6fr)" },
+  ];
+
   function visibleColumns() {
+    // 사용자가 정한 순서/숨김은 일반 Gamelist의 것이라 Compare에는 적용하지 않는다.
+    if (isCompare()) return COMPARE_COLUMNS;
     const { order, hidden } = columnLayout();
     return order.filter((id) => !hidden.has(id)).map((id) => COLUMN_BY_ID[id]);
   }
@@ -413,6 +428,10 @@
     compare: null,
     compareBase: null,
     compareFilter: "all",
+    //: 이미 Plan에 올린 행(`key|direction`) - 같은 것을 두 번 누르지 않게 화면에만 표시한다.
+    comparePlanned: new Set(),
+    //: 좌/우 Detail이 함께 쓰는 탭(Metadata/Media/ROM) - 한쪽을 바꾸면 반대쪽도 바뀐다.
+    compareTab: "metadata",
   };
 
   //: Archive는 Collection이 아니지만 같은 Gamelist/Detail UI를 쓴다(스펙 §43).
@@ -2888,6 +2907,7 @@
   // 있고, 그 차이는 상세의 Size 줄에서 본다.
   const COMPARE_FILTERS = [
     ["all", "All", "양쪽을 맞댄 전체 목록"],
+    ["diff", "Diffs", "다른 항목 전부(≠, >, <)"],
     ["same", "Same", "양쪽에 있고 비교 대상 Metadata가 같음 (ROM 파일이 같다는 뜻은 아님 - 크기는 상세에서 확인)"],
     ["only_a", "Only A", "기준 Collection에만 있음"],
     ["only_b", "Only B", "상대 Collection에만 있음"],
@@ -2895,54 +2915,57 @@
     ["media", "Media", "Media 구성이 다름 (상태와 별개 신호)"],
   ];
 
+  /** Compare 상단 막대. **한 줄**이다(사용자 결정) -
+   *   [상태 드롭다운] [* ≠ =] [Swap] [새로고침] ............ [Exit Compare]
+   * 어느 Collection끼리 비교하는지는 양쪽 Detail 머리에 이미 있어서 여기서 다시 적지 않고,
+   * Snapshot 시각도 보이지 않는다(새로고침으로 다시 찍는다). */
   function renderCompareBar(bar) {
     const state = S.compare;
     bar.classList.add("compare");
-    bar.appendChild(h("div", { class: "compare-title" }, [
-      h("span", { class: "compare-eyebrow" }, ["COMPARE"]),
-      h("span", { class: "truncate" }, [`${state.baseName} ↔ ${state.otherName}`]),
-    ]));
+    const setFilter = async (key) => {
+      S.compareFilter = key;
+      resetList();
+      renderFilterBar();
+      await reloadList();
+    };
 
-    const filters = h("div", { class: "compare-filters" });
-    COMPARE_FILTERS.forEach(([key, label, hint]) => {
-      const count = (state.counts || {})[key];
-      const btn = h("button", {
-        class: "compare-filter" + (S.compareFilter === key ? " active" : "") + " f-" + key,
-        title: hint,
-      }, [label, count === undefined ? "" : h("span", { class: "compare-filter-count" },
-                                              [formatCount(count)])]);
-      btn.addEventListener("click", async () => {
-        S.compareFilter = key;
-        resetList();
-        renderFilterBar();
-        await reloadList();
+    const select = h("select", { class: "compare-select", title: "표시할 항목" },
+      COMPARE_FILTERS.map(([key, label, hint]) => {
+        const count = (state.counts || {})[key];
+        const option = h("option", { value: key, title: hint },
+                         [count === undefined ? label : `${label} (${formatCount(count)})`]);
+        return option;
+      }));
+    select.value = COMPARE_FILTERS.some(([k]) => k === S.compareFilter) ? S.compareFilter : "";
+    select.addEventListener("change", () => setFilter(select.value));
+    bar.appendChild(select);
+
+    // 자주 쓰는 세 가지는 아이콘 그룹으로도 둔다.
+    const group = h("div", { class: "cmp-group" });
+    [["all", "*", "모든 항목"], ["diff", "≠", "다른 항목(≠ > <)"], ["same", "=", "같은 항목"]]
+      .forEach(([key, glyph, tip]) => {
+        const btn = h("button", {
+          class: `cmp-group-btn g-${key}` + (S.compareFilter === key ? " active" : ""), title: tip,
+        }, [glyph]);
+        btn.addEventListener("click", () => setFilter(key));
+        group.appendChild(btn);
       });
-      filters.appendChild(btn);
-    });
-    bar.appendChild(filters);
+    bar.appendChild(group);
 
-    bar.appendChild(h("div", { class: "filter-spacer" }));
-
-    // 이 결과는 시작 시점의 스냅샷이다(필터를 눌러도 다시 읽지 않는다). 그 사이
-    // Collection이 바뀌었을 수 있으므로 언제 찍은 것인지 밝히고, 다시 찍는 길을 준다.
-    if (state.takenAt) {
-      bar.appendChild(h("span", { class: "compare-snapshot", title: "이 시각의 스냅샷입니다" },
-        [`Snapshot ${formatClock(state.takenAt)}`]));
-    }
-    const refresh = h("button", { class: "btn compact", title: "지금 상태로 다시 비교합니다" },
-      ["Refresh"]);
+    const swap = h("button", { class: "cmp-tool", title: "기준과 상대를 바꿉니다" },
+      [icon("refresh", IC.sm), h("span", {}, ["Swap"])]);
+    swap.addEventListener("click", () => runCompare(state.otherId, state.baseId));
+    bar.appendChild(swap);
+    const refresh = h("button", { class: "cmp-tool", title: "지금 상태로 다시 비교합니다" },
+      [icon("refresh", IC.sm), h("span", {}, ["새로고침"])]);
     refresh.addEventListener("click", () => runCompare(state.baseId, state.otherId));
     bar.appendChild(refresh);
 
-    const exit = h("button", { class: "btn compact" }, ["Exit Compare"]);
+    bar.appendChild(h("div", { class: "filter-spacer" }));
+
+    const exit = h("button", { class: "cmp-exit" }, ["Exit Compare"]);
     exit.addEventListener("click", exitCompare);
     bar.appendChild(exit);
-  }
-
-  function formatClock(epochSeconds) {
-    const d = new Date(epochSeconds * 1000);
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   }
 
   function renderFilterBar() {
@@ -3335,23 +3358,63 @@
     }
   }
 
-  //: Compare 행의 기호(§56). +는 상대에만, -는 기준에만, △는 Metadata 충돌.
-  const COMPARE_MARK = {
-    only_b: ["add", "+", "상대 Collection에만 있음"],
-    only_a: ["del", "−", "기준 Collection에만 있음"],
-    conflict: ["warn", "△", "Metadata가 다름"],
-  };
-
+  /** Compare 가운데 연산자 칸(사용자 결정).
+   *
+   *   =  양쪽 ROM도 메타데이터/미디어도 같다
+   *   ≠  ROM은 양쪽에 있는데 메타데이터 또는 미디어가 다르다
+   *   >  ROM이 왼쪽(기준)에만 있다       <  ROM이 오른쪽(상대)에만 있다
+   *
+   * `>` `<`는 그대로 버튼이다 - 누르면 ROM+메타데이터를 반대쪽 Plan에 올린다.
+   * `≠`는 그 자체로는 방향이 없어서 **양옆에 작은 화살표가 뜨고**(행 높이가 변하지 않는다 -
+   * 가상 스크롤 목록에 높이가 변하는 행을 만들면 예전에 행 레이아웃이 깨졌던 문제가 되돌아온다)
+   * 그것을 누르면 메타데이터만 보낸다. 실제 파일은 Plan에서 Apply해야 바뀐다. */
   function compareMark(row) {
-    const mark = COMPARE_MARK[row.status];
-    if (mark) {
-      const [cls, glyph, title] = mark;
-      return h("span", { class: "status-mark " + cls, title }, [glyph]);
+    const planned = [...S.comparePlanned].some((k) => k.startsWith(`${row.key}|`));
+    if (planned) {
+      return h("div", { class: "cmp-op planned", title: "Plan에 올렸습니다 - Apply하면 반영됩니다" },
+               [icon("check", IC.sm)]);
     }
-    if (row.mediaDiff) {
-      return h("span", { class: "status-mark muted", title: "Media 구성이 다름" }, ["○"]);
+    if (row.status === "only_a" || row.status === "only_b") {
+      const toRight = row.status === "only_a";
+      const cell = h("button", {
+        class: "cmp-op one-side",
+        title: toRight ? "오른쪽으로 ROM+메타데이터를 보냅니다(Plan)" : "왼쪽으로 ROM+메타데이터를 보냅니다(Plan)",
+      }, [toRight ? ">" : "<"]);
+      cell.addEventListener("click", (e) => {
+        e.stopPropagation();
+        compareCopyRow(row, toRight ? "toRight" : "toLeft", false);
+      });
+      return cell;
     }
-    return h("span", { class: "status-mark ok", title: "양쪽이 같음" }, [""]);
+    if (row.status === "conflict") {
+      const cell = h("div", { class: "cmp-op diff",
+        title: row.changedFields.length ? "메타데이터가 다릅니다" : "미디어가 다릅니다" });
+      const arrow = (dir, label, tip) => {
+        const btn = h("button", { class: "cmp-op-arrow", title: tip }, [label]);
+        btn.addEventListener("click", (e) => { e.stopPropagation(); compareCopyRow(row, dir, true); });
+        return btn;
+      };
+      cell.appendChild(arrow("toLeft", "<", "오른쪽 메타데이터를 왼쪽으로 보냅니다(Plan)"));
+      cell.appendChild(h("span", { class: "cmp-op-symbol" }, ["≠"]));
+      cell.appendChild(arrow("toRight", ">", "왼쪽 메타데이터를 오른쪽으로 보냅니다(Plan)"));
+      return cell;
+    }
+    return h("div", { class: "cmp-op same", title: "양쪽이 같습니다" }, ["="]);
+  }
+
+  /** 연산자 버튼이 부르는 것 - 실제 파일은 건드리지 않고 반대쪽 Plan에만 올린다. */
+  async function compareCopyRow(row, direction, metadataOnly) {
+    const r = await api.compareCopyRow(row.key, direction, metadataOnly);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    const d = r.data || {};
+    // 비교 결과는 시작 시점의 스냅샷이라 다시 계산하지 않는다 - 대신 이 행이 이미 처리됐다는
+    // 것만 표시해 같은 것을 두 번 누르지 않게 한다.
+    S.comparePlanned.add(`${row.key}|${direction}`);
+    renderListWindow();
+    const what = metadataOnly ? "메타데이터" : "ROM+메타데이터";
+    showToast(d.added
+      ? `${what}를 ${d.targetName}의 Plan에 올렸습니다. 그 탭에서 Apply하세요.`
+      : `${d.targetName}에 이미 있어 Plan에 올리지 않았습니다.`, d.added ? "info" : "warning");
   }
 
   //: Gamelist Status 아이콘 4개(실사용 피드백 - "Missing Rom/Media/Description/Cover가
@@ -3614,7 +3677,8 @@
       style: { height: ROW_HEIGHT + "px", gridTemplateColumns: gridTemplate() },
     }, visibleColumns().map((col) => h("div", { class: "lc lc-" + col.id },
       col.id === "no" ? [truncSpan(String(index + 1))]
-        : (col.id === "file" || col.id === "title") ? [h("span", { class: "skeleton" })] : [])));
+        : /^(file|title|src(File|Title)|dst(File|Title))$/.test(col.id)
+          ? [h("span", { class: "skeleton" })] : [])));
   }
 
   /** Compare 목록의 행. **헤더와 같은 컬럼 틀(visibleColumns())을 그대로 쓴다** -
@@ -3627,21 +3691,31 @@
   function compareRowElement(row, index) {
     const el = h("div", {
       class: "lrow compare-row" + (S.focused === row.key ? " focused" : "") + " s-" + row.status,
+      "data-cmp-key": row.key,
       style: { height: ROW_HEIGHT + "px", gridTemplateColumns: gridTemplate() },
     });
-    const cells = {};
-    cells.no = h("div", { class: "lc lc-no" }, [truncSpan(String(index + 1))]);
-    cells.file = h("div", { class: "lc lc-file", title: row.file }, [truncSpan(row.file)]);
-    cells.title = h("div", { class: "lc lc-title" }, [
-      systemIcon(row.system, 15),
-      h("span", { class: "lrow-title truncate" }, [row.title || row.file]),
-    ]);
-    cells.desc = h("div", { class: "lc lc-desc" });
-    cells.region = h("div", { class: "lc lc-region" });
-    cells.rating = h("div", { class: "lc lc-rating" });
-    cells.fav = h("div", { class: "lc lc-fav" });
-    cells.genre = h("div", { class: "lc lc-genre" });
-    cells.status = h("div", { class: "lc lc-status" }, [compareMark(row)]);
+    // ROM이 없는 쪽은 비워 두어 두 줄이 같은 높이에서 마주 보게 한다 - 그래야 >와 <가
+    // "어느 쪽에 ROM이 없는지"를 말해 준다. 없다는 판단은 gamelist 항목이 아니라 ROM이다.
+    const side = (file, title, present, kind) => {
+      if (file === null || file === undefined) return h("div", { class: `lc lc-${kind} cmp-absent` }, ["—"]);
+      const norom = present === false ? " rom-missing" : "";
+      if (kind.endsWith("File")) {
+        return h("div", { class: `lc lc-${kind}${norom}`, title: present === false ? `${file} - ROM 파일 없음` : file },
+                 [truncSpan(file)]);
+      }
+      return h("div", { class: `lc lc-${kind}` }, [
+        systemIcon(row.system, 15),
+        h("span", { class: "lrow-title truncate" }, [title || file]),
+      ]);
+    };
+    const cells = {
+      no: h("div", { class: "lc lc-no" }, [truncSpan(String(index + 1))]),
+      srcFile: side(row.leftFile, row.leftTitle, row.leftPresent, "srcFile"),
+      srcTitle: side(row.leftFile, row.leftTitle, row.leftPresent, "srcTitle"),
+      op: h("div", { class: "lc lc-op" }, [compareMark(row)]),
+      dstFile: side(row.rightFile, row.rightTitle, row.rightPresent, "dstFile"),
+      dstTitle: side(row.rightFile, row.rightTitle, row.rightPresent, "dstTitle"),
+    };
     visibleColumns().forEach((col) => el.appendChild(cells[col.id]));
     el.addEventListener("click", () => openCompareDetail(row));
     return el;
@@ -4261,7 +4335,7 @@
     await reloadList();
   }
 
-  /** 좌우를 나란히 놓고 다른 값만 표시를 달리한다(§57). */
+  /** 행을 고르면 좌/우 Detail이 각자 그 항목을 보여준다(§57). 다른 값은 노란색으로 표시한다. */
   async function openCompareDetail(row) {
     S.focused = row.key;
     renderListWindow();
@@ -4271,76 +4345,155 @@
     renderDetailPanel();
   }
 
-  function renderCompareDetail(panel) {
-    const d = S.detailState.compare;
-    const inner = h("div", { id: "detail-panel-inner" });
-    panel.appendChild(inner);
+  //: Compare Detail에서 보여 주는 Metadata 카드(한 줄에 둘). Title/Description은 따로 크게 놓는다.
+  const CMP_FIELD_CARDS = [
+    ["Genre", "genre"], ["Developer", "developer"], ["Publisher", "publisher"],
+    ["Release", "releasedate"], ["Region", "region"], ["Players", "players"], ["Rating", "rating"],
+  ];
+  //: Media 탭의 줄 구성(사용자 결정). 비율은 CSS가 고정한다.
+  const CMP_MEDIA_ROWS = [
+    { cls: "cover", items: [["Cover", "Covers"]] },
+    { cls: "shot", items: [["Screenshot", "Screenshots"]] },
+    { cls: "trio", items: [["Marquee", "Marquees"], ["MixImage", "Miximages"], ["3DBox", "3DBoxes"]] },
+  ];
+  //: 위 줄들에 안 나오는 종류는 있고 없고만 칩으로 알린다.
+  const CMP_MEDIA_CHIPS = [
+    ["TitleScreen", "titlescreens"], ["BackCover", "backcovers"], ["PhysicalMedia", "physicalmedia"],
+    ["Wheel", "wheel"], ["FanArt", "fanart"], ["Video", "videos"], ["Manual", "manuals"],
+  ];
 
+  /** 그림 한 장. 다르면(`changed`) 노란 테두리다. 없으면 빈 칸으로 자리를 지킨다. */
+  function cmpImageTile(side, label, key, changed, extraClass) {
+    const type = key.toLowerCase();
+    const has = !!side && (side.mediaTypes || []).includes(type);
+    const tile = h("div", {
+      class: `cmp-tile ${extraClass || ""}` + (has ? "" : " empty") + (changed ? " changed" : ""),
+      title: label + (has ? "" : " 없음"),
+    });
+    tile.appendChild(h("div", { class: "cmp-tile-label" }, [label]));
+    const box = h("div", { class: "cmp-tile-box" });
+    if (has) {
+      const img = h("img", { alt: label });
+      box.appendChild(img);
+      api.getMediaImage(side.collectionId, side.romUid, key, true).then((r) => {
+        if (r.ok && r.data) img.src = r.data;
+      });
+      tile.classList.add("clickable");
+      tile.addEventListener("click", () => openMediaLightbox(img, label));
+    } else {
+      box.appendChild(icon("imageOff", IC.lg));
+    }
+    tile.appendChild(box);
+    return tile;
+  }
+
+  const cmpAbsent = () => h("div", { class: "cmp-absent-note" }, ["이 쪽에는 ROM이 없습니다."]);
+
+  function cmpMetadataTab(body, d, side) {
+    if (!side) { body.appendChild(cmpAbsent()); return; }
+    const changed = new Set(d.changedFields || []);
+    const mediaChanged = new Set(d.mediaChanged || []);
+    const fields = side.fields || {};
+    const mark = (key) => (changed.has(key) ? " changed" : "");
+    body.appendChild(h("div", { class: "cmp-block" + mark("name") }, [
+      h("div", { class: "cmp-label" }, ["Title"]),
+      h("div", { class: "cmp-title-value" }, [fields.name || side.title || "-"]),
+    ]));
+    // Description은 12줄까지만 보이고 넘으면 말줄임이다(사용자 결정) - 길이가 다른 두 쪽의
+    // 아래 그림이 서로 어긋나지 않게 줄 수를 고정한다.
+    body.appendChild(h("div", { class: "cmp-block" + mark("desc") }, [
+      h("div", { class: "cmp-label" }, ["Description"]),
+      h("div", { class: "cmp-desc" }, [fields.desc || "-"]),
+    ]));
+    const cards = h("div", { class: "cmp-cards" });
+    CMP_FIELD_CARDS.forEach(([label, key]) => {
+      cards.appendChild(h("div", { class: "cmp-card" + mark(key) }, [
+        h("div", { class: "cmp-label" }, [label]),
+        h("div", { class: "cmp-card-value truncate", title: fields[key] || "" }, [fields[key] || "-"]),
+      ]));
+    });
+    body.appendChild(cards);
+    // 아래에 Cover(세로)와 Screenshot(가로)을 나란히 - 두 쪽을 같은 자리에서 비교한다.
+    body.appendChild(h("div", { class: "cmp-media-pair" }, [
+      cmpImageTile(side, "Cover", "Covers", mediaChanged.has("covers"), "portrait"),
+      cmpImageTile(side, "Screenshot", "Screenshots", mediaChanged.has("screenshots"), "landscape"),
+    ]));
+  }
+
+  function cmpMediaTab(body, d, side) {
+    if (!side) { body.appendChild(cmpAbsent()); return; }
+    const changed = new Set(d.mediaChanged || []);
+    CMP_MEDIA_ROWS.forEach((row) => {
+      const line = h("div", { class: `cmp-media-row ${row.cls}` });
+      row.items.forEach(([label, key]) =>
+        line.appendChild(cmpImageTile(side, label, key, changed.has(key.toLowerCase()), row.cls)));
+      body.appendChild(line);
+    });
+    const chips = h("div", { class: "cmp-chips" });
+    CMP_MEDIA_CHIPS.forEach(([label, type]) => {
+      const has = (side.mediaTypes || []).includes(type);
+      chips.appendChild(h("span", {
+        class: "cmp-chip" + (has ? " on" : "") + (changed.has(type) ? " changed" : ""),
+      }, [label]));
+    });
+    body.appendChild(chips);
+  }
+
+  function cmpRomTab(body, d, side) {
+    if (!side) { body.appendChild(cmpAbsent()); return; }
+    const other = side === d.left ? d.right : d.left;
+    const line = (label, value, differs) => h("div", { class: "cmp-block" + (differs ? " changed" : "") }, [
+      h("div", { class: "cmp-label" }, [label]),
+      h("div", { class: "cmp-rom-value" }, [value || "-"]),
+    ]);
+    body.appendChild(line("File", side.filename, !!other && other.filename !== side.filename));
+    body.appendChild(line("Size", side.size ? formatBytes(side.size) : "-", !!other && other.size !== side.size));
+    body.appendChild(line("ROM", side.present ? "있음" : "ROM 파일 없음 (메타데이터만 있음)",
+                          !!other && !!other.present !== !!side.present));
+    body.appendChild(line("Path", side.romPath, false));
+  }
+
+  /** 한쪽 Detail(좌 또는 우). 탭은 양쪽이 함께 바뀐다(`S.compareTab`). */
+  function renderCompareSide(panel, d, side, name, withClose) {
+    const inner = h("div", {
+      id: withClose ? "detail-panel-inner" : "compare-left-inner", class: "cmp-side-inner",
+    });
+    panel.appendChild(inner);
     const header = h("div", { class: "detail-header" }, [
       h("div", { style: { minWidth: "0", flex: "1" } }, [
-        h("div", { class: "detail-eyebrow" }, ["COMPARE"]),
-        h("div", { class: "detail-filename" }, [d.file]),
+        h("div", { class: "detail-eyebrow truncate" }, [name]),
+        h("div", { class: "detail-filename truncate", title: side ? side.filename : "" },
+          [side ? side.filename : "(없음)"]),
         h("div", { class: "detail-system" }, [systemIcon(d.system, 13), String(d.system).toUpperCase()]),
       ]),
     ]);
-    const close = h("button", { class: "icon-btn", title: "닫기 (Esc)" }, [icon("x", IC.md)]);
-    close.addEventListener("click", closeDetail);
-    header.appendChild(close);
+    if (withClose) {
+      const close = h("button", { class: "icon-btn", title: "닫기 (Esc)" }, [icon("x", IC.md)]);
+      close.addEventListener("click", closeDetail);
+      header.appendChild(close);
+    }
     inner.appendChild(header);
 
-    const body = h("div", { class: "detail-body" });
-
-    // 어느 쪽에 있는지부터 알려준다 - 한쪽에만 있으면 값 비교 자체가 의미 없다.
-    body.appendChild(h("div", { class: "cmp-sides" }, [
-      h("div", { class: "cmp-side-name" + (d.left ? "" : " absent") },
-        [d.baseName, h("span", { class: "cmp-side-mark" }, [d.left ? "" : " (없음)"])]),
-      h("div", { class: "cmp-side-name" + (d.right ? "" : " absent") },
-        [d.otherName, h("span", { class: "cmp-side-mark" }, [d.right ? "" : " (없음)"])]),
-    ]));
-
-    // 같은 이름인데 크기가 다르면 다른 덤프일 수 있다 - 값 비교보다 먼저 알아야 한다.
-    // (크기는 Cache에 이미 있으므로 파일을 다시 읽지 않는다. SHA256 비교는 별건이다.)
-    const identity = h("div", { class: "cmp-table cmp-identity" });
-    [["File", "filename", (v) => v || "-"],
-     ["Size", "size", (v) => (v ? formatBytes(v) : "-")]].forEach(([label, key, fmt]) => {
-      const left = (d.left || {})[key];
-      const right = (d.right || {})[key];
-      const differs = !!d.left && !!d.right && left !== right;
-      const line = h("div", { class: "cmp-row" + (differs ? " changed" : "") });
-      line.appendChild(h("div", { class: "cmp-label" }, [label]));
-      line.appendChild(h("div", { class: "cmp-value" }, [d.left ? fmt(left) : "-"]));
-      line.appendChild(h("div", { class: "cmp-value" }, [d.right ? fmt(right) : "-"]));
-      identity.appendChild(line);
+    const tabs = h("div", { class: "detail-tabs" });
+    [["metadata", "Metadata"], ["media", "Media"], ["rom", "ROM"]].forEach(([key, label]) => {
+      const tab = h("button", { class: "detail-tab" + (S.compareTab === key ? " active" : "") }, [label]);
+      tab.addEventListener("click", () => { S.compareTab = key; renderDetailPanel(); });
+      tabs.appendChild(tab);
     });
-    body.appendChild(identity);
+    inner.appendChild(tabs);
 
-    const rows = [
-      ["Title", "name"], ["Description", "desc"], ["Genre", "genre"],
-      ["Developer", "developer"], ["Publisher", "publisher"], ["Release", "releasedate"],
-      ["Region", "region"], ["Players", "players"], ["Rating", "rating"],
-    ];
-    const changed = new Set(d.changedFields || []);
-    const table = h("div", { class: "cmp-table" });
-    rows.forEach(([label, key]) => {
-      const left = ((d.left || {}).fields || {})[key] || "";
-      const right = ((d.right || {}).fields || {})[key] || "";
-      if (!left && !right) return;
-      const line = h("div", { class: "cmp-row" + (changed.has(key) ? " changed" : "") });
-      line.appendChild(h("div", { class: "cmp-label" }, [label]));
-      line.appendChild(h("div", { class: "cmp-value" }, [left || "-"]));
-      line.appendChild(h("div", { class: "cmp-value" }, [right || "-"]));
-      table.appendChild(line);
-    });
-    body.appendChild(table);
-
-    if (d.mediaDiff) {
-      body.appendChild(h("div", { class: "cmp-media-note" }, [
-        icon("image", IC.sm),
-        h("span", {}, [`Media 구성이 다릅니다 - ${((d.left || {}).mediaTypes || []).join(", ") || "없음"}`
-                       + ` \u2194 ${((d.right || {}).mediaTypes || []).join(", ") || "없음"}`]),
-      ]));
-    }
+    const body = h("div", { class: "detail-body cmp-side-body tab-" + S.compareTab });
+    if (S.compareTab === "media") cmpMediaTab(body, d, side);
+    else if (S.compareTab === "rom") cmpRomTab(body, d, side);
+    else cmpMetadataTab(body, d, side);
     inner.appendChild(body);
+  }
+
+  function renderCompareDetail(panel) {
+    const d = S.detailState.compare;
+    renderCompareSide(panel, d, d.right, d.otherName, true);
+    const left = $("compare-left");
+    if (left) { clear(left); renderCompareSide(left, d, d.left, d.baseName, false); }
   }
 
   // ------------------------------------------------------------------
@@ -4622,6 +4775,9 @@
 
     const panel = $("detail-panel");
     clear(panel);
+    // Compare가 아니거나 상세가 닫혔으면 왼쪽 Detail(기준 쪽)은 비운다.
+    const leftPanel = $("compare-left");
+    if (leftPanel && !(S.detailState && S.detailState.compare)) clear(leftPanel);
     // Preview를 끄면 **아랫줄의 Detail 내용 기둥만** 뺀다. 윗줄(#detail-top)은
     // 남으므로 다시 켤 토글이 사라지지 않고, 빠진 폭은 목록이 쓴다(사용자 요청 -
     // 예전엔 패널 전체 폭을 44px로 접어 윗줄의 GameList 헤더까지 재배치됐고, 그
@@ -5866,6 +6022,7 @@
   /** 중앙 영역을 목록/Dashboard 중 하나로 맞춘다. */
   function renderCenterView() {
     $("center").classList.toggle("dashboard-mode", S.view === "dashboard");
+    $("center").classList.toggle("compare-mode", isCompare());
   }
 
   function showList() {

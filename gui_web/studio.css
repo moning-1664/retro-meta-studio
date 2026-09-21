@@ -933,7 +933,8 @@ body { font-size: var(--fs-body); }
   border-color: var(--border); margin-bottom: -1px; padding-bottom: 6px;
 }
 /* 탭 내용을 한 장의 카드로 감싼다(Stitch) - Metadata/Media/ROM이 같은 틀 안에 있다. */
-#detail-panel-inner > .detail-body {
+#detail-panel-inner > .detail-body,
+#compare-left-inner > .detail-body {
   margin: 7px; padding: 8px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--card2);
 }
@@ -1173,53 +1174,6 @@ button.sb-badge { cursor: pointer; }
 .match-option-why { color: var(--info); font-size: var(--fs-eyebrow); margin-top: 1px; }
 .match-tier.tier-manual { border-color: var(--muted); color: var(--muted); }
 
-/* Compare Mode (스펙 §54-59) - 일반 Gamelist와 같은 자리를 쓰되, 지금이 비교
-   상태라는 것이 한눈에 보여야 한다. */
-#filter-bar.compare { gap: 10px; }
-.compare-title {
-  display: flex; align-items: center; gap: 7px; min-width: 0;
-  font-size: var(--fs-body);
-}
-.compare-eyebrow {
-  flex: none; padding: 1px 7px; border-radius: var(--radius-pill);
-  border: 1px solid var(--info); color: var(--info);
-  font-size: var(--fs-eyebrow); letter-spacing: .04em;
-}
-.compare-filters { display: flex; align-items: center; gap: 4px; }
-.compare-filter {
-  display: flex; align-items: center; gap: 5px;
-  padding: 3px 9px; border-radius: var(--radius-pill);
-  border: 1px solid var(--border); background: var(--card2);
-  color: var(--muted); font-size: var(--fs-eyebrow); cursor: pointer;
-}
-.compare-filter:hover { color: var(--text); }
-.compare-filter.active { border-color: var(--accent); color: var(--text); background: var(--card); }
-.compare-filter-count { font-variant-numeric: tabular-nums; opacity: .75; }
-.compare-filter.f-only_a.active { border-color: var(--danger); }
-.compare-filter.f-only_b.active { border-color: var(--info); }
-.compare-filter.f-conflict.active { border-color: var(--warning); }
-
-/* 좌우 비교 상세 */
-.cmp-sides, .cmp-row {
-  display: grid; grid-template-columns: 84px 1fr 1fr; gap: 8px; align-items: baseline;
-}
-.cmp-sides { grid-template-columns: 1fr 1fr; padding: 0 0 7px; }
-.cmp-side-name { color: var(--text); font-size: var(--fs-eyebrow); font-weight: 600; }
-.cmp-side-name.absent { color: var(--muted); font-weight: 400; }
-.cmp-side-mark { color: var(--danger); }
-.cmp-table { display: flex; flex-direction: column; gap: 2px; }
-.cmp-row { padding: 5px 6px; border-radius: var(--radius-sm); }
-.cmp-row.changed { background: var(--card2); }
-.cmp-row.changed .cmp-value { color: var(--warning); }
-.cmp-label { color: var(--muted); font-size: var(--fs-eyebrow); }
-.cmp-value { font-size: var(--fs-body); word-break: break-word; }
-.cmp-media-note {
-  display: flex; align-items: center; gap: 6px; margin-top: 9px;
-  padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
-  color: var(--muted); font-size: var(--fs-eyebrow);
-}
-.compare-snapshot { color: var(--muted); font-size: var(--fs-eyebrow); font-variant-numeric: tabular-nums; }
-.cmp-identity { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
 .cheader-extras { display: flex; align-items: center; gap: 8px; padding-top: 4px; }
 
 /* Convert 미리보기 (스펙 §53) - 넘어가는 것과 잃는 것을 시각적으로 갈라 놓는다. */
@@ -1547,3 +1501,133 @@ button.sb-badge { cursor: pointer; }
 .detail-filename { user-select: text; cursor: text; }
 .detail-copy { flex: none; padding: 3px; background: transparent; opacity: .7; }
 .detail-copy:hover { opacity: 1; }
+
+/* ==========================================================================
+   Compare (사용자 결정 - 2026-09-17 ~ 09-20)
+   [좌 Detail(기준)] [가운데 Gamelist: File|Title  연산자  File|Title] [우 Detail(상대)]
+   ========================================================================== */
+
+/* ---- 상단 막대: 한 줄. 컨트롤 글자는 본문보다 작게 잡는다(큰 드롭다운 피드백). ---- */
+#filter-bar.compare { gap: 8px; align-items: center; }
+.compare-select {
+  height: 24px; padding: 0 6px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card2); color: var(--text); font-size: var(--fs-eyebrow);
+}
+.compare-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cmp-group { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.cmp-group-btn {
+  width: 30px; height: 24px; border: 0; background: var(--card2); color: var(--muted);
+  font-size: 17px; font-weight: 700; line-height: 1; cursor: pointer;
+}
+.cmp-group-btn + .cmp-group-btn { border-left: 1px solid var(--border); }
+.cmp-group-btn:hover { color: var(--text); }
+.cmp-group-btn.active { background: var(--card); color: var(--text); }
+.cmp-group-btn.g-diff.active { color: var(--danger); }
+.cmp-tool {
+  display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card2); color: var(--muted); font-size: var(--fs-eyebrow); cursor: pointer;
+}
+.cmp-tool:hover { color: var(--text); }
+/* Exit는 오른쪽 끝에 고정하고 눈에 띄게 빨갛게. 글자는 상자 안 가운데다. */
+.cmp-exit {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 92px; height: 24px; padding: 0 12px; border: 0; border-radius: var(--radius-sm);
+  background: var(--danger); color: #fff; font-size: var(--fs-eyebrow); font-weight: 600; cursor: pointer;
+}
+.cmp-exit:hover { filter: brightness(1.1); }
+
+/* ---- 레이아웃: 좌/우 Detail은 297px보다 15% 좁은 252px, 늘어나는 것은 가운데 목록이다. ---- */
+#compare-left { display: none; }
+#center.compare-mode #compare-left {
+  display: flex; flex-direction: column; flex: 0 0 252px; width: 252px; min-width: 252px; max-width: 252px;
+  box-sizing: border-box; overflow: hidden; background: var(--chrome-sub); border-right: 1px solid var(--border);
+}
+#center.compare-mode #detail-panel,
+#center.compare-mode #detail-top {
+  flex-basis: 252px; width: 252px; min-width: 252px; max-width: 252px;
+}
+#compare-left-inner { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+/* 가운데 목록은 창이 넓어지면 함께 넓어지고, 아주 넓으면 가운데에 모인다. */
+#center.compare-mode #list-head,
+#center.compare-mode #list-window {
+  width: 100%; max-width: 1500px; margin-left: auto; margin-right: auto;
+}
+#center.compare-mode #list-window { left: 0; right: 0; }
+
+/* ---- 가운데 연산자 칸: = ≠ > < ---- */
+.lc-op { justify-content: center; padding: 0; }
+.cmp-op {
+  display: inline-flex; align-items: center; justify-content: center; gap: 1px;
+  min-width: 46px; height: 20px; border: 0; background: none;
+  font-size: 15px; font-weight: 700; line-height: 1;
+}
+.cmp-op.same { color: var(--muted); opacity: .55; font-weight: 400; }
+.cmp-op.planned { color: var(--success); }
+.cmp-op.diff { color: var(--warning); }
+.cmp-op.one-side { color: var(--info); cursor: pointer; border-radius: var(--radius-xs); }
+.cmp-op.one-side:hover { background: color-mix(in srgb, var(--info) 20%, transparent); }
+.cmp-op.one-side:focus-visible { outline: 2px solid var(--info); outline-offset: -2px; }
+/* ≠는 평소엔 기호만 보이고, 행에 마우스를 올리거나 키보드로 들어오면 양옆 화살표가 나타난다. */
+.cmp-op-arrow {
+  display: none; align-items: center; justify-content: center;
+  width: 17px; height: 20px; padding: 0; border: 0; border-radius: var(--radius-xs);
+  background: none; color: var(--warning); font-size: 15px; font-weight: 700; cursor: pointer;
+}
+.lrow:hover .cmp-op.diff .cmp-op-arrow,
+.cmp-op.diff:focus-within .cmp-op-arrow { display: inline-flex; }
+.lrow:hover .cmp-op.diff .cmp-op-symbol,
+.cmp-op.diff:focus-within .cmp-op-symbol { display: none; }
+.cmp-op-arrow:hover { background: color-mix(in srgb, var(--warning) 22%, transparent); }
+.cmp-op-arrow:focus-visible { outline: 2px solid var(--warning); outline-offset: -1px; }
+/* ROM이 없는 쪽 칸 - 비어 있다는 것을 조용히 알린다. */
+.lc.cmp-absent { color: var(--muted); opacity: .35; justify-content: center; }
+
+/* ---- 좌/우 Detail 내용 ---- */
+.cmp-side-body { padding: 7px; overflow-y: auto; }
+.cmp-block { padding: 3px 5px; margin-bottom: 4px; border-radius: var(--radius-sm); border: 1px solid transparent; }
+.cmp-block.changed, .cmp-card.changed { background: color-mix(in srgb, var(--warning) 16%, transparent);
+  border-color: color-mix(in srgb, var(--warning) 55%, transparent); }
+.cmp-label { color: var(--muted); font-size: var(--fs-eyebrow); letter-spacing: .04em; }
+.cmp-title-value { font-size: var(--fs-body); font-weight: 600; word-break: break-word; }
+/* Description은 12줄로 고정 - 넘치면 말줄임. 줄 수가 달라도 아래 내용의 자리가 같아야 좌/우가 맞는다. */
+.cmp-desc {
+  font-size: var(--fs-caption); line-height: 1.35; white-space: pre-wrap; word-break: break-word;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 12; overflow: hidden;
+  height: calc(12 * 1.35em);
+}
+.cmp-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 6px 0; }
+.cmp-card { min-width: 0; padding: 3px 6px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--card2); }
+.cmp-card-value { font-size: var(--fs-eyebrow); }
+.cmp-rom-value { font-size: var(--fs-caption); word-break: break-all; user-select: text; }
+.cmp-absent-note { margin: 18px 8px; text-align: center; color: var(--muted); font-size: var(--fs-caption); }
+
+.cmp-tile { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cmp-tile-label { color: var(--muted); font-size: var(--fs-eyebrow); }
+.cmp-tile-box {
+  position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card2);
+}
+.cmp-tile-box img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.cmp-tile.changed .cmp-tile-box { border-color: var(--warning); box-shadow: 0 0 0 1px var(--warning); }
+.cmp-tile.empty .cmp-tile-box { color: var(--muted); opacity: .5; }
+.cmp-tile.clickable { cursor: zoom-in; }
+
+/* Metadata 아래: Cover(4:3 세로)와 Screenshot(4:3 가로). 이전보다 30% 더 세로로 길다. */
+.cmp-media-pair { display: grid; grid-template-columns: auto 1fr; gap: 6px; align-items: start; }
+.cmp-media-pair .cmp-tile.portrait .cmp-tile-box { height: 143px; aspect-ratio: 3 / 4; }
+.cmp-media-pair .cmp-tile.landscape .cmp-tile-box { height: 143px; width: 100%; }
+
+/* Media 탭: cover 1줄 / screenshot 1줄 / marquee+mixImage+3dbox 1줄(1:1) */
+.cmp-media-row { margin-bottom: 6px; }
+.cmp-media-row.cover .cmp-tile-box { width: 60%; aspect-ratio: 3 / 4; margin: 0 auto; }
+.cmp-media-row.shot .cmp-tile-box { width: 100%; aspect-ratio: 4 / 3; }
+.cmp-media-row.trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.cmp-media-row.trio .cmp-tile-box { width: 100%; aspect-ratio: 1 / 1; }
+.cmp-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.cmp-chip {
+  padding: 1px 6px; border-radius: var(--radius-pill); border: 1px solid var(--border);
+  color: var(--muted); opacity: .45; font-size: var(--fs-eyebrow);
+}
+.cmp-chip.on { opacity: 1; color: var(--text); }
+.cmp-chip.changed { border-color: var(--warning); color: var(--warning); opacity: 1; }
