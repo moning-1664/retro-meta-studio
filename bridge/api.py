@@ -36,6 +36,7 @@ from app.model.plan import OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE, 
 from app.plan import builder, clipboard
 from app.plan.applier import apply_plan
 from app.plan.validator import check_capacity, validate
+from app.archive import legacy as archive_legacy
 from app.archive import projection as archive_projection
 from app.archive import service as archive_service
 from app.compare import engine as compare_engine
@@ -1588,11 +1589,15 @@ class Api:
                 return err(f"Archive 디렉토리를 만들 수 없습니다: {e}")
         self.registry.set_setting(self.ARCHIVE_CONFIG_KEY, new)
         moved = (new["frontend"], new["archiveDir"]) != (old["frontend"], old["archiveDir"])
-        projection = None
+        projection = imported = None
         if moved and archive_projection.is_configured(new):
+            # 이전 버전이 만든 Archive 디렉토리를 고르면 그 내용을 먼저 가져온다.
+            if archive_legacy.has_legacy(new["archiveDir"]):
+                imported = archive_legacy.import_legacy(self.archive, new["archiveDir"])
+                log.info("legacy archive imported: %s", imported)
             projection = archive_projection.project(self.archive, new)
         return ok({**new, "configured": archive_projection.is_configured(new),
-                   "projection": projection})
+                   "projection": projection, "imported": imported})
 
     def _project_archive(self, result, rom_identity_ids=None):
         """Archive가 바뀐 뒤 설정된 디렉토리에 반영한다. 설정이 없으면 아무것도 안 한다."""
