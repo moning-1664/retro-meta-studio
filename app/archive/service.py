@@ -81,6 +81,7 @@ def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=No
 
     total = len(rows)
     ingested = revised = 0
+    identity_ids: list[str] = []
     for index, row in enumerate(rows, start=1):
         if progress_cb:
             progress_cb(index, total, row["filename"])
@@ -96,6 +97,7 @@ def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=No
                 filename=row["filename"], size=row["size"] or None,
                 sha256=row["sha256"], region=(row["fields"] or {}).get("region") or None)
 
+        identity_ids.append(rom_identity_id)
         kwargs = {"retention": retention} if retention else {}
         _revision, created = archive.put_record(
             rom_identity_id, collection.id, row["fields"], row["frontend_raw"],
@@ -116,7 +118,8 @@ def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=No
     return {"ingested": ingested, "revised": revised,
             "unchanged": ingested - revised, "sourceCollectionId": collection.id,
             # 화면에서 고른 대상과 실제로 들어간 대상이 같은지 확인할 수 있어야 한다.
-            "ingestedRomUids": [r["rom_uid"] for r in rows]}
+            "ingestedRomUids": [r["rom_uid"] for r in rows],
+            "romIdentityIds": identity_ids}
 
 
 def detail(archive, rom_identity_id) -> dict | None:

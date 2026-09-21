@@ -267,3 +267,62 @@ class ArchiveTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ArchiveDirectoryTests(unittest.TestCase):
+    """Archive 디렉토리가 진실이다 - 설정한 곳에 설정한 형식으로 완전히 써진다."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_archdir_"))
+        self.source_root = build_esde_tree(self.dir / "source")
+        self.archive_dir = self.dir / "Archives"
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.src = self.api.create_collection("Master", "es-de", str(self.source_root))["data"]["id"]
+        self.api.start_scan(self.src)
+        wait_idle(self.api)
+
+    def tearDown(self):
+        self.api.close()
+
+    def _ingest_all(self):
+        self.api.start_archive_ingest(self.src, {"kind": "all"})
+        wait_idle(self.api)
+
+    def test_unconfigured_archive_writes_nothing(self):
+        self.assertFalse(self.api.archive_config()["data"]["configured"])
+        self._ingest_all()
+        self.assertFalse(self.archive_dir.exists())
+
+    def test_ingest_writes_gamelist_and_media_into_configured_directory(self):
+        self.api.save_archive_config({"archiveDir": str(self.archive_dir)})
+        self._ingest_all()
+        gamelist = self.archive_dir / "gamelists" / "ps2" / "gamelist.xml"
+        self.assertTrue(gamelist.exists())
+        paths = [g.findtext("path") for g in ET.parse(gamelist).getroot().findall("game")]
+        self.assertIn("./FFX.iso", paths)
+        self.assertTrue((self.archive_dir / "downloaded_media" / "ps2" / "covers" / "FFX.png").exists())
+
+    def test_changing_directory_rewrites_everything_there(self):
+        self._ingest_all()
+        self.api.save_archive_config({"archiveDir": str(self.archive_dir)})
+        # 이미 Archive에 있던 내용이 새 디렉토리에 통째로 나타난다.
+        self.assertTrue((self.archive_dir / "gamelists" / "ps2" / "gamelist.xml").exists())
+
+    def test_media_is_optional(self):
+        self.api.save_archive_config({"archiveDir": str(self.archive_dir), "mediaInternal": False})
+        self._ingest_all()
+        self.assertTrue((self.archive_dir / "gamelists" / "ps2" / "gamelist.xml").exists())
+        self.assertFalse((self.archive_dir / "downloaded_media").exists())
+
+    def test_archive_edit_is_projected(self):
+        self.api.save_archive_config({"archiveDir": str(self.archive_dir)})
+        self._ingest_all()
+        rid = next(r["romIdentityId"] for r in self.api.archive_rows()["data"]["rows"]
+                   if r["file"] == "FFX.iso")
+        self.api.archive_edit(rid, {"name": "FFX Edited"})
+        game = next(g for g in ET.parse(self.archive_dir / "gamelists" / "ps2" / "gamelist.xml")
+                    .getroot().findall("game") if g.findtext("path") == "./FFX.iso")
+        self.assertEqual(game.findtext("name"), "FFX Edited")
+
+    def test_rejects_unknown_frontend(self):
+        self.assertFalse(self.api.save_archive_config({"frontend": "nope"})["ok"])

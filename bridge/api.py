@@ -24,7 +24,7 @@ from pathlib import Path
 
 from adapters import get_adapter
 from app import paths
-from app.model.collection import STORAGE_INTERNAL
+from app.model.collection import FRONTENDS, STORAGE_INTERNAL
 from app.model.constants import MEDIA_TYPES, VIDEO_MEDIA_TYPE, normalize_system
 from app import dashboard
 from app import media_cleanup
@@ -36,6 +36,7 @@ from app.model.plan import OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE, 
 from app.plan import builder, clipboard
 from app.plan.applier import apply_plan
 from app.plan.validator import check_capacity, validate
+from app.archive import projection as archive_projection
 from app.archive import service as archive_service
 from app.compare import engine as compare_engine
 from app.convert import service as convert_service
@@ -1471,7 +1472,7 @@ class Api:
                 self.archive, collection, cache, uids, progress_cb=cb)
             log.info("archive ingest done: scope=%s requested=%d ingested=%d",
                      kind, len(uids), len(result["ingestedRomUids"]))
-            return {**result, "scope": kind}
+            return {**result, "scope": kind, "projection": self._project_archive(result, result["romIdentityIds"])}
 
         job_id = self.jobs.run_heavy(run, mutates_state=True, target_ids=(collection_id,),
                                      kind="archive-ingest")
@@ -1559,10 +1560,65 @@ class Api:
         url = self._media_server.url_for(item["abs_path"]) if item else None
         return ok({"url": url} if url else None)
 
+    ARCHIVE_CONFIG_KEY = "archive.config"
+
+    def _archive_config(self) -> dict:
+        return archive_projection.normalize_config(
+            self.registry.get_setting(self.ARCHIVE_CONFIG_KEY, {}))
+
+    @guarded
+    def archive_config(self):
+        """Archive 설정(Frontend 형식 / 디렉토리 / ROM 디렉토리 / media 보관)."""
+        cfg = self._archive_config()
+        return ok({**cfg, "configured": archive_projection.is_configured(cfg)})
+
+    @guarded
+    def save_archive_config(self, patch):
+        """설정을 바꾼다. 디렉토리나 형식이 바뀌면 **새 위치/형식으로 다시 써 둔다**."""
+        if not isinstance(patch, dict):
+            return err("설정 형식이 올바르지 않습니다.")
+        old = self._archive_config()
+        new = archive_projection.normalize_config({**old, **patch})
+        if new["frontend"] not in FRONTENDS:
+            return err(f"알 수 없는 Frontend입니다: {new['frontend']}")
+        if new["archiveDir"]:
+            try:
+                Path(new["archiveDir"]).mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                return err(f"Archive 디렉토리를 만들 수 없습니다: {e}")
+        self.registry.set_setting(self.ARCHIVE_CONFIG_KEY, new)
+        moved = (new["frontend"], new["archiveDir"]) != (old["frontend"], old["archiveDir"])
+        projection = None
+        if moved and archive_projection.is_configured(new):
+            projection = archive_projection.project(self.archive, new)
+        return ok({**new, "configured": archive_projection.is_configured(new),
+                   "projection": projection})
+
+    def _project_archive(self, result, rom_identity_ids=None):
+        """Archive가 바뀐 뒤 설정된 디렉토리에 반영한다. 설정이 없으면 아무것도 안 한다."""
+        cfg = self._archive_config()
+        if not archive_projection.is_configured(cfg):
+            return None
+        try:
+            return archive_projection.project(self.archive, cfg, rom_identity_ids)
+        except Exception:  # noqa: BLE001 - 수집 자체는 성공했으므로 실패는 알리기만 한다
+            log.exception("Archive 디렉토리에 쓰지 못했습니다")
+            return {"error": "Archive 디렉토리에 쓰지 못했습니다. 로그를 확인하세요."}
+
+    @guarded
+    def archive_project(self):
+        """Archive 전체를 설정된 디렉토리에 다시 쓴다(복구/재배치용)."""
+        cfg = self._archive_config()
+        if not archive_projection.is_configured(cfg):
+            return err("Archive 디렉토리가 설정되지 않았습니다.")
+        return ok(archive_projection.project(self.archive, cfg))
+
     @guarded
     def archive_edit(self, rom_identity_id, fields):
         """Archive의 Metadata를 고친다. **Collection에는 반영되지 않는다**(§40)."""
-        return ok(archive_service.edit(self.archive, rom_identity_id, fields))
+        result = archive_service.edit(self.archive, rom_identity_id, fields)
+        self._project_archive(result, [rom_identity_id])
+        return ok(result)
 
     @guarded
     def archive_revisions(self, rom_identity_id, source_collection_id):
