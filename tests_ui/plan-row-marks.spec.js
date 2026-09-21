@@ -7,8 +7,8 @@
 // 그래서 최종 구성은 이렇다:
 //   - No. 칸(왼쪽, 가장 먼저 눈에 들어오는 자리) - 번호 대신 +(추가)/-(삭제)/
 //     파란 문서 아이콘(편집)이 선다.
-//   - 삭제 예정 행은 추가로 행 전체가 옅게 붉어진다(번호 칸 하나로는 스크롤 중
-//     놓치기 쉽다).
+//   - **행 전체는 물들이지 않는다**(사용자 결정 - "plan은 전체 색이 아니라 no쪽에 + - 를
+//     표시하고 각각 노랑 빨강"). 행을 칠하면 선택/포커스 색과 겹쳐 오히려 흐려진다.
 //   - 하단 Status Bar가 "몇 개가 바뀌는지"를 노랑(+N개)/빨강(-M개)으로 요약한다.
 //
 // (예전에 시도했던 "Gamelist 위 노란 미리보기 띠"는 자연스럽지 않다는 피드백으로
@@ -67,13 +67,39 @@ test("편집 예정(제목 등 정보가 덮어써질 항목)은 No. 칸에 파�
   expect(color).not.toContain(delColorProbe);
 });
 
-test("삭제 예정 행은 No. 아이콘뿐 아니라 행 전체가 붉게 물든다", async ({ page }) => {
+test("예정 표시는 No. 칸에만 있고 행 전체를 물들이지 않는다", async ({ page }) => {
   await servePlanState(page, 'data.marks = { rows: { "ps2|FFX.iso": "-" }, systems: [] };');
   const row = page.locator(".lrow").first();
-  await expect(row).toHaveClass(/row-pending-delete/);
+  await expect(row).not.toHaveClass(/row-pending-delete/);
+  // 삭제를 Plan에 올리면 선택은 비워진다 - 배경은 평범한 목록 줄 색 그대로여야 한다.
+  await page.mouse.move(700, 500);                       // hover 색이 섞이지 않게 포인터를 치운다
   const bg = await row.evaluate((el) => getComputedStyle(el).backgroundColor);
-  const plainBg = await page.locator(".lrow").nth(1).evaluate((el) => getComputedStyle(el).backgroundColor);
-  expect(bg).not.toBe(plainBg);
+  const plainBg = await page.evaluate(() => {
+    const probe = document.createElement("span");
+    probe.style.background = "var(--list-bg)";
+    document.body.appendChild(probe);
+    const c = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return c;
+  });
+  expect(bg).toBe(plainBg);
+});
+
+test("+ 는 노랑, - 는 빨강이다", async ({ page }) => {
+  await servePlanState(page, 'data.marks = { rows: { "ps2|FFX.iso": "+", "ps2|MGS2.iso": "-" }, systems: [] };');
+  const color = (sel) => page.locator(sel).first().evaluate((el) => getComputedStyle(el).color);
+  const token = (name) => page.evaluate((n) =>
+    getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
+  const [add, del, warning, danger] = await Promise.all([
+    color(".lno-mark.add"), color(".lno-mark.del"), token("--warning"), token("--danger")]);
+  const rgb = async (hex) => page.evaluate((h) => {
+    const probe = document.createElement("span");
+    probe.style.color = h; document.body.appendChild(probe);
+    const c = getComputedStyle(probe).color; probe.remove(); return c;
+  }, hex);
+  expect(add).toBe(await rgb(warning));
+  expect(del).toBe(await rgb(danger));
+  expect(add).not.toBe(del);
 });
 
 test("하단 Status Bar는 개수를 노랑(추가)/빨강(삭제)으로 보여준다", async ({ page }) => {

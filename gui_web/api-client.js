@@ -181,6 +181,9 @@
     systems: ["ps2"], takenAt: mockCompare.takenAt,
   });
 
+  //: Archive 설정(목업). 처음에는 정해진 곳이 없다 - Archive 탭의 빈 화면이 [Archive 설정]을 띄운다.
+  const mockArchiveConfig = { frontend: "es-de", archiveDir: "", romDir: "", mediaInternal: true };
+
   const mock = {
     list_collections: () => ok(mockCollections),
     collection_detail: () => ok(mockDetailView()),
@@ -281,6 +284,9 @@
       return ok({ added });
     },
     start_archive_ingest: (id, scope) => {
+      if (!mockArchiveConfig.archiveDir) {
+        return Promise.resolve({ ok: false, error: "Archive 디렉토리를 먼저 정하세요." });
+      }
       const count = mockIngestCount(scope);
       mockLastIngest = { ingested: count, revised: count, unchanged: 0,
                          scope: (scope && scope.kind) || "all",
@@ -296,11 +302,18 @@
     archive_rows: () => ok({ rows: [], total: 0, offset: 0 }),
     archive_uids: () => ok([]),
     archive_conflicts: () => ok({}),
-    archive_config: () => ok({ frontend: "es-de", archiveDir: "", romDir: "", mediaInternal: true, configured: false }),
-    save_archive_config: (patch) => ok({ frontend: "es-de", archiveDir: "", romDir: "", mediaInternal: true, ...patch, configured: !!(patch && patch.archiveDir), needsApply: true, hasLegacy: false }),
+    // 저장하면 "정해졌다"로 바뀐다 - 디렉토리를 정하기 전에는 수집이 거절되므로(사용자 결정)
+    // 목업도 그 상태를 들고 있어야 화면 흐름이 실제와 같아진다.
+    archive_config: () => ok({ ...mockArchiveConfig, configured: !!mockArchiveConfig.archiveDir }),
+    save_archive_config: (patch) => {
+      Object.assign(mockArchiveConfig, patch || {});
+      return ok({ ...mockArchiveConfig, configured: !!mockArchiveConfig.archiveDir,
+                  needsApply: true, hasLegacy: false });
+    },
     start_archive_apply: () => ok({ jobId: "mock-archive-apply" }),
     archive_refresh: () => ok({ added: 0, romsLinked: 0, systems: 0 }),
     archive_media_paste: () => ok({}),
+    media_paste: () => ok({ added: 1, skipped: [], conflicts: 0 }),
     archive_versions: () => ok({ romIdentityId: "", versions: [] }),
     archive_choose_version: () => ok({}),
     archive_systems: () => ok([]),
@@ -328,6 +341,10 @@
     plan_clear: () => ok(true),
     copy_selection: () => ok({ count: 1, bytes: 0 }),
     paste: () => ok({ added: 1, skipped: [] }),
+    clipboard_systems: () => ok({
+      systems: [{ system: "ps2", count: 2, exists: true }],
+      targetSystems: ["gba", "ps2", "snes"],
+    }),
     validate_plan: () => ok({ ok: true, entries: [], capacity: [], blocked: false }),
     start_apply: () => {
       // Plan에 올라간 제목 변경을 실제로 반영한다 - Storage 이동 등 다른 종류는
@@ -642,6 +659,15 @@
         direction, metadataOnly: !!metadataOnly,
       });
     },
+    compare_copy_rows: (keys, direction) => {
+      if (!mockCompare.on) return Promise.resolve({ ok: false, error: "Compare Mode가 아닙니다." });
+      return ok({
+        added: (keys || []).length, skipped: [], requested: (keys || []).length,
+        targetId: direction === "toRight" ? "c2" : "c1",
+        targetName: direction === "toRight" ? "Android ES-DE" : "Master Library",
+        direction, metadataOnly: true,
+      });
+    },
     exit_compare: () => { mockCompare.on = false; return ok(true); },
 
     // Match(§45-49). 자동으로 붙는 것은 Exact뿐이라는 규칙을 목업에서도 지킨다 -
@@ -825,7 +851,8 @@
     planResolveAllConflicts: (id, resolution) => call("plan_resolve_all_conflicts", id, resolution),
     planClear: (id) => call("plan_clear", id),
     copySelection: (id, romUids) => call("copy_selection", id, romUids),
-    paste: (id, mode) => call("paste", id, mode || null),
+    paste: (id, mode, systemMap) => call("paste", id, mode || null, systemMap || null),
+    clipboardSystems: (id) => call("clipboard_systems", id),
     validatePlan: (id) => call("validate_plan", id),
     startApply: (id) => call("start_apply", id),
 
@@ -848,6 +875,7 @@
       call("archive_clear_preferred", romIdentityId),
     archiveMediaPaste: (romIdentityId, key, source) =>
       call("archive_media_paste", romIdentityId, key, source),
+    mediaPaste: (id, romUid, key, source) => call("media_paste", id, romUid, key, source),
     archiveConfig: () => call("archive_config"),
     saveArchiveConfig: (patch) => call("save_archive_config", patch),
     startArchiveApply: () => call("start_archive_apply"),
@@ -876,6 +904,7 @@
     compareDetail: (key) => call("compare_detail", key),
     compareCopyRow: (key, direction, metadataOnly) =>
       call("compare_copy_row", key, direction, !!metadataOnly),
+    compareCopyRows: (keys, direction) => call("compare_copy_rows", keys, direction, true, true),
     exitCompare: () => call("exit_compare"),
 
     startScan: (id, force) => call("start_scan", id, !!force),

@@ -24,6 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from adapters import get_adapter
+from app.archive import conflicts as conflict_service
 from app.match import service as match_service
 from app.store.archive import ARCHIVE_EDIT_SOURCE
 from adapters.base import GameEntry
@@ -162,6 +163,9 @@ def detail(archive, rom_identity_id) -> dict | None:
         ],
         "media": archive.media_refs(rom_identity_id),
         "romSources": archive.rom_sources(rom_identity_id),
+        # **같은 내용은 한 줄로 묶어서 준다**(실사용 피드백 - "Revision에 동일 버젼이 같이 보인다").
+        # 출처가 둘이어도 내용이 같으면 고를 이유가 없다 - 실제로 다른 것만 골라야 뜻이 있다.
+        "versions": conflict_service.versions_of(archive, rom_identity_id),
     }
 
 

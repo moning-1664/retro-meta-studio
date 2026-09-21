@@ -280,6 +280,43 @@ class CompareApiTests(unittest.TestCase):
         self.assertFalse(self.api.compare_copy_row("ps2|Same.iso", "sideways")["ok"])
 
 
+    # ---------------------------------------- 고른 여러 행을 한 번에(상단 < > 버튼)
+    # 사용자 결정 - "< > 버튼은 선택된 항목들의 메타데이터 + 미디어를 좌/우측으로 overwrite".
+    def test_bulk_copy_plans_every_selected_row(self):
+        self.api.start_compare(self.base, self.other)
+        result = self.api.compare_copy_rows(["ps2|Same.iso", "ps2|Conflict.iso"], "toRight")
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(result["data"]["requested"], 2)
+        self.assertEqual(self.api.plan_state(self.other)["data"]["added"], 2)
+        self.assertEqual(self.api.plan_state(self.base)["data"]["total"], 0)
+
+    def test_bulk_copy_carries_no_rom_by_default(self):
+        """이 버튼은 내용을 맞추는 것이지 ROM을 옮기는 것이 아니다."""
+        self.api.start_compare(self.base, self.other)
+        self.api.compare_copy_rows(["ps2|Conflict.iso"], "toRight")
+        self.assertEqual(self.api.plan_state(self.other)["data"]["addedBytes"], 0)
+
+    def test_bulk_copy_resolves_its_own_conflicts_as_overwrite(self):
+        """덮어쓰라고 누른 버튼이 충돌 창을 다시 띄우면 같은 결정을 두 번 하는 셈이다."""
+        self.api.start_compare(self.base, self.other)
+        result = self.api.compare_copy_rows(["ps2|Conflict.iso"], "toRight")
+        self.assertEqual(result["data"].get("conflicts", 0), 0)
+        self.assertEqual(self.api.plan_state(self.other)["data"]["conflicts"], 0)
+
+    def test_bulk_copy_reports_rows_it_could_not_send(self):
+        self.api.start_compare(self.base, self.other)
+        result = self.api.compare_copy_rows(["ps2|OnlyBase.iso", "ps2|Conflict.iso"], "toLeft")
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertTrue(any("없습니다" in s["reason"] for s in result["data"]["skipped"]
+                            if "reason" in s), result["data"]["skipped"])
+
+    def test_bulk_copy_needs_keys_and_compare_mode(self):
+        self.assertFalse(self.api.compare_copy_rows(["ps2|Same.iso"], "toRight")["ok"])
+        self.api.start_compare(self.base, self.other)
+        self.assertFalse(self.api.compare_copy_rows([], "toRight")["ok"])
+        self.assertFalse(self.api.compare_copy_rows(["ps2|Nope.iso"], "toRight")["ok"])
+
+
 class CompareContractTests(unittest.TestCase):
     """Compare의 의미를 못박는 계약 테스트.
 

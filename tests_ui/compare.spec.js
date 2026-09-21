@@ -40,6 +40,7 @@ test.describe("상단 막대", () => {
     const bar = page.locator("#filter-bar.compare");
     await expect(bar.locator(".compare-select")).toBeVisible();
     await expect(bar.locator(".cmp-group-btn")).toHaveCount(3);
+    await expect(bar.locator(".cmp-send")).toHaveCount(2);
     await expect(bar.locator(".cmp-tool")).toHaveCount(2);
     await expect(bar.locator(".cmp-exit")).toBeVisible();
     await expect(bar).not.toContainText("Snapshot");
@@ -78,6 +79,18 @@ test.describe("상단 막대", () => {
     await expect(page.locator(".lrow")).toHaveCount(5);
   });
 
+  // Swap/새로고침은 **아이콘만**이다(사용자 결정) - 글자까지 넣으면 한 줄이 비좁다.
+  test("Swap과 새로고침은 아이콘만 있고 글자가 없다", async ({ page }) => {
+    await startCompare(page);
+    const tools = page.locator("#filter-bar .cmp-tool");
+    await expect(tools).toHaveCount(2);
+    for (let i = 0; i < 2; i += 1) {
+      expect((await tools.nth(i).innerText()).trim()).toBe("");
+      await expect(tools.nth(i).locator("svg")).toHaveCount(1);
+      await expect(tools.nth(i)).toHaveAttribute("title", /Swap|새로고침/);
+    }
+  });
+
   test("Swap은 기준과 상대를 바꿔 다시 비교한다", async ({ page }) => {
     await startCompare(page);
     await page.evaluate(() => {
@@ -85,7 +98,7 @@ test.describe("상단 막대", () => {
       const original = window.api.startCompare;
       window.api.startCompare = (a, b) => { window.__cmp.push([a, b]); return original(a, b); };
     });
-    await page.locator(".cmp-tool", { hasText: "Swap" }).click();
+    await page.locator(".cmp-tool[title*='Swap']").click();
     await expect.poll(() => page.evaluate(() => window.__cmp.length)).toBe(1);
     const [[base, other]] = await page.evaluate(() => window.__cmp);
     expect([base, other]).toEqual(["c2", "c1"]);
@@ -94,7 +107,7 @@ test.describe("상단 막대", () => {
 
   test("새로고침으로 다시 비교해도 비교 상태가 유지된다", async ({ page }) => {
     await startCompare(page);
-    await page.locator(".cmp-tool", { hasText: "새로고침" }).click();
+    await page.locator(".cmp-tool[title*='새로고침']").click();
     await expect(page.locator("#filter-bar.compare")).toBeVisible();
     await expect(page.locator(".lrow")).toHaveCount(5);
   });
@@ -161,11 +174,12 @@ test.describe("가운데 Gamelist", () => {
     expect(wide.right).toBe(narrow.right);
   });
 
-  test("좌/우 Detail은 297px보다 15% 좁다", async ({ page }) => {
+  test("좌/우 Detail은 일반 Detail(297px)보다 한참 좁다", async ({ page }) => {
+    // 사용자 결정 - 두 번에 걸쳐 15%씩 줄였다(297 -> 252 -> 214). 가운데 목록이 그만큼 넓어진다.
     await startCompare(page);
     await openDetail(page, "Conflict Game");
-    expect(Math.round((await page.locator("#compare-left").boundingBox()).width)).toBe(252);
-    expect(Math.round((await page.locator("#detail-panel").boundingBox()).width)).toBe(252);
+    expect(Math.round((await page.locator("#compare-left").boundingBox()).width)).toBe(214);
+    expect(Math.round((await page.locator("#detail-panel").boundingBox()).width)).toBe(214);
   });
 });
 
@@ -218,6 +232,110 @@ test.describe("연산자로 Plan에 올리기", () => {
     await page.locator(".lrow.s-only_a .cmp-op.one-side").click();
     await expect(page.locator(".lrow.s-only_a .cmp-op.planned")).toBeVisible();
     await expect(page.locator(".lrow.s-only_a .cmp-op.one-side")).toHaveCount(0);
+  });
+});
+
+// 사용자 피드백 - "키보드/마우스 ux가 별로 안된다. 멀티 선택 등 기능을 gamelist에서 되는 수준으로".
+test.describe("선택과 키보드", () => {
+  const rows = (page) => page.locator(".lrow");
+
+  test("그냥 누르면 한 개가 선택되고 상세가 열린다", async ({ page }) => {
+    await startCompare(page);
+    await openDetail(page, "Same Game");
+    await expect(rows(page).first()).toHaveClass(/selected/);
+    await expect(page.locator("#status-bar")).toContainText("Selected 1");
+    await expect(page.locator("#detail-panel")).toHaveClass(/open/);
+  });
+
+  test("Ctrl+클릭으로 여러 개를 고르고 다시 눌러 뺀다", async ({ page }) => {
+    await startCompare(page);
+    await rows(page).nth(0).locator(".lc-srcTitle").click();
+    await rows(page).nth(2).locator(".lc-srcTitle").click({ modifiers: ["Control"] });
+    await expect(page.locator("#status-bar")).toContainText("Selected 2");
+    await rows(page).nth(2).locator(".lc-srcTitle").click({ modifiers: ["Control"] });
+    await expect(page.locator("#status-bar")).toContainText("Selected 1");
+  });
+
+  test("Shift+클릭으로 범위를 고른다", async ({ page }) => {
+    await startCompare(page);
+    await rows(page).nth(0).locator(".lc-srcTitle").click();
+    await rows(page).nth(3).locator(".lc-dstTitle").click({ modifiers: ["Shift"] });
+    await expect(page.locator("#status-bar")).toContainText("Selected 4");
+    await expect(rows(page).nth(1)).toHaveClass(/selected/);
+  });
+
+  test("Ctrl+A로 전부 고른다", async ({ page }) => {
+    await startCompare(page);
+    await rows(page).first().locator(".lc-srcTitle").click();
+    await page.keyboard.press("Control+a");
+    await expect(page.locator("#status-bar")).toContainText("Selected 5");
+  });
+
+  test("위아래 화살표로 옮겨 다니고 Shift로 범위를 넓힌다", async ({ page }) => {
+    await startCompare(page);
+    await rows(page).first().locator(".lc-srcTitle").click();
+    await page.keyboard.press("ArrowDown");
+    await expect(rows(page).nth(1)).toHaveClass(/focused/);
+    await expect(page.locator("#status-bar")).toContainText("Selected 1");
+    await page.keyboard.press("Shift+ArrowDown");
+    await expect(page.locator("#status-bar")).toContainText("Selected 2");
+  });
+});
+
+// 사용자 결정 - "< > 버튼은 선택된 항목들의 메타데이터 + 미디어를 좌/우측으로 overwrite".
+test.describe("고른 항목을 좌/우로 보내기", () => {
+  test("고른 것이 없으면 눌리지 않는다", async ({ page }) => {
+    await startCompare(page);
+    await expect(page.locator(".cmp-send")).toHaveCount(2);
+    await expect(page.locator(".cmp-send").first()).toBeDisabled();
+    await expect(page.locator(".cmp-send").first()).toHaveAttribute("title", /먼저 고르세요/);
+  });
+
+  test("고른 항목 전부를 한 번에 보낸다", async ({ page }) => {
+    await startCompare(page);
+    await page.evaluate(() => {
+      window.__sent = [];
+      const original = window.api.compareCopyRows;
+      window.api.compareCopyRows = (keys, direction) => {
+        window.__sent.push({ keys, direction });
+        return original(keys, direction);
+      };
+    });
+    await page.locator(".lrow").nth(0).locator(".lc-srcTitle").click();
+    await page.locator(".lrow").nth(1).locator(".lc-srcTitle").click({ modifiers: ["Control"] });
+    await expect(page.locator(".cmp-send").first()).toBeEnabled();
+    await page.locator(".cmp-send[data-dir='toRight']").click();
+    await expect.poll(() => page.evaluate(() => window.__sent.length)).toBe(1);
+    const sent = (await page.evaluate(() => window.__sent))[0];
+    expect(sent.direction).toBe("toRight");
+    expect(sent.keys).toHaveLength(2);
+    await expect(page.locator("#toast")).toContainText("Plan에 올렸습니다");
+  });
+});
+
+// 사용자 피드백 - "swap/새로고침 등 실행 뒤 내 선택이 사라진다. 선택 유지".
+test.describe("다시 비교해도 선택은 남는다", () => {
+  for (const [label, selector] of [["Swap", ".cmp-tool[title*='Swap']"],
+                                   ["새로고침", ".cmp-tool[title*='새로고침']"]]) {
+    test(label + " 뒤에도 고른 항목이 그대로다", async ({ page }) => {
+      await startCompare(page);
+      await page.locator(".lrow").nth(0).locator(".lc-srcTitle").click();
+      await page.locator(".lrow").nth(1).locator(".lc-srcTitle").click({ modifiers: ["Control"] });
+      await expect(page.locator("#status-bar")).toContainText("Selected 2");
+      await page.locator(selector).click();
+      await expect(page.locator("#filter-bar.compare")).toBeVisible();
+      await expect(page.locator("#status-bar")).toContainText("Selected 2");
+      await expect(page.locator(".lrow.selected")).toHaveCount(2);
+    });
+  }
+
+  test("고른 상태에서 필터도 그대로다", async ({ page }) => {
+    await startCompare(page);
+    await page.locator(".compare-select").selectOption("conflict");
+    await page.locator(".lrow").first().locator(".lc-srcTitle").click();
+    await page.locator(".cmp-tool[title*='새로고침']").click();
+    await expect(page.locator(".compare-select")).toHaveValue("conflict");
+    await expect(page.locator("#status-bar")).toContainText("Selected 1");
   });
 });
 

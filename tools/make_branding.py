@@ -8,20 +8,13 @@
 
 - `gui_web/app-icon.png` - 카트리지 아이콘. 라벨에는 안드로메다 은하를 픽셀로
   그린다(사용자 결정 - "RetroMeta = Andromeda 어감이 비슷하니").
-- `gui_web/app-title.png` - "RetroMeta Studio"를 픽셀 글자로. 대문자 R/M/S와 i의
-  꼭지에 빨/녹/파/노를 넣어 레트로 느낌을 낸다(사용자 결정).
 - `app.ico` - 같은 카트리지로 만든 exe 아이콘(16~256px).
 
-## 왜 글자를 이미지로 굽는가
+## 제목(RetroMeta Studio)은 여기서 만들지 않는다
 
-픽셀 폰트 TTF를 저장소에 넣으려면 외부 폰트를 받아 와야 하고, 라이선스도 따라온다.
-여기서는 **시스템 폰트를 아주 작게 그린 뒤 이진화(threshold)해서** 픽셀 글자를
-만든다 - 안티에일리어싱이 사라지면서 비트맵 폰트와 같은 계단 모양이 남는다. 그것을
-정수배(2x)로 확대하므로 가장자리가 흐려지지 않는다.
-
-**글자마다 1px 어두운 외곽선을 두른다.** 밝은 테마(theme.css의 light 계열)에서
-흰 글자가 배경에 묻히기 때문이다 - 외곽선은 레트로 스타일이기도 해서 두 문제를
-한 번에 푼다.
+예전에는 제목도 픽셀 글자로 구워 `app-title.png`로 넣었는데, **배율이 바뀔 때마다 열화가
+심했다**(사용자 피드백). 지금은 화면이 글자로 직접 그린다 - `gui_web/studio.css`의
+`.nav-app-title-name`이 서체·색·외곽선을 모두 정하므로 어떤 배율에서도 또렷하다.
 """
 
 from __future__ import annotations
@@ -29,130 +22,10 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
 GUI = ROOT / "gui_web"
-
-#: **두 줄이다.** Navigator 폭은 224px 고정이고 아이콘과 여백을 빼면 글자에
-#: 쓸 수 있는 폭이 ~150px인데, "RetroMeta Studio"를 한 줄에 넣으면 글자당
-#: 5px밖에 못 준다 - 어떤 서체를 써도 뭉개진다. 두 줄로 나누면 글자당 8~12px가
-#: 되어 제대로 된 픽셀 글자 모양이 나온다(사용자 카트리지 그림도 두 줄이다).
-TITLE_LINES = ("RetroMeta", "Studio")
-#: 2x로 확대하기 전의 한 줄 폭(아트 픽셀). 긴 줄("RetroMeta")을 기준으로 잡는다.
-TITLE_ART_WIDTH = 70
-SCALE = 2
-
-#: 레트로 4색 + 본문 글자색 + 외곽선.
-RED, GREEN, BLUE, YELLOW = (232, 69, 60), (76, 175, 80), (63, 138, 224), (245, 197, 24)
-INK = (240, 244, 248)
-OUTLINE = (13, 18, 32)
-#: 어느 글자에 색을 넣을지 - (줄 번호, 글자 번호). R/M은 첫 줄, S는 둘째 줄.
-LETTER_COLORS = {(0, 0): RED, (0, 5): GREEN, (1, 0): BLUE}
-#: i의 꼭지만 따로 칠한다(줄기는 본문색). "Studio"의 i는 둘째 줄 4번째다.
-DOT_AT, DOT_COLOR = (1, 4), YELLOW
-
-#: 좁은 폭에 글자를 최대한 키우려면 폭이 좁은 서체가 필요하다.
-FONT_CANDIDATES = ("C:/Windows/Fonts/arialnb.ttf", "C:/Windows/Fonts/arialn.ttf",
-                   "C:/Windows/Fonts/tahomabd.ttf", "C:/Windows/Fonts/arialbd.ttf")
-
-
-def _font_path() -> str:
-    for candidate in FONT_CANDIDATES:
-        if Path(candidate).exists():
-            return candidate
-    raise SystemExit("픽셀 글자를 구울 서체를 찾지 못했습니다: " + ", ".join(FONT_CANDIDATES))
-
-
-def _pick_size(path: str, target_width: int) -> ImageFont.FreeTypeFont:
-    """가장 긴 줄이 target_width에 가장 가까워지는 글자 크기를 고른다.
-
-    크기를 눈으로 정하면 서체가 바뀔 때마다 다시 맞춰야 한다 - 목표 폭을 주고
-    찾게 하면 서체를 바꿔도 레이아웃이 그대로다.
-    """
-    longest = max(TITLE_LINES, key=len)
-    best, best_gap = None, None
-    for size in range(8, 26):
-        font = ImageFont.truetype(path, size)
-        gap = abs(round(font.getlength(longest)) - target_width)
-        if best_gap is None or gap < best_gap:
-            best, best_gap = font, gap
-    return best
-
-
-def _render_line(text: str, font: ImageFont.FreeTypeFont):
-    """한 줄을 이진화해서 (픽셀 맵, 폭, 높이, 글자별 x 범위)로 돌려준다.
-
-    작게 그린 뒤 이진화하면 안티에일리어싱이 사라지면서 비트맵 폰트와 같은
-    계단이 남는다 - 이것이 픽셀 글자의 정체다.
-    """
-    bbox = font.getbbox(text)
-    canvas = Image.new("L", (bbox[2] + 6, bbox[3] + 6), 0)
-    origin_x, origin_y = 3 - bbox[0], 3 - bbox[1]
-    ImageDraw.Draw(canvas).text((origin_x, origin_y), text, font=font, fill=255)
-    # 110은 "획의 중심만 남기는" 문턱이다. 더 높이면 가는 획이 끊기고, 더 낮추면
-    # 안티에일리어싱의 회색까지 살아나 계단이 뭉갠다.
-    binary = canvas.point(lambda v: 255 if v >= 110 else 0)
-    box = binary.getbbox()
-    binary = binary.crop(box)
-    spans = [(round(origin_x + font.getlength(text[:i])) - box[0],
-              round(origin_x + font.getlength(text[:i + 1])) - box[0])
-             for i in range(len(text))]
-    return binary.load(), binary.size[0], binary.size[1], spans
-
-
-def _dot_rows(pixels, height, span) -> set[int]:
-    """i의 꼭지가 차지하는 행. 꼭지와 줄기 사이에는 빈 줄이 있다는 점을 쓴다."""
-    rows = [y for y in range(height) if any(pixels[x, y] for x in range(*span))]
-    if not rows:
-        return set()
-    dot = []
-    for y in rows:
-        if dot and y != dot[-1] + 1:
-            break          # 빈 줄을 만났다 - 여기까지가 꼭지다.
-        dot.append(y)
-    return set(dot) if len(dot) < len(rows) else set()
-
-
-def build_title() -> Image.Image:
-    font = _pick_size(_font_path(), TITLE_ART_WIDTH)
-    lines = [_render_line(text, font) for text in TITLE_LINES]
-
-    gap = 2                                            # 줄 사이(아트 픽셀)
-    art_w = max(w for _p, w, _h, _s in lines)
-    art_h = sum(h for _p, _w, h, _s in lines) + gap * (len(lines) - 1)
-    art = Image.new("RGBA", (art_w + 2, art_h + 2), (0, 0, 0, 0))
-    out = art.load()
-
-    top = 0
-    for line_index, (pixels, width, height, spans) in enumerate(lines):
-        dot = _dot_rows(pixels, height, spans[DOT_AT[1]]) if DOT_AT[0] == line_index else set()
-
-        def color_at(x, y, spans=spans, dot=dot, line_index=line_index):
-            for index, (start, end) in enumerate(spans):
-                if start <= x < end:
-                    if (line_index, index) == DOT_AT and y in dot:
-                        return DOT_COLOR
-                    return LETTER_COLORS.get((line_index, index), INK)
-            return INK
-
-        # 외곽선 1px을 먼저 깔고 그 위에 글자를 얹는다 - 밝은 테마에서도 글자가
-        # 배경에 묻히지 않는다.
-        for y in range(height):
-            for x in range(width):
-                if not pixels[x, y]:
-                    continue
-                for dx in (-1, 0, 1):
-                    for dy in (-1, 0, 1):
-                        out[x + 1 + dx, top + y + 1 + dy] = (*OUTLINE, 255)
-        for y in range(height):
-            for x in range(width):
-                if pixels[x, y]:
-                    out[x + 1, top + y + 1] = (*color_at(x, y), 255)
-        top += height + gap
-
-    return art.resize((art.width * SCALE, art.height * SCALE), Image.NEAREST)
-
 
 # ----------------------------------------------------------------------
 # 카트리지 + 안드로메다
@@ -215,10 +88,6 @@ def build_cartridge() -> Image.Image:
 
 
 def main() -> None:
-    title = build_title()
-    title.save(GUI / "app-title.png")
-    print(f"  app-title.png     {title.size[0]}x{title.size[1]}")
-
     cart = build_cartridge()
     cart = cart.crop(cart.getbbox())
     # 화면에는 작게 들어가므로(높이 ~32px) 미리 줄여 둔다 - 1480px짜리를 그대로

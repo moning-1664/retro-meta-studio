@@ -1409,11 +1409,38 @@ class Api:
                                            self._clipboard_dir))
 
     @guarded
-    def paste(self, collection_id, mode=None):
+    def clipboard_systems(self, collection_id):
+        """복사해 둔 항목의 System과, 그것이 이 Collection에 있는지.
+
+        Frontend마다 System 이름 규칙이 다르다(사용자 피드백 - Pegasus의 `FBNEO ACT`는 ES-DE가
+        허용하지 않는 이름이다). 화면은 이 목록을 보고 **어느 System으로 붙일지 고르는 창**을 띄운다.
+        """
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            return err("Collection을 찾을 수 없습니다.")
+        _descriptor, items = clipboard.read_items(self.registry)
+        if not items:
+            return err("붙여넣을 항목이 없습니다.")
+        mine = {e.system for e in collection.systems}
+        counts: dict[str, int] = {}
+        for item in items:
+            counts[item["system"]] = counts.get(item["system"], 0) + 1
+        return ok({
+            "systems": [{"system": name, "count": counts[name], "exists": name in mine}
+                        for name in sorted(counts)],
+            "targetSystems": sorted(mine),
+        })
+
+    @guarded
+    def paste(self, collection_id, mode=None, system_map=None):
         """붙여넣기. **Settings의 복사 정책(transfer)을 따른다.**
 
         `mode`(patch/overwrite/replace)가 이미 있는 항목을 어떻게 다룰지 정한다
         (app/plan/paste_modes.py). 주지 않으면 저장된 모드를 쓴다.
+
+        `system_map`({원본 System: 이 Collection의 System})으로 **System 이름이 달라도 붙여넣는다**
+        (사용자 결정 - "페가수스의 FBNEO ACT를 ES-DE로 가져올 때 system을 선택해서 붙여넣기").
+        빈 값으로 두면 원본 이름을 그대로 쓴다(없으면 그 이름으로 새로 생긴다).
 
         - ROM/Media를 빼기로 했으면 Plan에 올리기 전에 그 부분을 뺀다(메타데이터는 늘 간다).
         - **원본에 ROM 파일이 없는 항목**(unmatched - Archive처럼 메타데이터만 있는 항목)은
@@ -1426,6 +1453,11 @@ class Api:
         descriptor, items = clipboard.read_items(self.registry)
         if not items:
             return err("붙여넣을 항목이 없습니다.")
+        # System 이름 바꾸기는 **정책을 따지기 전에** 한다 - 이 뒤의 검사(쓰기 가능한 System인가)는
+        # 실제로 파일이 놓일 System을 봐야 한다.
+        remap = {str(k): str(v).strip() for k, v in (system_map or {}).items() if str(v or "").strip()}
+        if remap:
+            items = [{**item, "system": remap.get(item["system"], item["system"])} for item in items]
         blocked = self._ensure_file_ops(collection) or self._ensure_writable(
             collection, [item.get("system") for item in items])
         if blocked:
@@ -1590,6 +1622,11 @@ class Api:
         수집은 게임 수만큼 DB 쓰기가 일어나므로 job으로 돌린다 - 동기로 부르면 큰
         Collection에서 창이 멈춘 것처럼 보이고 취소할 방법도 없다.
         """
+        # **Archive 디렉토리를 정하기 전에는 수집하지 않는다**(사용자 피드백 - 디렉토리를 고르지도
+        # 않았는데 수집이 돌았다). 정해 두지 않으면 모은 것이 DB에만 남아, 사용자가 꺼내 쓸 수 있는
+        # Frontend 트리가 어디에도 만들어지지 않는다(docs/ARCHIVE_DIRECTORY_DESIGN.md).
+        if not archive_projection.is_configured(self._archive_config()):
+            return err("Archive 디렉토리를 먼저 정하세요. Settings > Archive에서 저장할 폴더와 형식을 고릅니다.")
         collection, cache, _ = self._plan_context(collection_id)
         kind, uids = archive_service.resolve_scope(cache, scope)
         log.info("archive ingest requested: collection=%s scope=%s system=%s targets=%d",
@@ -1789,6 +1826,40 @@ class Api:
         row = self.workspace.open(source.get("id")).get_row(int(source.get("uid")))
         item = next((m for m in (row["media"] if row else []) if m["media_type"] == media_type), None)
         return item["rel_path"] if item else None
+
+    @guarded
+    def media_paste(self, collection_id, rom_uid, media_key, source):
+        """**Collection의 게임 한 개에 그림 한 장만 갈아 끼운다**(사용자 결정 - "특정 media를 복사하고
+        타겟 media에서 붙여넣기").
+
+        바이트가 움직이므로 Plan을 거친다(D1). 다른 media와 메타데이터는 건드리지 않는다 -
+        이 항목이 들고 가는 것은 고른 그 한 종류뿐이다. 이미 있는 그림은 **덮어쓴다** - 바꾸려고
+        누른 것이므로 충돌 창을 다시 띄우지 않는다.
+        """
+        collection, cache, provider = self._plan_context(collection_id)
+        row = cache.get_row(int(rom_uid))
+        if row is None:
+            return err("항목을 찾을 수 없습니다.")
+        blocked = self._ensure_file_ops(collection) or self._ensure_writable(collection, [row["system"]])
+        if blocked:
+            return blocked
+        media_type = MEDIA_KEYS.get(media_key, str(media_key or "").lower())
+        src = self._media_source_path(source or {})
+        if not src or not Path(src).is_file():
+            return err("복사할 media를 찾을 수 없습니다.")
+
+        item = {
+            "system": row["system"], "filename": row["filename"], "rom": None,
+            "media": [{"type": media_type, "path": str(src), "size": Path(src).stat().st_size}],
+            # 메타데이터는 지금 값을 그대로 둔다 - 그림 한 장만 바꾸는 것이다.
+            "fields": row["fields"], "frontend_raw": row["frontend_raw"],
+        }
+        plan = self._plan(collection_id)
+        result = builder.plan_add(plan, collection, provider, item and [item])
+        for key in result.pop("conflictKeys", []):
+            builder.resolve_conflict(plan, collection, provider, key, RESOLVE_OVERWRITE)
+        result["conflicts"] = 0
+        return ok({**result, "mediaType": media_type, "romUid": int(rom_uid)})
 
     @guarded
     def archive_media_paste(self, rom_identity_id, media_key, source):
@@ -2106,7 +2177,40 @@ class Api:
         return {**side, "collectionId": collection_id, "romPath": rom_path}
 
     @guarded
-    def compare_copy_row(self, key, direction, metadata_only=False):
+    def compare_copy_rows(self, keys, direction, metadata_only=True, overwrite=True):
+        """**고른 여러 행**을 한 번에 반대쪽 Plan에 올린다(사용자 결정 - Compare 상단의 `<` `>`는
+        "선택된 항목들의 메타데이터+미디어를 좌/우측으로 overwrite").
+
+        기본이 `metadata_only=True`인 이유: 이 버튼은 ROM을 옮기는 것이 아니라 **내용을 맞추는**
+        것이다. ROM까지 옮기는 것은 행마다 있는 `>` `<`(한쪽에만 ROM이 있을 때)가 맡는다.
+
+        `overwrite=True`면 이번에 생긴 충돌을 덮어쓰기로 정해 둔다 - 덮어쓰라고 누른 버튼이
+        충돌 창을 다시 띄우면 같은 결정을 두 번 하는 셈이다. 실제 파일은 Apply를 눌러야 바뀐다.
+        """
+        if not self._compare:
+            return err("Compare Mode가 아닙니다.")
+        keys = list(keys or [])
+        if not keys:
+            return err("보낼 항목을 먼저 고르세요.")
+        planned, skipped, target_name, target_id = 0, [], None, None
+        for key in keys:
+            result = self.compare_copy_row(key, direction, metadata_only=metadata_only,
+                                           overwrite=overwrite)
+            if not result["ok"]:
+                skipped.append({"key": key, "reason": result["error"]})
+                continue
+            data = result["data"]
+            planned += data.get("added", 0)
+            skipped.extend(data.get("skipped", []))
+            target_name, target_id = data["targetName"], data["targetId"]
+        if target_id is None:
+            return err(skipped[0]["reason"] if skipped else "보낼 수 있는 항목이 없습니다.")
+        return ok({"added": planned, "skipped": skipped, "requested": len(keys),
+                   "targetId": target_id, "targetName": target_name, "direction": direction,
+                   "metadataOnly": bool(metadata_only)})
+
+    @guarded
+    def compare_copy_row(self, key, direction, metadata_only=False, overwrite=False):
         """Compare 한 행을 반대쪽 Collection의 **Plan에 올린다**(사용자 결정 - "모든 변경은
         PLAN 기준 / 실제 Apply를 눌러야 적용").
 
@@ -2153,7 +2257,14 @@ class Api:
         other = row["right"] if to_right else row["left"]
         if other is not None and other["filename"] != side["filename"]:
             items = [{**item, "filename": other["filename"]} for item in items]
-        result = builder.plan_add(self._plan(target_id), target, provider, items)
+        plan = self._plan(target_id)
+        result = builder.plan_add(plan, target, provider, items)
+        keys = result.pop("conflictKeys", [])
+        if overwrite and keys:
+            # 덮어쓰라고 누른 버튼이다 - 이번에 생긴 충돌을 다시 묻지 않는다(사용자 결정).
+            for conflict_key in keys:
+                builder.resolve_conflict(plan, target, provider, conflict_key, RESOLVE_OVERWRITE)
+            result["conflicts"] = 0
         return ok({**result, "targetId": target_id, "targetName": target.name,
                    "direction": direction, "metadataOnly": bool(metadata_only)})
 

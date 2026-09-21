@@ -68,6 +68,15 @@
   --row-focus-bar: var(--accent);       /* Gamelist 포커스 행 왼쪽 막대 */
   --cheader-icon-fg: var(--accent);
   --app-title-fg: var(--accent);
+  /* App Title(Navigator 상단) - 레트로 4색 + 글자색/외곽선. 밝은 테마에서도 같은 값을 쓴다:
+     밝은 글자에 어두운 외곽선을 두르는 간판 방식이라 바탕색이 밝든 어둡든 읽힌다. */
+  --app-title-ink: #f2f6ff;
+  --app-title-outline: #101426;
+  --app-title-shade: rgba(16, 20, 38, .55);
+  --app-title-red: #ff5a4e;
+  --app-title-yellow: #ffcc22;
+  --app-title-green: #5ad46a;
+  --app-title-blue: #4aa3ff;
   --archive-tab-fg: var(--accent-red);
 
   --overlay: rgba(4, 6, 16, .62);

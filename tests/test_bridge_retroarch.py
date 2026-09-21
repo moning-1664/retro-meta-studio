@@ -122,6 +122,8 @@ class ArchiveLaunchTests(BridgeRetroarchTests):
     """Archive 항목도 ROM 위치가 기록돼 있으면 실행된다 - 화면이 막을 이유가 없었다."""
 
     def _ingest(self):
+        # Archive는 저장할 디렉토리를 정한 뒤에만 수집한다(사용자 결정).
+        self.api.save_archive_config({"archiveDir": str(self.dir / "Archives")})
         self.api.start_archive_ingest(self.cid, {"kind": "all"})
         from tests.fixtures import wait_idle
         wait_idle(self.api)

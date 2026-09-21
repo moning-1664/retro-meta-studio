@@ -38,8 +38,9 @@ test("Dashboard를 누르면 Dashboard 화면으로 바뀐다", async ({ page })
 });
 
 test("App Title이 Navigator 상단에 있고 GameList 상단 Chromium과 나란하다", async ({ page }) => {
-  // 제목은 픽셀 글자 그림이다 - 글자가 아니라 alt로 읽힌다(tools/make_branding.py).
-  await expect(page.locator(".nav-app-title-name")).toHaveAttribute("alt", "RetroMeta Studio");
+  // 제목은 **글자다**(사용자 결정 - 구워 둔 그림은 열화가 심했다). 읽어 주는 이름은 aria-label이 맡는다.
+  await expect(page.locator(".nav-app-title-name")).toHaveAttribute("aria-label", "RetroMeta Studio");
+  await expect(page.locator(".nav-app-title-name")).toContainText("RetroMeta");
   const navTop = await page.locator(".nav-top").boundingBox();
   const cheader = await page.locator(".cheader").first().boundingBox();
   // 정확히 같은 픽셀일 필요는 없다 - 위쪽 시작 지점이 비슷한 높이에 있으면 된다.
@@ -60,6 +61,56 @@ test("Settings를 누르면 Settings 화면이 열린다", async ({ page }) => {
 
 // 실사용 피드백 §8 + 로고 개편(사용자 결정).
 test.describe("App Title / Settings 자리와 크기", () => {
+  // 사용자 결정 - 제목은 글자로 그리고(그림은 열화), R/M/S와 i의 꼭지에 빨/노/녹/파를 넣는다.
+  test("제목은 그림이 아니라 글자이고, R/M/S와 i의 꼭지에 네 가지 색이 들어간다", async ({ page }) => {
+    const title = page.locator(".nav-app-title-name");
+    await expect(title.locator("img")).toHaveCount(0);
+    const colors = await title.evaluate((el) => {
+      const get = (sel) => getComputedStyle(el.querySelector(sel)).color;
+      return { r: get(".apt-r"), m: get(".apt-m"), s: get(".apt-s"),
+               dot: getComputedStyle(el.querySelector(".apt-i"), "::after").backgroundColor,
+               ink: getComputedStyle(el).color };
+    });
+    // 넷이 서로 다른 색이고, 본문 글자색과도 다르다.
+    const four = [colors.r, colors.m, colors.s, colors.dot];
+    expect(new Set(four).size).toBe(4);
+    four.forEach((c) => expect(c).not.toBe(colors.ink));
+  });
+
+  test("밝은 테마에서도 읽히도록 두꺼운 외곽선을 두른다", async ({ page }) => {
+    await page.evaluate(() => document.documentElement.setAttribute("data-theme", "sfc"));
+    const stroke = await page.locator(".nav-app-title-name").evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { width: parseFloat(cs.webkitTextStrokeWidth), order: cs.paintOrder };
+    });
+    expect(stroke.width).toBeGreaterThanOrEqual(2);
+    // 외곽선을 글자 아래에 깔지 않으면 획이 외곽선에 먹힌다.
+    expect(stroke.order).toContain("stroke");
+  });
+
+  test("부제가 제목 아래에 작게 붙는다", async ({ page }) => {
+    const sub = page.locator(".nav-app-subtitle");
+    await expect(sub).toHaveText("Retro Game Metadata Editor");
+    const [title, subtitle] = await Promise.all([
+      page.locator(".nav-app-title-name").boundingBox(), sub.boundingBox()]);
+    expect(subtitle.y).toBeGreaterThan(title.y);                       // 제목 아래
+    expect(subtitle.height).toBeLessThan(title.height / 2);            // 훨씬 작게
+  });
+
+  test("아이콘·제목·부제가 Navigator 칸을 벗어나지 않는다", async ({ page }) => {
+    const [nav, icon, title, sub] = await Promise.all([
+      page.locator(".nav-top").boundingBox(), page.locator(".nav-app-icon").boundingBox(),
+      page.locator(".nav-app-title-name").boundingBox(), page.locator(".nav-app-subtitle").boundingBox()]);
+    for (const box of [icon, title, sub]) {
+      expect(box.x).toBeGreaterThanOrEqual(nav.x);
+      expect(box.x + box.width).toBeLessThanOrEqual(nav.x + nav.width + 1);
+      expect(box.y).toBeGreaterThanOrEqual(nav.y - 1);
+      expect(box.y + box.height).toBeLessThanOrEqual(nav.y + nav.height + 1);
+    }
+    // 아이콘은 제목+부제를 합친 높이를 넘지 않는다(사용자 결정 - 너무 크지 않게).
+    expect(icon.height).toBeLessThanOrEqual((sub.y + sub.height) - title.y);
+  });
+
   test("로고가 Navigator 폭을 거의 채운다 - 아이콘과 제목이 나란히 들어간다", async ({ page }) => {
     // 224px 고정 폭 안에서 아이콘 + 제목이 잘리지 않고 들어가야 한다.
     const [nav, icon, title] = await Promise.all([
@@ -69,6 +120,8 @@ test.describe("App Title / Settings 자리와 크기", () => {
     ]);
     expect(icon.width + title.width).toBeGreaterThan(nav.width * 0.8);
     expect(title.x + title.width).toBeLessThanOrEqual(nav.x + nav.width);
+    // 너무 비어 보이지도 않아야 한다(사용자 결정) - 세로도 칸의 절반 이상을 쓴다.
+    expect(title.height).toBeGreaterThan(nav.height * 0.5);
   });
 
   test("App Title이 줄 안에서 세로 가운데다", async ({ page }) => {

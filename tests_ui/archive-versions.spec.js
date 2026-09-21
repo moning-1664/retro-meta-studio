@@ -110,3 +110,54 @@ test("Settings에도 같은 Archive 설정이 있다", async ({ page }) => {
   await page.locator(".stg-nav-item, .stg-tab", { hasText: "Archive" }).first().click();
   await expect(page.locator(".archive-dir")).toBeVisible();
 });
+
+// 사용자 피드백 - "디렉토리 선택도 안했는데 export가 되고 있다. 디렉토리 선택 후 export 가능하도록".
+test.describe("디렉토리를 정하기 전에는 보내지 않는다", () => {
+  test("Archive로 보내기를 누르면 수집 대신 설정 창이 뜬다", async ({ page }) => {
+    await openApp(page);
+    await page.evaluate(() => {
+      window.__ingests = 0;
+      const original = window.api.startArchiveIngest;
+      window.api.startArchiveIngest = (...args) => { window.__ingests += 1; return original(...args); };
+    });
+    await page.locator("#collection-header .cheader-right .icon-btn[title*='메타데이터 보내기']").click();
+    await page.locator(".ctx-menu .ctx-item", { hasText: "Archive" }).click();
+    await expect(page.locator(".modal-title")).toHaveText("Archive 설정");
+    await expect(page.locator("#toast")).toContainText("디렉토리를 먼저 정하세요");
+    expect(await page.evaluate(() => window.__ingests)).toBe(0);
+  });
+
+  test("디렉토리를 정한 뒤에는 수집이 실행된다", async ({ page }) => {
+    await openApp(page);
+    await page.evaluate(() => window.api.saveArchiveConfig({ archiveDir: "D:\Archives" }));
+    await page.evaluate(() => {
+      window.__ingests = 0;
+      const original = window.api.startArchiveIngest;
+      window.api.startArchiveIngest = (...args) => { window.__ingests += 1; return original(...args); };
+    });
+    await page.locator("#collection-header .cheader-right .icon-btn[title*='메타데이터 보내기']").click();
+    await page.locator(".ctx-menu .ctx-item", { hasText: "Archive" }).click();
+    await expect.poll(() => page.evaluate(() => window.__ingests)).toBe(1);
+  });
+});
+
+// 사용자 결정 - "Media만 복붙하기". Archive는 즉시, Collection은 Plan을 거친다(바이트가 움직인다).
+test("Collection에서도 미디어 한 장만 붙여넣을 수 있다 - Plan으로 간다", async ({ page }) => {
+  await openApp(page);
+  await page.evaluate(() => {
+    window.__pasted = [];
+    window.api.mediaPaste = async (id, romUid, key, source) => {
+      window.__pasted.push({ romUid, key, source });
+      return { ok: true, data: { added: 1, skipped: [], conflicts: 0 } };
+    };
+  });
+  await page.locator(".lrow", { hasText: "Final Fantasy X" }).locator(".lc-file").click();
+  await page.locator(".detail-tab", { hasText: "Media" }).click();
+  await page.locator(".media-tile.cover").click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "미디어 복사" }).click();
+  await page.locator(".media-tile.cover").click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "미디어 붙여넣기" }).click();
+  await expect.poll(() => page.evaluate(() => window.__pasted.length)).toBe(1);
+  expect((await page.evaluate(() => window.__pasted))[0].key).toBe("Covers");
+  await expect(page.locator("#toast")).toContainText("Plan에 올렸습니다");
+});

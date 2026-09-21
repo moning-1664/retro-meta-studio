@@ -330,7 +330,7 @@
     transfer: { pasteMode: "patch", includeRom: true, includeMedia: true, conflict: "ask",
                 unmatchedRomMode: "skip", unmatchedRomMetadata: true, unmatchedRomMedia: true, unmatchedRomVideo: true },
     //: Media 탭의 영상(사용자 결정: 소리 켬, 반복 켬, 5초 뒤 자동 재생 - 전부 Settings에서 바꾼다).
-    media: { videoMode: "auto", videoDelay: 3, videoSound: true, videoLoop: true },
+    media: { videoMode: "auto", videoDelay: 3, videoSound: true, videoLoop: true, videoVolume: 70 },
     //: Title Prefix/Postfix - 지역별로 제목에 붙일 표시(app/title_affix.py와 같은 기본값).
     //: 기본은 전부 꺼져 있다 - 사용자가 명시적으로 켜야 제목이 바뀐다.
     titleAffix: {
@@ -1180,6 +1180,15 @@
     rememberSession();
   }
 
+  /** Archive로 보내기 전에 저장할 곳이 정해져 있는지 확인한다. 없으면 설정 창을 띄우고 false. */
+  async function ensureArchiveConfigured() {
+    const r = await api.archiveConfig();
+    if (r.ok && r.data && r.data.configured) return true;
+    showToast("Archive 디렉토리를 먼저 정하세요.", "warning");
+    openArchiveSettings();
+    return false;
+  }
+
   /** Archive 설정이 있는지 - 없으면 빈 화면이 [Archive 설정] 버튼을 보여준다. */
   async function loadArchiveConfigured() {
     const r = await api.archiveConfig();
@@ -1570,17 +1579,29 @@
    * 둔다(사용자 요청) - 예전엔 최하단에 있었다. */
   function navTop() {
     const top = h("div", { class: "nav-top" });
+    // 제목은 **글자다 - 그림이 아니다**(사용자 결정 - 구워 둔 픽셀 글자 그림은 열화가 심했다).
+    // 글자로 그리면 어떤 배율에서도 또렷하고, 색과 외곽선을 테마에 맞춰 바꿀 수 있다.
+    // 대문자 R/M/S와 i의 꼭지에 빨/노/녹/파를 넣어 레트로 느낌을 낸다(사용자 결정).
+    const letter = (text, cls) => h("span", cls ? { class: cls } : {}, [text]);
     top.appendChild(h("div", { class: "nav-app-title" }, [
-      // 인베이더 마크보다 카트리지 그림이 낫다는 사용자 결정 - 제목+부제를 합친
-      // 높이에 맞춘다(CSS의 .nav-app-icon).
+      // 카트리지 그림은 사용자가 만든 것을 그대로 쓴다(tools/make_branding.py) -
+      // 제목+부제를 합친 높이에 맞춘다(CSS의 .nav-app-icon).
       h("img", { class: "nav-app-icon", src: "app-icon.png", alt: "" }),
-      // 제목은 픽셀 글자 그림이다(사용자 결정 - 대문자 R/M/S와 i의 꼭지에
-      // 빨/녹/파/노). 만드는 방법은 tools/make_branding.py에 있다.
-      //
-      // **부제("Frontend Metadata Editor")는 없앴다** - 카트리지 라벨에 이미
-      // "FRONT-END METADATA MANAGER"가 적혀 있어 같은 말을 두 번 하는 셈이었고,
-      // 두 줄짜리 제목이 띠를 채우면서 세 번째 줄을 놓을 자리도 없다.
-      h("img", { class: "nav-app-title-name", src: "app-title.png", alt: "RetroMeta Studio" }),
+      h("div", { class: "nav-app-title-text" }, [
+        h("div", { class: "nav-app-title-name", "aria-label": "RetroMeta Studio" }, [
+          letter("R", "apt-r"), letter("etro"), letter("M", "apt-m"), letter("eta"),
+          // **두 줄이다.** Navigator 폭은 224px 고정이라 한 줄에 넣으면 글자를 크게 키울 수 없다 -
+          // 줄을 나누면 같은 폭에서 글자가 훨씬 커진다(사용자 결정 - "제목은 크게").
+          h("br"),
+          letter("S", "apt-s"), letter("tud"),
+          // i의 **꼭지만** 파랗게 칠한다 - 꼭지 없는 ı(U+0131)를 쓰고 네모 점을 따로 얹는다.
+          // 서체 안의 점은 따로 색을 줄 수 없기 때문이다. 읽어 주는 이름은 위 aria-label이 맡는다.
+          h("span", { class: "apt-i" }, ["ı"]),
+          letter("o"),
+        ]),
+        // 부제(사용자 결정) - 제목보다 훨씬 작게, 한 줄로.
+        h("div", { class: "nav-app-subtitle" }, ["Retro Game Metadata Editor"]),
+      ]),
     ]));
     return top;
   }
@@ -3131,14 +3152,31 @@
       });
     bar.appendChild(group);
 
-    const swap = h("button", { class: "cmp-tool", title: "기준과 상대를 바꿉니다" },
-      [icon("refresh", IC.sm), h("span", {}, ["Swap"])]);
-    swap.addEventListener("click", () => runCompare(state.otherId, state.baseId));
-    bar.appendChild(swap);
-    const refresh = h("button", { class: "cmp-tool", title: "지금 상태로 다시 비교합니다" },
-      [icon("refresh", IC.sm), h("span", {}, ["새로고침"])]);
-    refresh.addEventListener("click", () => runCompare(state.baseId, state.otherId));
-    bar.appendChild(refresh);
+    // 고른 항목들의 메타데이터+미디어를 반대쪽으로 덮어쓴다(사용자 결정). ROM은 건드리지 않는다 -
+    // ROM을 옮기는 것은 행 가운데의 `>` `<`(한쪽에만 ROM이 있을 때)가 맡는다.
+    const sendSelected = (direction, label, tip) => {
+      const btn = h("button", {
+        class: "cmp-send", "data-dir": direction, disabled: !S.selected.size,
+        title: S.selected.size ? tip : "보낼 항목을 먼저 고르세요",
+      }, [label]);
+      btn.addEventListener("click", () => compareSendSelected(direction));
+      return btn;
+    };
+    bar.appendChild(h("div", { class: "cmp-group cmp-send-group" }, [
+      sendSelected("toLeft", "\u276e", "고른 항목의 메타데이터+미디어를 왼쪽으로 덮어씁니다(Plan)"),
+      sendSelected("toRight", "\u276f", "고른 항목의 메타데이터+미디어를 오른쪽으로 덮어씁니다(Plan)"),
+    ]));
+
+    // Swap/새로고침은 **아이콘만**이다(사용자 결정) - 글자까지 넣으면 한 줄이 비좁다.
+    const tool = (name, tip, onClick) => {
+      const btn = h("button", { class: "cmp-tool icon-only", title: tip }, [icon(name, IC.sm)]);
+      btn.addEventListener("click", onClick);
+      return btn;
+    };
+    bar.appendChild(tool("arrowLeftRight", "기준과 상대를 바꿉니다 (Swap)",
+      () => runCompare(state.otherId, state.baseId)));
+    bar.appendChild(tool("refresh", "지금 상태로 다시 비교합니다 (새로고침)",
+      () => runCompare(state.baseId, state.otherId)));
 
     bar.appendChild(h("div", { class: "filter-spacer" }));
 
@@ -3337,6 +3375,13 @@
    * 선택 때문에 달라지는 것은 수집 대상 표시뿐이다(Delete는 상시 버튼이 없다).
    */
   function updateSelectionDependentActions() {
+    // Compare 상단의 `<` `>`는 고른 항목이 있을 때만 눌린다.
+    document.querySelectorAll(".cmp-send").forEach((btn) => {
+      btn.disabled = !S.selected.size;
+      btn.title = S.selected.size
+        ? `고른 항목의 메타데이터+미디어를 ${btn.dataset.dir === "toLeft" ? "왼쪽" : "오른쪽"}으로 덮어씁니다(Plan)`
+        : "보낼 항목을 먼저 고르세요";
+    });
     // "Archive로"는 HERO의 메타데이터 보내기 아이콘으로 옮겨갔다(§4, §6) - 그
     // 버튼은 누를 때마다 scope를 새로 계산하는 플로팅 메뉴라서(openMetaTargetMenu),
     // 여기서 선택이 바뀔 때마다 따로 패치해 둘 상태가 없다.
@@ -3910,9 +3955,10 @@
     const win = $("list-window");
     if (!win) return;
     win.querySelectorAll("[data-rom-uid]").forEach((el) => {
-      const uid = Number(el.dataset.romUid);
-      el.classList.toggle("selected", S.selected.has(uid));
-      el.classList.toggle("focused", S.focused === uid);
+      // Compare의 열쇠는 문자열(system|file)이라 숫자로 바꾸면 NaN이 된다.
+      const key = isCompare() ? el.dataset.romUid : Number(el.dataset.romUid);
+      el.classList.toggle("selected", S.selected.has(key));
+      el.classList.toggle("focused", S.focused === key);
     });
   }
 
@@ -3944,8 +3990,11 @@
    */
   function compareRowElement(row, index) {
     const el = h("div", {
-      class: "lrow compare-row" + (S.focused === row.key ? " focused" : "") + " s-" + row.status,
-      "data-cmp-key": row.key,
+      class: "lrow compare-row" + (S.selected.has(row.key) ? " selected" : "")
+        + (S.focused === row.key ? " focused" : "") + " s-" + row.status,
+      // 일반 Gamelist와 **같은 열쇠 이름**을 쓴다 - 선택 표시(updateSelectionVisual)가
+      // 두 화면에서 같은 코드로 돌아간다.
+      "data-rom-uid": row.key, "data-cmp-key": row.key,
       style: { height: ROW_HEIGHT + "px", gridTemplateColumns: gridTemplate() },
     });
     // ROM이 없는 쪽은 비워 두어 두 줄이 같은 높이에서 마주 보게 한다 - 그래야 >와 <가
@@ -3971,20 +4020,22 @@
       dstTitle: side(row.rightFile, row.rightTitle, row.rightPresent, "dstTitle"),
     };
     visibleColumns().forEach((col) => el.appendChild(cells[col.id]));
-    el.addEventListener("click", () => openCompareDetail(row));
+    // Gamelist와 같은 선택 규칙(Ctrl 추가, Shift 범위). 그냥 누르면 한 개 선택 + 상세 열기다.
+    el.addEventListener("click", (e) => {
+      handleRowClick(e, row, index);
+      if (!e.shiftKey && !(e.ctrlKey || e.metaKey)) openCompareDetail(row);
+    });
     return el;
   }
 
   function rowElement(row, index) {
     if (isCompare()) return compareRowElement(row, index);
     const selected = S.selected.has(row.romUid);
-    // 삭제 예정 행은 Status 칸의 작은 기호 하나로만 알렸다 - 스크롤 중에는 그
-    // 기호가 화면 밖일 수도 있다(실사용 피드백 - "Gamelist에 빨간색으로 표시를
-    // 해서 이게 빠진다고 알려줌"). 행 전체를 옅게 물들여 어디서 봐도 알 수 있게 한다.
+    // **행 전체를 물들이지 않는다**(사용자 결정 - "plan은 전체 색이 아니라 no쪽에 + - 를 표시").
+    // 행 전체가 붉어지면 선택/포커스 색과 겹쳐서 지금 무엇을 고른 것인지 오히려 흐려진다.
     const mark = ((S.plan && S.plan.marks) || { rows: {} }).rows[`${row.system}|${row.file}`];
     const el = h("div", {
-      class: "lrow" + (selected ? " selected" : "") + (S.focused === row.romUid ? " focused" : "")
-        + (mark === "-" ? " row-pending-delete" : ""),
+      class: "lrow" + (selected ? " selected" : "") + (S.focused === row.romUid ? " focused" : ""),
       // 카드와 같은 열쇠. 선택이 바뀔 때 목록을 다시 짓지 않고 이 행만 고친다.
       "data-rom-uid": String(row.romUid),
       style: { height: ROW_HEIGHT + "px", gridTemplateColumns: gridTemplate() },
@@ -4125,6 +4176,10 @@
   const menuPoint = (event) => (event
     ? { x: event.clientX, y: event.clientY }
     : { x: window.innerWidth / 2, y: window.innerHeight / 3 });
+
+  /** 이 행의 선택 열쇠. **Compare는 romUid가 없다** - 한 행이 좌/우 두 항목의 짝이라
+   * 어느 쪽 romUid를 써도 한쪽에만 있는 행을 가리키지 못한다. `key`(system|file)가 그 자리를 맡는다. */
+  const rowKey = (row) => (row && row.key !== undefined ? row.key : row && row.romUid);
 
   function rowByUid(romUid) {
     for (const row of S.rowCache.values()) if (row && row.romUid === romUid) return row;
@@ -4268,16 +4323,18 @@
 
   /** 한 줄을 골라 보여준다 - 그냥 클릭한 것과 같다. */
   function focusRowAt(index, row) {
-    scrollToIndex(index, row.romUid);
-    S.selected = new Set([row.romUid]);
-    S.selectAnchor = row.romUid;
+    const key = rowKey(row);
+    scrollToIndex(index, key);
+    S.selected = new Set([key]);
+    S.selectAnchor = key;
     renderStatusBar();
+    if (isCompare()) { openCompareDetail(row); return; }
     openDetail(row);
   }
 
   /** ↑/↓ = 다음/이전 게임 선택(스크롤이 아니다). Shift를 누르면 기준점부터 범위로 넓힌다. */
   async function moveFocus(delta, extend) {
-    if (isCompare() || !S.total) return;
+    if (!S.total) return;
     const current = S.focused == null ? -1 : indexOfRow(S.focused);
     const next = current < 0 ? (delta > 0 ? 0 : S.total - 1)
       : Math.max(0, Math.min(S.total - 1, current + delta));
@@ -4291,10 +4348,10 @@
     S.selected.clear();
     for (let i = Math.max(0, lo); i <= hi; i++) {
       const r = S.rowCache.get(i);
-      if (r) S.selected.add(r.romUid);
+      if (r) S.selected.add(rowKey(r));
     }
-    S.focused = row.romUid;
-    scrollToIndex(next, row.romUid);
+    S.focused = rowKey(row);
+    scrollToIndex(next, rowKey(row));
     updateSelectionVisual();
     renderStatusBar();
   }
@@ -4302,10 +4359,10 @@
   /** 영문/숫자 키 = 그 글자로 시작하는 다음 파일로. 같은 키를 다시 누르면 그다음으로,
    * 끝까지 가면 처음부터 다시 찾는다(탐색기와 같다). */
   async function jumpToLetter(key) {
-    if (isCompare() || !S.total) return;
+    if (!S.total) return;
     const after = S.focused == null ? -1 : indexOfRow(S.focused);
     let index = -1;
-    if (isArchive()) {
+    if (isArchive() || isCompare()) {
       // Archive 목록은 백엔드 검색이 없다 - 받아 둔 줄에서 찾는다.
       const needle = key.toLowerCase();
       for (let k = 1; k <= S.total; k++) {
@@ -4325,7 +4382,16 @@
 
   /** Ctrl+A = 지금 목록(필터·정렬 그대로) 전체 선택. */
   async function selectAllRows() {
-    if (isCompare() || !S.total) return;
+    if (!S.total) return;
+    if (isCompare()) {
+      // 비교 결과는 시작 시점의 스냅샷이라 모두 메모리에 있다 - 한 번 더 물을 필요가 없다.
+      const rows = [...S.rowCache.values()].filter(Boolean);
+      S.selected = new Set(rows.map(rowKey));
+      updateSelectionVisual();
+      renderStatusBar();
+      showToast(`${formatCount(S.selected.size)}개를 선택했습니다.`);
+      return;
+    }
     if (isArchive()) { showToast("Archive에서는 전체 선택을 아직 지원하지 않습니다.", "warning"); return; }
     const r = await api.listUids(S.activeId, currentQuery());
     if (!r.ok) { showToast(r.error, "error"); return; }
@@ -4374,6 +4440,7 @@
    */
   function handleRowClick(event, row, index) {
     const additive = event.ctrlKey || event.metaKey;
+    const key = rowKey(row);
     if (event.shiftKey) {
       const anchor = S.selectAnchor;
       const anchorIndex = anchor == null ? -1 : indexOfRow(anchor);
@@ -4382,34 +4449,36 @@
         if (!additive) S.selected.clear();
         for (let i = lo; i <= hi; i++) {
           const r = S.rowCache.get(i);
-          if (r) S.selected.add(r.romUid);
+          if (r) S.selected.add(rowKey(r));
         }
       } else {
-        S.selected = new Set([row.romUid]);
-        S.selectAnchor = row.romUid;
+        S.selected = new Set([key]);
+        S.selectAnchor = key;
       }
+      S.focused = key;
       updateSelectionVisual();
       renderStatusBar();
       return;
     }
     if (additive) {
-      if (S.selected.has(row.romUid)) S.selected.delete(row.romUid);
-      else S.selected.add(row.romUid);
-      S.selectAnchor = row.romUid;
+      if (S.selected.has(key)) S.selected.delete(key);
+      else S.selected.add(key);
+      S.selectAnchor = key;
+      S.focused = key;
       updateSelectionVisual();
       renderStatusBar();
       return;
     }
-    S.selected = new Set([row.romUid]);
-    S.selectAnchor = row.romUid;
+    S.selected = new Set([key]);
+    S.selectAnchor = key;
     renderStatusBar();
     openDetail(row);
   }
 
   /** 캐시에 들어온 행 중에서 그 romUid의 위치. Shift 범위 선택의 기준점 계산용. */
-  function indexOfRow(romUid) {
+  function indexOfRow(key) {
     for (const [index, row] of S.rowCache.entries()) {
-      if (row && row.romUid === romUid) return index;
+      if (row && rowKey(row) === key) return index;
     }
     return -1;
   }
@@ -4576,15 +4645,43 @@
   // Compare Mode (스펙 §54-59)
   // ------------------------------------------------------------------
   async function runCompare(baseId, otherId) {
+    // **고른 것은 그대로 둔다**(사용자 피드백 - Swap/새로고침 뒤 선택이 사라졌다).
+    // 행의 열쇠는 (system|file)이라 좌우를 바꿔도 같은 행을 가리킨다.
+    const keptSelection = isCompare() ? new Set(S.selected) : null;
+    const keptFocus = isCompare() ? S.focused : null;
+    const keptFilter = isCompare() ? S.compareFilter : "all";
     const r = await api.startCompare(baseId, otherId);
     if (!r.ok) { showToast(r.error, "error"); return; }
     S.compare = r.data;
     S.compareBase = null;
-    S.compareFilter = "all";
-    // Compare는 Gamelist를 통째로 바꾼다. 이전 선택/상세는 다른 세계의 것이므로 버린다.
+    S.compareFilter = keptFilter;
     resetList();
     renderAll();
     await reloadList();
+    if (keptSelection && keptSelection.size) {
+      // 다시 비교한 결과에 남아 있는 행만 되살린다 - 사라진 행까지 고른 채로 두면
+      // 그 다음 동작이 없는 항목을 대상으로 삼는다.
+      const alive = new Set([...S.rowCache.values()].filter(Boolean).map((row) => row.key));
+      S.selected = new Set([...keptSelection].filter((key) => alive.has(key)));
+      S.focused = alive.has(keptFocus) ? keptFocus : null;
+      updateSelectionVisual();
+      renderStatusBar();
+      renderFilterBar();
+    }
+  }
+
+  /** 상단 `<` `>` - 고른 행들의 메타데이터+미디어를 반대쪽 Plan에 덮어쓰기로 올린다. */
+  async function compareSendSelected(direction) {
+    if (!S.selected.size) { showToast("보낼 항목을 먼저 고르세요.", "warning"); return; }
+    const r = await api.compareCopyRows([...S.selected], direction);
+    if (!r.ok) { showToast(r.error, "error"); return; }
+    const d = r.data || {};
+    [...S.selected].forEach((key) => S.comparePlanned.add(`${key}|${direction}`));
+    renderListWindow();
+    const failed = (d.skipped || []).length;
+    showToast(`${formatCount(d.added || 0)}개의 메타데이터+미디어를 ${d.targetName}의 Plan에 올렸습니다.`
+      + (failed ? ` (${formatCount(failed)}개 제외)` : "") + " 그 탭에서 Apply하세요.",
+      failed ? "warning" : "info");
   }
 
   async function exitCompare() {
@@ -5346,6 +5443,12 @@
       loadMediaImage(img, slot.key, false);
       zone.classList.add("clickable");
       zone.addEventListener("click", () => openMediaLightbox(img, slot.label));
+    } else if (slot === MEDIA_WIDE && media.Videos) {
+      // Screenshot이 없는데 영상은 있는 경우 - 깨진 그림 아이콘 대신 무엇을 기다리는지 말한다
+      // (사용자 결정 - "x 표시 대신 wait for video play ...").
+      preview.appendChild(h("div", { class: "media-video-wait" }, [
+        icon("play", IC.md), h("span", {}, ["영상 준비 중…"]),
+      ]));
     } else {
       // "… 없음"을 열두 번 적으면 그것만 눈에 들어온다. 아이콘 하나로 족하다.
       preview.appendChild(icon("imageOff", IC.lg));
@@ -5364,7 +5467,8 @@
     if (!state || state.compare) return;
     e.preventDefault();
     e.stopPropagation();
-    const pasteOk = !!mediaClip && state.archive;
+    // Archive든 Collection이든 붙여넣을 수 있다 - 가는 길만 다르다(Archive는 즉시, Collection은 Plan).
+    const pasteOk = !!mediaClip;
     showContextMenu(menuPoint(e), slot.label, mediaClip
       ? `복사해 둔 것: ${mediaClip.label} (${mediaClip.title})` : null, [
       { label: "미디어 복사", icon: "copy", disabled: !has, onSelect: () => {
@@ -5376,13 +5480,22 @@
         showToast(`${slot.label}을(를) 복사했습니다.`);
       } },
       { label: "미디어 붙여넣기", icon: "upload", disabled: !pasteOk,
-        title: !state.archive ? "Collection에는 Plan과 함께 지원합니다" : (mediaClip ? null : "복사한 미디어가 없습니다"),
+        title: mediaClip ? null : "복사한 미디어가 없습니다",
         onSelect: async () => {
-          const r = await api.archiveMediaPaste(state.romIdentityId, slot.key, mediaClip);
+          // Archive는 그 자리에서 바뀌고(파일을 복제하지 않는다), Collection은 바이트가 움직이므로
+          // Plan을 거친다(D1) - Apply를 눌러야 실제 파일이 바뀐다.
+          const r = state.archive
+            ? await api.archiveMediaPaste(state.romIdentityId, slot.key, mediaClip)
+            : await api.mediaPaste(S.activeId, state.romUid, slot.key, mediaClip);
           if (!r.ok) { showToast(r.error, "error"); return; }
-          state.media = { ...(state.media || {}), [slot.key]: true };
-          renderDetailPanel();
-          showToast(`${slot.label}을(를) 붙여넣었습니다.`);
+          if (state.archive) {
+            state.media = { ...(state.media || {}), [slot.key]: true };
+            renderDetailPanel();
+            showToast(`${slot.label}을(를) 붙여넣었습니다.`);
+            return;
+          }
+          await refreshPlan();
+          showToast(`${slot.label}을(를) Plan에 올렸습니다. Apply를 누르면 반영됩니다.`);
         } },
     ]);
   }
@@ -5437,6 +5550,10 @@
   // 대기 시간이 끝나기 전에 게임을 넘기면 URL을 요청하지도 않는다.
   let mediaVideo = null;   // 지금 Screenshot 자리에 붙어 있는 영상 하나 { zone, video, timer, playBtn }
 
+  /** 사용자가 영상을 멈춰 뒀는가(사용자 결정 - "한번 Pause 시 다른 게임으로 넘어가도 유지").
+   * 앱을 켜 둔 동안만 기억한다 - 설정이 아니라 지금의 기분에 가깝다. */
+  let mediaVideoPaused = false;
+
   function mediaVideoSettings() {
     return { ...DEFAULT_SETTINGS.media, ...((S.settings && S.settings.media) || {}) };
   }
@@ -5447,7 +5564,7 @@
     mediaVideo = null;
     clearTimeout(current.timer);
     const { zone, video } = current;
-    zone.classList.remove("video-playing", "video-loading");
+    zone.classList.remove("video-playing", "video-loading", "video-paused");
     if (current.playBtn) current.playBtn.remove();
     try { video.pause(); } catch (_) { /* 이미 떨어져 나간 요소 */ }
     const release = () => { video.removeAttribute("src"); try { video.load(); } catch (_) { /* 무시 */ } video.remove(); };
@@ -5465,6 +5582,8 @@
     video.setAttribute("playsinline", "");
     video.loop = settings.videoLoop !== false;
     video.muted = settings.videoSound === false;
+    // 음량은 Settings에서 정한다(사용자 결정). 0~100으로 받아 0~1로 쓴다.
+    video.volume = Math.min(1, Math.max(0, Number(settings.videoVolume ?? 70) / 100));
     zone.classList.add("has-video");
     zone.appendChild(video);
     const current = { zone, video, timer: null, playBtn: null };
@@ -5472,7 +5591,7 @@
 
     video.addEventListener("playing", () => {
       if (mediaVideo !== current) return;
-      zone.classList.remove("video-loading");
+      zone.classList.remove("video-loading", "video-paused");
       zone.classList.add("video-playing");
     });
     // 코덱을 못 읽거나 파일이 사라졌으면 조용히 Screenshot으로 둔다.
@@ -5485,6 +5604,8 @@
         : await api.getMediaVideoUrl(S.activeId, state.romUid);
       if (mediaVideo !== current) return;
       if (!r.ok || !r.data || !r.data.url) { stopMediaVideo(); return; }
+      // Screenshot이 없으면 이 자리에 깨진 그림 아이콘만 있었다 - 무엇을 기다리는지 말해 준다
+      // (사용자 결정 - "x 표시 대신 wait for video play ... 라고 출력된 후 video 재생").
       zone.classList.add("video-loading");
       video.src = r.data.url;
       try {
@@ -5497,18 +5618,34 @@
       }
     };
 
-    // 재생 중인 영상을 누르면 멈추고 Screenshot으로 돌아간다(확대 창을 열지 않는다).
+    // **누르면 멈추고, 다시 누르면 이어서 본다**(사용자 결정 - 예전에는 눌러서 끄면 Screenshot으로
+    // 돌아가 버렸다). 멈춘 것은 앱을 켜 둔 동안 기억해, 다른 게임으로 넘어가도 저절로 재생하지 않는다.
     zone.addEventListener("click", (e) => {
-      if (mediaVideo !== current || !zone.matches(".video-playing, .video-loading")) return;
+      if (mediaVideo !== current || !zone.matches(".video-playing, .video-loading, .video-paused")) return;
       e.stopImmediatePropagation();
       e.preventDefault();
-      stopMediaVideo({ fade: true });
-      if (settings.videoMode === "manual") setTimeout(() => { if (zone.isConnected && !mediaVideo) attachMediaVideo(zone, media); }, 420);
+      if (zone.classList.contains("video-paused")) {
+        mediaVideoPaused = false;
+        zone.classList.remove("video-paused");
+        video.play().catch(() => stopMediaVideo());
+        return;
+      }
+      mediaVideoPaused = true;
+      video.pause();
+      zone.classList.remove("video-playing", "video-loading");
+      zone.classList.add("video-paused");
     }, true);
 
-    if (settings.videoMode === "manual") {
+    // 멈춰 둔 상태이거나 "눌러서 재생"이면 재생 버튼을 놓는다 - 저절로 시작하지 않는다.
+    if (settings.videoMode === "manual" || mediaVideoPaused) {
       const btn = h("button", { class: "media-video-play", title: "영상 재생" }, [icon("play", IC.lg)]);
-      btn.addEventListener("click", (e) => { e.stopPropagation(); btn.remove(); current.playBtn = null; start(); });
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        mediaVideoPaused = false;
+        btn.remove();
+        current.playBtn = null;
+        start();
+      });
       zone.appendChild(btn);
       current.playBtn = btn;
     } else {
@@ -5557,38 +5694,53 @@
   //
   // 오른쪽 별표가 **Preferred Revision**이다. 골라 두면 Collection으로 보낼 때 그 판이
   // 먼저 쓰인다(Preferred -> Latest -> Older).
+  /** Archive 상세의 Revision 탭.
+   *
+   * **같은 내용은 한 줄로 묶는다**(실사용 피드백 - "우측 Revision에 여전히 동일 버젼이 같이
+   * 보인다"). 출처가 둘이어도 내용이 같으면 고를 이유가 없다 - 고를 것이 있을 때만 여러 줄이
+   * 나와야 그 선택이 뜻을 가진다. 묶는 규칙은 `[n]` 뱃지와 **같은 것**을 쓴다(app/archive/conflicts.py).
+   */
   function renderSourcesTab(body) {
     const state = S.detailState;
-    const sources = state.sources || [];
-    if (!sources.length) {
+    const versions = state.versions || [];
+    if (!versions.length) {
       body.appendChild(h("div", { class: "empty-msg" }, ["아직 수집된 Revision이 없습니다."]));
       return;
     }
+    if (versions.length === 1) {
+      body.appendChild(h("div", { class: "modal-hint revision-single" },
+        ["수집한 출처가 모두 같은 내용입니다 - 고를 것이 없습니다."]));
+    }
 
     const preferredId = state.preferredRecordId || null;
-    sources.forEach((source) => {
-      const chosen = source.recordId != null && source.recordId === preferredId;
+    const sourceName = (id) => (id === "__archive__" ? "Archive에서 직접 편집"
+      : (S.collections.find((c) => c.id === id) || {}).name || id);
+
+    versions.forEach((version, index) => {
+      const chosen = (version.recordIds || []).includes(preferredId);
       const box = h("div", { class: "revision-row" + (chosen ? " chosen" : "") });
 
       const main = h("div", { class: "revision-main" });
-      const fields = source.fields || {};
+      const fields = version.fields || {};
       main.appendChild(h("div", { class: "revision-title truncate" },
                           [fields.name || state.file || "(제목 없음)"]));
       main.appendChild(h("div", { class: "revision-desc" }, [fields.desc || "설명 없음"]));
-
-      const name = source.collectionId === "__archive__"
-        ? "Archive에서 직접 편집"
-        : (S.collections.find((c) => c.id === source.collectionId) || {}).name
-          || source.collectionId;
-      main.appendChild(h("div", { class: "revision-meta" }, [`${name} · rev ${source.revision}`]));
+      // 어느 Collection들에서 온 내용인지 - 여럿이면 그만큼이 같은 내용이라는 뜻이다.
+      const names = (version.sources || []).map(sourceName);
+      const media = Object.keys(version.media || {}).length
+        ? ` · ${Object.entries(version.media).map(([t, size]) => `${t} ${formatBytes(size)}`).join(", ")}`
+        : "";
+      main.appendChild(h("div", { class: "revision-meta" },
+        [`버전 ${index + 1} · ${names.join(", ")}${media}`]));
       box.appendChild(main);
 
       // 별표 하나로 "이 판을 쓴다"를 정한다. 다시 누르면 자동 선택(Latest)으로 돌아간다.
       const star = h("button", {
         class: "fav-btn" + (chosen ? " on" : ""),
-        title: chosen ? "선택 해제 (가장 최근 판을 씁니다)" : "이 Revision을 우선 사용",
+        title: chosen ? "선택 해제 (가장 최근 판을 씁니다)" : "이 버전을 우선 사용",
       }, [chosen ? "★" : "☆"]);
-      star.addEventListener("click", () => togglePreferredRevision(source, chosen));
+      star.addEventListener("click", () =>
+        togglePreferredRevision({ recordId: (version.recordIds || [])[0] }, chosen));
       box.appendChild(star);
 
       body.appendChild(box);
@@ -5602,10 +5754,19 @@
       ? await api.archiveClearPreferred(state.romIdentityId)
       : await api.archiveSetPreferred(state.romIdentityId, source.recordId);
     if (!r.ok) { showToast(r.error, "error"); return; }
-    state.preferredRecordId = chosen ? null : source.recordId;
+    // **다시 읽는다** - 고른 버전의 값과 그림이 실제로 화면에 반영되어야 한다(실사용 피드백 -
+    // "한 version을 선택해도 바뀌는 것이 없다"). 목록의 [n] 뱃지도 함께 사라진다.
+    const detail = await api.archiveDetail(state.romIdentityId);
+    if (detail.ok && S.detailState === state) {
+      S.detailState = { ...detail.data, tab: state.tab, archive: true, romUid: state.romUid };
+    } else {
+      state.preferredRecordId = chosen ? null : source.recordId;
+    }
+    delete S.matchCounts[state.romUid];
     renderDetailPanel();
-    showToast(chosen ? "우선 Revision을 해제했습니다. 가장 최근 판을 씁니다."
-                     : "이 Revision을 우선 사용합니다.");
+    renderListWindow();
+    showToast(chosen ? "우선 버전을 해제했습니다. 가장 최근 판을 씁니다."
+                     : "이 버전을 우선 사용합니다.");
   }
 
   function renderRomTab(body) {
@@ -5777,7 +5938,11 @@
   async function pasteClipboard() {
     if (blockedInCompare("붙여넣기")) return;
     if (isArchive()) { showToast("Archive에는 붙여넣을 수 없습니다 - \"Archive에 수집\"을 쓰세요.", "warning"); return; }
-    const r = await api.paste(S.activeId, currentPasteMode());
+    // 이 Collection에 없는 System이 섞여 있으면 **어디로 붙일지 먼저 묻는다**(사용자 결정).
+    // 묻지 않으면 `FBNEO ACT` 같은 이름이 ES-DE에 그대로 만들어져 Frontend가 못 읽는다.
+    const systemMap = await askPasteSystemMap();
+    if (systemMap === null) return;                       // 사용자가 취소했다
+    const r = await api.paste(S.activeId, currentPasteMode(), systemMap);
     if (!r.ok) { showToast(r.error, "error"); return; }
     const d = r.data;
     await refreshPlan();
@@ -5794,6 +5959,49 @@
     const why = left.length ? ` (${formatCount(left.length)}개 제외: ${left[0].reason})` : "";
     if (d.added) showToast(`Plan에 ${formatCount(d.added)}개를 추가했습니다.${why}`);
     else showToast(left.length ? `붙여넣을 내용이 없습니다 - ${left[0].reason}` : "붙여넣을 새 내용이 없습니다(전부 이미 있음).", "info");
+  }
+
+  /** 붙여넣기 전에 System 이름을 맞춘다. 반환: {원본:대상} 또는 취소면 null, 물을 것이 없으면 {}.
+   *
+   * Frontend마다 허용하는 System 이름이 다르다(사용자 피드백 - Pegasus의 `FBNEO ACT`는 ES-DE에 없다).
+   * 이 Collection에 없는 System만 묻는다 - 있는 것은 물을 이유가 없다. */
+  async function askPasteSystemMap() {
+    const info = await api.clipboardSystems(S.activeId);
+    if (!info.ok) return {};                              // 알 수 없으면 예전처럼 그대로 붙인다
+    const missing = (info.data.systems || []).filter((s) => !s.exists);
+    if (!missing.length) return {};
+    const targets = info.data.targetSystems || [];
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = (value) => { if (!settled) { settled = true; resolve(value); } };
+      const selects = missing.map((entry) => {
+        const select = h("select", { class: "field-input paste-system-select", "data-system": entry.system }, [
+          // 원본 이름 그대로 쓰면 그 이름의 System이 새로 생긴다.
+          h("option", { value: "" }, [`새 System으로 만들기 (${entry.system})`]),
+          ...targets.map((name) => h("option", { value: name }, [name.toUpperCase()])),
+        ]);
+        return { entry, select };
+      });
+      const body = h("div", { class: "modal-body paste-system-map" }, [
+        h("div", { class: "modal-text" }, [
+          `이 Collection에 없는 System이 ${formatCount(missing.length)}개 있습니다. 어디로 붙일지 고르세요.`]),
+        h("div", { class: "modal-hint" }, [
+          "Frontend마다 쓸 수 있는 System 이름이 다릅니다. 기존 System을 고르면 그 폴더로 들어갑니다."]),
+        ...selects.map(({ entry, select }) => h("div", { class: "paste-system-row" }, [
+          h("div", { class: "field-label" }, [`${entry.system} · ${formatCount(entry.count)}개`]),
+          select,
+        ])),
+      ]);
+      showModal("붙여넣을 System 고르기", body, [
+        h("button", { class: "btn", onClick: () => { closeModal(); done(null); } }, ["취소"]),
+        h("button", { class: "btn primary paste-system-ok", onClick: () => {
+          const map = {};
+          selects.forEach(({ entry, select }) => { if (select.value) map[entry.system] = select.value; });
+          closeModal();
+          done(map);
+        } }, ["붙여넣기"]),
+      ]);
+    });
   }
 
   //: 삭제할 수 있는 부분과 그 이름(사용자 결정 - 무엇이 지워지는지 메뉴에서 알 수 있어야 한다).
@@ -6067,6 +6275,8 @@
   }
 
   async function ingestToArchive() {
+    // 디렉토리를 정하기 전에는 보내지 않는다(사용자 피드백) - 그 자리에서 설정 창을 띄워 준다.
+    if (!(await ensureArchiveConfigured())) return;
     const scope = archiveScope();
     const label = archiveScopeLabel(scope);
     const started = await api.startArchiveIngest(S.activeId, scope);

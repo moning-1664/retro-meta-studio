@@ -147,17 +147,42 @@ body { font-size: var(--fs-body); }
   margin: 0 -7px; padding: 0 10px;
   border-bottom: 1px solid var(--border);
 }
-.nav-app-title { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; color: var(--app-title-fg); }
+.nav-app-title { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; }
 /* 사용자가 만든 카트리지 그림(라벨 안에 안드로메다 은하) - tools/make_branding.py.
-   두 줄짜리 제목과 같은 높이에 맞춘다. */
-.nav-app-icon { flex: none; height: calc(44px * var(--font-scale)); width: auto; }
-/* 제목은 글자가 아니라 그림이다 - 대문자 R/M/S와 i의 꼭지에 색이 들어가고 1px
-   외곽선이 둘러져 있어서 밝은 테마에서도 배경에 묻히지 않는다.
-   **원본 크기(138px)로 그린다** - 픽셀 아트는 정수배가 아닌 확대에서 계단이
-   흐려지므로, CSS가 늘리지 않게 그림을 쓸 크기에 맞춰 만들어 둔다. */
+   **제목+부제를 합친 높이에 맞춘다**(사용자 결정 - 아이콘이 너무 크면 안 된다). */
+.nav-app-icon { flex: none; height: calc(46px * var(--font-scale)); width: auto; }
+.nav-app-title-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+
+/* 제목은 **글자다**(사용자 결정) - 구워 둔 그림은 배율이 바뀔 때마다 열화됐다.
+   레트로 간판처럼 보이도록 폭이 좁고 두꺼운 서체에 자간을 주고, 밝은 테마에서도
+   배경에 묻히지 않게 **두꺼운 외곽선**을 두른다(paint-order로 외곽선을 글자 아래에 깐다 -
+   안 그러면 획이 외곽선에 먹힌다). */
 .nav-app-title-name {
-  display: block; width: calc(138px * var(--font-scale)); height: auto;
-  image-rendering: pixelated;
+  font-family: "Arial Narrow", "Franklin Gothic Medium", Tahoma, Impact, sans-serif;
+  font-weight: 800; font-size: calc(24px * var(--font-scale));
+  line-height: 1; letter-spacing: .02em; white-space: nowrap;
+  color: var(--app-title-ink);
+  -webkit-text-stroke: calc(2px * var(--font-scale)) var(--app-title-outline);
+  paint-order: stroke fill;
+  /* 흐림 없는 그림자 한 겹 - 오락실 간판처럼 글자가 한 칸 떠 보인다(레트로 느낌). */
+  text-shadow: calc(2px * var(--font-scale)) calc(2px * var(--font-scale)) 0 var(--app-title-shade);
+}
+.nav-app-title-name .apt-r { color: var(--app-title-red); }
+.nav-app-title-name .apt-m { color: var(--app-title-yellow); }
+.nav-app-title-name .apt-s { color: var(--app-title-green); }
+/* ı(꼭지 없는 i) 위에 네모 점을 따로 얹는다 - 서체 안의 점은 색을 줄 수 없다.
+   점도 글자와 같은 외곽선을 둘러(box-shadow) 같은 재질로 보이게 한다. */
+.apt-i { position: relative; display: inline-block; }
+.apt-i::after {
+  content: ""; position: absolute; left: 50%; top: .13em;
+  width: .21em; height: .21em; margin-left: -.105em;
+  background: var(--app-title-blue);
+  box-shadow: 0 0 0 calc(1.5px * var(--font-scale)) var(--app-title-outline);
+}
+.nav-app-subtitle {
+  color: var(--muted); font-size: calc(8.5px * var(--font-scale));
+  letter-spacing: .04em; line-height: 1.2; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
 }
 /* Navigator 최하단 고정 줄 - Dashboard + Settings(사용자 결정: 로고가 상단
    띠를 채우면서 톱니가 여기로 내려왔다). 띠 전체가 Navigator 폭과 맨 아래까지
@@ -740,9 +765,6 @@ body { font-size: var(--fs-body); }
 /* 삭제 예정 행 전체를 옅게 물들인다(실사용 피드백 - "Gamelist에 빨간색으로
    표시를 해서 이게 빠진다고 알려줌"). .selected보다 뒤에 와서 우선순위를
    가지면 안 된다 - 고른 상태가 더 급한 정보다. */
-.lrow.row-pending-delete { background: color-mix(in srgb, var(--danger) 10%, var(--list-bg)); }
-.lrow.row-pending-delete:hover { background: color-mix(in srgb, var(--danger) 16%, var(--list-bg)); }
-.lrow.row-pending-delete.selected { background: color-mix(in srgb, var(--danger) 20%, var(--list-selected)); }
 .lrow.placeholder { cursor: default; opacity: .5; }
 .lc {
   min-width: 0; display: flex; align-items: center; gap: 6px;
@@ -761,6 +783,8 @@ body { font-size: var(--fs-body); }
 .lc-no .lc-text { flex: 0 1 auto; text-align: right; }
 /* 추가/삭제 예정 행의 No. 자리(사용자 결정 - 숫자보다 여기서 바로 알아보는 게
    낫다). */
+/* Plan 예정 표시는 **No. 칸에만** 둔다(사용자 결정) - 추가는 노랑, 삭제는 빨강.
+   행 전체를 물들이면 선택/포커스 색과 겹쳐 무엇을 고른 것인지 흐려진다. */
 .lno-mark { display: inline-flex; }
 .lno-mark.add { color: var(--warning); }
 .lno-mark.del { color: var(--danger); }
@@ -1054,6 +1078,20 @@ body { font-size: var(--fs-body); }
   background: color-mix(in srgb, var(--chrome) 85%, transparent); color: var(--text);
 }
 .media-video-play:hover { color: var(--accent); border-color: var(--accent); }
+/* 멈춘 영상 - 마지막 화면을 그대로 두고 ||만 얹는다(사용자 결정 - "Pause 상태는 ||로 표시"). */
+.media-tile.video-paused .media-video { opacity: 1; }
+.media-tile.video-paused { cursor: pointer; }
+.media-tile.video-paused::after {
+  content: "\2016"; position: absolute; inset: 0; z-index: 3;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 30px; font-weight: 700; color: #fff;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, .75); pointer-events: none;
+}
+/* Screenshot 없이 영상만 있을 때 - 깨진 그림 아이콘 대신 기다리는 이유를 적는다. */
+.media-video-wait {
+  display: flex; align-items: center; gap: 5px;
+  color: var(--muted); font-size: var(--fs-eyebrow);
+}
 
 #toast {
   position: fixed; left: 50%; bottom: 56px; transform: translateX(-50%) translateY(12px);
@@ -1540,8 +1578,21 @@ button.sb-badge { cursor: pointer; }
   background: var(--card2); color: var(--muted); font-size: var(--fs-eyebrow); cursor: pointer;
 }
 .cmp-tool:hover { color: var(--text); }
+/* Swap/새로고침은 아이콘만이다(사용자 결정) - 정사각형으로 좁게 잡는다. */
+.cmp-tool.icon-only { width: 26px; padding: 0; justify-content: center; }
+/* 고른 항목을 좌/우로 덮어쓰는 버튼. 행 가운데의 > < 와 같은 뜻이라 같은 색을 쓴다. */
+.cmp-send {
+  width: 28px; height: 24px; border: 0; background: var(--card2); color: var(--info);
+  font-size: 14px; font-weight: 700; line-height: 1; cursor: pointer;
+}
+.cmp-send + .cmp-send { border-left: 1px solid var(--border); }
+.cmp-send:hover:not(:disabled) { background: color-mix(in srgb, var(--info) 22%, var(--card2)); }
+.cmp-send:disabled { color: var(--muted); opacity: .45; cursor: default; }
 /* Exit는 오른쪽 끝에 고정하고 눈에 띄게 빨갛게. 글자는 상자 안 가운데다. */
 .cmp-exit {
+  /* 오른쪽 끝에 고정한다(사용자 결정) - 앞의 .filter-spacer가 밀어 주지만, 창이 좁아
+     spacer가 줄어들어도 이 여백이 남아 버튼이 왼쪽으로 딸려오지 않게 한다. */
+  margin-left: auto;
   flex: none; display: inline-flex; align-items: center; justify-content: center;
   min-width: 92px; height: 24px; padding: 0 12px; border: 0; border-radius: var(--radius-sm);
   background: var(--danger); color: #fff; font-size: var(--fs-eyebrow); font-weight: 600; cursor: pointer;
@@ -1551,12 +1602,12 @@ button.sb-badge { cursor: pointer; }
 /* ---- 레이아웃: 좌/우 Detail은 297px보다 15% 좁은 252px, 늘어나는 것은 가운데 목록이다. ---- */
 #compare-left { display: none; }
 #center.compare-mode #compare-left {
-  display: flex; flex-direction: column; flex: 0 0 252px; width: 252px; min-width: 252px; max-width: 252px;
+  display: flex; flex-direction: column; flex: 0 0 214px; width: 214px; min-width: 214px; max-width: 214px;
   box-sizing: border-box; overflow: hidden; background: var(--chrome-sub); border-right: 1px solid var(--border);
 }
 #center.compare-mode #detail-panel,
 #center.compare-mode #detail-top {
-  flex-basis: 252px; width: 252px; min-width: 252px; max-width: 252px;
+  flex-basis: 214px; width: 214px; min-width: 214px; max-width: 214px;
 }
 #compare-left-inner { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 /* 가운데 목록은 창이 넓어지면 함께 넓어지고, 아주 넓으면 가운데에 모인다. */

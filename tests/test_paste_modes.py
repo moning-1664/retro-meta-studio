@@ -155,3 +155,65 @@ class PasteModeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PasteIntoAnotherSystemTests(unittest.TestCase):
+    """System 이름이 달라도 고른 System으로 붙여넣는다(사용자 결정 - Pegasus의 `FBNEO ACT` → ES-DE)."""
+
+    def setUp(self):
+        self.dir = temp_root("rms_sysmap_")
+        self.src_root = build_esde_tree(self.dir / "src")
+        # 원본에만 있는 System - ES-DE가 허용하지 않는 이름이라고 치자.
+        write_file(self.src_root / "fbneo act" / "1941.zip", b"r" * 40)
+        write_file(self.src_root / "gamelists" / "fbneo act" / "gamelist.xml",
+                   '<?xml version="1.0"?>\n<gameList><game><path>./1941.zip</path>'
+                   '<name>1941</name></game></gameList>')
+        self.dst_root = build_esde_tree(self.dir / "dst")
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.src = self.api.create_collection("S", "es-de", str(self.src_root))["data"]["id"]
+        self.dst = self.api.create_collection("D", "es-de", str(self.dst_root))["data"]["id"]
+        scan(self.api, self.src)
+        scan(self.api, self.dst)
+
+    def _copy_1941(self):
+        uid = next(r["romUid"] for r in self.api.list_rows(self.src, limit=99)["data"]["rows"]
+                   if r["file"] == "1941.zip")
+        self.api.copy_selection(self.src, [uid])
+
+    def _apply(self):
+        self.api.start_apply(self.dst)
+        wait_idle(self.api)
+
+    def test_it_reports_which_systems_the_target_lacks(self):
+        self._copy_1941()
+        data = self.api.clipboard_systems(self.dst)["data"]
+        entry = next(s for s in data["systems"] if s["system"] == "fbneo act")
+        self.assertFalse(entry["exists"])
+        self.assertEqual(entry["count"], 1)
+        self.assertIn("ps2", data["targetSystems"])
+
+    def test_pasting_with_a_map_puts_the_rom_in_the_chosen_system(self):
+        self._copy_1941()
+        result = self.api.paste(self.dst, "patch", {"fbneo act": "ps2"})
+        self.assertTrue(result["ok"], result.get("error"))
+        self._apply()
+        self.assertTrue((self.dst_root / "ps2" / "1941.zip").exists())
+        self.assertFalse((self.dst_root / "fbneo act").exists())
+        rows = {r["file"]: r for r in self.api.list_rows(self.dst, limit=99)["data"]["rows"]}
+        self.assertEqual(rows["1941.zip"]["system"], "ps2")
+
+    def test_without_a_map_the_original_name_is_kept(self):
+        self._copy_1941()
+        self.api.paste(self.dst, "patch")
+        self._apply()
+        self.assertTrue((self.dst_root / "fbneo act" / "1941.zip").exists())
+
+    def test_an_empty_choice_is_ignored(self):
+        self._copy_1941()
+        self.api.paste(self.dst, "patch", {"fbneo act": "  "})
+        self._apply()
+        self.assertTrue((self.dst_root / "fbneo act" / "1941.zip").exists())
+
+    def test_clipboard_systems_needs_something_copied(self):
+        self.assertFalse(self.api.clipboard_systems(self.dst)["ok"])

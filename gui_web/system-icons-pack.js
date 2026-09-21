@@ -61,6 +61,14 @@
         push(ALIASES[base]);
       }
     }
+    // **앞 이름으로도 찾는다**(사용자 결정 - "FBNEO xxxx, MAME xxxx도 앞에 이름을 기준으로 아이콘").
+    // `FBNEO ACT`는 FBNEO 중 액션만 모아 둔 폴더라 같은 기계다 - 정확한 이름이 없으면 앞 토막으로 찾는다.
+    // 정확한 이름을 먼저 넣었으므로 `mame2003.png`처럼 전체 이름 파일이 있으면 그쪽이 이긴다.
+    const head = raw.split(/[\s_\-.]+/).filter(Boolean)[0];
+    if (head && head !== key) {
+      push(head);
+      push(ALIASES[head]);
+    }
     return out;
   }
 

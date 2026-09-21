@@ -296,10 +296,15 @@ class ArchiveDirectoryTests(unittest.TestCase):
         self.api.start_archive_ingest(self.src, {"kind": "all"})
         wait_idle(self.api)
 
-    def test_unconfigured_archive_writes_nothing(self):
+    def test_ingest_is_refused_until_a_directory_is_chosen(self):
+        """사용자 피드백 - 디렉토리를 고르지도 않았는데 수집이 돌았다. 정하기 전에는 거절한다."""
         self.assertFalse(self.api.archive_config()["data"]["configured"])
-        self._ingest_all()
+        result = self.api.start_archive_ingest(self.src, {"kind": "all"})
+        self.assertFalse(result["ok"])
+        self.assertIn("디렉토리", result["error"])
+        wait_idle(self.api)
         self.assertFalse(self.archive_dir.exists())
+        self.assertEqual(self.api.archive_rows()["data"]["total"], 0)
 
     def test_ingest_writes_gamelist_and_media_into_configured_directory(self):
         configure(self.api, {"archiveDir": str(self.archive_dir)})
@@ -311,9 +316,12 @@ class ArchiveDirectoryTests(unittest.TestCase):
         self.assertTrue((self.archive_dir / "downloaded_media" / "ps2" / "covers" / "FFX.png").exists())
 
     def test_changing_directory_rewrites_everything_there(self):
+        first = self.dir / "FirstArchive"
+        configure(self.api, {"archiveDir": str(first)})
         self._ingest_all()
+        self.assertTrue((first / "gamelists" / "ps2" / "gamelist.xml").exists())
+        # 디렉토리를 바꾸면 이미 Archive에 있던 내용이 새 곳에 통째로 다시 나타난다.
         configure(self.api, {"archiveDir": str(self.archive_dir)})
-        # 이미 Archive에 있던 내용이 새 디렉토리에 통째로 나타난다.
         self.assertTrue((self.archive_dir / "gamelists" / "ps2" / "gamelist.xml").exists())
 
     def test_media_is_optional(self):
@@ -510,3 +518,103 @@ class ArchiveDirectoryRefreshTests(unittest.TestCase):
         result = self.api.archive_refresh()["data"]
         self.assertEqual((result["added"], result["romsLinked"]), (0, 1))
         self.assertTrue(self._rows()["Mario.sfc"]["present"])
+
+
+class ArchiveRevisionGroupingTests(unittest.TestCase):
+    """Revision 탭은 **같은 내용을 한 줄로 묶는다**(실사용 피드백 - "동일 버젼이 같이 보인다")."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_rev_"))
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        store = self.api.archive
+        game = store.ensure_game("Game", "game")
+        self.rid = store.ensure_rom_identity(game, "ps2", "game", filename="game.iso")
+        self.store = store
+
+    def tearDown(self):
+        self.api.close()
+
+    def _detail(self):
+        return self.api.archive_detail(self.rid)["data"]
+
+    def test_identical_sources_collapse_into_one_version(self):
+        self.store.put_record(self.rid, "a", {"name": "Game", "desc": "Same"}, {})
+        self.store.put_record(self.rid, "b", {"name": "Game", "desc": "Same"}, {})
+        detail = self._detail()
+        self.assertEqual(len(detail["sources"]), 2, "출처는 둘 그대로다")
+        self.assertEqual(len(detail["versions"]), 1, "내용이 같은데 버전이 둘로 나왔다")
+        self.assertEqual(sorted(detail["versions"][0]["sources"]), ["a", "b"])
+
+    def test_different_sources_stay_separate(self):
+        self.store.put_record(self.rid, "a", {"name": "Game", "desc": "One"}, {})
+        self.store.put_record(self.rid, "b", {"name": "Game", "desc": "Two"}, {})
+        self.assertEqual(len(self._detail()["versions"]), 2)
+
+    def test_choosing_a_version_changes_the_values_the_detail_reports(self):
+        """선택이 실제로 반영되어야 한다(실사용 피드백 - "선택해도 바뀌는 것이 없다")."""
+        self.store.put_record(self.rid, "a", {"name": "Game", "desc": "One"}, {})
+        self.store.put_record(self.rid, "b", {"name": "Game", "desc": "Two"}, {})
+        versions = self._detail()["versions"]
+        wanted = next(v for v in versions if v["fields"]["desc"] == "One")
+        self.api.archive_set_preferred(self.rid, wanted["recordIds"][0])
+        self.assertEqual(self._detail()["fields"]["desc"], "One")
+
+
+class CollectionMediaPasteTests(unittest.TestCase):
+    """Collection의 게임 한 개에 **그림 한 장만** 갈아 끼운다(사용자 결정 - "Media만 복붙하기")."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_cmpaste_"))
+        self.src_root = build_esde_tree(self.dir / "src")
+        self.dst_root = build_esde_tree(self.dir / "dst")
+        (self.dst_root / "downloaded_media" / "ps2" / "covers" / "FFX.png").write_bytes(b"OLD-COVER")
+        (self.src_root / "downloaded_media" / "ps2" / "covers" / "FFX.png").write_bytes(b"NEW-COVER!" * 3)
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.src = self.api.create_collection("S", "es-de", str(self.src_root))["data"]["id"]
+        self.dst = self.api.create_collection("D", "es-de", str(self.dst_root))["data"]["id"]
+        for cid in (self.src, self.dst):
+            self.api.start_scan(cid)
+            wait_idle(self.api)
+
+    def tearDown(self):
+        self.api.close()
+
+    def _uid(self, cid, filename):
+        return next(r["romUid"] for r in self.api.list_rows(cid, limit=50)["data"]["rows"]
+                    if r["file"] == filename)
+
+    def _paste(self):
+        return self.api.media_paste(self.dst, self._uid(self.dst, "FFX.iso"), "Covers",
+                                    {"kind": "collection", "id": self.src,
+                                     "uid": self._uid(self.src, "FFX.iso"), "key": "Covers"})
+
+    def test_it_goes_through_the_plan_and_only_applies_on_apply(self):
+        result = self._paste()
+        self.assertTrue(result["ok"], result.get("error"))
+        dest = self.dst_root / "downloaded_media" / "ps2" / "covers" / "FFX.png"
+        self.assertEqual(dest.read_bytes(), b"OLD-COVER", "Apply 전에 파일이 바뀌었다")
+        self.assertEqual(self.api.plan_state(self.dst)["data"]["added"], 1)
+        self.api.start_apply(self.dst)
+        wait_idle(self.api)
+        self.assertEqual(dest.read_bytes(), b"NEW-COVER!" * 3)
+
+    def test_other_media_and_the_rom_are_left_alone(self):
+        video = self.dst_root / "downloaded_media" / "ps2" / "videos" / "FFX.mp4"
+        rom_before = (self.dst_root / "ps2" / "FFX.iso").read_bytes()
+        video_before = video.read_bytes()
+        self._paste()
+        self.api.start_apply(self.dst)
+        wait_idle(self.api)
+        self.assertEqual(video.read_bytes(), video_before)
+        self.assertEqual((self.dst_root / "ps2" / "FFX.iso").read_bytes(), rom_before)
+
+    def test_it_does_not_ask_about_the_conflict_it_was_told_to_make(self):
+        result = self._paste()
+        self.assertEqual(result["data"]["conflicts"], 0)
+        self.assertEqual(self.api.plan_state(self.dst)["data"]["conflicts"], 0)
+
+    def test_a_missing_source_is_refused(self):
+        result = self.api.media_paste(self.dst, self._uid(self.dst, "FFX.iso"), "3DBoxes",
+                                      {"kind": "collection", "id": self.src,
+                                       "uid": self._uid(self.src, "FFX.iso"), "key": "3DBoxes"})
+        self.assertFalse(result["ok"])

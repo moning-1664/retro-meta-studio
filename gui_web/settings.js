@@ -251,7 +251,8 @@
         add(h("div", { class: "stg-subsection-title" }, ["GameList Columns"]));
         add(ctx.renderColumns ? ctx.renderColumns() :
           h("div", { class: "stg-info" }, ["컬럼 순서/표시 설정은 준비 중입니다."]));
-        const m = { videoMode: "auto", videoDelay: 3, videoSound: true, videoLoop: true, ...(s.media || {}) };
+        const m = { videoMode: "auto", videoDelay: 3, videoSound: true, videoLoop: true,
+                    videoVolume: 70, ...(s.media || {}) };
         add(h("div", { class: "stg-subsection-title" }, ["Video"]));
         add(row("media.videoMode", "영상 재생",
           select(m.videoMode, [["auto", "자동 재생"], ["manual", "눌러서 재생"], ["off", "재생 안 함"]],
@@ -262,6 +263,10 @@
             (v) => ctx.update("media", { videoDelay: Number(v) })),
           "게임을 고르고 이 시간만큼 그대로 두면 재생합니다. 그 전에 다른 게임으로 넘기면 재생하지 않습니다."));
         add(row("media.videoSound", "소리", toggle(m.videoSound, (v) => ctx.update("media", { videoSound: v }))));
+        add(row("media.videoVolume", "음량",
+          select(m.videoVolume, [[20, "20%"], [40, "40%"], [60, "60%"], [70, "70%"], [85, "85%"], [100, "100%"]],
+            (v) => ctx.update("media", { videoVolume: Number(v) })),
+          "소리를 켰을 때의 재생 음량입니다."));
         add(row("media.videoLoop", "반복 재생", toggle(m.videoLoop, (v) => ctx.update("media", { videoLoop: v }))));
         add(row("media.overwrite", "Media overwrite", soonSelect([["ask", "Always ask"], ["replace", "Replace"], ["keep", "Keep existing"]]), null, true));
         add(h("div", { class: "stg-subsection-title" }, ["Title Prefix/Postfix"]));

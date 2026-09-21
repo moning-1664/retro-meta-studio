@@ -16,6 +16,9 @@ const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => {
   await openApp(page);
+  // Archive는 저장할 디렉토리를 정한 뒤에만 수집한다(사용자 결정) - 여기서는 그 뒤의 범위 규칙을
+  // 보는 것이므로 이미 정해 둔 상태로 시작한다. 정하기 전의 거절은 archive-versions.spec.js가 본다.
+  await page.evaluate(() => window.api.saveArchiveConfig({ archiveDir: "D:\Archives" }));
   await page.exposeFunction("__ingest", (scope) => { page.__scopes.push(scope); });
   page.__scopes = [];
   await page.evaluate(() => {

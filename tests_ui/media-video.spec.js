@@ -45,15 +45,59 @@ test("첫 프레임이 나오기 전에는 보이지 않고, 나온 뒤에 서�
   await expect(page.locator(".media-tile.wide")).toHaveClass(/video-playing/);
 });
 
-test("재생 중에 누르면 멈추고 Screenshot으로 돌아간다 - 확대 창은 열지 않는다", async ({ page }) => {
+// 사용자 결정 - "Pause 상태는 ||로 표시 / 한번 Pause 시 다른 게임으로 넘어가도 유지".
+test("재생 중에 누르면 멈추고 ||를 보여준다 - 확대 창은 열지 않는다", async ({ page }) => {
   await openMediaOf(page, "FFX.iso");
   await page.clock.runFor(3200);
   await video(page).evaluate((v) => v.dispatchEvent(new Event("playing")));
   await page.locator(".media-tile.wide").click();
-  await expect(page.locator(".media-tile.wide")).not.toHaveClass(/video-playing/);
-  await page.clock.runFor(500);
-  await expect(video(page)).toHaveCount(0);
+  const tile = page.locator(".media-tile.wide");
+  await expect(tile).not.toHaveClass(/video-playing/);
+  await expect(tile).toHaveClass(/video-paused/);
+  // 마지막 화면을 그대로 두고 || 표시만 얹는다 - 영상을 떼어내지 않는다.
+  await expect(video(page)).toHaveCount(1);
+  expect(await tile.evaluate((el) => getComputedStyle(el, "::after").content)).toContain("\u2016");
   await expect(page.locator(".lightbox-img")).toHaveCount(0);
+});
+
+test("멈춘 영상을 다시 누르면 이어서 본다", async ({ page }) => {
+  await openMediaOf(page, "FFX.iso");
+  await page.clock.runFor(3200);
+  await video(page).evaluate((v) => v.dispatchEvent(new Event("playing")));
+  await page.locator(".media-tile.wide").click();
+  await expect(page.locator(".media-tile.wide")).toHaveClass(/video-paused/);
+  await page.locator(".media-tile.wide").click();
+  await expect(page.locator(".media-tile.wide")).not.toHaveClass(/video-paused/);
+});
+
+test("한 번 멈추면 다른 게임으로 넘어가도 저절로 재생하지 않는다", async ({ page }) => {
+  await openMediaOf(page, "FFX.iso");
+  await page.clock.runFor(3200);
+  await video(page).evaluate((v) => v.dispatchEvent(new Event("playing")));
+  await page.locator(".media-tile.wide").click();                 // 멈춤
+  await expect(page.locator(".media-tile.wide")).toHaveClass(/video-paused/);
+
+  await page.evaluate(() => {
+    window.__videoCalls = 0;
+    const original = window.api.getMediaVideoUrl;
+    window.api.getMediaVideoUrl = (...args) => { window.__videoCalls += 1; return original(...args); };
+  });
+  await page.locator(".lrow", { hasText: "MGS2.iso" }).locator(".lc-file").click();
+  await openMediaOf(page, "FFX.iso");
+  await page.clock.runFor(9000);
+  // 자동 재생 대신 재생 버튼이 선다 - 사용자가 멈춰 둔 상태이기 때문이다.
+  expect(await page.evaluate(() => window.__videoCalls)).toBe(0);
+  await expect(page.locator(".media-video-play")).toBeVisible();
+});
+
+test("음량은 Settings에서 정한 값으로 시작한다", async ({ page }) => {
+  // 설정은 앱이 시작할 때 한 번 읽는다 - 미리 넣어 두고 다시 연다(__RMS_MOCK_APP_SETTINGS).
+  await page.addInitScript(() => { window.__RMS_MOCK_APP_SETTINGS = { media: { videoVolume: 40 } }; });
+  await openApp(page);
+  await page.clock.install();
+  await openMediaOf(page, "FFX.iso");
+  await page.clock.runFor(3200);
+  expect(await video(page).evaluate((v) => v.volume)).toBeCloseTo(0.4, 2);
 });
 
 test("3초 전에 다른 게임으로 넘기면 영상을 요청하지 않는다", async ({ page }) => {

@@ -115,3 +115,84 @@ test.describe("붙여넣기 모드", () => {
     await expect(page.locator("#toast")).toContainText("채울 것이 없습니다");
   });
 });
+
+// 사용자 결정 - "system을 선택해서 붙여넣으면 system 이름이 달라도 붙여넣기 허용".
+test.describe("없는 System으로 붙여넣기", () => {
+  // 목업 기본은 "대상에 다 있다"(묻지 않는다) - 여기서만 없는 System을 섞어 둔다.
+  test.beforeEach(async ({ page }) => {
+    await page.evaluate(() => {
+      window.api.clipboardSystems = async () => ({ ok: true, data: {
+        systems: [{ system: "ps2", count: 2, exists: true },
+                  { system: "fbneo act", count: 1, exists: false }],
+        targetSystems: ["gba", "ps2", "snes"] } });
+    });
+  });
+
+  test("이 Collection에 없는 System만 물어본다", async ({ page }) => {
+    await page.locator(".lrow").first().click();
+    await page.keyboard.press("Control+c");
+    await page.keyboard.press("Control+v");
+    await expect(page.locator(".modal-title")).toHaveText("붙여넣을 System 고르기");
+    // 목업 클립보드에는 ps2(있음)와 "fbneo act"(없음)가 있다 - 없는 것만 묻는다.
+    const rows = page.locator(".paste-system-row");
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText("fbneo act");
+  });
+
+  test("고른 System이 붙여넣기에 그대로 전달된다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.__pasted = [];
+      const original = window.api.paste;
+      window.api.paste = (id, mode, map) => { window.__pasted.push({ mode, map }); return original(id, mode, map); };
+    });
+    await page.locator(".lrow").first().click();
+    await page.keyboard.press("Control+c");
+    await page.keyboard.press("Control+v");
+    await page.locator(".paste-system-select").selectOption("snes");
+    await page.locator(".paste-system-ok").click();
+    await expect.poll(() => page.evaluate(() => window.__pasted.length)).toBe(1);
+    const sent = (await page.evaluate(() => window.__pasted))[0];
+    expect(sent.map).toEqual({ "fbneo act": "snes" });
+  });
+
+  test("취소하면 붙여넣지 않는다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.__pasted = 0;
+      const original = window.api.paste;
+      window.api.paste = (...args) => { window.__pasted += 1; return original(...args); };
+    });
+    await page.locator(".lrow").first().click();
+    await page.keyboard.press("Control+c");
+    await page.keyboard.press("Control+v");
+    await page.locator(".modal-actions .btn", { hasText: "취소" }).click();
+    await expect(page.locator(".modal-title")).toHaveCount(0);
+    expect(await page.evaluate(() => window.__pasted)).toBe(0);
+  });
+
+  test("새 System으로 만들기를 고르면 이름을 바꾸지 않는다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.__pasted = [];
+      const original = window.api.paste;
+      window.api.paste = (id, mode, map) => { window.__pasted.push(map); return original(id, mode, map); };
+    });
+    await page.locator(".lrow").first().click();
+    await page.keyboard.press("Control+c");
+    await page.keyboard.press("Control+v");
+    await page.locator(".paste-system-ok").click();          // 기본값 = 새 System으로 만들기
+    await expect.poll(() => page.evaluate(() => window.__pasted.length)).toBe(1);
+    expect((await page.evaluate(() => window.__pasted))[0]).toEqual({});
+  });
+});
+
+// 사용자 결정 - "FBNEO xxxx, MAME xxxx도 앞에 이름을 기준으로 아이콘 추가".
+test("System 이름이 'FBNEO ACT'처럼 길어도 앞 이름으로 아이콘을 찾는다", async ({ page }) => {
+  const found = await page.evaluate(() => ({
+    act: window.RMSystemIconPack.candidates("FBNEO ACT"),
+    mame: window.RMSystemIconPack.candidates("MAME 2003"),
+    plain: window.RMSystemIconPack.candidates("snes"),
+  }));
+  expect(found.act).toContain("fbneo");
+  expect(found.mame[0]).toBe("mame2003");     // 전체 이름 파일이 있으면 그쪽이 먼저다
+  expect(found.mame).toContain("mame");
+  expect(found.plain).toEqual(["snes"]);
+});
