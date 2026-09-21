@@ -96,7 +96,8 @@ def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=No
             rom_identity_id = archive.ensure_rom_identity(
                 game_id, row["system"], normalize_title(Path(row["filename"]).stem),
                 filename=row["filename"], size=row["size"] or None,
-                sha256=row["sha256"], region=(row["fields"] or {}).get("region") or None)
+                sha256=row["sha256"], region=(row["fields"] or {}).get("region") or None,
+                title=title)
 
         identity_ids.append(rom_identity_id)
         kwargs = {"retention": retention} if retention else {}

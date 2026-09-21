@@ -84,7 +84,9 @@ def sync_from_directory(archive, config, provider) -> dict:
             game_id = archive.ensure_game(title, normalize_title(title))
             rid = archive.ensure_rom_identity(
                 game_id, system, normalize_title(Path(filename).stem), filename=filename,
-                size=_size(provider, rom_path) if rom_path else None)
+                size=_size(provider, rom_path) if rom_path else None,
+                # gamelist에서 읽은 제목만 진짜다 - ROM만 있는 항목의 제목은 파일명이라 넘기지 않는다.
+                title=(fields.get("name") or "").strip() or None)
             if entry is not None:
                 archive.put_record(rid, DIRECTORY_SOURCE, fields, entry.frontend_raw)
             else:

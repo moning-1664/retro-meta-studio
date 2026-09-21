@@ -234,20 +234,25 @@ class ArchiveStore:
         return game_id
 
     def ensure_rom_identity(self, game_id, system, filename_norm, *, filename="",
-                            size=None, sha256=None, region=None, disc_info=None) -> str:
+                            size=None, sha256=None, region=None, disc_info=None, title=None) -> str:
         """이 ROM의 Identity를 찾거나 만든다.
 
-        식별 키는 `rom_key`(파일명 stem을 대소문자/공백만 정리한 값)다. filename_norm은
-        괄호 안 정보를 버리므로 "Game (USA)"와 "Game (Europe)"이 같아져 서로 다른 ROM이
-        한 Identity로 합쳐진다 - §46이 금지하는 바로 그 상황이다. 두 변종은 같은
-        `game_id` 아래 **서로 다른** rom_identity로 남아야 하고, 그 둘을 잇는 것은
-        Match 엔진(Phase 5)의 일이다.
+        식별 키는 **(system, rom_key)뿐이다.** rom_key는 파일명 stem을 대소문자/공백만 정리한
+        값이라 "Game (USA)"와 "Game (Europe)"은 그대로 갈린다(§46) - 변종을 가르는 일은 이 키가
+        이미 한다.
+
+        **game_id는 키에 넣지 않는다.** 제목에서 나오는 값이라, 같은 ROM인데도 들어온 경로에 따라
+        제목이 달라지면 Identity가 둘로 갈렸다(실사용 피드백 - ROM만 있는 폴더를 먼저 읽어
+        "1941"로 잡아 두고, 나중에 메타데이터를 가져오면 "1941 (World)"라 또 하나가 생겼다).
+        한 System 안에서 같은 파일명은 같은 ROM이므로 키도 그것이면 충분하다.
         """
         key = rom_key_of(filename or filename_norm)
         row = self._conn.execute(
-            "SELECT rom_identity_id FROM rom_identities WHERE system=? AND rom_key=? AND game_id=?",
-            (system, key, game_id)).fetchone()
+            "SELECT rom_identity_id, game_id, filename, size, sha256, region"
+            " FROM rom_identities WHERE system=? AND rom_key=?", (system, key)).fetchone()
         if row:
+            self._merge_into_identity(row, game_id, size=size, sha256=sha256, region=region,
+                                      title=title)
             return row["rom_identity_id"]
         rid = uuid.uuid4().hex
         with transaction(self._conn):
@@ -257,6 +262,49 @@ class ArchiveStore:
                 (rid, game_id, system, filename_norm, filename or filename_norm,
                  size, sha256, region, disc_info, key))
         return rid
+
+    def _merge_into_identity(self, row, game_id, *, size=None, sha256=None, region=None,
+                             title=None) -> None:
+        """이미 있는 Identity에 이번에 알게 된 것을 채운다. **덮어쓰지 않고 빈 칸만 메운다.**
+
+        Game 연결은 지금 걸린 제목이 **파일명에서 나온 임시 제목일 때만** 바꾼다 - ROM만 읽어
+        만들어 둔 Identity가 나중에 진짜 제목을 얻으면 그쪽으로 옮겨 가야 하고, 반대로 진짜
+        제목이 이미 걸려 있는데 나중에 들어온 파일명 제목이 그것을 밀어내면 안 된다.
+
+        `title`(이번에 알게 된 제목)도 같은 규칙으로 쓴다. `ensure_game()`은 **정규화한 제목**으로
+        찾기 때문에 "1941"과 "1941 (World)"는 같은 Game에 걸린다 - 그래서 game_id는 그대로인데
+        보여 줄 제목만 파일명인 채로 남는 일이 생긴다. 임시 제목일 때만 진짜 제목으로 바꾼다.
+        """
+        updates, params = [], []
+        for column, value in (("size", size), ("sha256", sha256), ("region", region)):
+            if value not in (None, "") and not row[column]:
+                updates.append(f"{column}=?")
+                params.append(value)
+        placeholder = self._is_placeholder_game(row)
+        if game_id and game_id != row["game_id"] and placeholder:
+            updates.append("game_id=?")
+            params.append(game_id)
+        # 같은 Game에 걸려 있는데 보여 줄 제목만 파일명인 경우 - 제목을 올려 준다.
+        better_title = (title or "").strip()
+        if better_title and placeholder and game_id == row["game_id"]:
+            with transaction(self._conn):
+                self._conn.execute("UPDATE games SET title=? WHERE game_id=?",
+                                   (better_title, row["game_id"]))
+        if not updates:
+            return
+        with transaction(self._conn):
+            self._conn.execute(f"UPDATE rom_identities SET {','.join(updates)}"
+                               " WHERE rom_identity_id=?", (*params, row["rom_identity_id"]))
+
+    def _is_placeholder_game(self, row) -> bool:
+        """지금 걸린 Game 제목이 파일명에서 나온 것인가(= 아직 진짜 제목을 모른다)."""
+        game = self._conn.execute("SELECT title FROM games WHERE game_id=?",
+                                  (row["game_id"],)).fetchone()
+        if game is None:
+            return True
+        stem = str(row["filename"] or "")
+        stem = stem[:stem.rfind(".")] if "." in stem else stem
+        return str(game["title"] or "").strip().lower() == stem.strip().lower()
 
     def get_identity(self, rom_identity_id) -> dict | None:
         row = self._conn.execute(

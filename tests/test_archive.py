@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from bridge.api import Api
-from tests.fixtures import build_esde_tree, wait_idle
+from tests.fixtures import build_custom_esde_tree, build_esde_tree, wait_idle
 
 
 def configure(api, patch):
@@ -655,3 +655,74 @@ class ArchiveConflictsOnlyFilterTests(unittest.TestCase):
 
     def test_the_filter_combines_with_a_system_filter(self):
         self.assertEqual(self._files(conflicts_only=True, systems=["snes"]), ([], 0))
+
+
+class ArchiveIdentityMergeTests(unittest.TestCase):
+    """같은 ROM은 들어온 경로가 달라도 **하나의 Identity**다.
+
+    실사용 피드백 - ROM만 있는 폴더를 먼저 읽어 "1941"로 잡아 두고 나중에 메타데이터를
+    가져오면, 제목이 달라서("1941 (World)") Identity가 둘로 갈렸다.
+    """
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_merge_"))
+        self.archive_dir = self.dir / "Archives"
+        self.rom_dir = self.dir / "ArchiveRoms"
+        (self.rom_dir / "fbneo").mkdir(parents=True)
+        (self.rom_dir / "fbneo" / "1941.zip").write_bytes(b"rom" * 10)
+
+        # 메타데이터를 가진 Collection - 같은 파일명이지만 제목이 다르다.
+        self.source = build_custom_esde_tree(self.dir / "src", "fbneo", [
+            {"filename": "1941.zip", "title": "1941 (World)", "genre": "Shooter"}])
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.src = self.api.create_collection("S", "es-de", str(self.source))["data"]["id"]
+        self.api.start_scan(self.src)
+        wait_idle(self.api)
+        configure(self.api, {"archiveDir": str(self.archive_dir), "romDir": str(self.rom_dir)})
+
+    def tearDown(self):
+        self.api.close()
+
+    def _ingest(self):
+        self.api.start_archive_ingest(self.src, {"kind": "all"})
+        wait_idle(self.api)
+
+    def _rows(self):
+        return self.api.archive_rows()["data"]["rows"]
+
+    def test_rom_first_then_metadata_stays_one_row(self):
+        self.api.archive_refresh()                      # ROM만 읽는다 - 제목은 파일명이다
+        self.assertEqual(len(self._rows()), 1)
+        self._ingest()                                  # 그 뒤 진짜 메타데이터가 들어온다
+        rows = self._rows()
+        self.assertEqual(len(rows), 1, "같은 ROM인데 두 줄로 갈렸다")
+        self.assertEqual(rows[0]["title"], "1941 (World)", "진짜 제목으로 올라오지 않았다")
+        self.assertTrue(rows[0]["present"], "ROM 연결이 끊겼다")
+
+    def test_metadata_first_then_rom_keeps_the_real_title(self):
+        self._ingest()
+        self.api.archive_refresh()                      # 나중에 읽은 파일명이 제목을 밀어내면 안 된다
+        rows = self._rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["title"], "1941 (World)")
+        self.assertTrue(rows[0]["present"])
+
+    def test_the_merged_row_keeps_the_metadata(self):
+        self.api.archive_refresh()
+        self._ingest()
+        rid = self._rows()[0]["romIdentityId"]
+        self.assertEqual(self.api.archive_detail(rid)["data"]["fields"].get("genre"), "Shooter")
+
+    def test_merging_does_not_invent_a_version_conflict(self):
+        """한쪽이 비어 있는 것은 충돌이 아니라 채워 주는 같은 버전이다."""
+        self.api.archive_refresh()
+        self._ingest()
+        self.assertEqual(self.api.archive_conflicts()["data"], {})
+
+    def test_different_variants_stay_apart(self):
+        """(USA)와 (Europe)는 rom_key가 달라 그대로 갈린다(§46)."""
+        store = self.api.archive
+        game = store.ensure_game("Game", "game")
+        usa = store.ensure_rom_identity(game, "ps2", "game", filename="Game (USA).iso")
+        eur = store.ensure_rom_identity(game, "ps2", "game", filename="Game (Europe).iso")
+        self.assertNotEqual(usa, eur)

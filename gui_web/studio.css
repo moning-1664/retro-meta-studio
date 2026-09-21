@@ -177,7 +177,10 @@ body { font-size: var(--fs-body); }
   /* 가운데 네 칸을 기준으로 잡되, 조금 넘치는 만큼은 **비워 둔 오른쪽 한 칸**이 받아 준다
      (사용자 결정 - 그 칸은 여백이다). Navigator 밖으로는 나가지 않는다. */
   font-weight: 800; font-size: calc(15px * var(--font-scale));
-  line-height: 1.15; letter-spacing: .01em; white-space: nowrap;
+  /* 글자를 위아래로 20% 늘린다(사용자 결정 - "납작해 보인다"). 폭은 그대로 둬야 네 칸 안에
+     들어가므로 크기 대신 scaleY로 늘린다 - 레트로 간판 글자의 세로로 긴 비례이기도 하다. */
+  transform: scaleY(1.2); transform-origin: left center;
+  line-height: 1.32; letter-spacing: .01em; white-space: nowrap;
   color: var(--app-title-ink);
   -webkit-text-stroke: calc(1.3px * var(--font-scale)) var(--app-title-outline);
   paint-order: stroke fill;
@@ -1370,6 +1373,17 @@ button.sb-badge { cursor: pointer; }
 }
 /* Settings > Emulator - 경로 두 줄 + System별 Core 표 */
 .stg-path { display: flex; gap: 6px; align-items: center; flex: none; width: 380px; }
+/* Archive 설정은 Settings 패널(넓다)과 **모달**(좁다) 두 곳에서 같은 편집기를 쓴다.
+   모달에서는 `.stg-path`의 고정 폭(380px)이 라벨 칸을 0에 가깝게 밀어 글자가 한 자씩 세로로
+   쪼개졌다(실사용 스크린샷) - 좁은 곳에서는 라벨을 위, 컨트롤을 아래로 쌓는다. */
+.archive-settings .stg-row {
+  flex-direction: column; align-items: stretch; justify-content: flex-start;
+  gap: 6px; min-height: 0;
+}
+.archive-settings .stg-path { width: auto; flex: 1 1 auto; min-width: 0; }
+.archive-settings .stg-control { width: 100%; box-sizing: border-box; }
+.archive-settings .stg-toggle-row { justify-content: flex-start; }
+.archive-settings .stg-help { margin-top: 0; }
 .stg-path .stg-text { flex: 1; width: auto; min-width: 0; }
 .stg-path .btn { flex: none; white-space: nowrap; }
 /* System별 기본 Core - 패널 전체 폭(680px)까지 늘어지지 않게 폭을 고정 열로 묶는다
