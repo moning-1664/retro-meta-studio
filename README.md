@@ -1,128 +1,524 @@
 # RetroMeta Studio
 
-여러 Retro Game Frontend(ES-DE, Pegasus, LaunchBox, EmulationStation)의 게임 목록·
-메타데이터·ROM·Media를 하나의 작업 공간에서 관리하고 변환하는 Windows 데스크톱
-애플리케이션.
+Retro game ROM, metadata, media, and frontend collection management workspace for Windows.
 
-[RetroGameManager](https://github.com/moning-1664/RetroGameManager)에서 코드를 가져와
-시작했다. 기존 프로젝트는 모든 Import/Export가 중앙 MasterDB를 거치는 구조였는데,
-그 구조 자체의 사용성 문제를 해결하기 위해 상위 아키텍처를 다시 설계한다.
+RetroMeta Studio is designed around a practical problem: the same ROM collection may need to be maintained in several frontend formats, while metadata, media, ROM locations, and storage devices change independently.
 
-핵심 개념은 넷을 명확히 분리하는 것이다.
+Instead of treating one frontend format as the application's database, RetroMeta Studio provides a workspace for:
 
-| 개념 | 역할 |
+- registering and scanning ROM collections
+- reading and writing frontend-specific metadata
+- matching equivalent games across collections
+- comparing two collections
+- collecting and resolving metadata through Archive
+- preparing file changes as Plans before applying them
+- copying, moving, deleting, and pasting files through a controlled file-operation layer
+- converting metadata between supported frontend formats
+- working with local, UNC, and device-backed storage
+- launching games through RetroArch
+- maintaining media and title data
+
+The project started from [RetroGameManager](https://github.com/moning-1664/RetroGameManager), but the current architecture has been substantially redesigned as RetroMeta Studio.
+
+> **Current version: 0.4.1.6**
+
+## Project direction
+
+The central idea is to separate **game collection data**, **frontend representation**, **comparison/matching**, and **file operations** instead of making a single frontend database responsible for everything.
+
+The important concepts are:
+
+| Concept | Role |
 |---|---|
-| **Collection** | 실제 Frontend 환경을 나타내는 논리적 게임 라이브러리. 작업의 기본 단위 |
-| **Archive** | 여러 Collection에서 수집한 Metadata/Identity 보관소. Canonical DB가 **아니다** |
-| **Cache** | 파일시스템 Scan 결과. 언제든 버리고 다시 만들 수 있다 |
-| **Plan** | 실제 파일을 바꾸기 전에 변경 결과를 미리 계산한 집합 |
+| **Collection** | A logical ROM/frontend library registered in the application |
+| **Archive** | A separate area for collecting metadata/identity information from collections |
+| **Compare** | Side-by-side analysis of two collections, including matches and differences |
+| **Match** | Identification of equivalent games across collections |
+| **Plan** | A calculated set of file changes that can be reviewed before Apply |
+| **Adapter** | Frontend-specific reader/writer and format conversion layer |
+| **Storage** | Abstraction for where ROMs and media physically reside |
 
-설계 문서: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+The architecture is intentionally not tied to one frontend. ES-DE is an important target, but it is not the application's master format.
 
-## 현재 상태
+## Main workflow
 
-**Phase 7까지 완료.** `python main.py`로 실행된다. Collection 등록·스캔·탐색·메타데이터
-편집, Plan을 통한 복사/삭제/Storage 이동(인스턴스 간 복사 포함), 그리고 여러 Collection의
-Metadata를 출처와 함께 모으는 Archive, 그리고 이름이 어긋난 항목을 사람이 이어주는
-Match까지 동작한다.
+A typical workflow is:
 
-| Phase | 내용 | 상태 |
-|---|---|---|
-| 0 | 저장소 스키마·마이그레이션, 다중 인스턴스 기반, Provider/Adapter 인터페이스, 레거시 정리 | 완료 |
-| 1 | Core Model + ES-DE Adapter + Cache 스캔 | 완료 |
-| 2 | Collection UI (탭/헤더/내비/Gamelist) + 기존 Detail 패널 연결 | 완료 |
-| 3 | Plan (Auto Plan·용량 계산·Apply·인스턴스 간 복사/붙여넣기) | 완료 |
-| 4 | Archive (Source Tracking·Revision·Archive→Collection) | 완료 |
-| 5 | Match (Exact → Normalized → Heuristic 후보 UI) | 완료 |
-| 6 | Compare Mode (Same/Only A/Only B/Conflict + 좌우 Detail 비교) | 완료 |
-| 7 | 나머지 Frontend Adapter(Pegasus/LaunchBox/EmulationStation) + Round-trip 검증 + ES-DE custom systems XML | 완료 |
-| 8 | MTP Provider (선택) | 필요성 재평가 후 |
+1. Register a Collection and its storage/system locations.
+2. Scan the filesystem and build/update the Collection cache.
+3. Read frontend metadata and media through the appropriate Adapter.
+4. Review games and metadata in the web UI.
+5. Use Match when the same game appears under different names.
+6. Use Compare to inspect two collections side by side.
+7. Use Archive when metadata/identity information needs to be collected or revised independently of a Collection.
+8. Build a Plan for copy, paste, move, delete, or other file changes.
+9. Review the Plan.
+10. Apply the Plan through the file-operation layer.
+11. Export/write the result through the target Frontend Adapter.
 
-## 구조
+## Supported Frontends
+
+Frontend-specific processing is implemented in `adapters/`.
+
+Current adapters include:
+
+- ES-DE
+- Pegasus
+- LaunchBox
+- EmulationStation
+
+The adapter layer is responsible for reading/writing frontend-specific structures rather than forcing the rest of the application to understand every frontend's XML/JSON conventions.
+
+ES-DE also has dedicated template support under:
 
 ```
-app/          Collection·Plan·Archive·Match·Compare·Scan 등 모든 비즈니스 로직
-├── model/      순수 데이터 모델
-├── store/      SQLite 저장소 (registry / cache / archive)
-└── paths.py    앱 데이터 위치
-adapters/     Frontend Adapter (읽기+쓰기를 한 곳에서 책임)
-storage/      물리 접근 추상화 (Local/UNC, 후에 MTP)
-engines/      파일 복사 엔진 (Robocopy 기본 / 네이티브 워커 대안) + file_ops.py
-bridge/       pywebview 브릿지와 Job 큐
-gui_web/      웹 UI (셸 + 가상 스크롤 Gamelist + 기존 Detail 패널)
-importers/    기존 Frontend 파서 - Phase 1에서 adapters/로 흡수 예정
-exporters/    기존 Frontend 라이터 - Phase 1에서 adapters/로 흡수 예정
+adapters/esde_templates/
 ```
 
-앱 데이터는 실행 파일과 같은 폴더의 `db/`에 만들어진다.
+### ES-DE custom systems
+
+ES-DE custom-system generation is supported through the ES-DE adapter.
+
+The implementation distinguishes between normal system paths and cases where a system uses an explicitly configured/custom ROM location, including external storage and paths outside the normal ROM root.
+
+## Collection
+
+A Collection represents a usable frontend/game library rather than simply a directory.
+
+Collection-related data includes:
+
+- frontend type
+- systems
+- ROM locations
+- metadata
+- media references
+- storage assignment
+- scan/cache state
+
+A Collection can therefore represent a local frontend installation, a separate ROM library, or another supported storage arrangement.
+
+The application does not assume that all collections use the same filesystem layout.
+
+## Metadata
+
+Metadata is handled separately from the physical ROM files.
+
+Depending on the frontend, metadata can include fields such as:
+
+- title
+- description
+- genre
+- developer
+- publisher
+- release date
+- region
+- players
+- rating
+- platform/system-specific fields
+
+The application can read metadata from supported frontend formats, display it in the UI, compare it, and write it back through the appropriate adapter.
+
+## Media
+
+Media is treated as a separate part of collection management.
+
+Supported media can include frontend-dependent assets such as:
+
+- covers
+- screenshots
+- marquees
+- mix images
+- 3D boxes
+- physical media
+- videos
+- other frontend-specific media
+
+Media operations are integrated with Collection, Archive, Compare, Plan, and file-operation workflows.
+
+Media cleanup functionality is also present in the application.
+
+## Match
+
+The Match system is intended for cases where two collections contain the same game but use different names or metadata.
+
+The matching workflow includes:
+
+1. exact matching
+2. normalized-name matching
+3. heuristic candidate matching
+4. human confirmation
+
+Matching is deliberately separate from simple filename comparison so that frontend naming differences do not automatically create duplicate game records.
+
+## Compare
+
+Compare provides a two-collection comparison view.
+
+It can distinguish:
+
+- Same
+- Only in A
+- Only in B
+- Conflict
+
+The UI provides side-by-side detail panels and a Gamelist for inspecting differences.
+
+Compare is also connected to Plan so that selected changes can become planned file operations instead of immediately modifying files.
+
+The Compare UI includes selection and navigation behaviors such as:
+
+- single selection
+- multi-selection
+- Ctrl-click
+- Shift selection
+- Ctrl+A
+- keyboard/arrow navigation
+- swap
+- refresh
+- filtering
+- conflict/difference filtering
+
+## Archive
+
+Archive is a separate application area for collecting and managing metadata/identity information from Collections.
+
+Archive currently supports concepts including:
+
+- source tracking
+- identity records
+- revisions
+- metadata comparison
+- conflict detection
+- Archive → Collection operations
+- legacy Archive recovery/import
+- Archive-side ROM/media discovery
+
+Archive is intentionally kept separate from the Collection model.
+
+### Archive status
+
+Archive is still an actively stabilized part of the project.
+
+In particular, the following areas are under refinement:
+
+- synchronization between Archive DB data and directory projections
+- legacy media reconciliation
+- refresh semantics for manually changed frontend files
+- revision/conflict interaction
+- durable media handling
+- ROM identity matching
+
+Therefore Archive should not currently be described as a completely finalized canonical master database.
+
+## Plan and Apply
+
+File changes are not required to happen immediately.
+
+The Plan layer allows the application to calculate and review operations before they are applied.
+
+Plan-related functionality includes:
+
+- automatic plan generation
+- capacity/size calculation
+- copy
+- move
+- delete
+- instance-to-instance operations
+- paste
+- Apply
+
+Paste modes currently include:
+
+| Mode | Purpose |
+|---|---|
+| **Patch** | Apply only the selected/required changes |
+| **Overwrite** | Replace conflicting destination data |
+| **Replace** | Replace the target set according to the planned operation |
+
+This separation is important because metadata comparison and file mutation are different operations.
+
+## File operation engine
+
+Large Windows file operations are handled outside the main UI process.
+
+The project supports:
+
+### Robocopy
+
+Robocopy is the primary Windows copy engine.
+
+It is available through the application's file-operation layer and is the preferred engine for normal Windows file work.
+
+### Native Worker
+
+A separate native worker executable is also present:
+
+```
+native/MediaCopyWorker.exe
+```
+
+The worker can be used where configured, while Robocopy is preferred by the default `auto` configuration.
+
+The relevant implementation includes:
+
+```
+native/
+media_copy_worker.py
+file_ops.py
+```
+
+## Storage
+
+Physical storage is separated from application logic through the `storage/` layer.
+
+The project supports local filesystem access and storage arrangements such as UNC paths, while the storage abstraction is also used for device-backed workflows.
+
+This makes the application less dependent on a single drive letter or fixed ROM directory.
+
+## MTP / Android
+
+MTP support is implemented in the bridge/storage workflow for accessing Android devices.
+
+The application can discover and browse MTP devices through the bridge layer.
+
+This is intended for workflows such as managing ROM/media content on Android devices without treating the phone as a normal Windows drive.
+
+MTP functionality is still being refined and should be considered an active development area rather than a completely frozen interface.
+
+## RetroArch
+
+The application includes RetroArch launch integration under:
+
+```
+app/launch/retroarch.py
+```
+
+This allows a Collection/game entry to be connected to an emulator launch workflow instead of treating the application purely as a metadata editor.
+
+## Additional application functions
+
+The current application also contains functionality for:
+
+- Dashboard/statistics
+- media cleanup
+- title affix processing
+- metadata conversion
+- storage movement
+- Windows window management
+- multi-window/multi-instance workflows
+- media server/bridge functionality
+- background jobs
+
+These functions are implemented in the current application architecture rather than being only planned concepts.
+
+## GUI architecture
+
+The user interface is a web UI running inside a Windows desktop shell.
+
+Main pieces:
+
+```
+gui_web/       HTML / CSS / JavaScript UI
+bridge/        Python ↔ Web UI bridge and jobs
+pywebview      Desktop WebView shell
+```
+
+The UI uses a virtualized Gamelist for large collections and connects to the Python application through the bridge/API layer.
+
+The application also contains Windows-specific window controls and management.
+
+## Project structure
+
+The current repository is organized roughly as follows:
+
+```
+retro-meta-studio/
+├── adapters/          Frontend adapters
+│   ├── base.py
+│   ├── es_de.py
+│   ├── pegasus.py
+│   ├── launchbox.py
+│   ├── emulationstation.py
+│   └── esde_templates/
+│
+├── app/               Application/business logic
+│   ├── archive/
+│   ├── compare/
+│   ├── convert/
+│   ├── launch/
+│   ├── match/
+│   ├── metadata/
+│   ├── model/
+│   ├── plan/
+│   ├── scan/
+│   ├── store/
+│   ├── dashboard.py
+│   ├── media_cleanup.py
+│   ├── paths.py
+│   ├── storage_layout.py
+│   └── title_affix.py
+│
+├── bridge/             Python ↔ Web UI bridge
+│   ├── api.py
+│   ├── jobs.py
+│   ├── media_server.py
+│   └── windows.py
+│
+├── storage/            Physical storage abstraction
+├── importers/          Legacy/import parsing components
+├── exporters/          Legacy/export writing components
+├── gui_web/            HTML/CSS/JS frontend
+├── native/             Native file-operation worker
+├── tests/              Backend tests
+├── tests_ui/           UI tests
+├── tests_e2e/          Filesystem/E2E tests
+├── main.py             Application entry point
+├── requirements.txt
+└── package.json
+```
+
+The older `importers/` and `exporters/` areas remain in the repository for compatibility/transition purposes; the current frontend architecture is centered on `adapters/`.
+
+## Data storage
+
+The application uses SQLite as its primary structured storage.
+
+The current application data area is organized around:
 
 ```
 db/
-├── registry.db          Collection 등록 · Storage/System 배치 · 변경 로그 · 잠금
-├── archive.db           Metadata / Identity / Revision
-└── cache/<id>.db        Collection별 Scan 결과
+├── registry.db
+├── archive.db
+├── cache/
+└── clipboard/
 ```
 
-## 요구 사항
+The exact contents of these databases are an implementation detail and may evolve as the architecture is stabilized.
 
-- Windows 10/11
-- Python 3.11 이상
+The important separation is:
 
-## 테스트
+- Registry/application configuration
+- Collection scan/cache data
+- Archive data
+- temporary/clipboard-related data
 
-백엔드:
+JSON/XML frontend files remain frontend representations rather than replacing SQLite as the application's internal structured storage.
 
-```
+## Testing
+
+The repository contains several layers of tests.
+
+### Backend
+
+```bash
 python -m unittest discover -s tests
 ```
 
-`native/MediaCopyWorker.exe`가 없으면 네이티브 워커 테스트는 skip된다. 워커를 빌드하려면
-`native/build_worker.bat`을 실행한다.
+### GUI
 
-### ES-DE 외 Frontend 호환성
+The web UI is tested with Playwright/Chromium.
 
-`tests/test_frontend_compat.py`는 "우리 왕복이 맞는가"가 아니라 **"각 Frontend의 공식
-포맷 규칙에 맞는가"**를 본다. 둘은 다르다 - Pegasus의 rating 스케일이 틀렸을 때
-`test_adapters.py`의 ES-DE → Pegasus → ES-DE 왕복은 통과했다. 읽기와 쓰기가 **같은
-방식으로 틀려서** 대칭으로 상쇄됐기 때문이다. 아직 못 고친 것은 `expectedFailure`로
-박혀 있어서, 고치면 unexpected success로 suite가 실패해 알려준다.
-
-그래도 "우리 코드가 포맷 문서대로인가"까지다. **그 결과를 Frontend가 실제로 화면에
-띄우는가**는 물려 봐야 안다:
-
-```
-python -m tools.make_test_pack <출력 폴더>
-```
-
-4개 Frontend의 공식 배치대로 작은 라이브러리를 만든다. ROM은 내용이 `TEST ROM`인
-텍스트 파일이라 실행되지 않고, 검증 대상도 파일 발견 / 메타데이터 / media 표시까지다.
-각 이미지에 게임 이름과 media 종류가 그려져 있어서 `Box - Front` 자리에 `COVERS`가
-보이는지로 슬롯이 맞게 붙었는지 눈으로 판정한다. 케이스별로 무엇을 왜 보는지는 생성된
-`CHECKLIST.md`에 있다.
-
-GUI (Playwright, 헤드리스 Chromium):
-
-```
+```bash
 npm install
 npx playwright install chromium
 npx playwright test
 ```
 
-`gui_web/`은 pywebview가 없으면 `api-client.js`가 내장 목업으로 폴백하므로(`api.isMock()`),
-실제 앱을 띄우지 않고도 클릭/입력/스크롤 시나리오를 검증할 수 있다. 목업에 없는 호출은
-`{ok:false}`가 되어 그 화면이 조용히 오류 경로만 지나가므로, `tests/test_wiring.py`가
-`app.js → api-client.js → bridge/api.py`의 이름·인자 개수와 **목업 커버리지**를 함께
-감시한다. 네이티브 폴더 대화상자, 실제 파일 I/O, WebView2 고유 렌더링은 여전히 실기
-확인이 필요하다.
+The UI can use a mock API when pywebview is unavailable, allowing many interaction tests to run without starting the complete desktop application.
 
-## 파일 복사 엔진
+### End-to-end / real filesystem
 
-대량 파일 작업을 앱이 직접 하면 백신의 행동 기반 탐지에 걸린다. 그래서 실제 작업은
-별도 프로세스에 맡기며, 두 가지 엔진을 지원한다.
+The repository also contains real-filesystem scenarios under `tests_e2e/`, including workflows for ROM-only entries and scoped operations.
 
-| 엔진 | 설명 |
-|---|---|
-| **Robocopy** (기본) | Windows 내장, 마이크로소프트 서명 바이너리. 백신이 문제 삼지 않는다 |
-| Native Worker | 자체 `MediaCopyWorker.exe`. 서명이 없어 AhnLab에 탐지된 사례가 있다 |
+These tests are important because many frontend/storage bugs cannot be detected by testing the UI against mock data alone.
 
-설정은 `copy_engine`(`auto`/`robocopy`/`worker`)이며 기본값 `auto`는 Robocopy를 우선한다.
+### Frontend format validation
+
+Frontend compatibility tests are used to verify adapter behavior against the target format rules.
+
+The project does not assume that a successful internal round trip automatically proves that a frontend will interpret the generated files correctly. Where possible, generated test packs are used for practical validation.
+
+## Requirements
+
+Current development target:
+
+- Windows 10/11
+- Python 3.11+
+- Node.js/npm for UI testing
+- Chromium/Playwright for UI tests
+
+The application is primarily designed as a Windows desktop application because several important operations depend on Windows facilities such as Robocopy, pywebview/WebView2, and Windows filesystem/device behavior.
+
+## Development status
+
+RetroMeta Studio is an active development project.
+
+The core Collection/Scan/UI/Plan/Adapter/Match/Compare architecture is in place, while several areas continue to evolve:
+
+- Archive synchronization and recovery behavior
+- Archive revision/conflict UX
+- Compare → Plan workflows
+- ES-DE custom-system edge cases
+- MTP/Android workflows
+- media/file-operation edge cases
+- frontend compatibility validation
+
+The README intentionally describes these areas as they exist in the codebase rather than presenting future architectural goals as completed functionality.
+
+## Design principles
+
+### Frontend-neutral internal model
+
+The application should not become an ES-DE-specific database with other frontend exporters attached afterward.
+
+Frontend formats are representations of a collection.
+
+### Separate information from mutation
+
+Reading metadata, deciding what should change, and actually changing files are separate concerns.
+
+That is why Match, Compare, Plan, and Apply are separate layers.
+
+### Prefer reversible/inspectable operations
+
+Where practical, file changes should be represented as operations that can be inspected before execution.
+
+### Filesystem reality matters
+
+The application is intended to work with real ROM libraries, large media sets, external storage, and Android devices. File paths and physical storage are therefore first-class concerns.
+
+### Avoid hidden frontend assumptions
+
+A ROM directory name, media filename, frontend XML field, or platform identifier should not silently become the application's universal identity rule.
+
+## Running
+
+From the project directory:
+
+```bash
+python main.py
+```
+
+For UI development/testing:
+
+```bash
+npm install
+npx playwright install chromium
+npx playwright test
+```
+
+## Repository
+
+[moning-1664/retro-meta-studio](https://github.com/moning-1664/retro-meta-studio)
+
+## Origin
+
+RetroMeta Studio originated from the earlier RetroGameManager project, but the current project is a substantial architectural redesign rather than a simple continuation of the original frontend-management implementation.
+
+## In one sentence
+
+**RetroMeta Studio is a Windows desktop workspace for managing real retro-game collections, their ROMs, metadata, media, frontend formats, storage locations, comparisons, and planned file operations without making any single frontend the center of the system.**
+
+## License
+
+License information will be added when the project's distribution policy is finalized.
