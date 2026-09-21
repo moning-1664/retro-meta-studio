@@ -6,6 +6,7 @@
 """
 
 import time
+import sys
 import unittest
 
 import storage
@@ -174,6 +175,46 @@ class ComThreadTests(unittest.TestCase):
         with self.assertRaises(MtpError) as caught:
             com.run(lambda: "never", timeout=1.0)
         self.assertIn("comtypes", str(caught.exception))
+
+    def test_a_non_import_failure_reports_its_real_cause(self):
+        """COM 초기화가 실패한 진짜 원인을 알린다. 예전에는 무슨 오류든 "comtypes가 필요합니다"라고
+        답해서, 설치돼 있는 사람이 목록이 빈 이유를 알 수 없었다(실사용 피드백)."""
+        from storage.mtp_wpd import _ComThread
+
+        def boom():
+            raise OSError("RPC_E_CHANGED_MODE 같은 것")
+
+        com = _ComThread(initialize=boom)
+        with self.assertRaises(MtpError) as caught:
+            com.run(lambda: "never", timeout=1.0)
+        self.assertIn("RPC_E_CHANGED_MODE", str(caught.exception))
+        self.assertNotIn("pip install", str(caught.exception))
+
+    def test_thread_already_initialized_in_another_mode_is_tolerated(self):
+        """`import comtypes`가 스레드를 STA로 초기화해 둔 뒤 MTA 초기화가 RPC_E_CHANGED_MODE로
+        거절돼도 실패로 치지 않는다 - COM 호출은 그 스레드 하나에서만 일어난다."""
+        from unittest import mock
+        import comtypes
+        from storage import mtp_wpd
+
+        err = OSError("changed mode")
+        err.winerror = -2147417850           # 0x80010106 (부호 있는 32비트)
+        with mock.patch.object(comtypes, "CoInitializeEx", side_effect=err):
+            mtp_wpd._coinitialize()          # 예외 없이 끝나야 한다
+
+        other = OSError("something else")
+        other.winerror = -2147024809         # E_INVALIDARG
+        with mock.patch.object(comtypes, "CoInitializeEx", side_effect=other):
+            with self.assertRaises(OSError):
+                mtp_wpd._coinitialize()
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows 전용")
+    def test_raw_enumeration_runs_without_crashing(self):
+        """기기가 없어도 vtable 호출이 죽지 않고 목록(빈 것일 수 있다)을 돌려준다."""
+        from storage import mtp_wpd
+        com = mtp_wpd._ComThread()
+        result = com.run(mtp_wpd._raw_enumerate, timeout=30)
+        self.assertIsInstance(result, list)
 
     def test_a_device_that_never_answers_times_out_with_a_readable_reason(self):
         import threading as _threading

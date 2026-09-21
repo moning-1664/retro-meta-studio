@@ -72,9 +72,30 @@ _CHUNK = 256 * 1024
 _CALL_TIMEOUT = 120.0
 
 
+#: HRESULT RPC_E_CHANGED_MODE - 이 스레드가 이미 다른 방식(STA)으로 COM을 초기화했다.
+_RPC_E_CHANGED_MODE = 0x80010106
+
+
 def _coinitialize():
+    """이 스레드를 COM용으로 초기화한다.
+
+    **`import comtypes`는 그 스레드를 암묵적으로 STA로 초기화한다**(comtypes가 import할 때
+    `CoInitializeEx(None, COINIT_APARTMENTTHREADED)`를 부른다). 그 뒤에 MTA로 다시 초기화하면
+    Windows가 RPC_E_CHANGED_MODE로 거절하는데, 예전에는 이 오류가 "comtypes가 필요합니다"라는
+    엉뚱한 안내로 바뀌어 나갔다 - 기기가 탐색기에는 보이는데 앱에서는 목록이 비고 로그도
+    남지 않던 원인이다(실사용 피드백).
+
+    그래서 (1) import 전에 MTA를 요청해 두고, (2) 그래도 이미 초기화돼 있으면 그대로 쓴다 -
+    COM 호출은 모두 이 스레드 하나에서만 일어나므로 어느 아파트든 상관없다.
+    """
+    sys.coinit_flags = 0   # COINIT_MULTITHREADED. comtypes가 import 중에 읽는다
     import comtypes
-    comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+    try:
+        comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+    except OSError as e:
+        if (getattr(e, "winerror", None) or 0) & 0xFFFFFFFF != _RPC_E_CHANGED_MODE:
+            raise
+        log.info("COM 스레드가 이미 초기화돼 있어 그대로 씁니다(RPC_E_CHANGED_MODE)")
 
 
 class _ComThread:
@@ -116,6 +137,7 @@ class _ComThread:
         try:
             self._initialize()
         except Exception as e:  # noqa: BLE001
+            log.exception("MTP COM 스레드 초기화 실패")
             state["error"] = e
             ready.set()
             return
@@ -151,9 +173,15 @@ class _ComThread:
 
         ready.wait(10)
         if state["error"] is not None:
-            raise MtpError(
-                "MTP 연결에는 comtypes가 필요합니다. `pip install comtypes` 후 다시 시도해주세요."
-            ) from state["error"]
+            # 원인을 그대로 알린다. 예전에는 무슨 오류든 "comtypes가 필요합니다"로 답해서
+            # 설치된 사람에게 엉뚱한 일을 시켰다.
+            cause = state["error"]
+            if isinstance(cause, ImportError):
+                message = ("MTP 연결에는 comtypes가 필요합니다. `pip install comtypes` 후 "
+                           "다시 시도해주세요.")
+            else:
+                message = f"MTP(COM)를 초기화하지 못했습니다: {cause}"
+            raise MtpError(message) from cause
         done, box = threading.Event(), []
         jobs.put((func, done, box))
         if not done.wait(timeout):
@@ -180,6 +208,89 @@ def _require_comtypes():
         raise MtpError(
             "MTP 연결에는 comtypes가 필요합니다. `pip install comtypes` 후 다시 시도해주세요."
         ) from e
+
+
+# ----------------------------------------------------------------------
+# IPortableDeviceManager 직접 호출 (기기 열거 전용)
+# ----------------------------------------------------------------------
+_CLSID_PORTABLE_DEVICE_MANAGER = "{0AF10CEC-2ECD-4B92-9581-34F6AE0637F3}"
+_IID_PORTABLE_DEVICE_MANAGER = "{A1567595-4C2F-4574-A6FA-ECEF917B9A40}"
+_CLSCTX_INPROC_SERVER = 1
+#: IPortableDeviceManager의 vtable 위치(IUnknown 0-2 다음).
+_VT_RELEASE, _VT_GET_DEVICES, _VT_REFRESH, _VT_FRIENDLY_NAME = 2, 3, 4, 5
+
+
+def _guid(text):
+    import ctypes
+    value = (ctypes.c_byte * 16)()
+    ole32 = ctypes.WinDLL("ole32.dll")
+    ole32.CLSIDFromString.argtypes = [ctypes.c_wchar_p, ctypes.c_void_p]
+    ole32.CLSIDFromString.restype = ctypes.c_long
+    hr = ole32.CLSIDFromString(text, ctypes.byref(value))
+    if hr != 0:
+        raise OSError(f"CLSIDFromString 실패: 0x{hr & 0xFFFFFFFF:08X}")
+    return value
+
+
+def _raw_enumerate() -> list[tuple[str, str]]:
+    """(기기 ID, 표시 이름) 목록. 호출한 스레드는 이미 COM이 초기화돼 있어야 한다.
+
+    새로 꽂은 기기가 목록에 잡히려면 RefreshDeviceList를 먼저 불러야 한다 - 안 부르면 앱이
+    켜진 뒤에 꽂은 기기는 탐색기에는 보이는데 여기서는 0대로 나온다.
+    """
+    import ctypes
+    ole32 = ctypes.WinDLL("ole32.dll")
+    ole32.CoCreateInstance.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong,
+                                       ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    ole32.CoCreateInstance.restype = ctypes.c_long
+    ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+    clsid, iid = _guid(_CLSID_PORTABLE_DEVICE_MANAGER), _guid(_IID_PORTABLE_DEVICE_MANAGER)
+    obj = ctypes.c_void_p()
+    hr = ole32.CoCreateInstance(ctypes.byref(clsid), None, _CLSCTX_INPROC_SERVER,
+                                ctypes.byref(iid), ctypes.byref(obj))
+    if hr != 0 or not obj.value:
+        raise MtpError(f"Windows 휴대용 장치(WPD)를 열지 못했습니다: 0x{hr & 0xFFFFFFFF:08X}")
+    table = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+
+    def method(slot, *argtypes):
+        return ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, *argtypes)(table[slot])
+
+    try:
+        hr = method(_VT_REFRESH)(obj)
+        log.info("WPD RefreshDeviceList -> 0x%08X", hr & 0xFFFFFFFF)
+        get_devices = method(_VT_GET_DEVICES, ctypes.POINTER(ctypes.c_void_p),
+                             ctypes.POINTER(ctypes.c_ulong))
+        count = ctypes.c_ulong(0)
+        hr = get_devices(obj, None, ctypes.byref(count))
+        if hr != 0:
+            raise MtpError(f"WPD 기기 수를 읽지 못했습니다: 0x{hr & 0xFFFFFFFF:08X}")
+        if count.value == 0:
+            return []
+        ids = (ctypes.c_void_p * count.value)()
+        hr = get_devices(obj, ids, ctypes.byref(count))
+        if hr != 0:
+            raise MtpError(f"WPD 기기 목록을 읽지 못했습니다: 0x{hr & 0xFFFFFFFF:08X}")
+        friendly = method(_VT_FRIENDLY_NAME, ctypes.c_wchar_p, ctypes.c_void_p,
+                          ctypes.POINTER(ctypes.c_ulong))
+        found = []
+        for pointer in list(ids)[:count.value]:
+            if not pointer:
+                continue
+            device_id = ctypes.wstring_at(pointer)
+            ole32.CoTaskMemFree(pointer)      # 문서: 호출자가 해제한다(복사한 뒤에)
+            length = ctypes.c_ulong(0)
+            name = ""
+            if friendly(obj, device_id, None, ctypes.byref(length)) == 0 and length.value:
+                buffer = ctypes.create_unicode_buffer(length.value)
+                if friendly(obj, device_id, buffer, ctypes.byref(length)) == 0:
+                    name = buffer.value
+            found.append((device_id, name))
+        return found
+    finally:
+        try:
+            method(_VT_RELEASE)(obj)
+        except Exception:  # noqa: BLE001 - 해제 실패가 결과를 바꾸지 않는다
+            pass
 
 
 class WpdBackend(MtpBackend):
@@ -278,49 +389,25 @@ class WpdBackend(MtpBackend):
         return opened
 
     def _scan_devices(self) -> list[MtpDeviceInfo]:
-        import ctypes
-        import comtypes.client
-
         self._load()
-        manager = comtypes.client.CreateObject(
-            self._api.PortableDeviceManager, interface=self._api.IPortableDeviceManager)
-        count = ctypes.c_ulong(0)
-        manager.GetDevices(None, ctypes.byref(count))
+        # 기기 목록은 IPortableDeviceManager를 **vtable로 직접** 부른다(아래 _raw_*).
+        # comtypes 1.4의 GetDevices/GetDeviceFriendlyName은 [in, out] DWORD를 인자가 아니라
+        # 반환값으로 바꿔서 예전 방식(`byref(count)`)이 TypeError로 죽는다 - 그 오류가
+        # 기기 목록을 통째로 비게 했다. 문서화된 ABI를 직접 부르면 comtypes 버전과 무관하다.
+        raw = _raw_enumerate()
         # Windows가 몇 대로 보는지를 그대로 남긴다 - 탐색기에 기기가 보이는데
         # 여기서 0이면 MTP(미디어 장치)가 아니라 다른 모드로 붙어 있다는 뜻이다
         # (충전 전용/사진 전송(PTP) 등). 그 구분을 로그 없이는 할 수 없다.
-        log.info("WPD 기기 열거: %d대", count.value)
-        if count.value == 0:
-            self._device_ids = {}
-            return []
-        ids = (ctypes.c_wchar_p * count.value)()
-        manager.GetDevices(ids, ctypes.byref(count))
-
+        log.info("WPD 기기 열거: %d대", len(raw))
         found = []
         self._device_ids = {}
-        for device_id in list(ids)[:count.value]:
-            if not device_id:
-                continue
-            name = self._friendly_name(manager, device_id)
+        for device_id, name in raw:
+            name = name or "Android Device"
             key = self._device_key(device_id, name)
             self._device_ids[key] = device_id
             log.info("WPD 기기: name=%s key=%s id=%s", name, key, device_id)
             found.append(MtpDeviceInfo(key=key, name=name, device_id=device_id))
         return found
-
-    @staticmethod
-    def _friendly_name(manager, device_id) -> str:
-        import ctypes
-        length = ctypes.c_ulong(0)
-        try:
-            manager.GetDeviceFriendlyName(device_id, None, ctypes.byref(length))
-            buffer = ctypes.create_unicode_buffer(length.value)
-            manager.GetDeviceFriendlyName(device_id, buffer, ctypes.byref(length))
-            if buffer.value:
-                return buffer.value
-        except Exception:  # noqa: BLE001 - 이름은 없어도 되는 값이다
-            pass
-        return "Android Device"
 
     def _device_key(self, device_id: str, name: str) -> str:
         """경로에 쓸 기기 키. 일련번호를 쓰고, 못 읽으면 기기 ID를 요약해 대신한다.

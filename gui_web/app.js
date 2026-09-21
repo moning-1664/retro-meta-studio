@@ -1255,7 +1255,9 @@
       extRomLabel.hidden = extRomRow.hidden = device;
       if (device) {
         targetSel.value = "android";
-        if (!S.mtpDevices) loadDevices();
+        // 비어 있으면 다시 시도한다 - 첫 시도가 실패했을 때(기기를 나중에 꽂았거나 허용을
+        // 늦게 눌렀을 때) 앱을 다시 켜야만 목록이 나오는 것은 곤란하다.
+        if (!S.mtpDevices || !S.mtpDevices.length) loadDevices();
       }
     }
 
