@@ -2375,20 +2375,16 @@
       body.appendChild(h("div", { class: "field-label" }, ["이 PC에서의 경로"]));
       body.appendChild(h("div", { class: "field-row" }, [root, browse]));
 
-      deviceId = h("input", { class: "field-input storage-device-id", value: storage.deviceId || "", placeholder: "예: 1234-ABCD" });
-      deviceRoot = h("input", { class: "field-input storage-device-root", value: storage.deviceRoot || "" });
-      const syncPlaceholder = () => {
-        const id = deviceId.value.trim();
-        deviceRoot.placeholder = id ? `/storage/${id}` : "/storage/<Storage ID>";
-      };
-      deviceId.addEventListener("input", syncPlaceholder);
-      syncPlaceholder();
-      body.appendChild(h("div", { class: "field-label" }, ["Android Storage ID"]));
-      body.appendChild(deviceId);
-      body.appendChild(h("div", { class: "modal-hint" }, ["기기의 /storage/ 아래 SD카드 폴더 이름입니다. ES-DE custom_systems XML의 경로를 만드는 데 씁니다."]));
-      body.appendChild(h("div", { class: "field-label" }, ["기기에서 이 Storage의 경로"]));
+      // 기기 경로(전체 경로)가 유일한 입력이다(사용자 결정) - Storage ID만 받으면 PC 경로가
+      // SD카드의 하위 폴더일 때 어긋난다. ID는 경로 안에 이미 들어 있다.
+      deviceRoot = h("input", { class: "field-input storage-device-root", value: storage.deviceRoot || (storage.deviceId ? `/storage/${storage.deviceId}` : ""),
+                                placeholder: "/storage/1234-ABCD/Roms" });
+      body.appendChild(h("div", { class: "field-label" }, ["Android 기기에서의 전체 경로"]));
       body.appendChild(deviceRoot);
-      body.appendChild(h("div", { class: "modal-hint" }, ["비워 두면 /storage/<Storage ID>를 씁니다. PC 경로가 SD카드의 하위 폴더라면 그 경로까지 적으세요(예: /storage/1234-ABCD/ROMs)."]));
+      body.appendChild(h("div", { class: "modal-hint" }, [
+        "위 'PC 경로' 폴더가 안드로이드 기기에서는 어디에 있는지 전체 경로로 적으세요. "
+        + "예: SD카드(1234-ABCD)의 Roms 폴더 → /storage/1234-ABCD/Roms. "
+        + "기기의 파일 앱에서 그 폴더의 경로를 확인할 수 있습니다. ES-DE custom_systems XML의 ROM 경로에 그대로 쓰입니다."]));
     } else {
       // Internal의 PC 경로는 Collection 자체의 경로다 - 여기서 바꾸면 저장은 되지 않고
       // 조용히 무시되므로, 아예 입력칸을 주지 않고 참고로만 보여준다.
@@ -2765,13 +2761,18 @@
     const systems = data.systems || [];
     if (data.written === false && !needs.length) {
       // 만들 내용이 없는 것과 실패한 것은 다르다 - 왜 아무 일도 없었는지 말해준다.
-      showToast(`${storageLabel || "이 Storage"}에는 XML로 적을 System이 없습니다.`);
+      const why = {
+        "no-systems": "이 Storage에 붙은 System이 없습니다. 먼저 Storage의 System을 붙이세요.",
+        "android-internal": "Android Internal은 ES-DE 기본 ROM 폴더를 쓰므로 XML에 적지 않습니다. External Storage에서 실행하세요.",
+        "inside-root": "ROM이 Collection 폴더 안에 있어 ES-DE가 스스로 찾으므로 적을 것이 없습니다.",
+      }[data.reason];
+      showToast(`${storageLabel || "이 Storage"}: ${why || "XML로 적을 System이 없습니다."}`, "warning");
       return;
     }
     const rows = [
       ...systems.map((s) => ({ name: s, warn: noTemplate.has(s),
         note: noTemplate.has(s) ? "ES-DE 기본 목록에 없음" : "" })),
-      ...needs.map((s) => ({ name: s, warn: true, note: "Storage ID 없음" })),
+      ...needs.map((s) => ({ name: s, warn: true, note: "기기 경로 없음" })),
     ];
     const table = h("div", { class: "xml-table" }, rows.map((row) => h("div", {
       class: "xml-row" + (row.warn ? " warn" : ""), title: row.note || "정상 반영",

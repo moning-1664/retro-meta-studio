@@ -70,7 +70,7 @@ test.describe("충돌 표시와 쓰기 막힘", () => {
 test.describe("External Storage 설정과 연결", () => {
   test.beforeEach(async ({ page }) => { await openApp(page); });
 
-  test("External 그룹의 설정에서 Android Storage ID를 저장한다", async ({ page }) => {
+  test("External 그룹의 설정에서 기기 경로(전체 경로)를 저장한다", async ({ page }) => {
     await page.evaluate(() => {
       window.__updated = [];
       const original = window.api.updateStorage;
@@ -78,12 +78,13 @@ test.describe("External Storage 설정과 연결", () => {
     });
     const head = page.locator(".nav-group-head", { hasText: "EXTERNAL SD" });
     await head.locator(".storage-settings-btn").click();
-    await page.locator(".storage-device-id").fill("1234-ABCD");
-    await expect(page.locator(".storage-device-root")).toHaveAttribute("placeholder", "/storage/1234-ABCD");
+    // Storage ID 칸은 없다 - 전체 경로 하나만 받는다(사용자 결정).
+    await expect(page.locator(".storage-device-id")).toHaveCount(0);
+    await page.locator(".storage-device-root").fill("/storage/1234-ABCD/Roms");
     await page.locator(".storage-settings-save").click();
     await expect(page.locator(".toast-msg")).toHaveText("Storage 설정을 저장했습니다.");
     const args = await page.evaluate(() => window.__updated[0]);
-    expect([args[0], args[1], args[4]]).toEqual(["c1", "ext-1", "1234-ABCD"]);
+    expect([args[0], args[1], args[5]]).toEqual(["c1", "ext-1", "/storage/1234-ABCD/Roms"]);
   });
 
   // 실사용 피드백 - "Internal의 옵션에 들어있는 Android Storage ID, Storage
@@ -113,15 +114,18 @@ test.describe("External Storage 설정과 연결", () => {
     expect(args[5]).toBeNull();   // deviceRoot
   });
 
-  test("잘못된 Storage ID는 저장하지 않고 알린다", async ({ page }) => {
+  test("/로 시작하지 않는 기기 경로는 저장하지 않고 알린다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.api.updateStorage = async () => ({ ok: false, error: "기기 경로는 /로 시작해야 합니다(예: /storage/1234-ABCD/ROMs)." });
+    });
     await page.locator(".nav-group-head", { hasText: "EXTERNAL SD" }).locator(".storage-settings-btn").click();
-    await page.locator(".storage-device-id").fill("12 34");
+    await page.locator(".storage-device-root").fill("storage/x");
     await page.locator(".storage-settings-save").click();
-    await expect(page.locator(".toast-msg")).toContainText("Storage ID");
-    await expect(page.locator(".storage-device-id")).toBeVisible();
+    await expect(page.locator(".toast-msg")).toContainText("/로 시작");
+    await expect(page.locator(".storage-device-root")).toBeVisible();
   });
 
-  test("ES-DE XML 결과에 Storage ID가 없어 빠진 System을 알려준다", async ({ page }) => {
+  test("ES-DE XML 결과에 기기 경로가 없어 빠진 System을 알려준다", async ({ page }) => {
     // XML 생성은 이제 Storage 설정 안에 있다(사용자 결정 - 그룹 머리의 아이콘이었을
     // 때는 External이 여럿이면 "어느 그룹에서 눌러도 전체를 다시 쓴다"가 안 보였다).
     await page.evaluate(() => {
@@ -133,7 +137,7 @@ test.describe("External Storage 설정과 연결", () => {
     await page.locator(".modal-actions .btn", { hasText: "ES-DE XML 생성" }).click();
     const row = page.locator(".xml-row", { hasText: "ps2" });
     await expect(row).toHaveClass(/warn/);
-    await expect(row).toContainText("Storage ID 없음");
+    await expect(row).toContainText("기기 경로 없음");
   });
 
   test("External Storage를 지우고 다시 추가하면 그 밑의 System을 연결한다", async ({ page }) => {

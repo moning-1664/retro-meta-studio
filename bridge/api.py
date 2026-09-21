@@ -2014,7 +2014,10 @@ class Api:
         if action_id == getattr(adapter, "CUSTOM_SYSTEMS_ACTION", None):
             # storage_id를 주면 그 Storage만 대상으로 한다(실사용 피드백 - External이
             # 여러 개일 때 어느 그룹에서 눌러도 전체를 다시 쓰는 것은 의도와 다르다).
-            return ok(adapter.write_custom_systems(collection, storage_id=storage_id))
+            result = adapter.write_custom_systems(collection, storage_id=storage_id)
+            if result.get("error"):
+                return err(result["error"])
+            return ok(result)
         return err("아직 구현되지 않은 기능입니다.")
 
     # ------------------------------------------------------------------

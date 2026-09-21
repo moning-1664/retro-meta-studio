@@ -459,10 +459,16 @@ class EsDeAdapter(FrontendAdapter):
                 except ValueError:
                     pass
             if platform == "android":
-                if storage is None or not storage.device_id:
+                # **기기 경로(전체 경로)가 기본 입력이다**(사용자 결정) - ID만 받으면 PC 경로가
+                # SD카드의 하위 폴더일 때 어긋난다. 예전 데이터를 위해 ID만 있으면 그것으로
+                # /storage/<ID>를 만든다.
+                base = ""
+                if storage is not None:
+                    base = (storage.device_root
+                            or (f"/storage/{storage.device_id}" if storage.device_id else "")).rstrip("/")
+                if not base:
                     needs_id.append(entry.system)
                     continue
-                base = (storage.device_root or f"/storage/{storage.device_id}").rstrip("/")
                 try:
                     relative = rom_dir.relative_to(Path(storage.root_path)).as_posix()
                 except ValueError:
@@ -484,8 +490,19 @@ class EsDeAdapter(FrontendAdapter):
             generated.append((entry.system, node))
 
         path = root / "custom_systems" / "es_systems.xml"
+        scoped = [e for e in collection.systems if storage_id is None or e.storage_id == storage_id]
+        # 아무것도 못 쓴 이유를 화면이 말할 수 있게 한다 - "만들 System이 없다"만으로는 왜인지 모른다.
+        if generated or needs_id:
+            reason = None
+        elif not scoped:
+            reason = "no-systems"          # 이 Storage에 붙은 System이 없다(먼저 System을 붙여야 한다)
+        elif platform == "android":
+            reason = "android-internal"    # Android Internal은 ES-DE 기본 ROM 폴더를 쓴다
+        else:
+            reason = "inside-root"         # ROM이 Collection root 안에 있어 ES-DE가 스스로 찾는다
         result = {"path": str(path), "platform": platform, "systems": [n for n, _ in generated],
-                  "needsDeviceId": needs_id, "noTemplate": no_template, "kept": [], "written": False}
+                  "needsDeviceId": needs_id, "noTemplate": no_template, "kept": [], "written": False,
+                  "reason": reason}
         if not generated:
             return result
 
@@ -503,7 +520,13 @@ class EsDeAdapter(FrontendAdapter):
                 pass   # 깨진 기존 파일은 새로 쓴다 - 읽을 수 없는 내용을 살릴 방법이 없다
         for _, node in generated:
             xml_root.append(node)
-        write_xml(path, xml_root)
+        # **쓰기가 실제로 됐는지 확인한다.** write_xml은 실패해도 예외 없이 False를 돌려주는데,
+        # 예전에는 그 값을 버리고 항상 "만들었다"고 답했다 - 화면은 성공이라는데 파일은
+        # 없는 상태였다(실사용 피드백).
+        ok = write_xml(path, xml_root)
+        if not ok or not read_document(path):
+            result["error"] = f"파일을 쓰지 못했습니다: {path}"
+            return result
         result["written"] = True
         return result
 

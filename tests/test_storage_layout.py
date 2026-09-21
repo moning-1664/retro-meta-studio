@@ -179,6 +179,22 @@ class StorageSettingsAndXmlTests(unittest.TestCase):
         self.assertIn("snes9x", ET.tostring(snes, encoding="unicode"))   # 실행 명령도 살아 있다
         self.assertNotIn("ps2", self.xml_systems())                      # Android Internal은 적지 않는다
 
+    def test_android_xml_needs_only_the_device_path_not_a_storage_id(self):
+        """기기 경로(전체 경로)만 있으면 만들어진다 - ID를 따로 받지 않는다(사용자 결정)."""
+        cid, ext = self.make("android")
+        self.api.update_storage(cid, ext, None, None, "", "/storage/1234-ABCD/Roms")
+        result = self.api.run_adapter_action(cid, "esde-custom-systems")["data"]
+        self.assertTrue(result["written"], result)
+        self.assertEqual(self.xml_systems()["snes"].findtext("path"), "/storage/1234-ABCD/Roms/snes")
+
+    def test_empty_result_says_why(self):
+        cid, _ext = self.make("windows")
+        # 아직 System을 안 붙인 새 Storage에는 쓸 것이 없고, 그 이유가 "붙은 System이 없다"다.
+        empty = self.api.add_external_storage(cid, "Empty", str(self.dir / "empty"))["data"]
+        result = self.api.run_adapter_action(cid, "esde-custom-systems", storage_id=empty)["data"]
+        self.assertFalse(result["written"])
+        self.assertEqual(result["reason"], "no-systems")
+
     def test_a_storage_id_scopes_generation_to_just_that_storage(self):
         """External이 둘일 때, 한쪽 그룹의 버튼이 다른 쪽까지 다시 쓰면 안 된다
         (실사용 피드백 - "external만 골라서 생성하는게 맞다"). Collection당 파일은
@@ -263,3 +279,25 @@ class MixedStorageKindsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CustomSystemsWriteFailureTests(unittest.TestCase):
+    """쓰기가 실패하면 성공이라고 답하지 않는다."""
+
+    def test_failed_write_is_reported_not_swallowed(self):
+        from unittest import mock
+        from adapters import es_de
+        dir_ = temp_root("rms_xml_fail_")
+        root = build_esde_tree(dir_ / "esde")
+        sd = dir_ / "sd"
+        write_file(sd / "snes" / "SMW.sfc", b"s")
+        api = Api(registry_path=dir_ / "registry.db", cache_dir=dir_ / "cache")
+        self.addCleanup(api.close)
+        cid = api.create_collection("C", "es-de", str(root), "windows")["data"]["id"]
+        wait_job(api, api.start_scan(cid)["data"]["jobId"])
+        ext = api.add_external_storage(cid, "SD", str(sd))["data"]
+        api.attach_storage_systems(cid, ext)
+        with mock.patch.object(es_de, "write_xml", return_value=False):
+            result = api.run_adapter_action(cid, "esde-custom-systems")
+        self.assertFalse(result["ok"])
+        self.assertIn("쓰지 못했습니다", result["error"])
