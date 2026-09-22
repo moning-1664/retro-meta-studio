@@ -128,12 +128,36 @@ class CompareEngineTests(unittest.TestCase):
             "Game (Europe).iso": engine.STATUS_ONLY_B,
         })
 
-    def test_a_unique_normalized_candidate_does_pair(self):
+    def test_a_similar_name_does_not_pair(self):
+        """사용자 결정(번복) - 이름이 닮았다는 이유로는 짝짓지 않는다. Compare는 1:1 표라
+        확신할 수 없는 짝을 지으면 서로 다른 판이 같은 줄에 나란히 놓인다."""
         left = [entry(1, "Game.iso", title="Game")]
         right = [entry(9, "Game (USA).iso", title="Game")]
         rows = engine.compare(left, right)
-        self.assertEqual(len(rows), 1)
-        self.assertIsNotNone(rows[0]["right"])
+        self.assertEqual(self.statuses(rows),
+                         {"Game.iso": engine.STATUS_ONLY_A,
+                          "Game (USA).iso": engine.STATUS_ONLY_B})
+
+    def test_four_regional_dumps_never_pair_across_each_other(self):
+        """실사용 질문 - "[eu] [kr] [jp] [world] 롬이 4개 있으면 어떻게 매칭시킴?"
+        정규화하면 넷이 한 이름으로 뭉쳐 짝지을 근거가 없다. 이름이 같은 것끼리만 맺는다."""
+        names = ["Game [EU].zip", "Game [KR].zip", "Game [JP].zip", "Game [World].zip"]
+        left = [entry(i + 1, n) for i, n in enumerate(names)]
+        right = [entry(i + 11, n) for i, n in enumerate(names)]
+        rows = engine.compare(left, right)
+        self.assertEqual(len(rows), 4, "넷이 서로 뒤섞여 짝지어졌다")
+        for row in rows:
+            self.assertEqual(row["status"], engine.STATUS_SAME)
+            self.assertEqual(row["left"]["filename"], row["right"]["filename"])
+
+    def test_one_missing_region_leaves_both_sides_alone(self):
+        """한쪽에 [EU]가 없으면 그 자리를 다른 지역판이 대신 차지하지 않는다."""
+        left = [entry(1, "Game [EU].zip"), entry(2, "Game [KR].zip")]
+        right = [entry(11, "Game [KR].zip")]
+        rows = engine.compare(left, right)
+        self.assertEqual(self.statuses(rows),
+                         {"Game [EU].zip": engine.STATUS_ONLY_A,
+                          "Game [KR].zip": engine.STATUS_SAME})
 
     def test_different_systems_never_pair(self):
         left = [entry(1, "Game.iso", system="ps2")]

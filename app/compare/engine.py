@@ -5,23 +5,21 @@ Compare 엔진 (스펙 §54-59).
 
 두 Collection의 Gamelist를 나란히 놓고 `Same / Only A / Only B / Conflict`로 가른다.
 
-## Match 엔진과의 관계
+## 짝짓기 규칙 - 파일명이 글자까지 같을 때만
 
-판정 규칙은 `app/match/engine.py`의 `classify()`를 **그대로 재사용한다**. 그럴 수 있는
-이유는 Phase 6 착수 전에 판정 계약을 `MatchSubject <-> MatchSubject`로 한 단계 올려
-두었기 때문이다 - 그 전에는 "Collection row <-> Archive identity"로 못박혀 있어서,
-Compare가 쓰려면 Collection 쪽을 Archive인 척 꾸며 넘겨야 했다.
+같은 System에서 **파일명이 완전히 같으면** 짝으로 본다. 크기나 해시가 달라도 짝이다 -
+그 차이야말로 Compare가 보여주려는 것이기 때문이다.
 
-다만 **짝짓기 규칙은 Match와 다르다**. Match는 "이 둘이 같은 ROM인가"를 묻고 확증이
-없으면 후보로만 내놓지만, Compare는 목록 두 개를 1:1로 줄 세워야 한다. 그래서:
+이름이 닮았다는 이유로는 짝짓지 않는다(사용자 결정, 번복). 예전에는 `classify()`가
+Exact/Normalized를 주고 그 상대가 유일하면 짝지었는데, **지역만 다른 판이 여럿이면
+어느 것과 어느 것을 맺을지 정할 근거가 없다** - `Game [EU]`, `Game [KR]`, `Game [JP]`,
+`Game [World]`는 정규화하면 넷 다 같은 이름이라, 1:1 표에서는 서로 다른 판이 임의로
+같은 줄에 놓인다.
 
-1. **1차 - 정확한 파일명**: 같은 System에서 파일명이 완전히 같으면 짝으로 본다.
-   크기나 해시가 달라도 짝이다 - 그 차이야말로 Compare가 보여주려는 것이기 때문이다.
-   (Match의 Exact는 크기/해시 확증을 요구하지만, 여기서 같은 잣대를 쓰면 같은 이름의
-   다른 덤프가 "양쪽에 각각 있음"으로 갈라져 보인다.)
-2. **2차 - 엔진 판정이 유일할 때만**: 남은 것들에 `classify()`를 돌려 Exact/Normalized로
-   걸리는 상대를 찾되, **후보가 정확히 하나일 때만** 짝짓는다. 둘 이상이면 어느 쪽인지
-   알 수 없으므로 각자 "한쪽에만 있음"으로 남긴다 - 모호하면 자동으로 결정하지 않는다(§88).
+이름이 다른 같은 게임은 양쪽에 따로 남고(`only_a`/`only_b`), 필요하면 "직접 잇기"로
+사람이 이어 준다. **붙여넣기는 다르다** - 거기서는 `app/gameid.py`가 지역과 디스크
+번호까지 보고 대상을 하나 고를 수 있으므로, Compare에 안 보이는 짝도 붙여넣기로는
+처리된다.
 
 ## 상태
 
@@ -41,8 +39,6 @@ Compare가 쓰려면 Collection 쪽을 Archive인 척 꾸며 넘겨야 했다.
 
 from __future__ import annotations
 
-from app.match import engine as match_engine
-
 STATUS_SAME = "same"
 STATUS_SIMILAR = "similar"
 STATUS_CONFLICT = "conflict"
@@ -54,10 +50,6 @@ STATUS_ONLY_B = "only_b"
 #: 두 Collection이 충돌한다고 말하면 목록이 온통 Conflict가 된다.
 DIFF_FIELDS = ("name", "desc", "genre", "developer", "publisher",
                "releasedate", "region", "players", "rating")
-
-
-def _subject(entry) -> dict:
-    return match_engine.subject_of_row(entry)
 
 
 def fields_differ(a, b) -> list[str]:
@@ -73,11 +65,24 @@ def fields_differ(a, b) -> list[str]:
 
 
 def _pair(left_entries, right_entries) -> tuple[list[tuple], set, set]:
-    """(짝지어진 (left, right) 목록, 짝지어진 left 인덱스, 짝지어진 right 인덱스)."""
+    """(짝지어진 (left, right) 목록, 짝지어진 left 인덱스, 짝지어진 right 인덱스).
+
+    **짝은 같은 System + 글자까지 같은 파일명일 때만 맺는다**(사용자 결정, 번복).
+
+    예전에는 이름이 닮았으면(정규화 일치) 짝을 맺었다. 그러면 지역만 다른 판이
+    여럿일 때 **어느 것과 어느 것을 맺을지 정할 근거가 없다** - `Game [EU]`,
+    `Game [KR]`, `Game [JP]`, `Game [World]`는 정규화하면 넷 다 같은 이름이라
+    1:1 표에서는 임의로 짝지어지고, 화면에는 서로 다른 판이 같은 줄에 나란히
+    놓인다. Compare는 "이 둘을 맞대 보라"고 보여 주는 화면이므로 확신할 수 없는
+    짝을 지어서는 안 된다.
+
+    이름이 다른 같은 게임은 Compare에서 양쪽에 따로 남고(`only_a`/`only_b`),
+    필요하면 "직접 잇기"로 사람이 이어 준다. 붙여넣기는 다르다 - 거기서는
+    `app/gameid.py`가 지역/디스크까지 보고 대상을 하나 고를 수 있다.
+    """
     pairs = []
     used_left, used_right = set(), set()
 
-    # 1차: 같은 System + 완전히 같은 파일명.
     by_name = {}
     for j, right in enumerate(right_entries):
         by_name.setdefault((right["system"], right["filename"]), []).append(j)
@@ -91,54 +96,6 @@ def _pair(left_entries, right_entries) -> tuple[list[tuple], set, set]:
             used_left.add(i)
             used_right.add(j)
             break
-
-    # 2차: 엔진이 Exact/Normalized로 인정하고, 그런 상대가 **유일할** 때만.
-    #
-    # [성능] 남은 것끼리 전부 맞대면 O(N x M)이다. 실측(5,000 x 5,000)으로 1차에서
-    # 전부 짝지어지는 현실적인 경우는 0.03초였지만, 두 Collection이 이름을 하나도
-    # 공유하지 않는 최악의 경우는 7.3초가 걸렸다. classify()가 Exact/Normalized를
-    # 주는 조건은 "정규화 파일명이 같거나 / 정규화 제목이 같거나 / 해시가 같거나"뿐이므로,
-    # 그 세 키로 후보를 먼저 좁히면 결과는 그대로면서 비교 횟수만 준다
-    # (Phase 5에서 Archive 후보 검색을 인덱스로 좁힌 것과 같은 방향이다).
-    remaining_right = [j for j in range(len(right_entries)) if j not in used_right]
-    if remaining_right:
-        right_subjects = {j: _subject(right_entries[j]) for j in remaining_right}
-        by_filename, by_title, by_sha = {}, {}, {}
-        for j in remaining_right:
-            subject = right_subjects[j]
-            system = subject["system"]
-            if subject["filename_norm"]:
-                by_filename.setdefault((system, subject["filename_norm"]), []).append(j)
-            if subject["title_norm"]:
-                by_title.setdefault((system, subject["title_norm"]), []).append(j)
-            if subject["sha256"]:
-                by_sha.setdefault((system, subject["sha256"]), []).append(j)
-
-        for i, left in enumerate(left_entries):
-            if i in used_left:
-                continue
-            left_subject = _subject(left)
-            system = left_subject["system"]
-            candidates = set()
-            for index, key in ((by_filename, left_subject["filename_norm"]),
-                               (by_title, left_subject["title_norm"]),
-                               (by_sha, left_subject["sha256"])):
-                if key:
-                    candidates.update(index.get((system, key), ()))
-
-            hits = []
-            for j in sorted(candidates):
-                if j in used_right:
-                    continue
-                tier, _score, _why = match_engine.classify(left_subject, right_subjects[j])
-                if tier in (match_engine.TIER_EXACT, match_engine.TIER_NORMALIZED):
-                    hits.append(j)
-                    if len(hits) > 1:
-                        break
-            if len(hits) == 1:
-                pairs.append((i, hits[0]))
-                used_left.add(i)
-                used_right.add(hits[0])
 
     return pairs, used_left, used_right
 
@@ -162,7 +119,7 @@ def compare(left_entries, right_entries) -> list[dict]:
     left/right는 각각 {romUid, filename, title, size, present, mediaTypes, mediaSizes, fields} 또는 None.
 
     **있고 없고의 기준은 ROM 파일명이다**(사용자 결정) - ROM 실물이 있는지가 아니다.
-    `_pair()`가 이미 파일명(또는 엔진이 유일하게 판정한 상대)으로 짝을 지었으므로, 짝지어진
+    `_pair()`가 이미 파일명으로 짝을 지었으므로, 짝지어진
     행은 그 사실만으로 "양쪽에 있음"이다. 한쪽의 ROM 실물이 없어도(gamelist 항목만 있는
     경우) `only_a`/`only_b`로 갈라 보내지 않는다 - 그렇게 하면 파일명이 같은데도 ROM
     유무 차이만으로 "다른 파일"처럼 보였다(실사용 버그 리포트):

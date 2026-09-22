@@ -355,16 +355,16 @@ class PasteOntoAnExplicitlyChosenRowInTheSameCollectionTests(unittest.TestCase):
         self.assertEqual(result["data"]["count"], 2)
 
 
-class PasteFindsTheSameGameTheWayCompareDoesTests(unittest.TestCase):
-    """**붙여넣기와 Compare가 "같은 게임인가"를 같은 기준으로 판단해야 한다.**
+class PasteReachesNamesThatCompareDeliberatelyLeavesApartTests(unittest.TestCase):
+    """**붙여넣기와 Compare는 일부러 다른 기준을 쓴다.**
 
-    실사용 버그(그리고 내가 앞선 수정에서 놓친 것): Compare는 match_engine으로
-    `Aleste [J].zip`과 `Aleste (Japan) (T-En by Tsunami v1.0) (Cartridge).zip`을 한 줄로
-    짝지어 "메타데이터가 다르다(≠)"고 보여주는데, 붙여넣기는 `get_row_by_filename()`으로
-    **글자까지 똑같은 파일명**만 대상으로 인정했다. 그래서 사용자가 Compare에서 본 그
-    항목들을 복사해 붙여넣으면 아무 일도 일어나지 않았다.
+    - Compare는 1:1 표라 **파일명이 글자까지 같을 때만** 짝짓는다. 지역만 다른 판이
+      여럿이면(`[EU] [KR] [JP] [World]`) 어느 것과 어느 것을 맺을지 정할 근거가 없다.
+    - 붙여넣기는 그럴 근거가 있다. `app/gameid.py`가 지역과 디스크 번호까지 보고
+      대상을 하나 고른다 - 그래서 **Compare에서 양쪽에 따로 남는 짝도 붙여넣기로는
+      처리된다.**
 
-    실제 사용자 데이터(msx2, 84개)에서 Plan에 올라간 개수: 0개 -> 76개.
+    실제 사용자 데이터(msx2, 84개)에서 Plan에 올라간 개수: 0개 -> 76개(overwrite).
     """
 
     def setUp(self):
@@ -387,12 +387,11 @@ class PasteFindsTheSameGameTheWayCompareDoesTests(unittest.TestCase):
         uids = [r["romUid"] for r in self.api.list_rows(self.s)["data"]["rows"]]
         self.api.copy_selection(self.s, uids)
 
-    def test_compare_pairs_them_as_one_game(self):
-        """전제 - Compare는 이 둘을 같은 게임으로 본다(파일명이 다른데도)."""
+    def test_compare_leaves_them_on_their_own_sides(self):
+        """Compare는 이름이 다르면 짝짓지 않는다 - 양쪽에 따로 남는다(사용자 결정)."""
         self.api.start_compare(self.s, self.d)
         rows = self.api.compare_rows()["data"]["rows"]
-        self.assertEqual(len(rows), 1, "Compare가 짝짓지 못하면 이 테스트의 전제가 틀렸다")
-        self.assertEqual(rows[0]["status"], "conflict")
+        self.assertEqual({r["status"] for r in rows}, {"only_a", "only_b"})
         self.api.exit_compare()
 
     def test_replace_reaches_the_same_game_even_with_a_different_filename(self):
