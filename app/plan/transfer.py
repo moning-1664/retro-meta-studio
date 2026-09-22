@@ -17,9 +17,13 @@ app/plan/transfer.py
 | `overwrite` (덮어쓰기) | 원본의 비어 있지 않은 값이 이긴다(빈 값은 대상을 지우지 않는다) | 원본이 이긴다(같은 파일은 건너뜀) |
 | `replace` (완전 교체) | 원본의 값으로 게임의 Metadata를 다시 만든다(대상에만 있던 값도 원본에 없으면 사라진다) | 원본이 이긴다. 대상에만 있는 미디어는 **지우지 않는다**(파일 삭제는 Delete의 일) |
 
-**ROM은 모드와 무관하다.** 대상에 ROM이 있으면 그대로 둔다. `replace_rom=True`(사용자가 명시적으로
-ROM 교체를 골랐을 때)에만 원본 ROM을 올리고, 그때 비로소 identical/conflict 검사가 ROM에 걸린다.
-대상에 ROM이 없으면(gamelist 항목만 있거나 항목이 없음) 원본 ROM이 간다.
+**ROM은 모드와 무관하고, 절대 덮어쓰지 않는다**(사용자 결정 - "롬은 항상 부차적인 asset").
+설정의 `ROM 파일 복사`가 켜져 있고 **대상에 ROM 파일이 없을 때만** 복사한다. 그래서 ROM
+파일 충돌은 구조적으로 생길 수 없다 - 덮어쓸 일 자체가 없기 때문이다.
+
+대상 항목의 파일명이 원본과 다르면(지역 태그가 다르거나 사람이 직접 지목한 경우) ROM은
+옮기지 않는다. `Final Fantasy 7.zip`의 바이트를 `ff7.rom`이라는 이름으로 놓으면 확장자가
+바뀌어 에뮬레이터가 못 읽고, `[EU]` 덤프를 `[KR]` 이름으로 놓는 것도 틀린 파일이 된다.
 
 대상에 **없는** 게임은 어느 모드에서든 원본 그대로 새로 붙는다.
 
@@ -67,7 +71,7 @@ def _media_type(m) -> str:
     return m.get("type") or m.get("media_type")
 
 
-def decide(item, existing, mode, *, replace_rom=False) -> tuple[dict | None, str | None]:
+def decide(item, existing, mode) -> tuple[dict | None, str | None]:
     """게임 하나의 구성요소별 전송 의도를 정한다.
 
     `existing`: 대상의 같은 게임 행(없으면 None). 반환: (`plan_add`에 넘길 항목 또는 None, 건너뛴 이유).
@@ -76,11 +80,12 @@ def decide(item, existing, mode, *, replace_rom=False) -> tuple[dict | None, str
     if existing is None:
         return item, None                  # 대상에 없다 - 모드와 무관하게 원본 그대로 붙는다
 
-    # ROM: 있으면 지킨다. 교체는 명시적으로 고른 때만이고, 그때만 파일 검사(identical/conflict)가 걸린다.
+    # ROM: 대상에 이미 있으면 손대지 않는다(덮어쓰지 않는다). 이름이 다른 대상이면
+    # 원본 ROM을 그 이름으로 놓을 수 없으므로 역시 옮기지 않는다.
     rom = item.get("rom")
-    if rom and existing["present"]:
-        if not replace_rom or _same_file(rom, existing):
-            rom = None
+    if rom and (existing["present"]
+                or (existing["system"], existing["filename"]) != (item["system"], item["filename"])):
+        rom = None
 
     # Media
     have = {m["media_type"]: m for m in (existing.get("media") or [])}
@@ -172,7 +177,7 @@ class TargetIndex:
         return out
 
 
-def prepare(items, cache, mode, *, replace_rom=False, targets=None, index=None) -> tuple[list, list]:
+def prepare(items, cache, mode, *, targets=None, index=None) -> tuple[list, list]:
     """붙여넣기 - 어느 대상 행에 쓸지 정하고 구성요소별 의도를 계산한다.
 
     같은 게임인지 아는 방법은 둘이다.
@@ -194,15 +199,14 @@ def prepare(items, cache, mode, *, replace_rom=False, targets=None, index=None) 
             existing, how = chosen, "manual"
         else:
             existing, how = index.find(item, accept_similar=(mode == MODE_REPLACE))
-        if existing is not None and (existing["system"], existing["filename"]) != (item["system"], item["filename"]):
-            # 대상의 이름으로 쓴다 - 그래야 gamelist의 그 항목에 들어가고, 미디어도 그
-            # 파일명으로 놓여 프론트엔드가 찾는다.
-            item = {**item, "system": existing["system"], "filename": existing["filename"]}
-            if not replace_rom:
-                # 이름이 다른 대상이다. ROM을 대상 이름으로 복사하면 확장자까지 바뀌어
-                # 에뮬레이터가 못 읽는 파일이 된다 - ROM 교체를 명시한 때만 손댄다.
-                item = {**item, "rom": None}
-        out, reason = decide(item, existing, mode, replace_rom=replace_rom)
+        if existing is not None:
+            out, reason = decide(item, existing, mode)
+            if out is not None and (existing["system"], existing["filename"]) != (item["system"], item["filename"]):
+                # 대상의 이름으로 쓴다 - 그래야 gamelist의 그 항목에 들어가고, 미디어도 그
+                # 파일명으로 놓여 프론트엔드가 찾는다.
+                out = {**out, "system": existing["system"], "filename": existing["filename"]}
+        else:
+            out, reason = decide(item, existing, mode)
         if out is None:
             skipped.append({"filename": item["filename"], "reason": reason})
         else:
@@ -220,9 +224,8 @@ def _same_media(media, existing) -> bool:
     **크기만 본다**(사용자 결정, 번복 - `app/plan/builder.classify_destination()`의
     `size_only`와 같은 이유). 예전엔 크기+수정시각을 요구했는데, Collection/기기를
     옮기면(특히 MTP) mtime이 원본 그대로 보존되지 않는 경우가 흔해서 똑같은 그림도
-    매번 "다른 파일"로 보여 붙여넣을 때마다 Conflict가 떴다. ROM은 여전히 크기+시각을
-    같이 보는 `_same_file()`을 쓴다 - 같은 크기의 다른 리전/리비전 덤프가 실제로 있는,
-    더 위험한 자료이기 때문이다."""
+    매번 "다른 파일"로 보여 붙여넣을 때마다 Conflict가 떴다. ROM은 아예 덮어쓰지
+    않으므로(위 머리말) 같은 판정이 필요 없다."""
     if existing is None:
         return False
     try:
@@ -230,17 +233,6 @@ def _same_media(media, existing) -> bool:
     except (OSError, KeyError, TypeError):
         return False
     return stat.st_size == int(existing.get("size") or 0)
-
-
-def _same_file(rom, existing) -> bool:
-    """원본 ROM이 대상의 그 파일과 **같은 파일**인가. Plan의 IDENTICAL 판정과 같은 기준(크기+수정시각)이다 -
-    크기만 같고 시각이 다르면 같은 파일이라고 확신할 수 없으므로 충돌 확인으로 넘어간다."""
-    try:
-        stat = Path(rom["path"]).stat()
-    except (OSError, KeyError, TypeError):
-        return False
-    return (stat.st_size == int(existing.get("size") or 0)
-            and stat.st_mtime_ns == int(existing.get("mtime_ns") or 0))
 
 
 def _nothing_to_change(mode, item) -> str:

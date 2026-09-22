@@ -126,17 +126,16 @@ class PasteModeTests(unittest.TestCase):
         self.assertEqual(ffx["genre"], "RPG")
         self.assertEqual(self._cover(), b"x" * 10)
 
-    def test_rom_is_kept_unless_replacing_it_is_asked_for(self):
-        """대상 ROM이 다른 파일이어도 기본은 ROM을 건드리지 않는다 - ROM 충돌은 명시했을 때만."""
+    def test_the_rom_is_never_touched_even_when_it_differs(self):
+        """대상 ROM이 아주 다른 파일이어도 건드리지 않는다(사용자 결정 - 덮어쓰지 않는다)."""
         (self.dst_root / "ps2" / "FFX.iso").write_bytes(b"DIFFERENT-ROM-BYTES")
         scan(self.api, self.dst)
         self._copy_all()
         kept = self.api.paste(self.dst, "overwrite")["data"]
         self.assertEqual(kept["conflicts"], 0)
         self.assertEqual([e.filename for e in self.api._plan(self.dst).conflict_entries()], [])
-        self.api.plan_clear(self.dst)
-        asked = self.api.paste(self.dst, "overwrite", None, True)["data"]
-        self.assertEqual(asked["conflicts"], 1, "ROM 교체를 골랐는데 파일 충돌 확인이 걸리지 않았다")
+        self._apply()
+        self.assertEqual((self.dst_root / "ps2" / "FFX.iso").read_bytes(), b"DIFFERENT-ROM-BYTES")
 
     # --------------------------------------------------------------- 공통
     def test_items_missing_from_the_target_are_added_in_every_mode(self):

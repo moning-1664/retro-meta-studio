@@ -98,16 +98,23 @@ class TransferContractTests(unittest.TestCase):
         self._apply()
         self.assertEqual(self._media("covers"), b"SRC-COVER" * 5, "ROM 충돌 때문에 Media가 막혔다")
 
-    def test_rom_conflict_appears_only_when_replacing_the_rom_is_chosen(self):
-        """§9 - ROM을 고른 경우에만 ROM이 파일 검사에 들어간다."""
-        result = self._paste("overwrite", replace_rom=True)
-        self.assertEqual(self._rom_conflicts(), ["FFX.iso"])
-        self.assertEqual(result["conflicts"], 1)
+    def test_the_rom_is_never_overwritten_in_any_mode(self):
+        """사용자 결정(번복) - "롬은 항상 부차적인 asset". 대상에 ROM이 있으면 어느
+        모드에서도 손대지 않으므로, ROM 충돌은 구조적으로 생길 수 없다."""
+        before = (self.dst_root / "ps2" / "FFX.iso").read_bytes()
+        for mode in ("patch", "overwrite", "replace"):
+            self.api.plan_clear(self.d)
+            result = self._paste(mode)
+            self.assertEqual(self._rom_conflicts(), [], mode)
+            for entry in self.api._plan(self.d).entries:
+                self.assertFalse(entry.source.get("rom"), mode)
+        self._apply()
+        self.assertEqual((self.dst_root / "ps2" / "FFX.iso").read_bytes(), before)
 
     def test_include_rom_off_also_keeps_the_rom_out_of_the_check(self):
         """설정에서 ROM 복사를 끈 경우도 마찬가지다."""
         self.api.save_app_settings({"transfer": {"includeRom": False}})
-        self._paste("overwrite", replace_rom=True)
+        self._paste("overwrite")
         self.assertEqual(self._rom_conflicts(), [], "ROM을 끄고도 ROM이 충돌로 잡혔다")
 
     # ---------------------------------------------------------------- §15.5

@@ -140,13 +140,27 @@ class PlanIntegrationTests(unittest.TestCase):
         `같은 이름 + 같은 크기 + 다른 내용`은 ROM 관리에서 흔하다. 확신할 수 없으면
         사용자에게 묻는다(스펙 §85). 용량은 늘지 않지만 그것과 "덮어써도 된다"는
         전혀 다른 문제다.
+
+        붙여넣기는 이제 대상에 있는 ROM을 절대 덮어쓰지 않으므로(사용자 결정) 이 검사는
+        **목록이 모르는 파일이 그 자리에 있을 때** 걸린다 - 폴더에 파일은 있는데 gamelist나
+        스캔 결과에는 없는 상태다. 그때도 조용히 덮어써서는 안 된다.
         """
-        self.api.copy_selection(self.src, [self._uid(self.src, "MGS2.iso")])
-        self.api.paste(self.dst, "overwrite", None, True)  # ROM 교체를 명시해야 파일 검사가 걸린다
+        source_rom = self.source_root / "ps2" / "FFX.iso"
+        stranger = self.target_root / "ps2" / "FFX.iso"
+        # 목록에는 없지만 그 자리에 이미 있는 파일 - 크기는 같고 내용은 다르다.
+        stranger.write_bytes(b"X" * source_rom.stat().st_size)
+
+        self.api.copy_selection(self.src, [self._uid(self.src, "FFX.iso")])
+        self.api.paste(self.dst, "overwrite")
         state = self.api.plan_state(self.dst)["data"]
         self.assertEqual(state["added"], 1)
         self.assertEqual(state["conflicts"], 1, "같은 크기 파일이 충돌로 잡히지 않았다")
-        self.assertEqual(state["delta"].get("internal", 0), 0)
+        entry = self.api._plan(self.dst).conflict_entries()[0]
+        rom_conflicts = [c for c in entry.conflicts if c.get("kind") == "rom"]
+        self.assertTrue(rom_conflicts, "ROM이 아니라 다른 것이 충돌로 잡혔다")
+        # 크기가 같으므로 이 파일 때문에 늘어나는 물리 용량은 없다 - 그것과 "덮어써도
+        # 된다"는 별개다(media는 대상에 없던 것이라 따로 늘어난다).
+        self.assertEqual(rom_conflicts[0]["sourceSize"], rom_conflicts[0]["destSize"])
 
     def test_byte_identical_copy_is_skipped_without_asking(self):
         """우리가(또는 다른 도구가) 복사해둔 파일은 타임스탬프까지 같다. 이건 묻지 않는다."""

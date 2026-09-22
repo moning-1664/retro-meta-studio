@@ -217,7 +217,7 @@ test.describe("고른 행을 대상으로 삼기", () => {
     await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).click();
     await page.keyboard.press("Control+v");
     await expect.poll(() => calls.length).toBe(1);
-    expect(calls[0][5]).toBe("ps2|MGS2.iso");
+    expect(calls[0][4]).toBe("ps2|MGS2.iso");
   });
 
   test("여러 행을 골랐으면 대상 후보를 보내지 않는다", async ({ page }) => {
@@ -228,6 +228,6 @@ test.describe("고른 행을 대상으로 삼기", () => {
     await page.locator(".lrow", { hasText: "Super Mario World" }).click({ modifiers: ["Control"] });
     await page.keyboard.press("Control+v");
     await expect.poll(() => calls.length).toBe(1);
-    expect(calls[0][5]).toBeFalsy();
+    expect(calls[0][4]).toBeFalsy();
   });
 });

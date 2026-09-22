@@ -891,9 +891,8 @@
     planResolveAllConflicts: (id, resolution) => call("plan_resolve_all_conflicts", id, resolution),
     planClear: (id) => call("plan_clear", id),
     copySelection: (id, romUids) => call("copy_selection", id, romUids),
-    paste: (id, mode, systemMap, replaceRom, targetMap, fallbackTarget) =>
-      call("paste", id, mode || null, systemMap || null, replaceRom == null ? null : !!replaceRom,
-           targetMap || null, fallbackTarget || null),
+    paste: (id, mode, systemMap, targetMap, fallbackTarget) =>
+      call("paste", id, mode || null, systemMap || null, targetMap || null, fallbackTarget || null),
     clipboardSystems: (id) => call("clipboard_systems", id),
     clipboardItems: () => call("clipboard_items"),
     validatePlan: (id) => call("validate_plan", id),
@@ -954,9 +953,10 @@
     compareCopyRow: (key, direction, metadataOnly) =>
       call("compare_copy_row", key, direction, !!metadataOnly),
     compareManualCopy: (sourceKey, targetKey, mode) =>
-      call("compare_manual_copy", sourceKey, targetKey, mode || null, false),
+      call("compare_manual_copy", sourceKey, targetKey, mode || null),
     compareCopyRows: (keys, direction, mediaTypes) =>
-      call("compare_copy_rows", keys, direction, true, true, null, false, mediaTypes && mediaTypes.length ? mediaTypes : null),
+      call("compare_copy_rows", keys, direction, true, true, null,
+           mediaTypes && mediaTypes.length ? mediaTypes : null),
     exitCompare: () => call("exit_compare"),
 
     startScan: (id, force) => call("start_scan", id, !!force),

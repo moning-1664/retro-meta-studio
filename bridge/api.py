@@ -461,8 +461,6 @@ class Api:
         "includeRom": True, "includeMedia": True, "conflict": "ask",
         # 붙여넣기 모드(Patch/Overwrite/Replace) - app/plan/transfer.py
         "pasteMode": transfer.DEFAULT_MODE,
-        #: ROM도 원본으로 교체할까(명시적 선택일 때만 - 기본은 대상 ROM을 지킨다)
-        "replaceRom": False,
         "unmatchedRomMode": "copy",
         "unmatchedRomMetadata": True, "unmatchedRomMedia": True, "unmatchedRomVideo": True,
     }
@@ -1521,7 +1519,7 @@ class Api:
         })
 
     @guarded
-    def paste(self, collection_id, mode=None, system_map=None, replace_rom=None, target_map=None,
+    def paste(self, collection_id, mode=None, system_map=None, target_map=None,
               fallback_target=None):
         """붙여넣기. **Settings의 복사 정책(transfer)을 따른다.**
 
@@ -1558,8 +1556,7 @@ class Api:
             return blocked
         policy = self._transfer_policy()
         mode = transfer.normalize_mode(mode or policy["pasteMode"])
-        replace_rom = policy["replaceRom"] if replace_rom is None else bool(replace_rom)
-        policy = {**policy, "pasteMode": mode, "replaceRom": replace_rom}
+        policy = {**policy, "pasteMode": mode}
 
         # **사용자가 지목한 대상**({"system|원본파일명": "system|대상파일명"}). 자동 판단(파일명 일치)이
         # 못 붙인 짝을 사람이 직접 잇는 길이다(제안서 §5 - Replace는 Match 결과에 제한되지 않는다).
@@ -1648,8 +1645,7 @@ class Api:
         # 걷어 낸 항목은 "원본에 ROM이 없는" 항목이 아니다. 걷어 내고 나면 바뀔 것이 없는 항목은 Plan에
         # 올리지 않고 이유를 알린다.
         prepared, mode_skipped = transfer.prepare(prepared, target_cache, mode,
-                                                  replace_rom=replace_rom, targets=targets,
-                                                  index=index)
+                                                  targets=targets, index=index)
         extra_skipped.extend(mode_skipped)
 
         if not prepared:
@@ -1685,7 +1681,6 @@ class Api:
         mode = merged["unmatchedRomMode"] if merged["unmatchedRomMode"] in ("skip", "copy") else "copy"
         return {
             "pasteMode": transfer.normalize_mode(merged.get("pasteMode")),
-            "replaceRom": bool(merged.get("replaceRom")),
             "includeRom": bool(merged["includeRom"]),
             "includeMedia": bool(merged["includeMedia"]),
             "conflict": conflict,
@@ -2391,7 +2386,7 @@ class Api:
 
     @guarded
     def compare_copy_rows(self, keys, direction, metadata_only=True, overwrite=True, mode=None,
-                          replace_rom=False, media_types=None):
+                          media_types=None):
         """**고른 여러 행**을 한 번에 반대쪽 Plan에 올린다(사용자 결정 - Compare 상단의 `<` `>`는
         "선택된 항목들의 메타데이터+미디어를 좌/우측으로 overwrite").
 
@@ -2409,7 +2404,7 @@ class Api:
         planned, skipped, target_name, target_id = 0, [], None, None
         for key in keys:
             result = self.compare_copy_row(key, direction, metadata_only=metadata_only,
-                                           overwrite=overwrite, mode=mode, replace_rom=replace_rom,
+                                           overwrite=overwrite, mode=mode,
                                            media_types=media_types)
             if not result["ok"]:
                 skipped.append({"key": key, "reason": result["error"]})
@@ -2425,7 +2420,7 @@ class Api:
                    "metadataOnly": bool(metadata_only)})
 
     @guarded
-    def compare_manual_copy(self, source_key, target_key, mode=None, replace_rom=False):
+    def compare_manual_copy(self, source_key, target_key, mode=None):
         """**사용자가 직접 이은 두 항목** 사이의 전송(제안서 §5, §15.3-15.4).
 
         자동 짝짓기는 파일명/제목이 비슷할 때만 잇는다. `Final Fantasy 7.zip`과 `ff7.rom`처럼
@@ -2471,7 +2466,6 @@ class Api:
         existing = target_cache.get_row(int(other["romUid"]))
         prepared, skipped = transfer.prepare(
             items, target_cache, transfer.normalize_mode(mode or transfer.MODE_REPLACE),
-            replace_rom=bool(replace_rom),
             targets={transfer.item_key(items[0]): existing})
         if not prepared:
             return ok({"added": 0, "skipped": skipped, "conflicts": 0, "targetId": target_id,
@@ -2490,7 +2484,7 @@ class Api:
 
     @guarded
     def compare_copy_row(self, key, direction, metadata_only=False, overwrite=False, mode=None,
-                         replace_rom=False, media_types=None):
+                         media_types=None):
         """Compare 한 행을 반대쪽 Collection의 **Plan에 올린다**(사용자 결정 - "모든 변경은
         PLAN 기준 / 실제 Apply를 눌러야 적용").
 
@@ -2546,8 +2540,8 @@ class Api:
             target_cache = self.workspace.open(target_id)
             existing = target_cache.get_row(int(other["romUid"]))
             items = [{**item, "filename": other["filename"]} for item in items]
-            out, reason = transfer.decide(items[0], existing, transfer.normalize_mode(mode or "overwrite"),
-                                          replace_rom=bool(replace_rom))
+            out, reason = transfer.decide(items[0], existing,
+                                          transfer.normalize_mode(mode or "overwrite"))
             if out is None:
                 return ok({"added": 0, "skipped": [{"filename": other["filename"], "reason": reason}],
                            "conflicts": 0, "targetId": target_id, "targetName": target.name,

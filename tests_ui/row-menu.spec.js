@@ -199,10 +199,7 @@ test.describe("이 항목에 붙여넣기", () => {
     await page.exposeFunction("__note", (args) => calls.push(args));
     await page.evaluate(() => {
       const original = window.api.paste;
-      window.api.paste = (id, mode, systemMap, replaceRom, targetMap) => {
-        window.__note([id, mode, systemMap, replaceRom, targetMap]);
-        return original(id, mode, systemMap, replaceRom, targetMap);
-      };
+      window.api.paste = (...args) => { window.__note(args); return original(...args); };
     });
     await rightClick(page, "Metal Gear Solid 2");
     await page.keyboard.press("Control+c");
@@ -210,7 +207,7 @@ test.describe("이 항목에 붙여넣기", () => {
     await menuItem(page, "이 항목에 붙여넣기").click();
 
     await expect.poll(() => calls.length).toBe(1);
-    const [, , , , targetMap] = calls[0];
+    const [, , , targetMap] = calls[0];
     expect(targetMap).toEqual({ "ps2|MGS2.iso": "ps2|FFX.iso" });
   });
 

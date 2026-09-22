@@ -65,9 +65,10 @@ class RomKeptMediaOverwrittenTests(unittest.TestCase):
         u = next(r["romUid"] for r in self.api.list_rows(self.s)["data"]["rows"]
                  if r["file"] == "FFX.iso")
         self.api.copy_selection(self.s, [u])
-        paste = self.api.paste(self.d, "overwrite", None, True)["data"]  # ROM 교체를 명시해야 ROM 충돌이 잡힌다
-        self.assertEqual(paste["conflicts"], 1, "ROM과 Cover 둘 다 달라야 충돌로 잡힌다")
-        self.api.plan_resolve_all_conflicts(self.d, "skip")
+        paste = self.api.paste(self.d, "overwrite")["data"]
+        # 사용자 결정(번복) - ROM은 덮어쓰지 않으므로 충돌로 잡힐 일이 없다. 예전에는
+        # 여기서 ROM 충돌이 뜨고 "메타데이터만"을 골라야 비로소 Cover가 들어갔다.
+        self.assertEqual(paste["conflicts"], 0)
         job = self.api.start_apply(self.d)["data"]["jobId"]
         wait_idle(self.api)
         return self.api.get_job_progress(job)["data"].get("result")
@@ -92,9 +93,8 @@ class RomKeptMediaOverwrittenTests(unittest.TestCase):
         self.assertEqual(self._target_row()["title"], "Final Fantasy X")
 
     def test_cover_is_overwritten_with_the_source_cover(self):
-        """ROM 충돌 때문에 고른 "메타데이터만"이 같은 항목의 Cover 충돌까지 함께
-        건너뛰지 않는다 - Cover는 conflict 단위로 승인되어 Source 것으로 바뀐다.
-        """
+        """Overwrite 모드이므로 Cover는 Source 것으로 바뀐다 - ROM을 건드리지 않는 것과
+        무관하게 각 구성요소는 모드를 따른다."""
         self._paste_and_resolve_skip()
         self.assertEqual(self.dst_cover.read_bytes(), b"COVER-A" * 20)
 

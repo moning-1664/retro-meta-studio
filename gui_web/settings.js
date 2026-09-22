@@ -306,13 +306,9 @@
             (v) => ctx.update("transfer", { pasteMode: v })),
           "Patch: 이미 있는 항목의 빈 값과 없는 미디어만 채웁니다. Overwrite: 원본의 값과 미디어가 대상 것을 대신합니다. "
           + "Replace: 게임의 메타데이터와 미디어를 원본으로 다시 만듭니다. 상단 Plan 버튼 옆에서도 바꿀 수 있습니다."));
-        add(row("transfer.replaceRom", "ROM도 교체",
-          toggle(!!t.replaceRom, (v) => ctx.update("transfer", { replaceRom: v })),
-          "기본은 꺼짐 - 대상에 ROM이 있으면 어느 모드에서도 그대로 둡니다. 켜면 원본 ROM으로 바꾸며, "
-          + "그때만 같은 파일인지/다른 파일인지 확인(충돌 판정)이 ROM에 적용됩니다."));
         add(row("transfer.includeRom", "ROM 파일 복사",
           toggle(t.includeRom, (v) => ctx.update("transfer", { includeRom: v })),
-          "끄면 ROM은 옮기지 않고 메타데이터(와 Media)만 붙여넣습니다. 이미 가진 ROM에 정보만 채울 때 씁니다."));
+          "켜면 **대상에 ROM 파일이 없을 때만** 원본 ROM을 복사합니다. 이미 있는 ROM은 어느 모드에서도 덮어쓰지 않습니다."));
         add(row("transfer.includeMedia", "Media 복사",
           toggle(t.includeMedia, (v) => ctx.update("transfer", { includeMedia: v })),
           "끄면 커버·스크린샷·동영상을 옮기지 않습니다."));

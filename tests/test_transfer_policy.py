@@ -3,7 +3,10 @@
 붙여넣기는 registry의 앱 설정(ui.settings.transfer)을 읽는다.
   - includeRom / includeMedia를 끄면 Plan에 그 파일을 올리지 않는다(메타데이터는 늘 간다).
   - conflict가 skip/overwrite면 **이번 붙여넣기로 생긴 충돌만** 그렇게 정한다.
-기본값(ask)은 예전 동작 그대로다 - test_metadata_only_paste.py가 그 흐름을 검증한다.
+
+ROM은 이제 어느 모드에서도 덮어쓰지 않으므로(사용자 결정), 파일 충돌은 **목록이 모르는
+파일이 그 자리에 있을 때**만 생긴다 - 폴더에는 있는데 gamelist/스캔에는 없는 파일이다.
+아래 테스트는 그 상황을 만들어 conflict 정책을 검증한다.
 """
 
 import unittest
@@ -22,7 +25,7 @@ class TransferPolicyTests(unittest.TestCase):
         ])
         write_file(self.src / "downloaded_media" / "ps2" / "covers" / "FFX.png", b"c" * 40)
         write_file(self.src / "downloaded_media" / "ps2" / "covers" / "MGS2.png", b"c" * 40)
-        # 받는 쪽에는 FFX ROM만 이미 있다 - FFX는 충돌, MGS2는 새 항목이다.
+        # 받는 쪽에는 FFX ROM만 이미 있다 - FFX는 대상이 있는 항목, MGS2는 새 항목이다.
         self.dst = self.dir / "dst"
         write_file(self.dst / "ps2" / "FFX.iso", b"r" * 256)
 
@@ -32,14 +35,16 @@ class TransferPolicyTests(unittest.TestCase):
         self.d = self.api.create_collection("D", "es-de", str(self.dst))["data"]["id"]
         scan(self.api, self.s)
         scan(self.api, self.d)
+        # **스캔 뒤에** MGS2 자리에 목록이 모르는 파일을 놓는다 - 붙여넣기는 이 자리에
+        # ROM을 쓰려다 "남의 파일이 있다"를 만난다(지금 파일 충돌이 생기는 유일한 길).
+        write_file(self.dst / "ps2" / "MGS2.iso", b"stranger" * 40)
 
     def paste_all(self, **policy):
         if policy:
             self.api.save_app_settings({"transfer": policy})
         uids = [r["romUid"] for r in self.api.list_rows(self.s, limit=50)["data"]["rows"]]
         self.api.copy_selection(self.s, uids)
-        # ROM 충돌은 "ROM 교체"를 명시했을 때만 생긴다(게임 단위 전송 - app/plan/transfer.py)
-        r = self.api.paste(self.d, "overwrite", None, True)
+        r = self.api.paste(self.d, "overwrite")
         self.assertTrue(r["ok"], r.get("error"))
         return r["data"]
 
@@ -49,30 +54,30 @@ class TransferPolicyTests(unittest.TestCase):
     def test_default_policy_keeps_conflicts_for_the_user(self):
         result = self.paste_all()
         self.assertEqual(result["policy"], {
-            "pasteMode": "overwrite", "replaceRom": True, "includeRom": True, "includeMedia": True, "conflict": "ask",
+            "pasteMode": "overwrite", "includeRom": True, "includeMedia": True, "conflict": "ask",
             "unmatchedRom": {"mode": "copy", "metadata": True, "media": True, "video": True},
         })
         self.assertEqual(result["conflicts"], 1)
-        self.assertEqual([e.filename for e in self.api._plan(self.d).conflict_entries()], ["FFX.iso"])
+        self.assertEqual([e.filename for e in self.api._plan(self.d).conflict_entries()], ["MGS2.iso"])
 
     def test_conflict_skip_resolves_only_the_new_conflicts(self):
         result = self.paste_all(conflict="skip")
         self.assertEqual(result["conflicts"], 0)
         self.assertEqual(result["autoResolved"], 1)
         self.assertEqual(self.api._plan(self.d).conflict_entries(), [])
-        self.assertEqual(self.entries()["FFX.iso"].resolution, RESOLVE_SKIP)
+        self.assertEqual(self.entries()["MGS2.iso"].resolution, RESOLVE_SKIP)
 
     def test_conflict_overwrite(self):
         self.paste_all(conflict="overwrite")
-        self.assertEqual(self.entries()["FFX.iso"].resolution, RESOLVE_OVERWRITE)
+        self.assertEqual(self.entries()["MGS2.iso"].resolution, RESOLVE_OVERWRITE)
 
     def test_existing_conflicts_in_the_plan_are_not_touched(self):
-        self.paste_all()                                  # ask - FFX 충돌이 Plan에 남는다
+        self.paste_all()                                  # ask - MGS2 충돌이 Plan에 남는다
         self.api.save_app_settings({"transfer": {"conflict": "skip"}})
         self.api.copy_selection(self.s, [r["romUid"] for r in self.api.list_rows(self.s, limit=50)["data"]["rows"]
-                                         if r["file"] == "MGS2.iso"])
-        self.api.paste(self.d, "overwrite", None, True)
-        self.assertEqual([e.filename for e in self.api._plan(self.d).conflict_entries()], ["FFX.iso"])
+                                         if r["file"] == "FFX.iso"])
+        self.api.paste(self.d, "overwrite")
+        self.assertEqual([e.filename for e in self.api._plan(self.d).conflict_entries()], ["MGS2.iso"])
 
     def test_media_off_does_not_plan_media(self):
         self.paste_all(includeMedia=False)
@@ -94,7 +99,8 @@ class TransferPolicyTests(unittest.TestCase):
         wait_idle(self.api)
         result = self.api.get_job_progress(job["data"]["jobId"])["data"]
         self.assertNotEqual(result.get("status"), "error", result)
-        self.assertFalse((self.dst / "ps2" / "MGS2.iso").exists())
+        self.assertEqual((self.dst / "ps2" / "MGS2.iso").read_bytes(), b"stranger" * 40,
+                         "ROM을 끈 붙여넣기가 남의 파일을 건드렸다")
         self.assertEqual((self.dst / "ps2" / "FFX.iso").read_bytes(), b"r" * 256)
         self.assertTrue((self.dst / "downloaded_media" / "ps2" / "covers" / "MGS2.png").exists())
         gamelist = (self.dst / "gamelists" / "ps2" / "gamelist.xml").read_text(encoding="utf-8")

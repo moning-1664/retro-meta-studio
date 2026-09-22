@@ -3417,7 +3417,7 @@
      "원본의 메타데이터와 미디어가 대상 것을 대신합니다. 원본이 비어 있는 값으로 대상 값을 지우지는 않습니다."],
     ["replace", "Replace", "완전 교체 - 원본으로 다시 만듭니다",
      "게임의 메타데이터와 미디어를 원본 것으로 다시 만듭니다(원본에 없는 메타데이터 값은 사라집니다). "
-     + "대상에만 있는 미디어 파일은 지우지 않습니다. ROM은 어느 모드에서도 유지되며, 바꾸려면 설정의 'ROM도 교체'를 켜세요."],
+     + "대상에만 있는 미디어 파일은 지우지 않습니다. ROM은 어느 모드에서도 덮어쓰지 않습니다."],
   ];
   const currentPasteMode = () => (S.settings.transfer && S.settings.transfer.pasteMode) || "patch";
 
@@ -6240,7 +6240,7 @@
     // 이게 없으면 이름이 전혀 다른 두 게임(`FF7.zip` <-> `ff7.rom`)은 대상을 골라 놓고
     // 붙여넣어도 닿지 않았다.
     const fallback = !targetRow && S.selected.size === 1 ? selectedRowKey() : null;
-    const r = await api.paste(S.activeId, currentPasteMode(), systemMap, null, targetMap, fallback);
+    const r = await api.paste(S.activeId, currentPasteMode(), systemMap, targetMap, fallback);
     if (!r.ok) { showToast(r.error, "error"); return; }
     const d = r.data;
     await refreshPlan();
