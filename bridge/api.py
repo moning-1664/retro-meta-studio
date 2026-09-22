@@ -1293,6 +1293,26 @@ class Api:
         return summary
 
     @guarded
+    def plan_conflict_preview(self, collection_id, key, index=0):
+        """충돌 창의 미디어 미리보기 - 지금 대상에 있는 그림과 새로 들어올 그림을 나란히 보여 준다.
+
+        경로를 인자로 받지 않는다. **Plan이 이미 들고 있는 그 충돌의 source/dest만** 읽는다 - 임의의 파일을
+        읽는 통로가 되지 않게 하기 위해서다. ROM 충돌이나 영상은 그림이 없으므로 None이다.
+        """
+        plan = self._plan(collection_id)
+        entry = plan.get(key)
+        conflicts = (entry.conflicts if entry is not None else None) or []
+        if entry is None or not 0 <= int(index) < len(conflicts):
+            return err("충돌을 찾을 수 없습니다.")
+        conflict = conflicts[int(index)]
+        if conflict.get("kind") != "media":
+            return ok(None)
+        return ok({
+            "existing": self._encode_image(conflict["dest"], THUMBNAIL_MAX),
+            "incoming": self._encode_image(conflict["source"], THUMBNAIL_MAX),
+        })
+
+    @guarded
     def plan_resolve_conflict(self, collection_id, key, resolution):
         """충돌 항목을 어떻게 처리할지 정한다: skip(그대로 둠) 또는 overwrite(덮어씀).
 

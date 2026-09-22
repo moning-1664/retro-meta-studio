@@ -329,6 +329,7 @@
       ok({ moved: (romUids || []).length, target: system, conflicts: 0, skipped: [] }),
     open_storage_folder: () => ok({ path: "D:\ES-DE" }),
     create_system: (id, name) => ok({ system: name, romDir: "D:\ES-DE\\" + name, knownToEsde: !/-/.test(name) }),
+    plan_conflict_preview: () => ok(null),
     plan_resolve_conflict: (id, key) => {
       mockConflictEntries = mockConflictEntries.filter((e) => e.key !== key);
       return ok({ resolution: "skip" });
@@ -852,6 +853,7 @@
     titleAffixPreview: (id, romUids, system) => call("title_affix_preview", id, romUids, system),
     planTitleEdit: (id, romUids, system) => call("plan_title_edit", id, romUids, system),
     planRemoveEntry: (id, key) => call("plan_remove_entry", id, key),
+    planConflictPreview: (id, key, index) => call("plan_conflict_preview", id, key, index || 0),
     planResolveConflict: (id, key, resolution) => call("plan_resolve_conflict", id, key, resolution),
     planResolveAllConflicts: (id, resolution) => call("plan_resolve_all_conflicts", id, resolution),
     planClear: (id) => call("plan_clear", id),

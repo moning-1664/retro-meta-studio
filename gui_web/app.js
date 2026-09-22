@@ -6216,9 +6216,23 @@
    * (sourceSize/destSize)는 builder.classify_destination()이 이미 계산해 두고
    * 있었는데 예전엔 `reason` 문장 하나로만(그나마 첫 번째 충돌만) 줄여 보여줬다.
    */
-  function conflictDetailRow(conflict) {
+  function conflictDetailRow(conflict, entryKey, index) {
     const sameSize = conflict.sourceSize === conflict.destSize;
+    // Media 충돌이면 두 그림을 나란히 보여 준다 - 크기 숫자만으로는 어느 쪽이 나은지 알 수 없다.
+    const preview = conflict.kind === "media" ? h("div", { class: "conflict-preview" }) : null;
+    if (preview) {
+      api.planConflictPreview(S.activeId, entryKey, index).then((r) => {
+        if (!r.ok || !r.data) return;
+        [["existing", "지금 대상에 있는 파일"], ["incoming", "새로 들어올 파일"]].forEach(([which, label]) => {
+          if (!r.data[which]) return;
+          const img = h("img", { class: "conflict-thumb " + which, alt: label, title: label, src: r.data[which] });
+          img.addEventListener("click", () => openMediaLightbox(img, label));
+          preview.appendChild(img);
+        });
+      });
+    }
     return h("div", { class: "conflict-detail" }, [
+      preview,
       icon(conflict.kind === "rom" ? "gamepad" : "image", IC.sm),
       h("span", { class: "conflict-detail-kind" }, [conflictKindLabel(conflict)]),
       h("span", { class: "conflict-detail-sizes" }, [
@@ -6249,7 +6263,7 @@
             conflicts.length > 1
               ? h("span", { class: "conflict-count-badge" }, [`충돌 ${conflicts.length}개`]) : null,
           ]),
-          ...conflicts.map(conflictDetailRow),
+          ...conflicts.map((c, i) => conflictDetailRow(c, entry.key, i)),
         ]),
         h("div", { class: "conflict-actions" }, [
           // "건너뛰기"는 그 항목을 통째로 건너뛴다고 읽힌다. 실제로 하는 일은
