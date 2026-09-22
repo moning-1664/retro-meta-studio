@@ -4739,7 +4739,19 @@
       showToast(`${formatCount(S.selected.size)}개를 선택했습니다.`);
       return;
     }
-    if (isArchive()) { showToast("Archive에서는 전체 선택을 아직 지원하지 않습니다.", "warning"); return; }
+    if (isArchive()) {
+      // archiveUids()는 이미 있었고(HERO의 "메타데이터 가져오기"가 쓴다) 테스트도
+      // 있었는데, Ctrl+A만 이 자리에 "아직 지원 안 함"으로 남아 있었다 - 검색어
+      // 필터는 이 API가 못 받으므로(System만 좁힐 수 있다) 검색 중에는 그 System
+      // 전체가 뽑힌다는 한계는 남아 있다.
+      const r = await api.archiveUids(currentQuery().systems);
+      if (!r.ok) { showToast(r.error, "error"); return; }
+      S.selected = new Set(r.data);
+      updateSelectionVisual();
+      renderStatusBar();
+      showToast(`${formatCount(S.selected.size)}개를 선택했습니다.`);
+      return;
+    }
     const r = await api.listUids(S.activeId, currentQuery());
     if (!r.ok) { showToast(r.error, "error"); return; }
     S.selected = new Set(r.data);

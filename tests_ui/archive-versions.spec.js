@@ -23,6 +23,7 @@ async function openArchive(page, conflicts = { rid1: 2 }) {
       { recordIds: [12], sources: ["b"], sourceNames: ["Android"], fields: { name: "MGS2 Sons of Liberty", desc: "Version two" }, media: { screenshots: 4096 } },
     ] } });
     window.api.archiveChooseVersion = () => { pending = {}; return Promise.resolve({ ok: true, data: {} }); };
+    window.api.archiveUids = () => Promise.resolve({ ok: true, data: rows.map((r) => r.romUid) });
   }, { rows: ROWS, conflicts });
   await page.locator(".ctab.archive").click();
   await expect(page.locator(".lrow").first()).toBeVisible();
@@ -82,6 +83,15 @@ test("Detail의 Revision 탭에 버전들이 실제로 보인다", async ({ page
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(0)).toContainText("Version one");
   await expect(rows.nth(1)).toContainText("Sons of Liberty");
+});
+
+test("Archive에서도 Ctrl+A로 전체를 고를 수 있다", async ({ page }) => {
+  // archiveUids()는 이미 있었고(HERO의 "메타데이터 가져오기"가 쓴다) 테스트도 있었는데,
+  // Ctrl+A만 "아직 지원하지 않습니다" 경고만 띄우고 실제로는 부르지 않고 있었다.
+  await openArchive(page);
+  await page.locator(".lrow").nth(0).click();
+  await page.keyboard.press("Control+a");
+  await expect(page.locator("#toast")).toContainText("2개를 선택");
 });
 
 test("미디어를 우클릭하면 복사/붙여넣기 메뉴가 나온다", async ({ page }) => {
