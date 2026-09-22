@@ -406,18 +406,17 @@ class PasteFindsTheSameGameTheWayCompareDoesTests(unittest.TestCase):
         self.assertEqual(entry.filename, "Aleste (Japan) (T-En by Tsunami v1.0).zip")
         self.assertEqual(entry.payload.get("genre"), "Shooter")
 
-    def test_patch_and_overwrite_stay_conservative_but_say_what_to_do(self):
-        """확증이 없는 짝(이름은 같고 크기가 다름)은 Patch/Overwrite가 자동으로 붙이지
-        않는다 - 지역판/리비전을 조용히 덮어쓰면 안 된다(§88). 대신 **다음에 뭘 하면
-        되는지**를 말해 준다."""
-        for mode in ("patch", "overwrite"):
+    def test_every_mode_reaches_it_because_it_is_the_same_game(self):
+        """사용자 결정(번복) - 같은 게임인지는 `gameid`가 정하고, 모드는 **어떻게 옮길지**만
+        정한다. 예전에는 Patch/Overwrite가 "확증이 없다"며 안 붙였는데, 그러면 모드에 따라
+        같은 게임이 같은 게임이 아니게 된다."""
+        for mode in ("patch", "overwrite", "replace"):
             self.api.plan_clear(self.d)
             self._copy_all()
             result = self.api.paste(self.d, mode)["data"]
-            self.assertEqual(result["added"], 0, mode)
-            reason = result["skipped"][0]["reason"]
-            self.assertIn("Replace", reason, f"{mode}: 해결 방법을 알려주지 않았다")
-            self.assertNotIn("ROM 미매칭", reason, f"{mode}: 엉뚱한 이유를 달았다")
+            self.assertEqual(result["added"], 1, f"{mode}: {result['skipped']}")
+            self.assertEqual(self.api._plan(self.d).entries[0].filename,
+                             "Aleste (Japan) (T-En by Tsunami v1.0).zip", mode)
 
     def test_the_rom_is_not_copied_onto_the_other_filename(self):
         self._copy_all()
@@ -426,8 +425,11 @@ class PasteFindsTheSameGameTheWayCompareDoesTests(unittest.TestCase):
             self.assertFalse(entry.source.get("rom"), "이름이 다른 대상에 ROM을 옮기려 했다")
 
 
-class AmbiguousTargetsAreNeverGuessedTests(unittest.TestCase):
-    """후보가 여럿이면 어느 모드에서도 자동으로 고르지 않는다(§88)."""
+class SeveralCandidatesArePickedByARuleNotAtRandomTests(unittest.TestCase):
+    """후보가 여럿이면 **정해진 순서**로 하나를 고른다(사용자 결정).
+
+    파일명 -> 디스크 번호 -> 지역 -> 알파벳. 중요한 것은 "아무거나"가 임의가 아니라는
+    점이다 - 같은 입력에는 늘 같은 답이 나와야 한다."""
 
     def setUp(self):
         self.dir = temp_root("rms_ambiguous_")
@@ -445,12 +447,16 @@ class AmbiguousTargetsAreNeverGuessedTests(unittest.TestCase):
         scan(self.api, self.s)
         scan(self.api, self.d)
 
-    def test_replace_refuses_and_explains_instead_of_picking_one(self):
+    def test_it_picks_the_first_by_name_and_always_the_same_one(self):
         uids = [r["romUid"] for r in self.api.list_rows(self.s)["data"]["rows"]]
-        self.api.copy_selection(self.s, uids)
-        result = self.api.paste(self.d, "replace")["data"]
-        self.assertEqual(result["added"], 0, "어느 지역판인지 모르는데 하나를 골라 덮어썼다")
-        self.assertIn("여럿", result["skipped"][0]["reason"])
+        chosen = set()
+        for _ in range(3):
+            self.api.plan_clear(self.d)
+            self.api.copy_selection(self.s, uids)
+            result = self.api.paste(self.d, "replace")["data"]
+            self.assertEqual(result["added"], 1, result["skipped"])
+            chosen.add(self.api._plan(self.d).entries[0].filename)
+        self.assertEqual(chosen, {"Game (Europe).zip"}, "고르는 대상이 실행할 때마다 달라진다")
 
     def test_manual_designation_still_works(self):
         """모호하다고 막아 두기만 하면 안 된다 - 사람이 지목하면 그대로 간다."""

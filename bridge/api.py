@@ -1613,7 +1613,7 @@ class Api:
                 # 이름으로는 확실한 대상을 못 찾았고, 화면에서 고른 행이 있다 - 그 행이 대상이다.
                 existing, how = fallback_row, "selected"
                 targets[key] = fallback_row        # prepare()도 같은 판단을 쓰게 한다
-            if item.get("rom") or existing is not None or how in ("similar", "ambiguous"):
+            if item.get("rom") or existing is not None:
                 # ROM이 있거나, 대상 Game이 이미 있거나, 비슷한 후보가 있다. 대상이 있으면 이건
                 # 그냥 평범한 Metadata/Media 갱신이다 - ROM 유무와 무관하게 모드(Patch/Overwrite/
                 # Replace)를 그대로 따른다. 비슷한 후보만 있는 경우도 여기로 흘려보낸다 -

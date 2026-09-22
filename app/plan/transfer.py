@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.match import engine as match_engine
+from app import gameid
 
 MODE_PATCH = "patch"
 MODE_OVERWRITE = "overwrite"
@@ -104,35 +104,17 @@ def item_key(item) -> str:
     return f"{item['system']}|{item['filename']}"
 
 
-def _subject_of_item(item) -> dict:
-    """전송 항목 -> Match 엔진이 보는 모양. Compare가 행을 넘길 때와 같은 구조여야
-    두 화면이 "같은 게임인가"를 같은 기준으로 판단한다."""
-    return match_engine.subject(
-        system=item["system"], filename=item["filename"],
-        title=(item.get("fields") or {}).get("name"),
-        size=(item.get("rom") or {}).get("size"),
-        fields=item.get("fields"))
-
-
 class TargetIndex:
     """붙여넣기의 대상 후보를 한 번만 읽어 두는 색인.
 
-    **Compare와 같은 엔진(match_engine)으로 대상을 찾는다.** 예전에는 붙여넣기만
-    `get_row_by_filename()`으로 **파일명이 글자 하나까지 같을 때만** 대상으로 인정했다.
-    그래서 같은 화면의 두 기능이 "같은 게임인가"를 다르게 판단했다 - Compare는
-    `Aleste [J].zip`과 `Aleste (Japan) (T-En by Tsunami v1.0) (Cartridge).zip`을 한 줄로
-    짝지어 "메타데이터가 다르다"고 보여주는데, 정작 붙여넣기는 그 짝을 못 찾아
-    아무 일도 하지 않았다(실사용 버그 - "Compare에선 대부분 다르다고 나오는데
-    붙여넣으면 8개만 된다". 그 8개가 파일명까지 똑같은 것의 개수였다).
+    **"같은 게임인가"는 `app/gameid.py` 한 곳이 정한다.** 예전에는 붙여넣기만
+    `get_row_by_filename()`으로 파일명이 글자 하나까지 같을 때만 대상으로 인정해서,
+    Compare가 한 줄로 짝지어 보여 준 항목을 정작 붙여넣기는 찾지 못했다(실사용 버그 -
+    "Compare에선 대부분 다르다고 나오는데 붙여넣으면 8개만 된다". 그 8개가 파일명까지
+    똑같은 것의 개수였다).
 
-    티어를 두 단계로 갈라 쓴다.
-
-    - `exact`(해시가 같거나 / 정규화 파일명 + 크기가 같다)는 **자동으로 대상으로 삼는다.**
-    - `normalized`(이름은 같은데 크기가 다르다)는 match_engine 스스로 "지역판/리비전
-      차이일 수 있어 확증이 없다"고 말하는 티어다. 조용히 덮어쓰면 남의 판을 지운다 -
-      **자동으로 붙이지 않고, 그런 후보가 있다는 사실을 이유로 돌려준다.** 사용자는
-      Compare나 "이 항목에 붙여넣기"로 직접 지목하면 된다(§88 - 모호하면 자동으로
-      결정하지 않는다).
+    후보가 여럿이면 `gameid.pick_target()`이 정해진 순서(파일명 -> 디스크 번호 -> 지역 ->
+    알파벳)로 하나를 고른다 - 임의로 고르지 않고 **같은 입력에 늘 같은 답**을 낸다.
     """
 
     def __init__(self, cache, systems):
@@ -141,63 +123,53 @@ class TargetIndex:
         # (all_entries는 Compare용이라 media_types/media_sizes만 싣는다).
         self._cache = cache
         self._by_name = {}
-        self._buckets = {"file": {}, "title": {}, "sha": {}}
+        self._buckets = {}
         for row in cache.all_entries(systems=sorted({s for s in systems if s})):
             self._by_name[(row["system"], row["filename"])] = row["rom_uid"]
-            subject = match_engine.subject_of_row(row)
-            system = subject["system"]
-            for kind, key in (("file", subject["filename_norm"]),
-                              ("title", subject["title_norm"]),
-                              ("sha", subject["sha256"])):
-                if key:
-                    self._buckets[kind].setdefault((system, key), []).append(subject)
+            key = gameid.key_of(row["filename"])
+            entry = (row["filename"], row["rom_uid"], key)
+            for bucket in key.buckets:
+                self._buckets.setdefault((row["system"], bucket), []).append(entry)
 
     def find(self, item, *, accept_similar=False) -> tuple[dict | None, str | None]:
-        """(대상 행, 어떻게 찾았는지). 못 찾으면 (None, None), 모호하면 (None, "ambiguous").
+        """(대상 행, 어떻게 찾았는지). 못 찾으면 (None, None).
 
-        `accept_similar`는 **Replace 모드**가 준다(사용자 결정 - "replace는 그냥 다른
-        게임이더라도 매뉴얼하게 소스를 중점으로 붙여넣기"). 이름은 같은데 크기가 달라
-        match_engine이 확증을 주지 못하는 짝(`normalized`)까지 대상으로 받아들인다 -
-        Replace를 고른 것 자체가 "같은 게임인지의 판정에 매이지 않겠다"는 명시적 의사다.
-        Patch/Overwrite는 확증이 있는 짝(`exact`)만 자동으로 잡는다. 어느 모드든 후보가
-        **여럿이면** 붙이지 않는다 - 어느 것인지 모르는데 고르면 남의 판을 덮어쓴다(§88).
+        "같은 게임인가"는 `app/gameid.py` **한 곳**이 정한다 - Compare/Archive/붙여넣기가
+        같은 답을 내야 한다. 후보가 여럿이면 `gameid.pick_target()`이 정해진 순서
+        (파일명 -> 디스크 번호 -> 지역 -> 알파벳)로 고른다. 예전처럼 "모호하니 안 붙인다"로
+        끝내지 않는다 - 사용자 결정에 따라 **아무거나 하나는 고르되 늘 같은 답**을 낸다.
+
+        `accept_similar`는 남겨 둔다(호출부 호환). 지금 규칙에서는 같은 게임이면 모드와
+        무관하게 대상이 되므로 결과에 영향이 없다.
         """
         exact = self._by_name.get((item["system"], item["filename"]))
         if exact is not None:
             return self._cache.get_row(exact), "exact"
 
-        mine = _subject_of_item(item)
-        system = mine["system"]
-        candidates, seen = [], set()
-        for kind, key in (("file", mine["filename_norm"]), ("title", mine["title_norm"]),
-                          ("sha", mine["sha256"])):
-            if not key:
-                continue
-            for subject in self._buckets[kind].get((system, key), ()):
-                if subject["ref"] in seen:
+        mine = gameid.key_of(item["filename"])
+        seen, candidates = set(), []
+        for bucket in mine.buckets:
+            for filename, rom_uid, key in self._buckets.get((item["system"], bucket), ()):
+                if rom_uid in seen or not gameid.same_game(mine, key):
                     continue
-                seen.add(subject["ref"])
-                candidates.append(subject)
-
-        hits = []
-        for subject in candidates:
-            tier, _score, _why = match_engine.classify(mine, subject)
-            if tier in (match_engine.TIER_EXACT, match_engine.TIER_NORMALIZED):
-                hits.append((tier, subject["ref"]))
-        if not hits:
+                seen.add(rom_uid)
+                candidates.append((filename, rom_uid))
+        if not candidates:
             return None, None
-        confident = [ref for tier, ref in hits if tier == match_engine.TIER_EXACT]
-        if len(confident) == 1:
-            return self._cache.get_row(confident[0]), "exact"
-        if confident:
-            return None, "ambiguous"
-        # 여기부터는 normalized(이름은 같은데 크기가 다르다)뿐이다.
-        similar = [ref for _tier, ref in hits]
-        if len(similar) > 1:
-            return None, "ambiguous"
-        if accept_similar:
-            return self._cache.get_row(similar[0]), "similar"
-        return None, "similar"
+        rom_uid, how = gameid.pick_target(item["filename"], candidates)
+        return self._cache.get_row(rom_uid), how
+
+    def matches(self, item) -> list:
+        """이 항목과 **같은 게임인 대상 전부**(rom_uid 목록). 언어 변종처럼 여러 대상에
+        같은 메타데이터를 써야 할 때 쓴다."""
+        mine = gameid.key_of(item["filename"])
+        seen, out = set(), []
+        for bucket in mine.buckets:
+            for _filename, rom_uid, key in self._buckets.get((item["system"], bucket), ()):
+                if rom_uid not in seen and gameid.same_game(mine, key):
+                    seen.add(rom_uid)
+                    out.append(rom_uid)
+        return out
 
 
 def prepare(items, cache, mode, *, replace_rom=False, targets=None, index=None) -> tuple[list, list]:
@@ -230,9 +202,6 @@ def prepare(items, cache, mode, *, replace_rom=False, targets=None, index=None) 
                 # 이름이 다른 대상이다. ROM을 대상 이름으로 복사하면 확장자까지 바뀌어
                 # 에뮬레이터가 못 읽는 파일이 된다 - ROM 교체를 명시한 때만 손댄다.
                 item = {**item, "rom": None}
-        if existing is None and how in ("similar", "ambiguous"):
-            skipped.append({"filename": item["filename"], "reason": _no_confident_target(how)})
-            continue
         out, reason = decide(item, existing, mode, replace_rom=replace_rom)
         if out is None:
             skipped.append({"filename": item["filename"], "reason": reason})
@@ -241,13 +210,6 @@ def prepare(items, cache, mode, *, replace_rom=False, targets=None, index=None) 
     return prepared, skipped
 
 
-def _no_confident_target(how) -> str:
-    """왜 안 붙었는지 **다음에 뭘 하면 되는지까지** 말한다 - 예전에는 이런 항목이
-    "ROM 미매칭"이라는 엉뚱한 이유를 달고 사라져서, 진짜 원인(이름이 달라 대상을 못 찾음)을
-    사용자가 알 길이 없었다."""
-    if how == "ambiguous":
-        return ("이름이 비슷한 대상이 여럿이라 어느 것인지 확정할 수 없습니다 - "
-                "Compare나 우클릭 \"이 항목에 붙여넣기\"로 직접 지목하세요")
     return ("이름이 달라 같은 게임이라고 확신할 수 없습니다 - Replace 모드로 붙여넣거나, "
             "Compare나 우클릭 \"이 항목에 붙여넣기\"로 직접 지목하세요")
 
