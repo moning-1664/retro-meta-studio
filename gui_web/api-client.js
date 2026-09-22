@@ -344,6 +344,7 @@
     archive_systems: () => ok([]),
     archive_detail: () => ok(null),
     archive_edit: () => ok({ revision: 1, changed: true }),
+    archive_delete: (ids) => ok({ deleted: (ids || []).length }),
     archive_set_preferred: (id, recordId) => ok({ romIdentityId: id, recordId }),
     archive_clear_preferred: (id) => ok({ romIdentityId: id, recordId: null }),
     archive_to_collection: () => ok({ updated: 0, planned: 0, skipped: [] }),
@@ -956,6 +957,7 @@
     archiveSystems: () => call("archive_systems"),
     archiveDetail: (romIdentityId) => call("archive_detail", romIdentityId),
     archiveEdit: (romIdentityId, fields) => call("archive_edit", romIdentityId, fields),
+    archiveDelete: (romIdentityIds) => call("archive_delete", romIdentityIds),
     archiveSetPreferred: (romIdentityId, recordId) =>
       call("archive_set_preferred", romIdentityId, recordId),
     archiveClearPreferred: (romIdentityId) =>

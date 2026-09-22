@@ -4599,13 +4599,22 @@
           onSelect: () => copyTextToClipboard(files.join("\n"),
             files.length > 1 ? `파일명 ${formatCount(files.length)}개를 복사했습니다.` : "파일명을 복사했습니다.") },
         "separator",
-        { label: "삭제", icon: "trash", hint: "Del", danger: true, disabled: locked,
-          title: "ROM + 메타데이터 + 미디어를 모두 지웁니다", onSelect: () => deleteSelection(DELETE_ALL) },
-        { label: "ROM 삭제", icon: "gamepad", danger: true, disabled: locked,
-          title: "ROM 파일만 지웁니다 - 메타데이터와 미디어는 남습니다", onSelect: () => deleteSelection(["rom"]) },
-        { label: "메타데이터 삭제", icon: "fileText", danger: true, disabled: locked,
-          title: "메타데이터와 미디어를 지웁니다 - ROM은 남습니다",
-          onSelect: () => deleteSelection(DELETE_META_AND_MEDIA) },
+        // Archive는 ROM/메타데이터를 따로 지울 수 없다 - Identity 하나가 여러 출처를
+        // 모은 것이라 "ROM만"/"메타데이터만"이라는 구분 자체가 없다(실사용 버그
+        // 리포트 후 정리 - 예전엔 이 셋이 그대로 보이는데 눌러도 매번 에러였다).
+        ...(isArchive()
+          ? [{ label: "Archive에서 지우기", icon: "trash", hint: "Del", danger: true, disabled: locked,
+               title: "실제 ROM/Media 파일은 지우지 않습니다 - Archive의 기록만 지웁니다.",
+               onSelect: () => deleteSelection() }]
+          : [
+              { label: "삭제", icon: "trash", hint: "Del", danger: true, disabled: locked,
+                title: "ROM + 메타데이터 + 미디어를 모두 지웁니다", onSelect: () => deleteSelection(DELETE_ALL) },
+              { label: "ROM 삭제", icon: "gamepad", danger: true, disabled: locked,
+                title: "ROM 파일만 지웁니다 - 메타데이터와 미디어는 남습니다", onSelect: () => deleteSelection(["rom"]) },
+              { label: "메타데이터 삭제", icon: "fileText", danger: true, disabled: locked,
+                title: "메타데이터와 미디어를 지웁니다 - ROM은 남습니다",
+                onSelect: () => deleteSelection(DELETE_META_AND_MEDIA) },
+            ]),
         ...rowFolderItems(row, single),
       ]);
   }
@@ -6587,6 +6596,26 @@
     if (blockedInCompare("삭제")) return;
     if (!S.selected.size) { showToast("삭제할 항목을 선택하세요.", "warning"); return; }
     const count = S.selected.size;
+    // Archive는 Plan을 거치지 않는다(D1 - 파일이 안 움직인다, Metadata 편집과 같은 자리에서
+    // 바로 지운다). 예전엔 여기서 Collection용 planDelete(S.activeId=…)를 그대로 불러
+    // "Collection을 찾을 수 없습니다"로 매번 죽었다(실사용 버그 리포트 - "삭제가
+    // 구조적으로 안 되냐"). 실제 ROM/Media 파일은 지우지 않는다(§37) - Archive의 기록만
+    // 지운다.
+    if (isArchive()) {
+      const ids = [...S.selected];
+      const run = async () => {
+        const r = await api.archiveDelete(ids);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        S.selected.clear();
+        resetList();
+        await reloadList();
+        showToast(`Archive에서 ${formatCount(r.data.deleted)}개를 지웠습니다 - 실제 ROM/Media 파일은 그대로입니다.`);
+      };
+      showConfirm("Archive에서 지우기",
+        `${formatCount(count)}개를 Archive에서 지웁니다. 실제 ROM/Media 파일은 지워지지 않습니다 - `
+        + "필요하면 해당 Collection에서 다시 수집할 수 있습니다.", true, run);
+      return;
+    }
     const chosen = Array.isArray(parts) && parts.length ? parts : DELETE_ALL;
     const what = chosen.map((p) => DELETE_PART_LABEL[p]).join(" + ");
     const run = async () => {

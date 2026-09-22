@@ -2199,6 +2199,49 @@ class Api:
         return ok(result)
 
     @guarded
+    def archive_delete(self, rom_identity_ids):
+        """Archive에서 이 항목들을 지운다. **실제 ROM/Media 파일은 지우지 않는다**(§37) -
+        Archive는 파일을 복제하지 않고 경로만 들고 있으므로, 지우는 것은 Archive
+        자신의 기록(Revision/출처/Preferred 지정)뿐이다. 실제 파일을 지우려면
+        Collection 쪽에서 지워야 한다.
+
+        Archive 우클릭 메뉴의 "삭제"가 예전엔 Collection용 `plan_delete()`를 그대로
+        불러 `Collection_id`가 "__archive__" 같은 값이라 매번 "Collection을 찾을 수
+        없습니다"로 죽고 있었다(실사용 버그 리포트 - "복붙이나 삭제가 구조적으로
+        안 되냐"). Archive는 Plan을 거치지 않는다(D1 - 바이트가 안 움직인다) - Metadata
+        편집(archive_edit)과 같은 자리에서 즉시 지운다.
+
+        Archive 디렉토리가 설정돼 있으면 그 gamelist에서도 항목을 지운다 - 안 그러면
+        "디렉토리가 진실"이라는 원칙(app/archive/directory.py) 때문에 다음 새로고침 때
+        지운 항목이 디렉토리에서 다시 읽혀 되살아난다. 그 디렉토리에 이미 복사해 둔
+        media 파일까지 지우지는 않는다(고아 파일로 남는다) - ROM/Media를 실제로 지우는
+        일은 이 메서드의 몫이 아니다.
+        """
+        ids = [str(i) for i in (rom_identity_ids or [])]
+        if not ids:
+            return err("지울 항목이 없습니다.")
+        cfg = self._archive_config()
+        removable = archive_projection.is_configured(cfg)
+        adapter = get_adapter(cfg["frontend"]) if removable else None
+        collection = archive_projection.collection_for(cfg) if removable else None
+        deleted = 0
+        for rid in ids:
+            identity = self.archive.get_identity(rid)
+            if identity is None:
+                continue
+            if removable and identity["filename"]:
+                try:
+                    layout = adapter.layout(collection, identity["system"])
+                    remove = getattr(adapter, "remove_entries", None)
+                    if remove is not None:
+                        remove(layout, [identity["filename"]])
+                except Exception:  # noqa: BLE001 - DB 삭제는 그래도 진행한다
+                    log.exception("Archive 디렉토리에서 항목 제거 실패: %s", rid)
+            if self.archive.delete_identity(rid):
+                deleted += 1
+        return ok({"deleted": deleted})
+
+    @guarded
     def archive_revisions(self, rom_identity_id, source_collection_id):
         """한 출처의 Revision 이력(ARCHIVE_REVISION_POLICY.md §14 Revision History)."""
         return ok(self.archive.revisions_of(rom_identity_id, source_collection_id))

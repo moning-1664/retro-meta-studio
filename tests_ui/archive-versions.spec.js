@@ -1,7 +1,7 @@
 // Archive의 [n] 뱃지 - 같은 ROM에 서로 다른 버전이 둘 이상이고 아직 고르지 않았을 때만.
 // Collection에는 Matching이 없다(사용자 결정): 후보를 고르게 하지 않는다.
 const { test, expect } = require("@playwright/test");
-const { openApp } = require("./_helpers");
+const { openApp, modalButton } = require("./_helpers");
 
 const ROWS = [
   { romUid: "rid1", romIdentityId: "rid1", system: "ps2", file: "MGS2.iso", title: "Metal Gear Solid 2",
@@ -92,6 +92,38 @@ test("Archive에서도 Ctrl+A로 전체를 고를 수 있다", async ({ page }) 
   await page.locator(".lrow").nth(0).click();
   await page.keyboard.press("Control+a");
   await expect(page.locator("#toast")).toContainText("2개를 선택");
+});
+
+test.describe("Archive 행 우클릭 - 삭제", () => {
+  // 실사용 버그 리포트 - "복붙이나 삭제 편집이 구조적으로 불가능해?": 삭제 메뉴는
+  // 보이는데 눌러도 Collection용 API를 그대로 불러 매번 에러였다. ROM/메타데이터를
+  // 따로 지우는 구분(Collection 전용)이 없다는 것도 이 메뉴가 확인해 준다.
+  const rightClickRow = (page, text) => page.locator(".lrow", { hasText: text }).click({ button: "right" });
+  const menuItem = (page, label) => page.locator(".ctx-menu .ctx-item", { hasText: label });
+
+  test("ROM 삭제/메타데이터 삭제는 없고 'Archive에서 지우기' 하나뿐이다", async ({ page }) => {
+    await openArchive(page);
+    await rightClickRow(page, "Final Fantasy X");
+    await expect(menuItem(page, "ROM 삭제")).toHaveCount(0);
+    await expect(menuItem(page, "메타데이터 삭제")).toHaveCount(0);
+    await expect(menuItem(page, "Archive에서 지우기")).toBeVisible();
+  });
+
+  test("확인하면 실제로 지워지고, 실제 파일은 그대로라고 알린다", async ({ page }) => {
+    await openArchive(page);
+    await page.evaluate(() => {
+      window.__deleted = [];
+      const original = window.api.archiveDelete;
+      window.api.archiveDelete = (ids) => { window.__deleted.push(ids); return original(ids); };
+    });
+    await rightClickRow(page, "Final Fantasy X");
+    await menuItem(page, "Archive에서 지우기").click();
+    await expect(page.locator(".modal-text")).toContainText("실제 ROM/Media 파일은 지워지지 않습니다");
+    await modalButton(page, "확인").click();
+    await expect.poll(() => page.evaluate(() => window.__deleted.length)).toBeGreaterThan(0);
+    expect(await page.evaluate(() => window.__deleted[0])).toEqual(["rid2"]);
+    await expect(page.locator("#toast")).toContainText("실제 ROM/Media 파일은 그대로");
+  });
 });
 
 test("미디어를 우클릭하면 복사/붙여넣기 메뉴가 나온다", async ({ page }) => {

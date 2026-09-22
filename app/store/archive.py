@@ -313,6 +313,20 @@ class ArchiveStore:
             (rom_identity_id,)).fetchone()
         return dict(row) if row else None
 
+    def delete_identity(self, rom_identity_id) -> bool:
+        """Archive에서 이 Identity를 지운다. **실제 ROM/Media 파일은 건드리지 않는다**
+        (§37 - Archive는 파일을 복제하지 않고 경로만 들고 있다). 지우는 것은 Archive
+        자신의 기록(모아 둔 Revision/출처/Media 참조/Preferred 지정)뿐이다.
+
+        `ON DELETE CASCADE`(archive_records/archive_media/archive_rom_sources/
+        preferred_revisions 모두 rom_identity_id를 참조한다)가 나머지를 정리한다 -
+        연결(FK)이 켜져 있어야 하고(app/store/sqlite.py connect()), 실제로 켜져 있다.
+        """
+        with transaction(self._conn):
+            cur = self._conn.execute(
+                "DELETE FROM rom_identities WHERE rom_identity_id=?", (rom_identity_id,))
+            return cur.rowcount > 0
+
     def rom_identities_of_game(self, game_id) -> list[dict]:
         return [dict(r) for r in self._conn.execute(
             "SELECT * FROM rom_identities WHERE game_id=? ORDER BY system, filename_norm", (game_id,))]

@@ -171,6 +171,48 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(game.findtext("name"), "Final Fantasy X",
                          "Archive 편집이 Collection에 새어나갔다")
 
+    def test_deleting_removes_the_archive_entry_but_not_the_real_files(self):
+        """실사용 버그 리포트 - 우클릭 메뉴의 "삭제"가 Collection용 API를 그대로
+        불러 매번 "Collection을 찾을 수 없습니다"로 죽고 있었다. Archive는 Plan을
+        거치지 않고(D1) 그 자리에서 지운다 - 단, 실제 ROM/Media 파일(§37)은 그대로다."""
+        self.api.archive_ingest(self.src)
+        rid = self._rid("FFX.iso")
+
+        result = self.api.archive_delete([rid])
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(result["data"]["deleted"], 1)
+
+        self.assertFalse(self.api.archive_detail(rid)["ok"])
+        files = {r["file"] for r in self.api.archive_rows()["data"]["rows"]}
+        self.assertNotIn("FFX.iso", files)
+        # 원본 ROM은 그대로다.
+        self.assertTrue((self.source_root / "ps2" / "FFX.iso").exists())
+
+    def test_deleting_an_unknown_id_is_reported_not_silently_ignored(self):
+        result = self.api.archive_delete(["no-such-id"])
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["data"]["deleted"], 0)
+
+    def test_deleting_also_removes_it_from_the_configured_archive_directory(self):
+        """디렉토리가 설정돼 있는데 gamelist에서 안 지우면, "디렉토리가 진실"이라는
+        원칙(app/archive/directory.py) 때문에 다음 새로고침 때 지운 항목이 되살아난다."""
+        archive_dir = self.dir / "archive_out"
+        configure(self.api, {"frontend": "es-de", "archiveDir": str(archive_dir)})
+        self.api.archive_ingest(self.src)
+        rid = self._rid("FFX.iso")
+        self.api._apply_archive_config()   # 처음 한 번 디렉토리에 실제로 쓴다
+
+        result = self.api.archive_delete([rid])
+        self.assertTrue(result["ok"], result.get("error"))
+
+        root = ET.parse(archive_dir / "gamelists" / "ps2" / "gamelist.xml").getroot()
+        paths = {(g.findtext("path") or "").strip() for g in root.findall("game")}
+        self.assertNotIn("./FFX.iso", paths)
+
+        # 되살아나지 않아야 한다 - sync_from_directory()가 다시 훑어도 그대로 없다.
+        self.api._apply_archive_config()
+        self.assertNotIn("FFX.iso", {r["file"] for r in self.api.archive_rows()["data"]["rows"]})
+
     def test_editing_twice_with_the_same_value_creates_no_revision(self):
         self.api.archive_ingest(self.src)
         rid = self._rid("FFX.iso")
