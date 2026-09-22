@@ -330,6 +330,47 @@ class Api:
         return ok(True)
 
     @guarded
+    def update_collection_paths(self, collection_id, root_path=None, rom_path=None):
+        """"Collection 정보"의 폴더 변경(사용자 결정) - Metadata/ROM 위치를 바꾸고
+        강제로 다시 스캔한다.
+
+        **Internal Storage와 Collection root만 옮긴다** - External Storage는 사용자가
+        따로 추가한 것이라 이 화면의 몫이 아니다(건드리면 외장 SD의 ROM이 갑자기
+        Internal 취급을 받는다). Adapter의 `layout()`은 매번 `collection.root_path`와
+        System의 Storage를 새로 읽으므로(app/scan/scanner.py), 여기서 두 값만 바꾸고
+        강제 재스캔하면 나머지는 스캔이 새 경로 기준으로 다시 맞춘다.
+
+        **재스캔은 선택이 아니라 필수다** - 화면에서 실행 전에 반드시 경고해야 한다
+        (사용자 결정). 옛 경로 기준으로 남아 있는 Cache 항목은 이 호출만으로는 지워지지
+        않고, 뒤따르는 전체 재스캔이 사라진 System을 정리한다(scan_collection 참고).
+        """
+        collection = self.registry.get_collection(collection_id)
+        if collection is None:
+            return err("Collection을 찾을 수 없습니다.")
+        meta = str(root_path or "").strip()
+        rom = str(rom_path or "").strip()
+        if not meta and not rom:
+            return err("Metadata 디렉토리와 ROM 디렉토리 중 하나는 입력하세요.")
+        new_root = meta or rom
+        self.workspace.close_collection(collection_id)
+        self.registry.update_collection(collection_id, root_path=new_root)
+        self.registry.update_storage(collection_id, STORAGE_INTERNAL, root_path=new_root)
+        # ROM이 Metadata와 다른 곳에 있으면 System마다 rom_path를 새 위치로 맞춘다.
+        # 같은 곳이면(또는 안 줬으면) 지워서 Internal Storage 기준으로 다시 계산되게
+        # 한다. External Storage에 놓인 System은 건드리지 않는다.
+        rom_override = rom if (rom and rom != new_root) else None
+        for entry in collection.systems:
+            if entry.storage_id != STORAGE_INTERNAL:
+                continue
+            self.registry.upsert_system(collection_id, entry.system, entry.storage_id,
+                                        rom_path=rom_override, media_path=entry.media_path,
+                                        metadata_path=entry.metadata_path)
+        # 실제 재스캔(수천 개짜리 Collection이면 오래 걸린다)은 여기서 동기로 하지
+        # 않는다 - 화면이 다른 "다시 스캔"과 같은 방식(start_scan, 진행률 job)으로
+        # 이어서 부른다.
+        return ok(self._collection_summary(self.registry.get_collection(collection_id)))
+
+    @guarded
     def delete_collection(self, collection_id):
         self._plans.pop(collection_id, None)
         self.workspace.close_collection(collection_id)

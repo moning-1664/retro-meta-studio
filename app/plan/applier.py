@@ -28,6 +28,7 @@ ROM 관리 도구에서 가장 위험한 것은 기능이 없는 게 아니라 *
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import file_ops
@@ -40,6 +41,8 @@ from app.model.plan import (
 from app import title_affix
 from app.plan.builder import ACTION_CONFLICT, ACTION_IDENTICAL, classify_destination
 from utils import normalize_title
+
+log = logging.getLogger(__name__)
 
 
 def apply_plan(plan, collection, cache, registry, provider, progress_cb=None,
@@ -173,6 +176,7 @@ def _write_media_links(adds, collection, adapter, media_links, errors):
         try:
             adapter.write_media_links(layout, links)
         except Exception as e:  # noqa: BLE001
+            log.exception("media 경로 기록 실패 (system=%s)", system)
             message = f"media 경로 기록 실패: {e}"
             for entry in adds:
                 if entry.system == system and entry.filename in links                         and entry.status == STATUS_APPLIED:
@@ -426,6 +430,7 @@ def _write_metadata(prepared, adapter, errors, media_links, disc_titles=None):
             adapter.write_index(layout, [_entry_to_write(item["entry"], adapter, disc_titles)
                                          for item in group])
         except Exception as e:  # noqa: BLE001
+            log.exception("ADD Metadata 기록 실패 (system=%s, %d개)", system, len(group))
             for item in group:
                 entry = item["entry"]
                 recovered = _undo(item, errors)
@@ -516,6 +521,7 @@ def _apply_delete(entry, collection, adapter, cache, provider, errors):
         try:
             remove(layout, [entry.filename])
         except Exception as e:  # noqa: BLE001
+            log.exception("DELETE gamelist 항목 제거 실패 (%s)", entry.filename)
             # 파일은 이미 지워졌으므로 단순 실패가 아니다. 사용자가 알아야 한다.
             entry.status = STATUS_PARTIAL
             entry.error = f"파일은 삭제했지만 gamelist 항목 제거에 실패: {e}"
@@ -589,6 +595,7 @@ def _apply_title_edits(entries, collection, adapter, cache, errors, step, disc_t
         try:
             adapter.write_index(layout, write_entries)
         except Exception as e:  # noqa: BLE001
+            log.exception("제목 편집 Metadata 기록 실패 (system=%s, %d개)", system, len(write_entries))
             for entry in group:
                 if entry.key not in rows_by_key:
                     continue
@@ -743,6 +750,7 @@ def _apply_storage_change(entry, collection, adapter, cache, registry, provider,
         # 다음 Storage 이동에서 또 같은 문제가 반복된다.
         registry.move_system(collection.id, entry.system, entry.storage_to, rom_path=None)
     except Exception as e:  # noqa: BLE001
+        log.exception("STORAGE CHANGE Registry 갱신 실패 (%s, system=%s)", entry.filename, entry.system)
         # 파일은 옮겨졌는데 Registry가 못 따라온 경우다. 그대로 두면 앱이 ROM을
         # 찾지 못하므로 파일을 원래 자리로 되돌린다.
         restored = _restore_moved(moved, errors, entry)

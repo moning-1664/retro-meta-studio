@@ -16,9 +16,13 @@ async function openConvertFromTab(page) {
   await page.locator(".modal-body button", { hasText: "Convert" }).click();
 }
 
+/** 미리보기 이후 검증(손실 표, Plan 반영)은 대상을 어떻게 골랐는지와 무관하므로,
+ * 여기서는 항상 "이미 있는 Collection으로"를 골라 기존 흐름을 그대로 쓴다. */
 async function openConvertPreview(page) {
   await openConvertFromTab(page);
   await expect(page.locator(".modal-title")).toHaveText("Convert");
+  await page.locator(".modal-body .seg-btn", { hasText: "이미 있는 Collection으로" }).click();
+  await page.locator(".convert-existing-block select").selectOption({ index: 0 });
   await modalButton(page, "다음").click();
   await expect(page.locator(".modal-title")).toHaveText("Convert 미리보기");
 }
@@ -29,14 +33,30 @@ test("Collection 정보에서 Convert를 시작한다", async ({ page }) => {
   await expect(page.locator(".modal-body button", { hasText: "Convert" })).toBeVisible();
 });
 
-test("대상 Collection을 고르게 하고 원본 보존을 알린다", async ({ page }) => {
+test("기본은 '새 Collection으로'이고, Frontend/폴더를 고르게 한다", async ({ page }) => {
   await openConvertFromTab(page);
+  await expect(page.locator(".modal-body .seg-btn.on")).toHaveText("새 Collection으로");
+  await expect(page.locator(".convert-new-block select")).toBeVisible();
+  await expect(page.locator(".convert-new-block input.field-input")).toBeVisible();
+});
 
-  // 자기 자신은 대상에 없어야 한다.
-  const options = page.locator(".modal-body select option");
+test("'이미 있는 Collection으로'는 자기 자신을 빼고 원본 보존을 알린다", async ({ page }) => {
+  await openConvertFromTab(page);
+  await page.locator(".modal-body .seg-btn", { hasText: "이미 있는 Collection으로" }).click();
+
+  const options = page.locator(".convert-existing-block select option");
   await expect(options).toHaveCount(1);
   await expect(options).toContainText("Android ES-DE");
-  await expect(page.locator(".modal-hint")).toContainText("원본은 그대로");
+  await expect(page.locator(".modal-hint").last()).toContainText("원본은 그대로");
+});
+
+test("'새 Collection으로'는 그 자리에서 Collection을 만들고 이어서 미리보기로 간다", async ({ page }) => {
+  await openConvertFromTab(page);
+  await page.locator(".convert-new-block select").selectOption("es-de");
+  await page.locator(".convert-new-block input.field-input").fill("D:\\NewPegasus");
+  await modalButton(page, "다음").click();
+  await expect(page.locator(".modal-title")).toHaveText("Convert 미리보기");
+  await expect(page.locator(".convert-head")).toContainText("Master Library");
 });
 
 test("미리보기가 넘어가는 것과 잃는 것을 나눠 보여준다", async ({ page }) => {

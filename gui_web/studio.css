@@ -163,8 +163,14 @@ body { font-size: var(--fs-body); }
   transform: translateX(calc(var(--nav-top-inset) / -2));
 }
 /* 사용자가 만든 카트리지 그림(라벨 안에 안드로메다 은하) - tools/make_branding.py.
-   **칸의 절반 크기 정사각형**이다 - 카트리지는 가로가 길어서 그 안에 맞춰 넣는다. */
-.nav-app-icon { width: 69.5%; aspect-ratio: 1; height: auto; object-fit: contain; }
+   높이는 **`--header-row-h`의 비율**로 고정한다(사용자 리포트 - 같은 100% 화면
+   배율·같은 그림인데도 PC마다 비율이 달라 보였다). 예전엔 폭을 그리드 칸의 69.5%로
+   두고 aspect-ratio로 높이를 derive했는데, 그 칸 폭은 창 너비에 따라 변하는 값이라
+   화면마다 서브픽셀 반올림이 달라질 여지가 있었다. `--header-row-h`는 절대 안
+   바뀌는 값이라(layout-bands.spec.js) 여기서 높이를 그 값에 고정하면 폭은
+   aspect-ratio가 그대로 따라가고, 창 너비나 화면 배율과 무관하게 항상 같은 비율이
+   나온다. */
+.nav-app-icon { height: calc(var(--header-row-h) * 0.66); width: auto; aspect-ratio: 1; object-fit: contain; }
 /* 가운데 네 칸. 오른쪽 한 칸(6번째)은 비워 둔다. */
 .nav-app-title-text { grid-column: 2 / span 4; min-width: 0; display: flex; flex-direction: column; gap: 0; }
 
@@ -752,20 +758,6 @@ body { font-size: var(--fs-body); }
 .stg-column-actions { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-top: 6px; }
 .stg-column-reset { flex: none; white-space: nowrap; }
 
-/* Settings > Import/Export > ROM 미매칭 정책 - 라디오 두 개 + 체크박스 세 개가 한 값을 공유한다. */
-.stg-unmatched { padding: 4px 0 14px; }
-.stg-unmatched-option {
-  display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; font-size: var(--fs-body);
-}
-.stg-unmatched-radio { accent-color: var(--accent); }
-.stg-unmatched-checks {
-  display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 4px 0 8px 24px;
-}
-.stg-check-row { display: flex; align-items: center; gap: 6px; font-size: var(--fs-body); cursor: pointer; }
-.stg-unmatched-check { accent-color: var(--accent); }
-.stg-unmatched-check:disabled { cursor: not-allowed; }
-.stg-unmatched-checks:has(.stg-unmatched-check:disabled) { opacity: .5; }
-
 /* Settings > Metadata & Media > Title Prefix/Postfix - 구역(한/영/일/유럽/글로벌)마다
    켜짐·Prefix/Postfix·텍스트 한 줄. */
 .stg-title-affix { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 10px; }
@@ -1150,14 +1142,20 @@ body { font-size: var(--fs-body); }
   background: color-mix(in srgb, var(--chrome) 85%, transparent); color: var(--text);
 }
 .media-video-play:hover { color: var(--accent); border-color: var(--accent); }
-/* 멈춘 영상 - 마지막 화면을 그대로 두고 ||만 얹는다(사용자 결정 - "Pause 상태는 ||로 표시"). */
+/* 멈춘 영상 - 마지막 화면을 그대로 두고 배지 하나를 얹는다. 예전엔 글자 "||"였는데
+   허접해 보인다는 지적(실사용 피드백)에 재생 버튼(.media-video-play)과 같은 재질의
+   동그란 배지 + pause 아이콘으로 바꿨다 - 재생/멈춤 두 상태가 같은 언어로 보인다. */
 .media-tile.video-paused .media-video { opacity: 1; }
 .media-tile.video-paused { cursor: pointer; }
-.media-tile.video-paused::after {
-  content: "\2016"; position: absolute; inset: 0; z-index: 3;
+.media-video-pause-badge {
+  position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+}
+.media-video-pause-badge .ic {
   display: flex; align-items: center; justify-content: center;
-  font-size: 30px; font-weight: 700; color: #fff;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, .75); pointer-events: none;
+  width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, .35);
+  background: color-mix(in srgb, #000 55%, transparent); color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .5);
 }
 /* Screenshot 없이 영상만 있을 때 - 깨진 그림 아이콘 대신 기다리는 이유를 적는다. */
 .media-video-wait {

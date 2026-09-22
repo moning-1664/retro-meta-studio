@@ -121,6 +121,30 @@ class ArchiveTests(unittest.TestCase):
         detail = self.api.archive_detail(self._rid("MGS2.iso"))["data"]
         self.assertEqual({s["collectionId"] for s in detail["sources"]}, {self.src, self.dst})
 
+    def test_same_platform_under_a_different_esde_folder_name_is_one_identity(self):
+        """msx/msx1처럼 ES-DE가 같은 플랫폼에 쓰는 다른 폴더명은 하나의 Identity여야
+        한다(실사용 리포트 - 완전히 같은 파일명인데 System만 msx/msx1로 갈려 두 줄로
+        보였다). System 이름 정규화 없이 raw 값을 그대로 키로 쓰면 이 규칙이 깨진다."""
+        from tests.fixtures import build_custom_esde_tree
+
+        entry = [{"filename": "Gall Force-Defense of Chaos [J].zip", "title": "갈 포스"}]
+        msx_root = build_custom_esde_tree(self.dir / "msx_src", "msx", entry)
+        msx1_root = build_custom_esde_tree(self.dir / "msx1_src", "msx1", entry)
+        msx_id = self.api.create_collection("MSX", "es-de", str(msx_root))["data"]["id"]
+        msx1_id = self.api.create_collection("MSX1", "es-de", str(msx1_root))["data"]["id"]
+        for cid in (msx_id, msx1_id):
+            self.api.start_scan(cid)
+            wait_idle(self.api)
+
+        self.api.archive_ingest(msx_id)
+        self.api.archive_ingest(msx1_id)
+
+        rows = self.api.archive_rows()["data"]["rows"]
+        matches = [r for r in rows if r["file"] == "Gall Force-Defense of Chaos [J].zip"]
+        self.assertEqual(len(matches), 1, matches)
+        detail = self.api.archive_detail(matches[0]["romIdentityId"])["data"]
+        self.assertEqual({s["collectionId"] for s in detail["sources"]}, {msx_id, msx1_id})
+
     def test_archive_gamelist_supports_search(self):
         self.api.archive_ingest(self.src)
         rows = self.api.archive_rows(search="metal")["data"]

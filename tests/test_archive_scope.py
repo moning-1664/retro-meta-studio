@@ -98,9 +98,13 @@ class ArchiveScopeTests(unittest.TestCase):
         self.assertEqual(set(result["ingestedRomUids"]), self._uids("msx1"))
         self.assertEqual(result["ingested"], 2)
 
-        systems = {r["system"] for r in self.api.archive_rows()["data"]["rows"]}
-        self.assertEqual(systems, {"msx1"},
-                         "MSX1만 골랐는데 다른 System이 Archive에 들어갔다")
+        # System 이름 자체는 여기서 확인하지 않는다 - msx/msx1처럼 같은 플랫폼을
+        # 가리키는 폴더명은 Archive Identity 키에서 정규화된다(실사용 리포트,
+        # app/model/constants.py normalize_system). 이 테스트가 지키려는 불변식은
+        # "고른 System의 게임만 들어갔는가"이므로 **파일명**으로 확인한다.
+        files = {r["file"] for r in self.api.archive_rows()["data"]["rows"]}
+        self.assertEqual(files, {"Aleste.rom", "Nemesis.rom"},
+                         "MSX1만 골랐는데 다른 System의 게임이 Archive에 들어갔다")
 
     def test_ingesting_a_selection_ingests_only_those_games(self):
         chosen = sorted(self._uids("nes"))[:2]

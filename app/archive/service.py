@@ -27,6 +27,7 @@ from adapters import get_adapter
 from app.archive import conflicts as conflict_service
 from app import title_affix
 from app.match import service as match_service
+from app.model.constants import normalize_system
 from app.store.archive import ARCHIVE_EDIT_SOURCE
 from adapters.base import GameEntry
 from utils import normalize_title
@@ -94,8 +95,15 @@ def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=No
         rom_identity_id = match_service.linked_identity(archive, collection.id, row)
         if rom_identity_id is None:
             game_id = archive.ensure_game(title, title_norm)
+            # System 이름을 정규화해서 Identity 키로 쓴다(실사용 리포트) - ES-DE는 같은
+            # 플랫폼을 Collection마다 msx/msx1처럼 다른 폴더명으로 쓸 수 있는데, 그대로
+            # 넘기면 완전히 같은 파일명의 ROM이 System만 달라 서로 다른 Identity로
+            # 갈라졌다("같은 파일명이면 같은 게임" 규칙이 System 이름 불일치로 깨진
+            # 경우). 폴더명 자체(row["system"])는 실제 파일 작업에 계속 쓰이므로 여기
+            # 정규화는 Identity 키에만 영향을 준다(app/model/constants.py 참고).
+            identity_system = normalize_system(collection.frontend, row["system"])
             rom_identity_id = archive.ensure_rom_identity(
-                game_id, row["system"], normalize_title(Path(row["filename"]).stem),
+                game_id, identity_system, normalize_title(Path(row["filename"]).stem),
                 filename=row["filename"], size=row["size"] or None,
                 sha256=row["sha256"], region=(row["fields"] or {}).get("region") or None,
                 title=title)

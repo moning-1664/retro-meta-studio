@@ -41,6 +41,28 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(internal["systems"][0]["count"], 3)
         self.assertEqual(internal["actualBytes"], 3110)
 
+    def test_changing_the_folder_finds_the_same_games_at_the_new_location(self):
+        """"Collection 정보"의 폴더 변경(사용자 결정) - 폴더를 통째로 옮긴 뒤 새
+        위치를 알려주면, 재스캔 후 같은 게임들이 그대로 나와야 한다."""
+        import shutil
+        moved = self.dir / "esde-moved"
+        shutil.copytree(self.root, moved)
+
+        result = self.api.update_collection_paths(self.cid, str(moved))
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(result["data"]["rootPath"], str(moved))
+
+        wait_job(self.api, self.api.start_scan(self.cid, True)["data"]["jobId"])
+        detail = self.api.collection_detail(self.cid)["data"]
+        self.assertEqual(detail["rootPath"], str(moved))
+        self.assertEqual(detail["totalGames"], 3)
+        rows = self.api.list_rows(self.cid, limit=10, offset=0)["data"]["rows"]
+        self.assertIn("FFX.iso", [r["file"] for r in rows])
+
+    def test_changing_the_folder_needs_at_least_one_path(self):
+        result = self.api.update_collection_paths(self.cid, "", "")
+        self.assertFalse(result["ok"])
+
     def test_list_rows_paginates_and_reports_total(self):
         page = self.api.list_rows(self.cid, limit=2, offset=0)["data"]
         self.assertEqual(page["total"], 3)

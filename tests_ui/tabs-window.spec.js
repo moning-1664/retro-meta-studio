@@ -114,8 +114,12 @@ test.describe("창 크기 조절 - 네 변과 네 모서리", () => {
   });
 });
 
+// "같은 파일이 이미 있을 때"(transfer.conflict)와 "ROM 미매칭일 때"(unmatchedRomPolicy)
+// 화면은 없앴다(메뉴 정리 §9 후속, 사용자 결정) - patch/overwrite/replace와 헷갈려했다.
+// 값은 여전히 살아 있고 기본값 그대로 동작한다 - 그 동작은 tests/test_transfer_policy.py가
+// 백엔드에서 촘촘히 검증한다(default_policy_keeps_conflicts_for_the_user 등).
 test.describe("Settings - Collection → Collection 복사 정책", () => {
-  test("ROM/Media 복사와 충돌 처리를 바꾸면 저장된다", async ({ page }) => {
+  test("ROM/Media 복사를 바꾸면 저장된다", async ({ page }) => {
     await page.evaluate(() => {
       window.__saved = [];
       const original = window.api.saveAppSettings;
@@ -126,69 +130,16 @@ test.describe("Settings - Collection → Collection 복사 정책", () => {
     const media = page.locator(".stg-row[data-key='transfer.includeMedia']");
     await expect(media).not.toHaveClass(/soon/);
     await media.locator(".stg-switch").click();
-    await page.locator(".stg-row[data-key='transfer.conflict'] select").selectOption("skip");
     await expect.poll(async () => {
       const all = await page.evaluate(() => window.__saved);
       return Object.assign({}, ...all.map((p) => p.transfer || {}));
-    }).toEqual({ includeMedia: false, conflict: "skip" });
+    }).toEqual({ includeMedia: false });
   });
-});
 
-test.describe("Settings - ROM 미매칭 정책", () => {
-  const openTransfer = async (page) => {
+  test("'같은 파일이 이미 있을 때'/'ROM 미매칭일 때' 화면은 더 이상 없다", async ({ page }) => {
     await page.locator(".settings-btn").click();
     await page.locator(".stg-nav-item[data-section='transfer']").click();
-    await expect(page.locator(".stg-unmatched")).toBeVisible();
-  };
-  const spySave = async (page) => {
-    await page.evaluate(() => {
-      window.__saved = [];
-      const original = window.api.saveAppSettings;
-      window.api.saveAppSettings = (patch) => { window.__saved.push(patch); return original(patch); };
-    });
-  };
-  const lastTransferPatch = async (page) => {
-    const all = await page.evaluate(() => window.__saved);
-    return Object.assign({}, ...all.map((p) => p.transfer || {}));
-  };
-
-  test("기본은 '복사하지 않음'이 선택되어 있고 체크박스는 비활성이다", async ({ page }) => {
-    await openTransfer(page);
-    await expect(page.locator(".stg-unmatched-skip")).toBeChecked();
-    await expect(page.locator(".stg-unmatched-copy")).not.toBeChecked();
-    for (const field of ["metadata", "media", "video"]) {
-      await expect(page.locator(`.stg-unmatched-check[data-field='unmatchedRom${field[0].toUpperCase()}${field.slice(1)}']`))
-        .toBeDisabled();
-    }
-  });
-
-  test("'복사'를 고르면 체크박스가 켜지고 저장된다", async ({ page }) => {
-    await spySave(page);
-    await openTransfer(page);
-    await page.locator(".stg-unmatched-copy").check();
-    await expect.poll(() => lastTransferPatch(page)).toEqual({ unmatchedRomMode: "copy" });
-    for (const field of ["unmatchedRomMetadata", "unmatchedRomMedia", "unmatchedRomVideo"]) {
-      await expect(page.locator(`.stg-unmatched-check[data-field='${field}']`)).toBeEnabled();
-    }
-  });
-
-  test("Metadata/Media/Video는 서로 독립적으로 끌 수 있다", async ({ page }) => {
-    await spySave(page);
-    await openTransfer(page);
-    await page.locator(".stg-unmatched-copy").check();
-    await page.locator(".stg-unmatched-check[data-field='unmatchedRomVideo']").uncheck();
-    // 두 조작이 저장 debounce(300ms) 안에서 한 번에 저장될 수도, 따로 저장될 수도 있다 -
-    // 최종적으로 합쳐진 값만 확인한다(그 사이의 배치 나뉨은 구현 세부사항이다).
-    await expect.poll(async () => (await lastTransferPatch(page)).unmatchedRomVideo).toBe(false);
-    expect((await lastTransferPatch(page)).unmatchedRomMode).toBe("copy");
-    await expect(page.locator(".stg-unmatched-check[data-field='unmatchedRomMetadata']")).toBeChecked();
-    await expect(page.locator(".stg-unmatched-check[data-field='unmatchedRomMedia']")).toBeChecked();
-  });
-
-  test("다시 '복사하지 않음'을 고르면 체크박스가 다시 비활성화된다", async ({ page }) => {
-    await openTransfer(page);
-    await page.locator(".stg-unmatched-copy").check();
-    await page.locator(".stg-unmatched-skip").check();
-    await expect(page.locator(".stg-unmatched-check[data-field='unmatchedRomMetadata']")).toBeDisabled();
+    await expect(page.locator(".stg-row[data-key='transfer.conflict']")).toHaveCount(0);
+    await expect(page.locator(".stg-unmatched")).toHaveCount(0);
   });
 });

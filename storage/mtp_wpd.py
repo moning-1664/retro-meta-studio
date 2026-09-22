@@ -640,7 +640,14 @@ class WpdBackend(MtpBackend):
             if variant is None:
                 raise MtpError("이 Windows에서는 삭제에 필요한 타입을 찾지 못했습니다.")
             variant.vt = 31   # VT_LPWSTR
-            variant.data.pwszVal = object_id
+            # comtypes가 만드는 PROPVARIANT의 공용체(union) 필드는 이름이 없는(anonymous)
+            # 필드다 - ctypes가 그 멤버들을 구조체 자신에 바로 얹어 주므로 `variant.pwszVal`로
+            # 바로 쓴다. `variant.data.pwszVal`처럼 중간에 "data"라는 이름을 넣으면
+            # `AttributeError: 'tag_inner_PROPVARIANT' object has no attribute 'data'`로
+            # 죽는다(실사용 버그 - MTP에 이미 있는 gamelist.xml을 덮어쓰려 할 때마다
+            # delete()가 이 줄에서 죽어 Apply가 매번 조용히 실패했다. 새 파일을 처음 쓸
+            # 때는 delete()를 안 타서 증상이 "가끔"처럼 보였다).
+            variant.pwszVal = object_id
             ids.Add(variant)
             device.Content().Delete(_DELETE_NO_RECURSION, ids, None)
         return self._com.run(work)

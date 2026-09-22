@@ -518,6 +518,16 @@
       Object.assign(c, { target, arch, os: os || null });
       return ok(true);
     },
+    update_collection_paths: (id, rootPath, romPath) => {
+      const c = mockCollections.find((x) => x.id === id);
+      if (!c) return Promise.resolve({ ok: false, error: "없는 Collection" });
+      if (!String(rootPath || "").trim() && !String(romPath || "").trim()) {
+        return Promise.resolve({ ok: false, error: "Metadata 디렉토리와 ROM 디렉토리 중 하나는 입력하세요." });
+      }
+      c.rootPath = String(rootPath || "").trim() || String(romPath || "").trim();
+      if (mockDetail.id === id) mockDetail.rootPath = c.rootPath;
+      return ok(c);
+    },
     delete_collection: (id) => {
       const i = mockCollections.findIndex((x) => x.id === id);
       if (i < 0) return Promise.resolve({ ok: false, error: "없는 Collection" });
@@ -857,6 +867,7 @@
     mtpFindEsde: (deviceKey) => call("mtp_find_esde", deviceKey),
     renameCollection: (id, name) => call("rename_collection", id, name),
     updateCollectionTarget: (id, target, arch, os) => call("update_collection_target", id, target, arch, os),
+    updateCollectionPaths: (id, rootPath, romPath) => call("update_collection_paths", id, rootPath, romPath),
     deleteCollection: (id) => call("delete_collection", id),
     openCollection: (id) => call("open_collection", id),
     closeCollection: (id) => call("close_collection", id),

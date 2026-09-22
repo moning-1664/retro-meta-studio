@@ -83,6 +83,33 @@ test.describe("상단 탭 - 갖다대기와 우클릭", () => {
     await page.locator(".modal-body button", { hasText: "Convert" }).click();
     await expect(page.locator(".modal-title")).toHaveText("Convert");
   });
+
+  test("Metadata 폴더를 바꾸면 재스캔 경고가 뜨고, 확인해야 반영된다", async ({ page }) => {
+    await page.evaluate(() => {
+      window.__paths = [];
+      const original = window.api.updateCollectionPaths;
+      window.api.updateCollectionPaths = (id, root, rom) => { window.__paths.push({ id, root, rom }); return original(id, root, rom); };
+    });
+    await tab(page).click({ button: "right" });
+    await menuItem(page, "Collection 정보").click();
+    const metaInput = page.locator(".modal-body .field-row input.field-input").first();
+    await metaInput.fill("D:\\새폴더");
+    await modalButton(page, "저장").click();
+    await expect(page.locator(".modal-title")).toHaveText("폴더 변경");
+    await expect(page.locator(".modal-text")).toContainText("다시 스캔");
+    await expect(page.evaluate(() => window.__paths.length)).resolves.toBe(0);
+    await modalButton(page, "확인").click();
+    await expect.poll(() => page.evaluate(() => window.__paths.length)).toBe(1);
+    expect(await page.evaluate(() => window.__paths[0].root)).toBe("D:\\새폴더");
+  });
+
+  test("이름/Target만 바꾸면 재스캔 경고 없이 바로 저장된다", async ({ page }) => {
+    await tab(page).click({ button: "right" });
+    await menuItem(page, "Collection 정보").click();
+    await page.locator(".modal-body select").selectOption("windows");
+    await modalButton(page, "저장").click();
+    await expect(page.locator(".modal-title")).toHaveCount(0);
+  });
 });
 
 test.describe("Gamelist 행 우클릭 메뉴", () => {

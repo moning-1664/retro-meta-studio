@@ -138,7 +138,7 @@
     /** Title Prefix/Postfix - 5개 구역(한국/영어권/일본/유럽/글로벌) 줄마다 켜짐 여부·
      * Prefix/Postfix·붙일 텍스트를 정한다(app/title_affix.py의 DEFAULT_CONFIG와 같은 구역).
      *
-     * `ctx.update()`는 패널을 다시 그리지 않으므로(unmatchedRomPolicy와 같은 사정), 한 구역
+     * `ctx.update()`는 패널을 다시 그리지 않으므로, 한 구역
      * 안에서 여러 필드를 잇달아 바꿔도 항상 최신 값을 함께 보내도록 `state`에 누적해 둔다 -
      * 안 그러면 나중에 바꾼 필드가 먼저 바꾼 필드를 예전 값으로 되돌려 보낸다("titleAffix"
      * 섹션도 한 단계 깊이까지만 병합되므로, 이 구역 하나는 항상 통째로 보내야 한다).
@@ -197,54 +197,6 @@
       return wrap;
     }
 
-    /** ROM 미매칭 정책 - 원본에 ROM 파일이 없는 항목(Archive처럼 메타데이터만 있는 항목)을
-     * 붙여넣을 때 무엇을 할지. 라디오 두 개 + Metadata/Media/Video 체크박스 세 개가
-     * 하나의 값(transfer.unmatchedRom*)을 공유한다 - bridge/api.py의 _transfer_policy와
-     * 같은 기본값이다. "복사"를 고르지 않으면 체크박스는 흐리게 비활성화한다.
-     */
-    function unmatchedRomPolicy(t) {
-      const wrap = h("div", { class: "stg-unmatched", "data-key": "transfer.unmatchedRom" });
-      const radioName = "stg-unmatched-mode";
-      const mode = t.unmatchedRomMode === "copy" ? "copy" : "skip";
-
-      // 라디오를 바꿔도 ctx.update()가 패널을 다시 그리지 않는다(값의 주인은 app.js고, 이
-      // 모듈은 그리기만 한다) - 그래서 체크박스 활성/비활성은 여기서 직접 켜고 끈다.
-      const checkInputs = [];
-      const checks = h("div", { class: "stg-unmatched-checks" });
-      const checkRow = (field, label) => {
-        const input = h("input", {
-          type: "checkbox", class: "stg-unmatched-check", "data-field": field,
-          disabled: mode !== "copy",
-        });
-        input.checked = t[field] !== false;
-        input.addEventListener("change", () => ctx.update("transfer", { [field]: input.checked }));
-        checkInputs.push(input);
-        return h("label", { class: "stg-check-row" }, [input, h("span", {}, [label])]);
-      };
-      checks.appendChild(checkRow("unmatchedRomMetadata", "Metadata"));
-      checks.appendChild(checkRow("unmatchedRomMedia", "Media"));
-      checks.appendChild(checkRow("unmatchedRomVideo", "Video"));
-
-      const setMode = (next) => {
-        ctx.update("transfer", { unmatchedRomMode: next });
-        checkInputs.forEach((input) => { input.disabled = next !== "copy"; });
-      };
-      const skipRadio = h("input", { type: "radio", name: radioName, class: "stg-unmatched-radio stg-unmatched-skip" });
-      skipRadio.checked = mode !== "copy";
-      skipRadio.addEventListener("change", () => { if (skipRadio.checked) setMode("skip"); });
-      const copyRadio = h("input", { type: "radio", name: radioName, class: "stg-unmatched-radio stg-unmatched-copy" });
-      copyRadio.checked = mode === "copy";
-      copyRadio.addEventListener("change", () => { if (copyRadio.checked) setMode("copy"); });
-
-      wrap.appendChild(h("label", { class: "stg-unmatched-option" },
-        [skipRadio, h("span", {}, ["매칭되는 ROM이 없으면 Metadata/Media를 복사하지 않음"])]));
-      wrap.appendChild(h("label", { class: "stg-unmatched-option" },
-        [copyRadio, h("span", {}, ["매칭되는 ROM이 없어도 다음을 복사"])]));
-      wrap.appendChild(checks);
-      wrap.appendChild(h("div", { class: "stg-help" },
-        ["선택한 항목의 원본에 ROM 파일이 없을 때(예: Archive 항목) 무엇을 붙여넣을지 정합니다."]));
-      return wrap;
-    }
 
     // ---------------------------------------------------------------- 섹션
     function content(key) {
@@ -347,16 +299,12 @@
         // 이름은 사용자 결정(메뉴 정리 §9) - "Collection → Collection 복사 (Ctrl+C / Ctrl+V)"는
         // 무엇을 하는 구역인지보다 조작 방법이 앞서 보였다.
         //
-        // 아래 "같은 파일이 이미 있을 때"와 "ROM 미매칭일 때" 두 항목은 patch/overwrite/replace
-        // 규칙이 생기면서 없어져도 될 것 같다는 의견이 있었지만, 실제로는 그 규칙과
-        // **겹치지 않는** 별개의 경우를 다룬다(확인 후 남겨 둠, 메뉴 정리 §9):
-        //   - "같은 파일이 이미 있을 때"(transfer.conflict) - 이번 붙여넣기와 무관한 **엉뚱한
-        //     파일**이 대상 경로에 이미 있는 경우다(bridge/api.py 1705줄). patch/overwrite/replace는
-        //     "같은 게임의 필드를 어떻게 합칠지"를 정할 뿐, 파일 경로 충돌 자체는 다루지 않는다.
-        //   - "ROM 미매칭일 때"(unmatchedRomPolicy) - 원본에 대응하는 **대상 자체가 아예 없어
-        //     새로 만들어지는** 경우다(bridge/api.py 1654줄) - 기존 항목이 없으니 patch/overwrite/
-        //     replace를 적용할 대상도 없다.
-        // 지우면 이 두 경우의 동작을 더는 바꿀 수 없게 되므로, 이름만 정리하고 기능은 남겼다.
+        // "같은 파일이 이미 있을 때"(transfer.conflict)와 "ROM 미매칭일 때"(unmatchedRomPolicy)
+        // 두 항목은 화면에서 뺐다(사용자 결정, 메뉴 정리 §9 후속) - patch/overwrite/replace와
+        // 겹치지 않는 별개의 경우(엉뚱한 파일이 이미 있음 / 대상 자체가 없어 새로 생김)를 다루는
+        // 것은 맞지만, 그 구분 자체가 사용자에게 혼란만 줬다. **기능은 그대로 둔다** - 저장된
+        // 값이 없으면 기본값(둘 다 "Plan에서 직접 고르기"/"복사 안 함"에 준하는 값)을 그대로
+        // 쓰므로(bridge/api.py TRANSFER_DEFAULTS), 화면에서 안 보여도 동작은 바뀌지 않는다.
         add(h("div", { class: "stg-subsection-title" }, ["Collection 간 복사 설정"]));
         add(row("transfer.pasteMode", "붙여넣기 모드",
           select(t.pasteMode, [["patch", "Patch - 보완(없는 것만 채움)"], ["overwrite", "Overwrite - 덮어쓰기(원본 값 적용)"],
@@ -370,12 +318,6 @@
         add(row("transfer.includeMedia", "Media 복사",
           toggle(t.includeMedia, (v) => ctx.update("transfer", { includeMedia: v })),
           "끄면 커버·스크린샷·동영상을 옮기지 않습니다."));
-        add(row("transfer.conflict", "같은 파일이 이미 있을 때",
-          select(t.conflict, [["ask", "Plan에서 직접 고르기"], ["skip", "기존 파일 두기"], ["overwrite", "덮어쓰기"]],
-            (v) => ctx.update("transfer", { conflict: v })),
-          "이번 붙여넣기로 생긴 충돌에만 적용합니다. 메타데이터는 어느 경우에도 붙여넣습니다."));
-        add(h("div", { class: "stg-subsection-title" }, ["ROM 미매칭일 때"]));
-        add(unmatchedRomPolicy(t));
         add(row("transfer.backup", "Backup before overwrite", soonToggle(false), null, true));
       } else if (key === "archive") {
         add(...section("Archive", "Archive를 어디에 어떤 형식으로 저장할지 정합니다."));

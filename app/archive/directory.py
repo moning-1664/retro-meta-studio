@@ -23,6 +23,7 @@ from pathlib import Path
 
 from adapters import get_adapter
 from app.archive import projection
+from app.model.constants import normalize_system
 from app.store.archive import rom_key_of
 from utils import normalize_title
 
@@ -62,6 +63,10 @@ def sync_from_directory(archive, config, provider) -> dict:
     added = linked = media_linked = 0
     systems = _systems(provider, adapter, collection, cfg)
     for system in systems:
+        # Identity 키만 정규화한다(msx/msx1처럼 같은 플랫폼을 가리키는 다른 폴더명이
+        # ingest_collection과 다른 Identity로 갈리지 않게 - app/archive/service.py 참고).
+        # 폴더 자체(layout/rom_dir)는 실제 이 디렉토리의 이름 그대로 읽어야 한다.
+        identity_system = normalize_system(cfg["frontend"], system)
         layout = adapter.layout(collection, system)
         rom_dir = _rom_root(cfg) / system
         index = adapter.read_index(provider, layout)
@@ -76,7 +81,7 @@ def sync_from_directory(archive, config, provider) -> dict:
             roms[name] = rom_dir / name
 
         for filename in sorted(set(index) | set(roms)):
-            key = (system, rom_key_of(filename))
+            key = (identity_system, rom_key_of(filename))
             hit = known.get(key)
             rom_path = roms.get(filename)
             media = media_index.get(Path(filename).stem, [])
@@ -93,7 +98,7 @@ def sync_from_directory(archive, config, provider) -> dict:
                 title = (fields.get("name") or "").strip() or Path(filename).stem
                 game_id = archive.ensure_game(title, normalize_title(title))
                 rid = archive.ensure_rom_identity(
-                    game_id, system, normalize_title(Path(filename).stem), filename=filename,
+                    game_id, identity_system, normalize_title(Path(filename).stem), filename=filename,
                     size=_size(provider, rom_path) if rom_path else None,
                     # gamelist에서 읽은 제목만 진짜다 - ROM만 있는 항목의 제목은 파일명이라 넘기지 않는다.
                     title=(fields.get("name") or "").strip() or None)

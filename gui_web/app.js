@@ -1160,13 +1160,16 @@
   }
 
   /** "Collection 정보" - 탭 우클릭의 "이름 변경"/"Convert"를 하나로 묶었다(사용자 결정,
-   * 메뉴 정리 §6). "Collection 추가"와 같은 필드 구성으로 지금 값을 보여주고, 이름/Target은
-   * 그 자리에서 고칠 수 있다. 경로는 만들 때 정한 저장소 구조라 여기서는 정보로만 보여준다 -
-   * 폴더를 옮기는 것은 되돌릴 수 없는 별개의 작업이라 이 화면의 범위 밖이다. Convert는
-   * 전용 진입점을 없앤 대신 여기서 계속 쓸 수 있게 버튼으로 남겼다(사용자 결정). */
+   * 메뉴 정리 §6). "Collection 추가"와 같은 필드 구성으로 지금 값을 보여주고, 이름/Target/
+   * 폴더를 그 자리에서 고칠 수 있다. 폴더는 재스캔이 필수라 바꾸기 전에 반드시 경고한다
+   * (사용자 결정) - Adapter의 layout()이 매번 collection.root_path를 새로 읽으므로
+   * (app/scan/scanner.py), 경로만 바꾸고 재스캔하면 나머지는 스캔이 새로 맞춘다.
+   * 기기(MTP) Collection은 폴더 선택창이 다른 경로라 이 화면에서는 다루지 않는다.
+   * Convert는 전용 진입점을 없앤 대신 여기서 계속 쓸 수 있게 버튼으로 남겼다(사용자 결정). */
   async function openCollectionInfo(collection) {
     const r = await api.collectionDetail(collection.id);
     const detail = r.ok ? r.data : {};
+    const isDevice = !!detail.isDevice;
 
     const nameInput = h("input", { class: "field-input", value: collection.name });
     const targetSel = h("select", { class: "field-input" }, [
@@ -1177,9 +1180,23 @@
     ]);
     targetSel.value = collection.target || "";
 
-    const pathRows = (detail.storages || [collection]).map((s) => h("div", { class: "field-row" }, [
-      h("input", { class: "field-input", value: s.rootPath || collection.rootPath || "", disabled: true }),
-    ]));
+    const metaInput = h("input", { class: "field-input", value: collection.rootPath || "",
+                                   disabled: isDevice });
+    const romInput = h("input", { class: "field-input", placeholder: "비워두면 Metadata와 같은 폴더",
+                                  disabled: isDevice });
+    const browse = (input, title) => {
+      const btn = h("button", { class: "btn", disabled: isDevice }, [icon("folderOpen", IC.sm), h("span", {}, ["찾아보기"])]);
+      btn.addEventListener("click", async () => {
+        const res = await api.pickFolder(title);
+        if (res.ok && res.data) input.value = res.data;
+      });
+      return btn;
+    };
+    const pathNote = isDevice
+      ? h("div", { class: "modal-hint" }, ["기기(MTP) Collection의 폴더는 여기서 바꿀 수 없습니다."])
+      : h("div", { class: "modal-hint" }, [
+          "폴더를 바꾸면 이 Collection을 처음부터 다시 스캔합니다 - System별로 따로 지정해 둔 " +
+          "ROM 위치(External Storage 등)는 그대로 둡니다."]);
 
     const size = formatBytes((detail.totalRomBytes || 0) + (detail.totalMediaBytes || 0));
     const statsRow = h("div", { class: "modal-hint" }, [
@@ -1193,7 +1210,11 @@
       statsRow,
       h("div", { class: "field-label" }, ["이름"]), nameInput,
       h("div", { class: "field-label" }, ["Target"]), targetSel,
-      h("div", { class: "field-label" }, ["저장 경로"]), ...pathRows,
+      h("div", { class: "field-label" }, ["Metadata 디렉토리"]),
+      h("div", { class: "field-row" }, [metaInput, browse(metaInput, "Metadata 폴더 선택")]),
+      h("div", { class: "field-label" }, ["ROM 디렉토리 ", h("span", { class: "field-optional" }, ["(선택)"])]),
+      h("div", { class: "field-row" }, [romInput, browse(romInput, "ROM 폴더 선택")]),
+      pathNote,
       h("div", { class: "field-label" }, ["다른 Frontend로"]), convertBtn,
     ]);
 
@@ -1201,13 +1222,32 @@
       h("button", { class: "btn", onClick: closeModal }, ["닫기"]),
       h("button", { class: "btn primary", onClick: async () => {
         const name = nameInput.value.trim();
-        closeModal();
-        if (name && name !== collection.name) await api.renameCollection(collection.id, name);
-        if (targetSel.value !== (collection.target || "")) {
-          await api.updateCollectionTarget(collection.id, targetSel.value);
+        const newMeta = metaInput.value.trim();
+        const newRom = romInput.value.trim();
+        const pathChanged = !isDevice && (newMeta !== (collection.rootPath || "") || newRom);
+        const applyRest = async () => {
+          if (name && name !== collection.name) await api.renameCollection(collection.id, name);
+          if (targetSel.value !== (collection.target || "")) {
+            await api.updateCollectionTarget(collection.id, targetSel.value);
+          }
+        };
+        if (!pathChanged) {
+          closeModal();
+          await applyRest();
+          await loadCollections();
+          renderAll();
+          return;
         }
-        await loadCollections();
-        renderAll();
+        showConfirm("폴더 변경", "폴더를 바꾸면 이 Collection을 처음부터 다시 스캔합니다. 계속할까요?",
+          false, async () => {
+            closeModal();
+            await applyRest();
+            const pr = await api.updateCollectionPaths(collection.id, newMeta, newRom);
+            if (!pr.ok) { showToast(pr.error, "error"); return; }
+            await loadCollections();
+            renderAll();
+            await runScan(collection.id, true);
+          });
       } }, ["저장"]),
     ]);
     setTimeout(() => nameInput.focus(), 30);
@@ -4846,30 +4886,90 @@
   // ------------------------------------------------------------------
   // Convert (스펙 §53)
   // ------------------------------------------------------------------
-  /** 변환 대상 고르기 -> 미리보기 -> Plan. 원본 Collection은 건드리지 않는다. */
+  /** 변환 대상 고르기 -> (새 Collection이면 먼저 만들기) -> 미리보기 -> Plan.
+   * 원본 Collection은 건드리지 않는다.
+   *
+   * **"다른 Frontend 형식으로 바꾼다"는 것이 이 앱에서는 "그 형식의 새 Collection을
+   * 만든다"는 뜻이다**(사용자 결정) - Frontend별 폴더 구조(gamelist 위치, media 배치
+   * 등)를 실제로 아는 것은 Collection 하나가 가리키는 폴더뿐이라, "이 Collection
+   * 자체를 다른 형식으로"는 곧 "그 형식의 폴더를 새로 만들고 내용을 옮긴다"와 같다.
+   * 예전엔 그 폴더(=Collection)를 미리 "+ Collection"으로 따로 만들어 둬야만
+   * 골라졌는데, 그 준비 단계가 안 보여서 "왜 대상이 다른 Collection이냐"는 혼란이
+   * 있었다 - 이제 이 창 안에서 바로 만든다. */
   async function openConvert(source) {
-    const targets = S.collections.filter((c) => c.id !== source.id);
-    if (!targets.length) {
-      showToast("변환해 넣을 다른 Collection이 없습니다. 먼저 추가하세요.", "warning");
-      return;
+    const existing = S.collections.filter((c) => c.id !== source.id);
+    const frontendsR = await api.frontends();
+    const frontends = frontendsR.ok ? frontendsR.data : [{ id: "es-de", label: "ES-DE" }];
+
+    let mode = "new";
+    const modeSeg = h("div", { class: "seg" });
+    const modeBtn = (value, label) => {
+      const btn = h("button", { class: "seg-btn", "data-mode": value }, [label]);
+      btn.addEventListener("click", () => { mode = value; sync(); });
+      return btn;
+    };
+    modeSeg.appendChild(modeBtn("new", "새 Collection으로"));
+    modeSeg.appendChild(modeBtn("existing", "이미 있는 Collection으로"));
+
+    const frontendSel = h("select", { class: "field-input" },
+      frontends.map((f) => h("option", { value: f.id }, [f.label])));
+    const folderInput = h("input", { class: "field-input", placeholder: "폴더를 선택하세요" });
+    const browseBtn = h("button", { class: "btn" }, [icon("folderOpen", IC.sm), h("span", {}, ["찾아보기"])]);
+    browseBtn.addEventListener("click", async () => {
+      const r = await api.pickFolder("변환해 넣을 폴더 선택");
+      if (r.ok && r.data) folderInput.value = r.data;
+    });
+    const newBlock = h("div", { class: "convert-new-block" }, [
+      h("div", { class: "field-label" }, ["Frontend"]), frontendSel,
+      h("div", { class: "field-label" }, ["폴더"]),
+      h("div", { class: "field-row" }, [folderInput, browseBtn]),
+      h("div", { class: "modal-hint" }, ["비어 있는(또는 아직 없는) 폴더를 고르세요 - 그 자리에 새 Collection을 만듭니다."]),
+    ]);
+
+    const existingSel = h("select", { class: "field-input" },
+      existing.map((c) => h("option", { value: c.id }, [`${c.name} (${c.frontendLabel})`])));
+    const existingBlock = h("div", { class: "convert-existing-block" }, [
+      h("div", { class: "field-label" }, ["대상 Collection"]), existingSel,
+    ]);
+    if (!existing.length) {
+      existingBlock.appendChild(h("div", { class: "modal-hint" }, ["변환해 넣을 다른 Collection이 아직 없습니다."]));
     }
 
-    const select = h("select", { class: "field-input" },
-      targets.map((c) => h("option", { value: c.id }, [`${c.name} (${c.frontendLabel})`])));
+    function sync() {
+      modeSeg.querySelectorAll(".seg-btn").forEach((btn) =>
+        btn.classList.toggle("on", btn.dataset.mode === mode));
+      newBlock.hidden = mode !== "new";
+      existingBlock.hidden = mode !== "existing";
+    }
+    sync();
+
     const body = h("div", { class: "modal-body" }, [
-      h("div", { class: "modal-text" }, [`${source.name}의 내용을 다른 Collection으로 변환합니다.`]),
-      h("div", { class: "field-label" }, ["대상 Collection"]),
-      select,
+      h("div", { class: "modal-text" }, [`${source.name}의 내용을 다른 Frontend 형식으로 변환합니다.`]),
+      modeSeg,
+      newBlock,
+      existingBlock,
       h("div", { class: "modal-hint" },
         ["원본은 그대로 둡니다. 변환 결과는 Plan에 올라가고, Apply를 눌러야 실제로 반영됩니다."]),
     ]);
 
     showModal("Convert", body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
-      h("button", { class: "btn primary", onClick: () => {
-        const targetId = select.value;
+      h("button", { class: "btn primary", onClick: async () => {
+        if (mode === "existing") {
+          if (!existingSel.value) { showToast("대상 Collection을 고르세요.", "warning"); return; }
+          const targetId = existingSel.value;
+          closeModal();
+          showConvertPreview(source.id, targetId);
+          return;
+        }
+        const folder = folderInput.value.trim();
+        if (!folder) { showToast("폴더를 고르세요.", "warning"); return; }
+        const label = (frontends.find((f) => f.id === frontendSel.value) || {}).label || frontendSel.value;
+        const created = await api.createCollection(defaultCollectionName(label), frontendSel.value, folder);
+        if (!created.ok) { showToast(created.error, "error"); return; }
+        await loadCollections();
         closeModal();
-        showConvertPreview(source.id, targetId);
+        showConvertPreview(source.id, created.data.id);
       } }, ["다음"]),
     ]);
   }
@@ -5983,6 +6083,7 @@
     const { zone, video } = current;
     zone.classList.remove("video-playing", "video-loading", "video-paused");
     if (current.playBtn) current.playBtn.remove();
+    if (current.pauseBadge) current.pauseBadge.remove();
     try { video.pause(); } catch (_) { /* 이미 떨어져 나간 요소 */ }
     const release = () => { video.removeAttribute("src"); try { video.load(); } catch (_) { /* 무시 */ } video.remove(); };
     // 서서히 사라지는 동안(CSS transition)만 남겨 두고 떼어낸다 - 다운로드도 여기서 끊긴다.
@@ -6003,13 +6104,17 @@
     video.volume = Math.min(1, Math.max(0, Number(settings.videoVolume ?? 70) / 100));
     zone.classList.add("has-video");
     zone.appendChild(video);
-    const current = { zone, video, timer: null, playBtn: null };
+    // 재생 버튼(.media-video-play)과 같은 재질의 동그란 배지 - "||" 글자보다 또렷하다
+    // (실사용 피드백 "pause 버튼이 허접하다").
+    const pauseBadge = h("div", { class: "media-video-pause-badge" }, [icon("pause", IC.lg)]);
+    const current = { zone, video, timer: null, playBtn: null, pauseBadge };
     mediaVideo = current;
 
     video.addEventListener("playing", () => {
       if (mediaVideo !== current) return;
       zone.classList.remove("video-loading", "video-paused");
       zone.classList.add("video-playing");
+      pauseBadge.remove();
     });
     // 코덱을 못 읽거나 파일이 사라졌으면 조용히 Screenshot으로 둔다.
     video.addEventListener("error", () => { if (mediaVideo === current) stopMediaVideo(); });
@@ -6044,6 +6149,7 @@
       if (zone.classList.contains("video-paused")) {
         mediaVideoPaused = false;
         zone.classList.remove("video-paused");
+        pauseBadge.remove();
         video.play().catch(() => stopMediaVideo());
         return;
       }
@@ -6051,6 +6157,7 @@
       video.pause();
       zone.classList.remove("video-playing", "video-loading");
       zone.classList.add("video-paused");
+      zone.appendChild(pauseBadge);
     }, true);
 
     // 멈춰 둔 상태이거나 "눌러서 재생"이면 재생 버튼을 놓는다 - 저절로 시작하지 않는다.
