@@ -628,27 +628,46 @@ class WpdBackend(MtpBackend):
             return device.Content().CreateObjectWithPropertiesOnly(values, None)
         return self._com.run(work)
 
+    def _single_id_collection(self, object_id):
+        """object_id 하나만 담은 `IPortableDevicePropVariantCollection` - `delete()`가 쓴다.
+
+        분리해 둔 이유는 **이 부분만 테스트로 고정할 수 있어서다** - 실제 삭제(device.
+        Content().Delete())는 진짜 기기가 있어야 하지만, PROPVARIANT를 만들고 담는 이
+        부분은 기기 없이도 COM만으로 검증할 수 있다(tests/test_mtp_provider.py).
+
+        **`tag_inner_PROPVARIANT`는 `self._api`의 것을 써야 한다.** PortableDeviceApiLib와
+        PortableDeviceTypesLib는 서로 다른 typelib라서, comtypes가 둘을 따로 만든 Python
+        클래스가 각자 생긴다 - ABI는 같아도 ctypes 입장에서는 다른 타입이다.
+        `IPortableDevicePropVariantCollection.Add()`의 진짜 인자 타입(introspection으로
+        확인)은 `self._api` 쪽 `LP_tag_inner_PROPVARIANT`라서, `self._types`의 것을
+        넘기면 `ctypes.ArgumentError: expected LP_tag_inner_PROPVARIANT instance instead
+        of tag_inner_PROPVARIANT`로 죽는다(실사용 버그 - 이전에 `variant.data.pwszVal`
+        오타를 고친 뒤에도 여전히 삭제가 실패했다).
+        """
+        import ctypes
+        import comtypes.client
+        ids = comtypes.client.CreateObject(
+            self._types.PortableDevicePropVariantCollection,
+            interface=self._api.IPortableDevicePropVariantCollection)
+        variant = self._api.tag_inner_PROPVARIANT() if hasattr(self._api, "tag_inner_PROPVARIANT") else None
+        if variant is None:
+            raise MtpError("이 Windows에서는 삭제에 필요한 타입을 찾지 못했습니다.")
+        variant.vt = 31   # VT_LPWSTR
+        # comtypes가 만드는 PROPVARIANT의 공용체(union) 필드는 이름이 없는(anonymous)
+        # 필드다 - ctypes가 그 멤버들을 구조체 자신에 바로 얹어 주므로 `variant.pwszVal`로
+        # 바로 쓴다. `variant.data.pwszVal`처럼 중간에 "data"라는 이름을 넣으면
+        # `AttributeError: 'tag_inner_PROPVARIANT' object has no attribute 'data'`로 죽는다.
+        variant.pwszVal = object_id
+        # Add()는 REF가 아니라 포인터 인자로 선언돼 있어(introspection 확인) 구조체를
+        # 그대로 넘기면 같은 종류의 TypeError로 죽는다 - 명시적으로 포인터를 넘긴다.
+        ids.Add(ctypes.pointer(variant))
+        return ids
+
     def delete(self, device_key, object_id) -> None:
         def work():
-            import comtypes.client
             self._load()
             device = self._device(device_key)
-            ids = comtypes.client.CreateObject(
-                self._types.PortableDevicePropVariantCollection,
-                interface=self._api.IPortableDevicePropVariantCollection)
-            variant = self._types.tag_inner_PROPVARIANT() if hasattr(self._types, "tag_inner_PROPVARIANT") else None
-            if variant is None:
-                raise MtpError("이 Windows에서는 삭제에 필요한 타입을 찾지 못했습니다.")
-            variant.vt = 31   # VT_LPWSTR
-            # comtypes가 만드는 PROPVARIANT의 공용체(union) 필드는 이름이 없는(anonymous)
-            # 필드다 - ctypes가 그 멤버들을 구조체 자신에 바로 얹어 주므로 `variant.pwszVal`로
-            # 바로 쓴다. `variant.data.pwszVal`처럼 중간에 "data"라는 이름을 넣으면
-            # `AttributeError: 'tag_inner_PROPVARIANT' object has no attribute 'data'`로
-            # 죽는다(실사용 버그 - MTP에 이미 있는 gamelist.xml을 덮어쓰려 할 때마다
-            # delete()가 이 줄에서 죽어 Apply가 매번 조용히 실패했다. 새 파일을 처음 쓸
-            # 때는 delete()를 안 타서 증상이 "가끔"처럼 보였다).
-            variant.pwszVal = object_id
-            ids.Add(variant)
+            ids = self._single_id_collection(object_id)
             device.Content().Delete(_DELETE_NO_RECURSION, ids, None)
         return self._com.run(work)
 

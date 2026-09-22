@@ -216,6 +216,28 @@ class ComThreadTests(unittest.TestCase):
         result = com.run(mtp_wpd._raw_enumerate, timeout=30)
         self.assertIsInstance(result, list)
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows 전용")
+    def test_delete_builds_a_propvariant_collection_without_crashing(self):
+        """실사용 버그 - `delete()`(덮어쓰기의 첫 단계)가 매번 죽어서 이미 있는
+        gamelist.xml을 MTP에 다시 쓰지 못했다. 두 typelib(PortableDeviceApiLib/
+        PortableDeviceTypesLib)가 각자 다른 Python 타입을 만드는 comtypes 특성 때문에
+        (1) `variant.data.pwszVal`(없는 속성) (2) 엉뚱한 typelib의 PROPVARIANT 타입으로
+        `.Add()`를 부름 - 두 겹으로 죽고 있었다. 진짜 기기 없이도 이 부분(PROPVARIANT를
+        만들어 컬렉션에 담는 것)만은 COM으로 검증할 수 있다."""
+        from storage import mtp_wpd
+        backend = mtp_wpd.WpdBackend()
+
+        def work():
+            backend._load()
+            ids = backend._single_id_collection("some-object-id")
+            import ctypes
+            count = ctypes.c_ulong(0)
+            ids.GetCount(ctypes.byref(count))
+            return count.value
+
+        com = mtp_wpd._ComThread()
+        self.assertEqual(com.run(work, timeout=30), 1)
+
     def test_a_device_that_never_answers_times_out_with_a_readable_reason(self):
         import threading as _threading
         from storage.mtp_wpd import _ComThread

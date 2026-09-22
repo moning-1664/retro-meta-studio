@@ -3486,13 +3486,16 @@
     });
     bar.appendChild(fav);
 
-    // Archive에만 있는 필터 - **다른 버전이 있는 항목만** 본다(사용자 결정 - "유사롬만 골라서 볼 수
-    // 있는 filter 옵션"). 고를 것이 있는 항목만 남으므로 정리할 때 그것만 훑으면 된다.
+    // Archive에만 있는 필터 - **충돌(출처 간 내용이 실제로 다른 항목)만** 본다(사용자
+    // 결정 - "유사롬만 골라서 볼 수 있는 filter 옵션"). 고를 것이 있는 항목만 남으므로
+    // 정리할 때 그것만 훑으면 된다. 아이콘/문구를 System 목록의 "!" 충돌 표시와 같은
+    // 언어로 맞췄다(사용자 지적 - 예전엔 "copy" 아이콘이라 충돌 필터인지 알아보기
+    // 어려웠다).
     if (isArchive()) {
       const onlyDiff = h("button", {
         class: "icon-btn archive-conflicts-only" + (S.archiveConflictsOnly ? " on" : ""),
-        title: S.archiveConflictsOnly ? "전체 보기" : "다른 버전이 있는 항목만 보기",
-      }, [icon("copy", IC.md)]);
+        title: S.archiveConflictsOnly ? "전체 보기" : "충돌(출처 간 내용이 다른 항목)만 보기",
+      }, [icon("alertTriangle", IC.md)]);
       onlyDiff.addEventListener("click", async () => {
         S.archiveConflictsOnly = !S.archiveConflictsOnly;
         renderFilterBar();
@@ -5520,6 +5523,12 @@
         archive: true, romUid: d.romIdentityId, romIdentityId: d.romIdentityId,
         system: d.system, file: d.filename, fields: d.fields, size: d.size,
         present: true, sha256: d.sha256, sources: d.sources,
+        // Revision 탭(renderSourcesTab)이 읽는 값들 - 예전엔 여기서 빠뜨려서, 목록의
+        // [n] 충돌 뱃지는 보이는데 그 항목을 열면 Revision 탭이 늘 "수집된 Revision이
+        // 없습니다"로 나왔다(실사용 버그 리포트 - 뭘 고를지가 곧 충돌 해소인데
+        // 아무것도 안 보였다). 백엔드는 이미 매번 계산해서 주고 있었다
+        // (app/archive/service.py detail() -> conflict_service.versions_of()).
+        versions: d.versions, preferredRecordId: d.preferredRecordId,
         media: (d.media || []).reduce((acc, m) => {
           acc[MEDIA_LABEL[m.media_type] || m.media_type] = "pending"; return acc;
         }, {}),

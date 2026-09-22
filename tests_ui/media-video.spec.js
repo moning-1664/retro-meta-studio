@@ -45,8 +45,10 @@ test("첫 프레임이 나오기 전에는 보이지 않고, 나온 뒤에 서�
   await expect(page.locator(".media-tile.wide")).toHaveClass(/video-playing/);
 });
 
-// 사용자 결정 - "Pause 상태는 ||로 표시 / 한번 Pause 시 다른 게임으로 넘어가도 유지".
-test("재생 중에 누르면 멈추고 ||를 보여준다 - 확대 창은 열지 않는다", async ({ page }) => {
+// 사용자 결정 - "Pause 상태는 표시 / 한번 Pause 시 다른 게임으로 넘어가도 유지". 처음엔
+// "||" 글자였는데 허접해 보인다는 지적(실사용 피드백)으로 재생 버튼과 같은 재질의
+// 동그란 배지 + pause 아이콘(.media-video-pause-badge)으로 바꿨다.
+test("재생 중에 누르면 멈추고 pause 배지를 보여준다 - 확대 창은 열지 않는다", async ({ page }) => {
   await openMediaOf(page, "FFX.iso");
   await page.clock.runFor(3200);
   await video(page).evaluate((v) => v.dispatchEvent(new Event("playing")));
@@ -54,9 +56,9 @@ test("재생 중에 누르면 멈추고 ||를 보여준다 - 확대 창은 열�
   const tile = page.locator(".media-tile.wide");
   await expect(tile).not.toHaveClass(/video-playing/);
   await expect(tile).toHaveClass(/video-paused/);
-  // 마지막 화면을 그대로 두고 || 표시만 얹는다 - 영상을 떼어내지 않는다.
+  // 마지막 화면을 그대로 두고 배지만 얹는다 - 영상을 떼어내지 않는다.
   await expect(video(page)).toHaveCount(1);
-  expect(await tile.evaluate((el) => getComputedStyle(el, "::after").content)).toContain("\u2016");
+  await expect(tile.locator(".media-video-pause-badge")).toBeVisible();
   await expect(page.locator(".lightbox-img")).toHaveCount(0);
 });
 

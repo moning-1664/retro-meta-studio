@@ -170,7 +170,7 @@ body { font-size: var(--fs-body); }
    바뀌는 값이라(layout-bands.spec.js) 여기서 높이를 그 값에 고정하면 폭은
    aspect-ratio가 그대로 따라가고, 창 너비나 화면 배율과 무관하게 항상 같은 비율이
    나온다. */
-.nav-app-icon { height: calc(var(--header-row-h) * 0.66); width: auto; aspect-ratio: 1; object-fit: contain; }
+.nav-app-icon { height: calc(var(--header-row-h) * 0.45); width: auto; aspect-ratio: 1; object-fit: contain; }
 /* 가운데 네 칸. 오른쪽 한 칸(6번째)은 비워 둔다. */
 .nav-app-title-text { grid-column: 2 / span 4; min-width: 0; display: flex; flex-direction: column; gap: 0; }
 
@@ -1244,8 +1244,9 @@ button.sb-badge { cursor: pointer; }
 .conflict-size { padding: 1px 6px; border-radius: var(--radius-xs); }
 .conflict-size.existing { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
 .conflict-size.incoming { background: color-mix(in srgb, var(--info) 14%, transparent); color: var(--info); }
-.conflict-detail-reason { color: var(--muted); }
-.conflict-detail-reason.same-size { color: var(--warning); }
+/* 무엇이 다른지 설명하는 문장이다 - Compare의 "다른 값" 문구와 같은 노란색을
+   쓴다(사용자 지적, 메뉴 정리 이후 후속). */
+.conflict-detail-reason { color: var(--warning); }
 .conflict-actions { flex: none; display: flex; flex-direction: column; gap: 5px; }
 .conflict-actions .btn { justify-content: flex-start; gap: 6px; white-space: nowrap; }
 .conflict-actions .btn.danger-outline {
@@ -1799,11 +1800,13 @@ button.sb-badge { cursor: pointer; }
 .cmp-chip.changed { border-color: var(--warning); color: var(--warning); opacity: 1; }
 
 /* 충돌 창 미디어 미리보기 - 지금 대상에 있는 그림과 새로 들어올 그림을 나란히 */
-.conflict-preview { display: flex; gap: 6px; flex: none; }
-.conflict-thumb { width: 56px; height: 56px; object-fit: contain; border-radius: 4px;
+/* 사용자 지적 - 그림이 너무 작아서 잘 안 보였다. Compare의 "다른 값" 표시(.cmp-tile.changed)와
+   같은 노란색 언어로 맞췄다 - 크기를 2배로 키우고, 서로 다른 두 그림임을 노란 테두리로
+   감싼다. */
+.conflict-preview { display: flex; gap: 8px; flex: none; }
+.conflict-thumb { width: 112px; height: 112px; object-fit: contain; border-radius: 4px;
+  border: 2px solid var(--warning); box-shadow: 0 0 0 1px color-mix(in srgb, var(--warning) 55%, transparent);
   background: var(--bg-subtle, rgba(127,127,127,.12)); cursor: zoom-in; }
-.conflict-thumb.existing { outline: 1px solid rgba(127,127,127,.5); }
-.conflict-thumb.incoming { outline: 1px solid var(--accent, #4c8dff); }
 
 /* Compare 미디어 다중 선택 - 타일 모서리의 체크 */
 .cmp-tile { position: relative; }

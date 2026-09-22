@@ -59,6 +59,31 @@ test("버전을 고르면 뱃지가 사라진다", async ({ page }) => {
   await expect(page.locator(".match-badge")).toHaveCount(0);
 });
 
+test("Detail의 Revision 탭에 버전들이 실제로 보인다", async ({ page }) => {
+  // 실사용 버그 리포트 - 목록엔 [n] 뱃지가 붙는데, 그 항목을 열어 Revision 탭으로
+  // 가면 늘 "수집된 Revision이 없습니다"만 보였다. 원인은 화면이 archive_detail()의
+  // versions/preferredRecordId를 S.detailState로 옮기다가 빠뜨린 것이었다 -
+  // 백엔드는 항상 제대로 계산해서 주고 있었다.
+  await openArchive(page);
+  await page.evaluate(() => {
+    window.api.archiveDetail = () => Promise.resolve({ ok: true, data: {
+      romIdentityId: "rid1", gameId: "g", system: "ps2", filename: "MGS2.iso", title: "Metal Gear Solid 2",
+      fields: { name: "MGS2" }, frontendRaw: {}, sources: [], media: [],
+      romSources: [], edited: false, preferredRecordId: null,
+      versions: [
+        { recordIds: [11], sources: ["a"], fields: { name: "MGS2", desc: "Version one" }, media: { covers: 2048 } },
+        { recordIds: [12], sources: ["b"], fields: { name: "MGS2 Sons of Liberty", desc: "Version two" }, media: {} },
+      ] } });
+  });
+  await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).locator(".lc-title").click();
+  await page.locator(".detail-tab", { hasText: "Revision" }).click();
+  await expect(page.locator(".empty-msg")).toHaveCount(0);
+  const rows = page.locator(".revision-row");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("Version one");
+  await expect(rows.nth(1)).toContainText("Sons of Liberty");
+});
+
 test("미디어를 우클릭하면 복사/붙여넣기 메뉴가 나온다", async ({ page }) => {
   await openArchive(page);
   await page.evaluate(() => {
