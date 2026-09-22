@@ -1476,6 +1476,22 @@ class Api:
                                            self._clipboard_dir))
 
     @guarded
+    def clipboard_items(self):
+        """지금 복사해 둔 항목들의 (System, 파일명) 요약. Gamelist에서 "이 항목에
+        붙여넣기"를 보여줄지 판단하는 데 쓴다 - 파일명이 다른 항목에는 자동 매칭
+        Ctrl+V가 닿지 않으므로(§5 - "System + ROM Filename은 대상 지목을 위한
+        힌트일 뿐, Game Identity 자체가 아니다"), 정확히 무엇이 복사되어 있는지
+        보여주고 사용자가 직접 대상을 골라야 한다.
+        """
+        _descriptor, items = clipboard.read_items(self.registry)
+        if not items:
+            return err("붙여넣을 항목이 없습니다.")
+        return ok({"count": len(items),
+                   "items": [{"system": i["system"], "filename": i["filename"],
+                              "title": (i.get("fields") or {}).get("name") or i["filename"]}
+                             for i in items]})
+
+    @guarded
     def clipboard_systems(self, collection_id):
         """복사해 둔 항목의 System과, 그것이 이 Collection에 있는지.
 

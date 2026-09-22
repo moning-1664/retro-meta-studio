@@ -19,6 +19,7 @@
     { id: "c2", name: "Android ES-DE", frontend: "es-de", frontendLabel: "ES-DE",
       target: "android", os: "android", arch: "arm64", rootPath: "E:\\ES-DE", systemCount: 2 },
   ];
+  let mockClipboardUids = [];
   const mockRows = [
     { romUid: 1, system: "ps2", file: "FFX.iso", title: "Final Fantasy X", size: 4400000000,
       storageId: "ext-1", hasMetadata: true, hasMedia: true, hasCover: true, present: true,
@@ -344,12 +345,25 @@
       return ok({ system, bytes: 0 });
     },
     plan_clear: () => ok(true),
-    copy_selection: () => ok({ count: 1, bytes: 0 }),
+    copy_selection: (id, uids) => {
+      // clipboard_items가 "정말 복사한 것"을 돌려주도록 실제로 기억해 둔다 - 예전엔
+      // 고정된 목업이라 "이 항목에 붙여넣기"가 항상 같은 항목이 복사된 것처럼 보였다.
+      mockClipboardUids = [...(uids || [])];
+      return ok({ count: mockClipboardUids.length, bytes: 0 });
+    },
     paste: () => ok({ added: 1, skipped: [] }),
     clipboard_systems: () => ok({
       systems: [{ system: "ps2", count: 2, exists: true }],
       targetSystems: ["gba", "ps2", "snes"],
     }),
+    clipboard_items: () => {
+      if (!mockClipboardUids.length) return Promise.resolve({ ok: false, error: "붙여넣을 항목이 없습니다." });
+      const items = mockClipboardUids.map((uid) => {
+        const row = mockRows.find((r) => r.romUid === uid);
+        return { system: row.system, filename: row.file, title: row.title };
+      });
+      return ok({ count: items.length, items });
+    },
     validate_plan: () => ok({ ok: true, entries: [], capacity: [], blocked: false }),
     start_apply: () => {
       // Plan에 올라간 제목 변경을 실제로 반영한다 - Storage 이동 등 다른 종류는
@@ -877,8 +891,11 @@
     planResolveAllConflicts: (id, resolution) => call("plan_resolve_all_conflicts", id, resolution),
     planClear: (id) => call("plan_clear", id),
     copySelection: (id, romUids) => call("copy_selection", id, romUids),
-    paste: (id, mode, systemMap) => call("paste", id, mode || null, systemMap || null),
+    paste: (id, mode, systemMap, replaceRom, targetMap) =>
+      call("paste", id, mode || null, systemMap || null, replaceRom == null ? null : !!replaceRom,
+           targetMap || null),
     clipboardSystems: (id) => call("clipboard_systems", id),
+    clipboardItems: () => call("clipboard_items"),
     validatePlan: (id) => call("validate_plan", id),
     startApply: (id) => call("start_apply", id),
 

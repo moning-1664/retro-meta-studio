@@ -277,3 +277,79 @@ class CompareManualLinkTests(unittest.TestCase):
         before = self.api.archive.match_links_of(self.d)
         self.api.compare_manual_copy("ps2|Final Fantasy 7.zip", "ps2|ff7.rom")
         self.assertEqual(self.api.archive.match_links_of(self.d), before)
+
+
+class PasteOntoAnExplicitlyChosenRowInTheSameCollectionTests(unittest.TestCase):
+    """실사용 버그 리포트 - "NES의 Dragon Ball Z1 (K).zip에 Dragon Ball 2 (K).zip을
+    Replace로 덮어썼는데 결과가 똑같다. Compare가 아니라 Gamelist에서 했다."
+
+    재현: 같은 Collection 안에서 이름이 다른 두 항목. 원본을 복사한 뒤 평범한
+    붙여넣기(자동 파일명 매칭)를 하면 **원본 자신의 자리**에 다시 채워질 뿐, 노리던
+    다른 이름의 대상은 전혀 건드리지 못한다 - "Plan에 오르고 Apply도 되는데 결과가
+    똑같다"는 증상과 정확히 같다. 대상을 직접 지목해야(target_map) 그 행에 쓴다.
+    """
+
+    def setUp(self):
+        self.dir = temp_root("rms_same_collection_target_")
+        self.root = build_custom_esde_tree(self.dir / "c", "nes", [
+            {"filename": "Dragon Ball 2 (K).zip", "title": "Dragon Ball 2 (K)", "genre": "RPG"},
+            {"filename": "Dragon Ball Z1 (K).zip", "title": "Dragon Ball Z1 (K)"},
+        ])
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.c = self.api.create_collection("C", "es-de", str(self.root))["data"]["id"]
+        scan(self.api, self.c)
+
+    def _uid(self, filename):
+        return next(r["romUid"] for r in self.api.list_rows(self.c, limit=50)["data"]["rows"]
+                    if r["file"] == filename)
+
+    def _title(self, filename):
+        root = ET.parse(self.root / "gamelists" / "nes" / "gamelist.xml").getroot()
+        game = next(g for g in root.findall("game")
+                    if (g.findtext("path") or "").endswith(filename))
+        return game.findtext("name")
+
+    def test_plain_paste_never_reaches_a_different_named_row(self):
+        """전제 확인 - 이게 사용자가 겪은 "결과가 똑같다"의 정체다."""
+        self.api.copy_selection(self.c, [self._uid("Dragon Ball 2 (K).zip")])
+        result = self.api.paste(self.c, "replace")
+        self.assertTrue(result["ok"], result.get("error"))
+        # 원본 자신의 자리로만 돌아간다 - 바뀔 게 없어 보통 건너뛴다.
+        self.assertEqual(self._title("Dragon Ball Z1 (K).zip"), "Dragon Ball Z1 (K)",
+                         "평범한 붙여넣기가 다른 이름의 행까지 건드렸다면 이 테스트 전제가 틀렸다")
+
+    def test_target_map_reaches_the_explicitly_chosen_row(self):
+        self.api.copy_selection(self.c, [self._uid("Dragon Ball 2 (K).zip")])
+        result = self.api.paste(self.c, "replace",
+                                target_map={"nes|Dragon Ball 2 (K).zip": "nes|Dragon Ball Z1 (K).zip"})
+        self.assertTrue(result["ok"], result.get("error"))
+        self.api.start_apply(self.c)
+        wait_idle(self.api)
+        self.assertEqual(self._title("Dragon Ball Z1 (K).zip"), "Dragon Ball 2 (K)")
+        # 원본 항목은 그대로 남아 있다 - 옮긴 것이 아니라 내용을 복사한 것이다.
+        self.assertEqual(self._title("Dragon Ball 2 (K).zip"), "Dragon Ball 2 (K)")
+
+    def test_the_rom_is_not_moved_onto_the_different_filename(self):
+        """이름이 다른 대상이다 - ROM을 그 이름으로 복사하면 확장자/식별이 깨진다."""
+        self.api.copy_selection(self.c, [self._uid("Dragon Ball 2 (K).zip")])
+        self.api.paste(self.c, "replace",
+                       target_map={"nes|Dragon Ball 2 (K).zip": "nes|Dragon Ball Z1 (K).zip"})
+        for entry in self.api._plan(self.c).entries:
+            self.assertFalse(entry.source.get("rom"))
+
+    def test_clipboard_items_reports_what_is_actually_copied(self):
+        """이 항목에 붙여넣기 메뉴가 "정확히 하나만 복사됐는가"를 판단하는 데 쓴다."""
+        empty = self.api.clipboard_items()
+        self.assertFalse(empty["ok"])
+        self.api.copy_selection(self.c, [self._uid("Dragon Ball 2 (K).zip")])
+        result = self.api.clipboard_items()
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(result["data"]["count"], 1)
+        self.assertEqual(result["data"]["items"][0]["filename"], "Dragon Ball 2 (K).zip")
+
+    def test_clipboard_items_reports_more_than_one(self):
+        self.api.copy_selection(self.c, [self._uid("Dragon Ball 2 (K).zip"),
+                                         self._uid("Dragon Ball Z1 (K).zip")])
+        result = self.api.clipboard_items()
+        self.assertEqual(result["data"]["count"], 2)

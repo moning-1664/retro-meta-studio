@@ -4413,7 +4413,11 @@
             label: single ? (row.title || row.file) : `선택한 ${formatCount(count)}개` }) },
         "separator",
         { label: "복사", icon: "copy", hint: "Ctrl+C", disabled: isArchive() || locked, onSelect: copySelectedRows },
-        { label: "붙여넣기", icon: "upload", hint: "Ctrl+V", disabled: isArchive() || locked, onSelect: pasteClipboard },
+        { label: "붙여넣기", icon: "upload", hint: "Ctrl+V", disabled: isArchive() || locked, onSelect: () => pasteClipboard() },
+        { label: "이 항목에 붙여넣기", icon: "upload",
+          disabled: !single || isArchive() || locked,
+          title: "복사한 항목의 파일명이 달라도 이 항목에 지목해서 붙입니다(설정된 모드를 따릅니다)",
+          onSelect: () => pasteClipboard(row) },
         { label: single ? "파일명 복사" : `파일명 ${formatCount(files.length)}개 복사`, icon: "copy",
           disabled: !files.length,
           onSelect: () => copyTextToClipboard(files.join("\n"),
@@ -6198,14 +6202,32 @@
     showToast(`${formatCount(r.data.count)}개 복사했습니다. 대상 System/Collection에서 Ctrl+V로 붙여넣으세요.`);
   }
 
-  async function pasteClipboard() {
+  /** `targetRow`를 주면 클립보드 항목(정확히 하나여야 한다)을 **그 행에 지목해서** 붙인다 -
+   * 파일명이 서로 달라 자동 매칭(System+파일명)이 닿지 않는 두 게임을 사람이 직접 이을 때 쓴다
+   * (실사용 버그 리포트 - "Replace로 다른 이름의 게임에 덮어썼는데 결과가 똑같다": 원인은
+   * 이 경로가 없어서, 평범한 Ctrl+V가 **복사한 항목 자신의 자리**에 조용히 다시 채워지고
+   * 실제로 고르려던 대상 행은 전혀 건드리지 못했던 것이다). */
+  async function pasteClipboard(targetRow) {
     if (blockedInCompare("붙여넣기")) return;
     if (isArchive()) { showToast("Archive에는 붙여넣을 수 없습니다 - \"Archive에 수집\"을 쓰세요.", "warning"); return; }
-    // 이 Collection에 없는 System이 섞여 있으면 **어디로 붙일지 먼저 묻는다**(사용자 결정).
-    // 묻지 않으면 `FBNEO ACT` 같은 이름이 ES-DE에 그대로 만들어져 Frontend가 못 읽는다.
-    const systemMap = await askPasteSystemMap();
-    if (systemMap === null) return;                       // 사용자가 취소했다
-    const r = await api.paste(S.activeId, currentPasteMode(), systemMap);
+    let systemMap = {};
+    let targetMap = null;
+    if (targetRow) {
+      const clip = await api.clipboardItems();
+      if (!clip.ok) { showToast(clip.error, "error"); return; }
+      if (clip.data.count !== 1) {
+        showToast("항목을 하나만 복사했을 때만 이 항목에 붙여넣을 수 있습니다.", "warning");
+        return;
+      }
+      const item = clip.data.items[0];
+      targetMap = { [`${item.system}|${item.filename}`]: `${targetRow.system}|${targetRow.file}` };
+    } else {
+      // 이 Collection에 없는 System이 섞여 있으면 **어디로 붙일지 먼저 묻는다**(사용자 결정).
+      // 묻지 않으면 `FBNEO ACT` 같은 이름이 ES-DE에 그대로 만들어져 Frontend가 못 읽는다.
+      systemMap = await askPasteSystemMap();
+      if (systemMap === null) return;                     // 사용자가 취소했다
+    }
+    const r = await api.paste(S.activeId, currentPasteMode(), systemMap, null, targetMap);
     if (!r.ok) { showToast(r.error, "error"); return; }
     const d = r.data;
     await refreshPlan();

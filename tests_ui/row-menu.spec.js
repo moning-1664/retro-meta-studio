@@ -184,3 +184,64 @@ test.describe("게임 한 개 단위 폴더 열기", () => {
     }
   });
 });
+
+// 실사용 버그 - "Replace로 다른 이름의 게임에 덮어썼는데 결과가 똑같다". 원인은 평범한
+// Ctrl+V가 복사한 항목 자신의 자리로만 돌아가는 것이었다 - 파일명이 다른 대상에는 아예
+// 닿지 않았다. "이 항목에 붙여넣기"로 대상을 직접 지목한다.
+test.describe("이 항목에 붙여넣기", () => {
+  test("복사한 게 없으면 눌러도 되지만 비활성은 아니다 - 결과가 API에서 걸러진다", async ({ page }) => {
+    await rightClick(page, "Final Fantasy X");
+    await expect(menuItem(page, "이 항목에 붙여넣기")).toBeVisible();
+  });
+
+  test("정확히 하나를 복사했으면 target_map으로 이 행을 지목해서 붙인다", async ({ page }) => {
+    const calls = [];
+    await page.exposeFunction("__note", (args) => calls.push(args));
+    await page.evaluate(() => {
+      const original = window.api.paste;
+      window.api.paste = (id, mode, systemMap, replaceRom, targetMap) => {
+        window.__note([id, mode, systemMap, replaceRom, targetMap]);
+        return original(id, mode, systemMap, replaceRom, targetMap);
+      };
+    });
+    await rightClick(page, "Metal Gear Solid 2");
+    await page.keyboard.press("Control+c");
+    await rightClick(page, "Final Fantasy X");
+    await menuItem(page, "이 항목에 붙여넣기").click();
+
+    await expect.poll(() => calls.length).toBe(1);
+    const [, , , , targetMap] = calls[0];
+    expect(targetMap).toEqual({ "ps2|MGS2.iso": "ps2|FFX.iso" });
+  });
+
+  test("여러 개를 복사했으면 거절하고 새로 붙이지 않는다", async ({ page }) => {
+    await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).click();
+    await page.locator(".lrow", { hasText: "Final Fantasy X" }).click({ modifiers: ["Control"] });
+    await page.keyboard.press("Control+c");
+    // 복사 뒤 다시 하나만 눌러 선택을 좁힌다 - "이 항목에 붙여넣기"는 지금 고른
+    // 행이 하나일 때만 켜지고(대상을 하나 지목하는 기능이다), 거절은 그 하나에
+    // 클립보드가 여럿 들어있을 때 일어난다.
+    await page.locator(".lrow", { hasText: "Final Fantasy X" }).click();
+    await rightClick(page, "Final Fantasy X");
+
+    const calls = [];
+    await page.exposeFunction("__pasted", (args) => calls.push(args));
+    await page.evaluate(() => {
+      const original = window.api.paste;
+      window.api.paste = (...args) => { window.__pasted(args); return original(...args); };
+    });
+    await menuItem(page, "이 항목에 붙여넣기").click();
+    await expect(page.locator("#toast")).toContainText("하나만 복사했을 때만");
+    expect(calls.length).toBe(0);
+  });
+
+  test("여러 행을 골랐으면 비활성이다(하나를 지목하는 기능이다)", async ({ page }) => {
+    await page.locator(".lrow", { hasText: "Final Fantasy X" }).click();
+    await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).click({ modifiers: ["Control"] });
+    // 이미 고른 행 중 하나를 우클릭해야 여러 개 선택이 유지된다(탐색기와 같다) -
+    // 안 고른 행을 우클릭하면 그 한 행으로 선택이 다시 좁혀진다.
+    await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).click({ button: "right" });
+    await expect(page.locator("#status-bar")).toContainText("Selected 2");
+    await expect(menuItem(page, "이 항목에 붙여넣기")).toBeDisabled();
+  });
+});
