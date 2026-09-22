@@ -231,3 +231,32 @@ test.describe("고른 행을 대상으로 삼기", () => {
     expect(calls[0][4]).toBeFalsy();
   });
 });
+
+// 여러 개를 한 번에 붙이면 Replace는 Patch로 내려간다(사용자 결정) - 조용히 바꾸지 않고
+// 모드 토글이 잠깐 Patch로 밝혀진다.
+test("Replace가 Patch로 내려가면 모드 토글이 잠깐 밝혀진다", async ({ page }) => {
+  await page.evaluate(() => {
+    window.api.paste = () => Promise.resolve({ ok: true, data: {
+      added: 2, skipped: [], conflicts: 0,
+      policy: { pasteMode: "patch" }, downgradedFrom: "replace",
+    } });
+  });
+  await page.locator(".lrow").first().click();
+  await page.keyboard.press("Control+c");
+  await page.keyboard.press("Control+v");
+  await expect(page.locator(".paste-mode .seg-btn[data-mode='patch']")).toHaveClass(/flash/);
+  await expect(page.locator("#toast")).toContainText("대신 Patch로 붙였습니다");
+});
+
+test("내려가지 않았으면 토글은 그대로다", async ({ page }) => {
+  await page.evaluate(() => {
+    window.api.paste = () => Promise.resolve({ ok: true, data: {
+      added: 1, skipped: [], conflicts: 0,
+      policy: { pasteMode: "replace" }, downgradedFrom: null,
+    } });
+  });
+  await page.locator(".lrow").first().click();
+  await page.keyboard.press("Control+c");
+  await page.keyboard.press("Control+v");
+  await expect(page.locator(".paste-mode .seg-btn.flash")).toHaveCount(0);
+});

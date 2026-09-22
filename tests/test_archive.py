@@ -770,3 +770,54 @@ class SameTimestampSourcesResolveDeterministicallyTests(unittest.TestCase):
         for _ in range(5):
             fields, _raw = self.archive.resolve_fields(rid)
             self.assertEqual(fields.get("genre"), "Shooter", "동점에서 승자가 흔들린다")
+
+
+class MergingSourcesFavoursWhatCameFirstTests(unittest.TestCase):
+    """출처가 여럿일 때 최종 값을 어떻게 정하는가(사용자 결정).
+
+    - 충돌이 아니면 **먼저 들어온 값이 이기고**, 빈 칸만 나중 것이 채운다.
+    - 다만 **파일명에서 나온 제목은 진짜 제목에 자리를 내준다** - 그러지 않으면
+      ROM만 읽어 만든 `1941`이 나중에 들어온 `1941 (World)`를 영영 밀어낸다.
+    """
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_merge_order_"))
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        configure(self.api, {"archiveDir": str(self.dir / "Archives")})
+        self.archive = self.api.archive
+        game = self.archive.ensure_game("1941", "1941")
+        self.rid = self.archive.ensure_rom_identity(game, "fbneo", "1941", filename="1941.zip")
+
+    def _fields(self):
+        return self.archive.resolve_fields(self.rid)[0]
+
+    def test_the_first_source_wins_and_later_ones_only_fill_gaps(self):
+        self.archive.put_record(self.rid, "first",
+                                {"name": "1941 (World)", "genre": "Shooter"}, {})
+        self.archive.put_record(self.rid, "second",
+                                {"name": "1941 다른 제목", "genre": "Shmup", "desc": "설명"}, {})
+        fields = self._fields()
+        self.assertEqual(fields["name"], "1941 (World)", "나중 출처가 앞선 값을 밀어냈다")
+        self.assertEqual(fields["genre"], "Shooter")
+        self.assertEqual(fields["desc"], "설명", "빈 칸이 채워지지 않았다")
+
+    def test_a_title_taken_from_the_filename_yields_to_a_real_one(self):
+        self.archive.put_record(self.rid, "rom-scan", {"name": "1941"}, {})
+        self.archive.put_record(self.rid, "collection",
+                                {"name": "1941 (World)", "genre": "Shooter"}, {})
+        fields = self._fields()
+        self.assertEqual(fields["name"], "1941 (World)", "파일명에서 온 제목이 계속 이겼다")
+        self.assertEqual(fields["genre"], "Shooter")
+
+    def test_a_real_title_is_not_replaced_by_a_filename_one(self):
+        """반대 방향 - 진짜 제목이 먼저 들어왔으면 나중의 파일명 제목이 밀어내지 못한다."""
+        self.archive.put_record(self.rid, "collection", {"name": "1941 (World)"}, {})
+        self.archive.put_record(self.rid, "rom-scan", {"name": "1941"}, {})
+        self.assertEqual(self._fields()["name"], "1941 (World)")
+
+    def test_an_empty_value_never_wins(self):
+        """빈 문자열은 값 없음과 같다(사용자 결정)."""
+        self.archive.put_record(self.rid, "first", {"name": "1941 (World)", "desc": ""}, {})
+        self.archive.put_record(self.rid, "second", {"desc": "진짜 설명"}, {})
+        self.assertEqual(self._fields()["desc"], "진짜 설명")

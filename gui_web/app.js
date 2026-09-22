@@ -3421,6 +3421,21 @@
   ];
   const currentPasteMode = () => (S.settings.transfer && S.settings.transfer.pasteMode) || "patch";
 
+  /** 실제로 쓰인 모드를 토글에서 잠깐 밝혀 준다. 설정 값 자체는 바꾸지 않는다 -
+   * 이번 붙여넣기에만 적용된 일이므로 다음 번에는 고른 모드가 그대로 쓰인다. */
+  function flashPasteMode(used, requested) {
+    const labelOf = (mode) => (PASTE_MODES.find(([m]) => m === mode) || [null, mode])[1];
+    document.querySelectorAll(".paste-mode .seg-btn").forEach((btn) => {
+      btn.classList.toggle("flash", btn.dataset.mode === used);
+    });
+    setTimeout(() => {
+      document.querySelectorAll(".paste-mode .seg-btn.flash").forEach((btn) => btn.classList.remove("flash"));
+    }, 2200);
+    // 토스트는 직접 띄우지 않는다 - 바로 뒤에 오는 결과 토스트가 덮어쓴다. 문구만 돌려주고
+    // 호출부가 결과 메시지에 붙인다.
+    return ` 여러 개라 ${labelOf(requested)} 대신 ${labelOf(used)}로 붙였습니다.`;
+  }
+
   /** 붙여넣기 모드 토글(list/card 토글과 같은 모양). 다음 붙여넣기(Ctrl+V)부터 적용된다. */
   function pasteModeToggle() {
     const group = h("div", { class: "seg paste-mode",
@@ -6246,6 +6261,9 @@
     await refreshPlan();
     resetList();
     await reloadList();
+    // 여러 개를 한 번에 붙이면 Replace는 Patch로 내려간다(사용자 결정) - 조용히 바꾸지
+    // 않고 **모드 토글이 잠깐 Patch로 바뀌었다가 돌아오게** 해서 눈으로 알려 준다.
+    const downgrade = d.downgradedFrom ? flashPasteMode(d.policy.pasteMode, d.downgradedFrom) : "";
     if (d.conflicts) {
       showToast(`추가 ${formatCount(d.added)}개 · 충돌 ${formatCount(d.conflicts)}개 - 대상에 이미 있는 항목입니다.`, "warning");
       openConflictDialog();
@@ -6255,7 +6273,8 @@
     // 아니라, 올릴 때 왜 올리지 않았는지를 알려 준다(사용자 결정).
     const left = (d.skipped || []).filter((s) => s.reason);
     const why = left.length ? ` (${formatCount(left.length)}개 제외: ${left[0].reason})` : "";
-    if (d.added) showToast(`Plan에 ${formatCount(d.added)}개를 추가했습니다.${why}`);
+    if (d.added) showToast(`Plan에 ${formatCount(d.added)}개를 추가했습니다.${why}${downgrade}`,
+                           downgrade ? "warning" : "info");
     else showToast(left.length ? `붙여넣을 내용이 없습니다 - ${left[0].reason}` : "붙여넣을 새 내용이 없습니다(전부 이미 있음).", "info");
   }
 

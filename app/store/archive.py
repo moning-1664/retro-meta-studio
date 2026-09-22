@@ -437,13 +437,30 @@ class ArchiveStore:
             (rom_identity_id,)).fetchone()
         return self.record_by_id(row["record_id"]) if row else None
 
+    @staticmethod
+    def _filled(value) -> bool:
+        return value is not None and str(value).strip() != ""
+
     def resolve_fields(self, rom_identity_id) -> tuple[dict, dict]:
         """이 항목에 적용할 Metadata(desc/genre/rating 등).
 
         우선순위(ARCHIVE_REVISION_POLICY.md §9, §14): Preferred → (Archive에서
-        직접 고친 값) → Latest. `app/archive/service.py`의 Detail 조회와
+        직접 고친 값) → 출처들의 병합. `app/archive/service.py`의 Detail 조회와
         `list_rows()`가 같은 규칙을 쓴다 - 여기서만 다른 값을 보여주면 목록과
         상세가 어긋난다.
+
+        **출처가 여럿이면 먼저 들어온 값이 이기고, 빈 칸만 나중 것이 채운다**(사용자 결정 -
+        "컨플릭이 아니면 먼저 들어온 값이 이김"). 통째로 최신 것을 고르던 예전 방식은,
+        나중에 들어온 빈약한 출처가 앞서 들어온 좋은 값을 통째로 밀어냈다.
+
+        **순서를 정할 때 record_id를 함께 본다.** `updated_at`만 보면 두 출처가 같은
+        시계 눈금 안에 기록됐을 때(Windows의 time()은 해상도가 ~15.6ms라 흔하다) 순서가
+        임의로 갈려 같은 입력에 같은 답이 나오지 않는다 - 실제로 "ROM만 먼저 읽고 곧바로
+        메타데이터를 수집"하면 두 출처의 시각이 같아져 제목과 장르가 실행할 때마다 달라졌다.
+
+        **파일명에서 나온 제목은 진짜 제목에 자리를 내준다**(사용자 결정). ROM만 읽어
+        만들어 둔 출처의 제목은 파일명 그대로라, 그것이 먼저 들어왔다는 이유로 이기면
+        `1941`이 `1941 (World)`를 영영 밀어낸다.
         """
         preferred = self.get_preferred(rom_identity_id)
         if preferred:
@@ -451,15 +468,32 @@ class ArchiveStore:
         edited = self.latest_record(rom_identity_id, ARCHIVE_EDIT_SOURCE)
         if edited:
             return edited["fields"], edited["frontend_raw"]
-        sources = self.sources_of(rom_identity_id)
-        # **동점일 때는 나중에 기록된 것(record_id가 큰 것)이 이긴다.** `updated_at`만 보면
-        # 두 출처가 같은 시계 눈금 안에 기록됐을 때(Windows의 time()은 해상도가 ~15.6ms라
-        # 흔하다) 승자가 임의로 갈린다 - 같은 입력에 같은 답이 나오지 않는다. 실제로
-        # "ROM만 먼저 읽고 곧바로 메타데이터를 수집"하면 두 출처의 시각이 같아져, 제목과
-        # 장르가 실행할 때마다 달라졌다. record_id는 AUTOINCREMENT라 기록 순서를 정확히
-        # 말해 준다.
-        latest = max(sources, key=lambda s: (s["updated_at"], s["record_id"]), default=None)
-        return (latest or {}).get("fields") or {}, (latest or {}).get("frontend_raw") or {}
+
+        sources = sorted(self.sources_of(rom_identity_id),
+                         key=lambda s: (s["updated_at"], s["record_id"]))
+        if not sources:
+            return {}, {}
+
+        identity = self.get_identity(rom_identity_id)
+        stem = str((identity or {}).get("filename") or "")
+        stem = (stem[:stem.rfind(".")] if "." in stem else stem).strip().lower()
+
+        def from_filename(value) -> bool:
+            return bool(stem) and str(value or "").strip().lower() == stem
+
+        merged, raw = {}, {}
+        for source in sources:
+            for key, value in (source["fields"] or {}).items():
+                if not self._filled(value):
+                    continue
+                current = merged.get(key)
+                # 빈 칸을 채우거나, 파일명에서 나온 제목을 진짜 제목으로 바꾼다.
+                if not self._filled(current) or (key == "name" and from_filename(current)
+                                            and not from_filename(value)):
+                    merged[key] = value
+            if not raw:
+                raw = source["frontend_raw"] or {}
+        return merged, raw
 
     def clear_preferred(self, rom_identity_id) -> bool:
         with transaction(self._conn):

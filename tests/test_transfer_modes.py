@@ -13,7 +13,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from bridge.api import Api
-from tests.fixtures import build_esde_tree, scan, temp_root, wait_idle, write_file
+from tests.fixtures import (build_custom_esde_tree, build_esde_tree, scan, temp_root,
+                            wait_idle, write_file)
 
 
 class PasteModeTests(unittest.TestCase):
@@ -118,8 +119,14 @@ class PasteModeTests(unittest.TestCase):
 
     # ---------------------------------------------------------------- Replace
     def test_replace_rebuilds_the_game_from_the_source(self):
-        """완전 교체 - 원본을 무시하는 것이 아니라 게임의 Metadata/Media를 원본 것으로 다시 만든다."""
-        self._paste("replace")
+        """완전 교체 - 원본을 무시하는 것이 아니라 게임의 Metadata/Media를 원본 것으로 다시 만든다.
+
+        **한 개만 복사해서 붙인다** - 여러 개를 한 번에 붙이면 Replace는 Patch로 내려간다
+        (사용자 결정, MultiPasteDowngradesReplaceTests 참고)."""
+        uid = next(r["romUid"] for r in self.api.list_rows(self.src)["data"]["rows"]
+                   if r["file"] == "FFX.iso")
+        self.api.copy_selection(self.src, [uid])
+        self.api.paste(self.dst, "replace")
         self._apply()
         ffx = self._ffx()
         self.assertEqual(ffx["desc"], "A role-playing game.")
@@ -227,3 +234,64 @@ class PasteIntoAnotherSystemTests(unittest.TestCase):
 
     def test_clipboard_systems_needs_something_copied(self):
         self.assertFalse(self.api.clipboard_systems(self.dst)["ok"])
+
+
+class MultiPasteDowngradesReplaceTests(unittest.TestCase):
+    """여러 개를 한 번에 붙일 때 Replace는 Patch로 내려간다(사용자 결정).
+
+    Replace는 대상의 메타데이터를 원본 것으로 다시 만드는(= 원본에 없는 값은 지우는)
+    모드라, 수십~수백 개에 한꺼번에 걸면 되돌리기 어렵다. **조용히 바꾸지 않고**
+    `downgradedFrom`으로 알려 화면이 모드 토글에서 밝힐 수 있게 한다.
+    """
+
+    def setUp(self):
+        self.dir = temp_root("rms_multi_downgrade_")
+        self.src_root = build_custom_esde_tree(self.dir / "src", "ps2", [
+            {"filename": "A.iso", "title": "A 새 제목"},
+            {"filename": "B.iso", "title": "B 새 제목"},
+        ])
+        self.dst_root = build_custom_esde_tree(self.dir / "dst", "ps2", [
+            {"filename": "A.iso", "title": "A", "genre": "RPG"},
+            {"filename": "B.iso", "title": "B", "genre": "Action"},
+        ])
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.s = self.api.create_collection("S", "es-de", str(self.src_root))["data"]["id"]
+        self.d = self.api.create_collection("D", "es-de", str(self.dst_root))["data"]["id"]
+        scan(self.api, self.s)
+        scan(self.api, self.d)
+
+    def _copy(self, *files):
+        uids = [r["romUid"] for r in self.api.list_rows(self.s, limit=50)["data"]["rows"]
+                if r["file"] in files]
+        self.api.copy_selection(self.s, uids)
+
+    def test_one_item_keeps_replace(self):
+        self._copy("A.iso")
+        result = self.api.paste(self.d, "replace")["data"]
+        self.assertIsNone(result["downgradedFrom"])
+        self.assertEqual(result["policy"]["pasteMode"], "replace")
+
+    def test_several_items_fall_back_to_patch_and_say_so(self):
+        self._copy("A.iso", "B.iso")
+        result = self.api.paste(self.d, "replace")["data"]
+        self.assertEqual(result["downgradedFrom"], "replace")
+        self.assertEqual(result["policy"]["pasteMode"], "patch")
+
+    def test_the_downgrade_really_behaves_like_patch(self):
+        """Patch는 대상에 있는 값을 지킨다 - Replace였다면 genre가 사라졌을 것이다."""
+        self._copy("A.iso", "B.iso")
+        self.api.paste(self.d, "replace")
+        self.api.start_apply(self.d)
+        wait_idle(self.api)
+        rows = {r["file"]: r for r in self.api.list_rows(self.d, limit=50)["data"]["rows"]}
+        self.assertEqual(rows["A.iso"]["title"], "A", "Patch인데 대상 제목이 바뀌었다")
+        self.assertEqual(rows["A.iso"]["genre"], "RPG", "Replace처럼 값이 지워졌다")
+
+    def test_other_modes_are_never_downgraded(self):
+        for mode in ("patch", "overwrite"):
+            self.api.plan_clear(self.d)
+            self._copy("A.iso", "B.iso")
+            result = self.api.paste(self.d, mode)["data"]
+            self.assertIsNone(result["downgradedFrom"], mode)
+            self.assertEqual(result["policy"]["pasteMode"], mode)

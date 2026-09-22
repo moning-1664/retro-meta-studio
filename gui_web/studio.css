@@ -1817,3 +1817,14 @@ button.sb-badge { cursor: pointer; }
 }
 .cmp-link:hover:not(:disabled) { color: var(--text); background: color-mix(in srgb, var(--info) 18%, var(--card2)); }
 .cmp-link:disabled { opacity: .35; cursor: default; }
+
+/* 여러 개를 붙일 때 Replace가 Patch로 내려간 것을 모드 토글에서 잠깐 밝힌다. */
+.paste-mode .seg-btn.flash {
+  background: color-mix(in srgb, var(--warning) 35%, var(--card3));
+  color: var(--text);
+  animation: paste-mode-flash 2.2s ease-out;
+}
+@keyframes paste-mode-flash {
+  0%, 60% { box-shadow: 0 0 0 1px var(--warning); }
+  100% { box-shadow: none; }
+}

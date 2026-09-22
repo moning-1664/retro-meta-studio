@@ -1556,6 +1556,13 @@ class Api:
             return blocked
         policy = self._transfer_policy()
         mode = transfer.normalize_mode(mode or policy["pasteMode"])
+        # **여러 개를 한 번에 붙일 때 Replace는 Patch로 내려간다**(사용자 결정).
+        # Replace는 대상의 메타데이터를 원본 것으로 다시 만드는(= 원본에 없는 값은 지우는)
+        # 모드라, 수십~수백 개에 한꺼번에 걸면 되돌리기 어렵다. 조용히 바꾸지 않고
+        # `downgradedFrom`으로 알려 준다 - 화면이 모드 토글을 잠깐 Patch로 보여 준다.
+        downgraded_from = None
+        if mode == transfer.MODE_REPLACE and len(items) > 1:
+            downgraded_from, mode = mode, transfer.MODE_PATCH
         policy = {**policy, "pasteMode": mode}
 
         # **사용자가 지목한 대상**({"system|원본파일명": "system|대상파일명"}). 자동 판단(파일명 일치)이
@@ -1650,7 +1657,8 @@ class Api:
 
         if not prepared:
             return ok({"added": 0, "skipped": extra_skipped, "conflicts": 0,
-                      "source": descriptor.get("sourceName"), "policy": policy})
+                      "source": descriptor.get("sourceName"), "policy": policy,
+                      "downgradedFrom": downgraded_from})
 
         plan = self._plan(collection_id)
         result = builder.plan_add(plan, collection, provider, prepared)
@@ -1672,7 +1680,8 @@ class Api:
             result["autoResolved"] = result.get("autoResolved", 0) + len(keys)
             result["conflicts"] = 0
         result["skipped"] = [*extra_skipped, *result.get("skipped", [])]
-        return ok({**result, "source": descriptor.get("sourceName"), "policy": policy})
+        return ok({**result, "source": descriptor.get("sourceName"), "policy": policy,
+                   "downgradedFrom": downgraded_from})
 
     def _transfer_policy(self):
         stored = (self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {}).get("transfer") or {}
