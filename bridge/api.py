@@ -2249,6 +2249,29 @@ class Api:
         return ok({"rows": [self._compare_row_summary(r) for r in page],
                    "total": total, "offset": int(offset)})
 
+    @guarded
+    def compare_all_keys(self, status=None, systems=None, search=None):
+        """지금 필터에 맞는 **전체** 행의 열쇠(system|file). Ctrl+A(전체 선택)용.
+
+        `compare_rows()`는 화면에 보여줄 몫만 페이지로 잘라 준다(기본 200개). 가상
+        스크롤이 그 조각만 `S.rowCache`에 채워 두므로, "화면에 이미 다 있다"고
+        믿고 그 캐시만으로 전체 선택을 만들면 200개가 넘는 결과에서는 뒤쪽이
+        조용히 빠진다(실사용 버그 - "대부분 다르다고 나오는데 실제로는 몇 개만
+        붙여넣기 된다"). Compare 결과 자체는 이미 메모리에 있으니 새로 비교할
+        필요는 없지만, 페이지가 아니라 **전체**를 돌려줘야 한다.
+        """
+        if not self._compare:
+            return err("Compare Mode가 아닙니다.")
+        rows = compare_engine.filter_rows(self._compare["rows"], status)
+        if systems:
+            rows = [r for r in rows if r["system"] in systems]
+        if search:
+            needle = str(search).strip().lower()
+            rows = [r for r in rows
+                    if needle in r["file"].lower()
+                    or needle in ((r["left"] or r["right"] or {}).get("title") or "").lower()]
+        return ok([f"{r['system']}|{r['file']}" for r in rows])
+
     @staticmethod
     def _compare_row_summary(row):
         left, right = row["left"] or {}, row["right"] or {}

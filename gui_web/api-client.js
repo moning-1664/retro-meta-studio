@@ -633,6 +633,13 @@
           : status === "diff" ? (r.status !== "same" && r.status !== "similar") : r.status === status);
       return ok({ rows, total: rows.length, offset: 0 });
     },
+    compare_all_keys: (status) => {
+      if (!mockCompare.on) return Promise.resolve({ ok: false, error: "Compare Mode가 아닙니다." });
+      const rows = mockCompareRows.filter((r) =>
+        !status || status === "all" ? true : status === "media" ? r.mediaDiff
+          : status === "diff" ? (r.status !== "same" && r.status !== "similar") : r.status === status);
+      return ok(rows.map((r) => r.key));
+    },
     compare_detail: (key) => {
       const row = mockCompareRows.find((r) => r.key === key) || mockCompareRows[0];
       const has = (side) => side === "left" ? row.status !== "only_b" : row.status !== "only_a";
@@ -924,6 +931,8 @@
     compareState: () => call("compare_state"),
     compareRows: (q) => call("compare_rows", q.status || null, q.systems || null,
                              q.search || null, q.limit || 200, q.offset || 0),
+    // 지금 필터에 맞는 전체 열쇠(system|file) - Ctrl+A용. 화면 페이지가 아니라 전체다.
+    compareAllKeys: (q) => call("compare_all_keys", q.status || null, q.systems || null, q.search || null),
     compareDetail: (key) => call("compare_detail", key),
     compareCopyRow: (key, direction, metadataOnly) =>
       call("compare_copy_row", key, direction, !!metadataOnly),

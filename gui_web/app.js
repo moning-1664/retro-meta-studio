@@ -4545,9 +4545,15 @@
   async function selectAllRows() {
     if (!S.total) return;
     if (isCompare()) {
-      // 비교 결과는 시작 시점의 스냅샷이라 모두 메모리에 있다 - 한 번 더 물을 필요가 없다.
-      const rows = [...S.rowCache.values()].filter(Boolean);
-      S.selected = new Set(rows.map(rowKey));
+      // 비교 결과 자체는 시작 시점의 스냅샷이라 다시 비교할 필요는 없지만, 지금 이
+      // 필터에 맞는 **전체** 열쇠를 새로 물어야 한다(실사용 버그, 번복) - `S.rowCache`는
+      // 가상 스크롤이 화면에 그린 조각만 채운 캐시라 "이미 메모리에 다 있다"는 예전
+      // 가정이 틀렸다. 총 개수가 한 페이지(200개)를 넘으면 스크롤 안 한 뒤쪽이
+      // 조용히 선택에서 빠져, "대부분 다르다고 나오는데 실제로는 몇 개만 붙여넣기
+      // 된다"는 증상으로 나타났다.
+      const r = await api.compareAllKeys({ ...currentQuery(), status: S.compareFilter });
+      if (!r.ok) { showToast(r.error, "error"); return; }
+      S.selected = new Set(r.data);
       updateSelectionVisual();
       renderStatusBar();
       showToast(`${formatCount(S.selected.size)}개를 선택했습니다.`);

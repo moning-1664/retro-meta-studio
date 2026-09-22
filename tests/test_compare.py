@@ -477,3 +477,53 @@ class CompareSnapshotTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CompareSelectAllBeyondOnePageTests(unittest.TestCase):
+    """실사용 버그 - "대부분 다르다고 나오는데 실제로는 몇 개만 붙여넣기 된다".
+
+    원인: Compare의 전체 선택(Ctrl+A)이 가상 스크롤의 화면 캐시(`S.rowCache`)만 보고
+    "이미 다 메모리에 있다"고 가정했다. 한 페이지(`compare_rows`의 기본 200개)를 넘는
+    결과에서는 스크롤 안 한 뒤쪽이 조용히 선택에서 빠진다. `compare_all_keys()`는
+    페이지가 아니라 필터에 맞는 전체를 돌려줘야 한다.
+    """
+
+    def setUp(self):
+        self.dir = temp_root("rms_compare_page_")
+        n = 250   # compare_rows 기본 페이지(200)보다 많아야 잘림을 재현한다
+        base_entries = [{"filename": f"Game {i:03d}.iso", "title": f"Game {i:03d}", "genre": "RPG"}
+                        for i in range(n)]
+        other_entries = [{"filename": f"Game {i:03d}.iso", "title": f"Game {i:03d}", "genre": "Action"}
+                         for i in range(n)]
+        base_root = build_custom_esde_tree(self.dir / "base", "ps2", base_entries)
+        other_root = build_custom_esde_tree(self.dir / "other", "ps2", other_entries)
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.base = self.api.create_collection("Base", "es-de", str(base_root))["data"]["id"]
+        self.other = self.api.create_collection("Other", "es-de", str(other_root))["data"]["id"]
+        for cid in (self.base, self.other):
+            scan(self.api, cid)
+        self.api.start_compare(self.base, self.other)
+
+    def test_a_page_sized_request_only_returns_the_first_page(self):
+        """전제 확인 - compare_rows는 여전히 페이지만 돌려준다(전체 선택용이 아니다)."""
+        page = self.api.compare_rows(status="conflict")["data"]
+        self.assertEqual(page["total"], 250)
+        self.assertEqual(len(page["rows"]), 200)
+
+    def test_all_keys_returns_every_matching_row_not_just_one_page(self):
+        result = self.api.compare_all_keys(status="conflict")
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(len(result["data"]), 250)
+        self.assertEqual(len(set(result["data"])), 250, "중복 없이 250개 전부")
+
+    def test_all_keys_respects_the_system_filter(self):
+        result = self.api.compare_all_keys(status="conflict", systems=["nope"])
+        self.assertEqual(result["data"], [])
+
+    def test_selecting_everything_then_sending_moves_all_250_not_just_the_first_page(self):
+        keys = self.api.compare_all_keys(status="conflict")["data"]
+        result = self.api.compare_copy_rows(keys, "toRight")
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(result["data"]["added"], 250,
+                         "페이지에 없던 51개가 전체 선택에서 빠졌다")
