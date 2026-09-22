@@ -459,3 +459,23 @@ test("Compare 중에는 System을 끌어 옮길 수 없다", async ({ page }) =>
   await expect(page.locator(".nav-system").first()).not.toHaveAttribute("draggable", "true");
   await expect(page.locator(".nav-action", { hasText: "Add External Storage" })).toHaveCount(0);
 });
+
+test("Media 탭에서 여러 종류를 체크하면 상단 < >가 그 종류만 보낸다", async ({ page }) => {
+  await startCompare(page);
+  const calls = [];
+  await page.exposeFunction("__note", (args) => calls.push(args));
+  await page.evaluate(() => {
+    const original = window.api.compareCopyRows;
+    window.api.compareCopyRows = (keys, dir, types) => { window.__note([keys, dir, types]); return original(keys, dir, types); };
+  });
+  await openDetail(page, "Media Only");
+  await page.locator("#compare-left .detail-tab", { hasText: "Media" }).click();
+  const picks = page.locator("#compare-left .cmp-pick");
+  await picks.nth(0).click();
+  await picks.nth(1).click();
+  await expect(page.locator("#compare-left .cmp-tile.picked")).toHaveCount(2);
+  await page.locator(".lrow", { hasText: "Media Only" }).click();
+  await page.locator(".cmp-send[data-dir='toRight']").click();
+  await expect.poll(() => calls.length).toBe(1);
+  expect(calls[0][2]).toHaveLength(2);
+});

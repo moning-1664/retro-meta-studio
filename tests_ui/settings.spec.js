@@ -99,10 +99,18 @@ test("Shift + 휠은 UI 크기를 바꾸지 않는다(가로 스크롤 키)", as
 
 test("아직 기능이 없는 항목은 '준비 중'이고 조작할 수 없다", async ({ page }) => {
   await openSettings(page, "general");
+  const startup = row(page, "general.startup");
+  await expect(startup).toHaveClass(/soon/);
+  await expect(startup.locator(".stg-soon")).toHaveText("준비 중");
+  await expect(startup.locator("select")).toBeDisabled();
+});
+
+test("Language는 이제 준비 중이 아니고 다섯 언어를 고를 수 있다", async ({ page }) => {
+  await openSettings(page, "general");
   const language = row(page, "general.language");
-  await expect(language).toHaveClass(/soon/);
-  await expect(language.locator(".stg-soon")).toHaveText("준비 중");
-  await expect(language.locator("select")).toBeDisabled();
+  await expect(language).not.toHaveClass(/soon/);
+  await expect(language.locator("select")).toBeEnabled();
+  await expect(language.locator("select option")).toHaveCount(5);
 });
 
 test("화면 설정 초기화는 테마를 기본값으로 되돌린다", async ({ page }) => {

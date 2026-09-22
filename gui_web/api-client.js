@@ -915,7 +915,8 @@
     compareDetail: (key) => call("compare_detail", key),
     compareCopyRow: (key, direction, metadataOnly) =>
       call("compare_copy_row", key, direction, !!metadataOnly),
-    compareCopyRows: (keys, direction) => call("compare_copy_rows", keys, direction, true, true),
+    compareCopyRows: (keys, direction, mediaTypes) =>
+      call("compare_copy_rows", keys, direction, true, true, null, false, mediaTypes && mediaTypes.length ? mediaTypes : null),
     exitCompare: () => call("exit_compare"),
 
     startScan: (id, force) => call("start_scan", id, !!force),

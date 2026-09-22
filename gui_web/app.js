@@ -446,6 +446,8 @@
     comparePlanned: new Set(),
     //: 좌/우 Detail이 함께 쓰는 탭(Metadata/Media/ROM) - 한쪽을 바꾸면 반대쪽도 바뀐다.
     compareTab: "metadata",
+    //: Compare 미디어 탭에서 체크한 미디어 종류(소문자 키). 있으면 상단 < >는 이 종류만 보낸다.
+    compareMediaSel: new Set(),
     //: Archive 목록에서 "다른 버전이 있는 것만" 보고 있는가(사용자 결정 - 유사롬 filter).
     archiveConflictsOnly: false,
   };
@@ -3258,7 +3260,9 @@
     const sendSelected = (direction, label, tip) => {
       const btn = h("button", {
         class: "cmp-send", "data-dir": direction, disabled: !S.selected.size,
-        title: S.selected.size ? tip : "보낼 항목을 먼저 고르세요",
+        title: S.selected.size
+          ? (S.compareMediaSel.size ? `고른 항목의 미디어(${[...S.compareMediaSel].join(", ")})만 보냅니다(Plan)` : tip)
+          : "보낼 항목을 먼저 고르세요",
       }, [label]);
       btn.addEventListener("click", () => compareSendSelected(direction));
       return btn;
@@ -4820,7 +4824,7 @@
   /** 상단 `<` `>` - 고른 행들의 메타데이터+미디어를 반대쪽 Plan에 덮어쓰기로 올린다. */
   async function compareSendSelected(direction) {
     if (!S.selected.size) { showToast("보낼 항목을 먼저 고르세요.", "warning"); return; }
-    const r = await api.compareCopyRows([...S.selected], direction);
+    const r = await api.compareCopyRows([...S.selected], direction, [...S.compareMediaSel]);
     if (!r.ok) { showToast(r.error, "error"); return; }
     const d = r.data || {};
     [...S.selected].forEach((key) => S.comparePlanned.add(`${key}|${direction}`));
@@ -4872,9 +4876,21 @@
     const type = key.toLowerCase();
     const has = !!side && (side.mediaTypes || []).includes(type);
     const tile = h("div", {
-      class: `cmp-tile ${extraClass || ""}` + (has ? "" : " empty") + (changed ? " changed" : ""),
+      class: `cmp-tile ${extraClass || ""}` + (has ? "" : " empty") + (changed ? " changed" : "")
+        + (S.compareMediaSel.has(type) ? " picked" : ""),
       title: label + (has ? "" : " 없음"),
     });
+    // 체크하면 상단 < >가 이 미디어 종류만 보낸다(여러 종류 선택 가능, 양쪽 Detail에 함께 표시된다).
+    const pick = h("button", { class: "cmp-pick" + (S.compareMediaSel.has(type) ? " on" : ""),
+      title: "이 미디어만 보내기 (여러 개 선택 가능)", "aria-pressed": S.compareMediaSel.has(type) ? "true" : "false" },
+      [S.compareMediaSel.has(type) ? "✓" : ""]);
+    pick.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (S.compareMediaSel.has(type)) S.compareMediaSel.delete(type); else S.compareMediaSel.add(type);
+      renderDetailPanel();
+      renderFilterBar();
+    });
+    tile.appendChild(pick);
     tile.appendChild(h("div", { class: "cmp-tile-label" }, [label]));
     const box = h("div", { class: "cmp-tile-box" });
     if (has) {

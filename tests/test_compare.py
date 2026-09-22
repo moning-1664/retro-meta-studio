@@ -318,6 +318,26 @@ class CompareApiTests(unittest.TestCase):
                             for s in result["data"]["skipped"]), result["data"]["skipped"])
         self.assertEqual(self.api.plan_state(self.base)["data"]["total"], 0)
 
+    def test_bulk_copy_sends_only_the_chosen_media_types(self):
+        """Compare 미디어 다중 선택 - 고른 종류만 가고, 메타데이터/ROM은 건드리지 않는다."""
+        media = self.dir / "base" / "downloaded_media" / "ps2"
+        for kind in ("covers", "screenshots", "videos"):
+            (media / kind).mkdir(parents=True, exist_ok=True)
+            (media / kind / ("Conflict.mp4" if kind == "videos" else "Conflict.png")).write_bytes(b"x" * 30)
+        scan(self.api, self.base)
+        self.api.start_compare(self.base, self.other)
+        result = self.api.compare_copy_rows(["ps2|Conflict.iso"], "toRight", media_types=["covers", "screenshots"])
+        self.assertTrue(result["ok"], result.get("error"))
+        entry = next(e for e in self.api._plan(self.other).entries if e.filename == "Conflict.iso")
+        self.assertEqual(sorted(m["type"] for m in entry.source["media"]), ["covers", "screenshots"])
+        self.assertFalse(entry.source["rom"])
+        self.assertNotEqual((entry.payload or {}).get("genre"), "RPG", "메타데이터가 함께 덮어써졌다")
+
+    def test_bulk_copy_with_media_types_needs_a_counterpart(self):
+        self.api.start_compare(self.base, self.other)
+        result = self.api.compare_copy_rows(["ps2|OnlyBase.iso"], "toRight", media_types=["covers"])
+        self.assertFalse(result["ok"])
+
     def test_bulk_copy_carries_no_rom_by_default(self):
         """이 버튼은 내용을 맞추는 것이지 ROM을 옮기는 것이 아니다."""
         self.api.start_compare(self.base, self.other)

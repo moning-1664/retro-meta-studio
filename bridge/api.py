@@ -2280,7 +2280,7 @@ class Api:
 
     @guarded
     def compare_copy_rows(self, keys, direction, metadata_only=True, overwrite=True, mode=None,
-                          replace_rom=False):
+                          replace_rom=False, media_types=None):
         """**고른 여러 행**을 한 번에 반대쪽 Plan에 올린다(사용자 결정 - Compare 상단의 `<` `>`는
         "선택된 항목들의 메타데이터+미디어를 좌/우측으로 overwrite").
 
@@ -2298,7 +2298,8 @@ class Api:
         planned, skipped, target_name, target_id = 0, [], None, None
         for key in keys:
             result = self.compare_copy_row(key, direction, metadata_only=metadata_only,
-                                           overwrite=overwrite, mode=mode, replace_rom=replace_rom)
+                                           overwrite=overwrite, mode=mode, replace_rom=replace_rom,
+                                           media_types=media_types)
             if not result["ok"]:
                 skipped.append({"key": key, "reason": result["error"]})
                 continue
@@ -2314,7 +2315,7 @@ class Api:
 
     @guarded
     def compare_copy_row(self, key, direction, metadata_only=False, overwrite=False, mode=None,
-                         replace_rom=False):
+                         replace_rom=False, media_types=None):
         """Compare 한 행을 반대쪽 Collection의 **Plan에 올린다**(사용자 결정 - "모든 변경은
         PLAN 기준 / 실제 Apply를 눌러야 적용").
 
@@ -2355,7 +2356,15 @@ class Api:
         # 파일명으로 다시 찾지 않고 짝이 알려 준 상대 행을 그대로 게임 단위 전송 계층에 넘긴다.
         # 의도(Metadata/Media/ROM)는 여기서 정하고, 파일 안전 검사는 그 뒤 plan_add()가 바뀔 것에만 한다.
         other = row["right"] if to_right else row["left"]
-        if metadata_only or not side.get("present"):
+        wanted = {str(t).lower() for t in (media_types or []) if str(t).strip()}
+        if wanted:
+            # 고른 미디어 종류만 보낸다(사용자 결정 - Compare 미디어 다중 선택). 메타데이터/ROM은 건드리지 않는다.
+            if other is None:
+                return err("상대에 그 항목이 없어 미디어만 보낼 수 없습니다.")
+            items = [{**item, "rom": None, "fields": {},
+                      "media": [m for m in item.get("media") or []
+                                if (m.get("type") or m.get("media_type")) in wanted]} for item in items]
+        elif metadata_only or not side.get("present"):
             # 내용을 맞추는 버튼이거나 ROM이 없는 쪽이다 - ROM은 옮기지 않는다.
             items = [{**item, "rom": None} for item in items]
         if other is not None:
