@@ -96,3 +96,25 @@ test("검색어를 넣으면 디바운스 후 결과가 줄어든다", async ({ 
   await page.locator(".search-input").fill("mario");
   await expect(page.locator("#filter-total")).toBeVisible();
 });
+
+// 툴바가 좁아졌을 때 - 실사용 피드백: "가로폭이 작으면 2줄로 나오는데, 버튼 배치는
+// 1줄로 유지되도록 자리가 모자라면 search 길이가 우선적으로 줄자."
+test.describe("좁은 창에서의 필터 바", () => {
+  test("버튼은 1줄을 유지하고, 자리가 모자라면 검색창이 먼저 줄어든다", async ({ page }) => {
+    await page.setViewportSize({ width: 720, height: 800 });
+    await page.reload();
+    await openApp(page);
+    const bar = page.locator("#filter-bar");
+    const modes = page.locator(".view-mode-seg");
+    const search = page.locator(".search-box");
+    const [barBox, modesBox, searchBox] = await Promise.all([
+      bar.boundingBox(), modes.boundingBox(), search.boundingBox(),
+    ]);
+    // 한 줄이다 - 높이가 두 줄만큼 늘어나지 않는다(버튼 한 줄 높이 근방).
+    expect(barBox.height).toBeLessThan(50);
+    // 다른 버튼(List/Card 토글)은 온전한 크기를 유지한다.
+    expect(modesBox.width).toBeGreaterThan(40);
+    // 검색창이 기본 240px보다 훨씬 좁게 줄어 자리를 양보했다.
+    expect(searchBox.width).toBeLessThan(200);
+  });
+});

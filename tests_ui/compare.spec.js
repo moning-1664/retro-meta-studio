@@ -515,3 +515,21 @@ test("같은 쪽 항목만 고르면 직접 잇기는 막혀 있다", async ({ p
     .click({ modifiers: ["Control"] });
   await expect(page.locator(".cmp-link")).toBeDisabled();
 });
+
+test("고르지 않은 상태 필터는 색이 없고, 고른 것만 색이 들어간다", async ({ page }) => {
+  await startCompare(page);
+  const diff = page.locator(".cmp-group-btn.g-diff");
+  const similar = page.locator(".cmp-group-btn.g-similar");
+  // 아무것도 고르지 않은 기본(all)에서는 diff/similar 둘 다 활성 색이 없다.
+  await expect(diff).not.toHaveClass(/active/);
+  await expect(similar).not.toHaveClass(/active/);
+  const grey = await diff.evaluate((el) => getComputedStyle(el).color);
+
+  await diff.click();
+  await expect(diff).toHaveClass(/active/);
+  const colored = await diff.evaluate((el) => getComputedStyle(el).color);
+  expect(colored).not.toBe(grey);
+  // 고르지 않은 similar는 여전히 색이 없다(회색) - 동시에 둘 다 튀지 않는다.
+  const stillGrey = await similar.evaluate((el) => getComputedStyle(el).color);
+  expect(stillGrey).toBe(grey);
+});

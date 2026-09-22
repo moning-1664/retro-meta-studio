@@ -311,14 +311,28 @@ class CacheStore:
     # 목록 조회 (정렬/필터/페이징 전부 SQL)
     # ------------------------------------------------------------------
     #: Header를 눌러 정렬할 수 있는 컬럼. 화면이 이 이름을 그대로 쓴다.
+    #:
+    #: `title`은 **`title_norm`이 아니라 화면에 보이는 `title`을 그대로** 쓴다(실사용
+    #: 피드백 - "[K]/[Rev A] 같은 대괄호가 정렬 대상이 아니다"). `title_norm`은 §3.1의
+    #: "같은 메타데이터인가" 판정용으로 괄호/태그를 지운 값이라, 그걸 목록 정렬에도
+    #: 재사용하면 대괄호만 다른 두 항목이 같은 값으로 묶여 대괄호 차이가 정렬에 전혀
+    #: 반영되지 않는다. 화면 정렬은 사용자가 실제로 보는 글자 그대로를 기준으로 삼는다.
     ORDERS = {
-        "title": "r.title_norm", "filename": "r.filename", "size": "r.size",
+        "title": "LOWER(r.title)", "filename": "r.filename", "size": "r.size",
         "system": "r.system", "favorite": "r.favorite",
         "desc": "LOWER(COALESCE(json_extract(m.fields_json,'$.desc'),''))",
         "region": "LOWER(COALESCE(json_extract(m.fields_json,'$.region'),''))",
         "genre": "LOWER(COALESCE(json_extract(m.fields_json,'$.genre'),''))",
         "rating": "CAST(COALESCE(json_extract(m.fields_json,'$.rating'),0) AS REAL)",
     }
+
+    #: 값이 없는 항목(빈 문자열)을 방향과 무관하게 항상 맨 뒤로 보내는 컬럼(실사용 피드백 -
+    #: "desc로 정렬했는데 설명 없는 항목들이 파일명 순서로 섞여 나온다. 정렬 기준이 뭔지
+    #: 모르겠다"). 원인은 빈 값이 전부 "" 로 동률이라 2차 기준인 filename으로 갈리기
+    #: 때문이다 - 설명이 있는 항목과 없는 항목이 뒤섞인 것처럼 보인다. Description이
+    #: 없다는 것은 정렬 순서에 대해 아무 의견도 없다는 뜻이므로 방향에 관계없이 맨
+    #: 뒤로 보낸다(스프레드시트의 NULLS LAST와 같은 관례).
+    EMPTY_LAST_ORDERS = frozenset({"desc", "region", "genre"})
 
     #: 우선 정렬(실사용 피드백 - "모든상태/메타데이터 없음/미디어없음/ROM없음
     #: 필터는 실제로 동작 안 한다"). 예전 상태 필터는 목록을 걸러내는 셀렉트였는데
@@ -382,9 +396,13 @@ class CacheStore:
         적용된다. 1차 기준의 방향까지 뒤집으면 "미디어 우선"을 눌렀는데 없는 것부터
         보이는 모순이 생긴다.
         """
-        column = self.ORDERS.get(order, "r.title_norm")
+        column = self.ORDERS.get(order, "LOWER(r.title)")
         prefix = f"{self.PRIORITY_ORDERS[priority]}, " if priority in self.PRIORITY_ORDERS else ""
-        return f"{prefix}{column} {'DESC' if descending else 'ASC'}, r.filename"
+        # 이 항은 늘 ASC로 고정한다 - "값 없음"을 뒤로 보내는 규칙 자체는 정렬 방향과
+        # 무관해야 한다. descending을 그대로 적용하면 내림차순에서는 값 없음이 앞으로
+        # 온다(§ EMPTY_LAST_ORDERS 주석과 같은 문제가 방향만 바뀌어 재발한다).
+        empty_last = f"({column} = ''), " if order in self.EMPTY_LAST_ORDERS else ""
+        return f"{prefix}{empty_last}{column} {'DESC' if descending else 'ASC'}, r.filename"
 
     def query_uids(self, *, systems=None, storage_ids=None, search=None, order="title",
                    descending=False, favorites_only=False, priority=None) -> list[int]:

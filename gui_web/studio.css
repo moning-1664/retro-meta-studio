@@ -177,13 +177,15 @@ body { font-size: var(--fs-body); }
   /* 가운데 네 칸을 기준으로 잡되, 조금 넘치는 만큼은 **비워 둔 오른쪽 한 칸**이 받아 준다
      (사용자 결정 - 그 칸은 여백이다). Navigator 밖으로는 나가지 않는다. */
   font-weight: 800; font-size: calc(15px * var(--font-scale));
-  /* 글자를 위아래로 20% 늘린다(사용자 결정 - "납작해 보인다"). 크기(font-size) 대신
-     scale로 늘려야 레트로 간판 글자의 세로로 긴 비례가 난다.
-     가로도 20% 늘린다(사용자 결정 - "다시 작아졌다, 가로 길이만 20% 늘려라") - 원래
-     칸(4/6)을 넘치는 만큼은 비워 둔 오른쪽 칸이 받아 주므로, transform-origin을
-     왼쪽에 고정해 지금 있는 자리에서 오른쪽으로만 커지게 한다(왼쪽 시작 위치는
-     그대로 두고 폭만 늘린다). */
-  transform: scale(1.2); transform-origin: left center;
+  /* 세로는 위아래로 20% 늘린다(사용자 결정 - "납작해 보인다"). 크기(font-size) 대신
+     scaleY로 늘려야 레트로 간판 글자의 세로로 긴 비례가 난다.
+     가로는 세로와 **다른 배율**을 쓴다 - 한때 가로에도 세로와 같은 1.2배를 그대로
+     썼더니 "가로폭이 갑자기 커졌다"(실사용 피드백, 번복)는 문제가 났다. 세로 폭은
+     그대로 두고 가로만 그 결과에서 20% 줄인다(1.2 * 0.8 = 0.96) - scaleX/scaleY를
+     따로 줘서 세로 비례는 건드리지 않는다. transform-origin은 왼쪽에 고정해
+     지금 있는 시작 위치에서만 늘고 준다(원래 칸(4/6)을 넘치는 만큼은 비워 둔
+     오른쪽 칸이 받아 준다). */
+  transform: scale(.96, 1.2); transform-origin: left center;
   line-height: 1.32; letter-spacing: .01em; white-space: nowrap;
   color: var(--app-title-ink);
   -webkit-text-stroke: calc(1.3px * var(--font-scale)) var(--app-title-outline);
@@ -509,13 +511,26 @@ body { font-size: var(--fs-body); }
 #filter-bar {
   display: flex; align-items: center; gap: 6px; min-height: var(--toolbar-h); box-sizing: border-box;
   padding: 4px 12px; border-bottom: 1px solid var(--border); background: var(--chrome);
+  /* **한 줄을 유지한다**(실사용 피드백 - "가로폭이 작으면 2줄로 나오는데, 버튼 배치는
+     1줄로 유지되도록"). 원래 이 규칙은 nowrap을 정한 적이 없어서, 먼저 불러오는
+     legacy style.css의 `#filter-bar { flex-wrap: wrap; }`가 이 속성만은 덮이지
+     않고 그대로 새어 들어오고 있었다 - 여기서 명시적으로 막는다. 자리가 모자라면
+     아래 .search-box가 먼저 줄어든다(다른 버튼들은 min-width:auto라 내용 크기
+     밑으로는 안 줄고, search-input만 min-width:0이라 그만큼 계속 줄 수 있다) -
+     넘치는 나머지는 가로 스크롤로 받는다. */
+  flex-wrap: nowrap; overflow-x: auto;
 }
 .search-box {
-  /* 200px -> 240px(실사용 피드백 - "search는 지금보다 20% 더 길게"). */
-  display: flex; align-items: center; gap: 6px; flex: 0 1 240px;
+  /* 200px -> 240px(실사용 피드백 - "search는 지금보다 20% 더 길게"). 자리가 모자라면
+     이 칸이 제일 먼저 줄어든다(위 #filter-bar 주석 참고) - 그래서 최소 폭을 따로
+     두어 완전히 짜부라지지는 않게 한다. */
+  display: flex; align-items: center; gap: 6px; flex: 0 1 240px; min-width: 64px;
   padding: 3px 8px; background: var(--card);
   border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--muted);
 }
+/* 검색창 말고는 줄어들지 않는다 - 버튼이 잘리거나 글자가 줄바꿈되면 누르기 더
+   어려워지므로, 모자란 자리는 전부 검색창이 받는다. */
+#filter-bar > *:not(.search-box) { flex-shrink: 0; }
 .search-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent); }
 .search-input {
   flex: 1; min-width: 0; background: transparent; border: none; outline: none;
@@ -1645,11 +1660,13 @@ button.sb-badge { cursor: pointer; }
 .cmp-group-btn + .cmp-group-btn { border-left: 1px solid var(--border); }
 .cmp-group-btn:hover { color: var(--text); }
 .cmp-group-btn.active { background: var(--card); color: var(--text); }
-/* ≠/≒는 늘 색으로 구분한다(사용자 결정) - 눌러야만(active) 보이면 고르기 전엔
-   무엇이 다른 뜻인지 알 수 없다. */
-.cmp-group-btn.g-diff { color: var(--danger); }
-.cmp-group-btn.g-similar { color: var(--info); }
-.cmp-group-btn.g-diff.active, .cmp-group-btn.g-similar.active { filter: brightness(1.15); }
+/* ≠/≒는 **고른 것만** 색이 들어간다(사용자 결정, 번복) - 예전엔 항상 색을 넣어 뜻을
+   미리 알렸는데, 그러면 네 버튼이 전부 색이 있어 정작 지금 고른 게 무엇인지 눈에
+   띄지 않았다("토글인데 다 색깔이 있어서 뭘 골랐는지 안 보인다"). 안 고른 것은
+   회색 아이콘으로 가라앉히고, 고른 것만 제 색으로 도드라지게 한다.
+   뜻은 title 툴팁으로 여전히 전달된다. */
+.cmp-group-btn.g-diff.active { color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, var(--card)); }
+.cmp-group-btn.g-similar.active { color: var(--info); background: color-mix(in srgb, var(--info) 16%, var(--card)); }
 .cmp-tool {
   display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px;
   border: 1px solid var(--border); border-radius: var(--radius-sm);

@@ -117,9 +117,11 @@ test.describe("App Title / Settings 자리와 크기", () => {
 
   // 사용자 결정 - "앱 타이틀을 가로로 6등분해서 좌측 한칸은 아이콘, 우측 한칸을 비우고
   // 나머지 66% 크기로 타이틀을 1줄로 배치. 아이콘은 좌측 한칸의 절반 크기 정사각형".
-  // 그 뒤 사용자 결정(번복) - "타이틀만 가로 길이를 20% 늘려라"(현재 위치 그대로) - 부제는
-  // 그대로 네 칸이고, 제목만 transform-origin: left로 20% 더 커져 오른쪽 빈 칸을 더 먹는다.
-  test("가로 6등분 - 왼쪽 한 칸 아이콘, 가운데 네 칸(+20%) 제목, 부제는 네 칸", async ({ page }) => {
+  // 그 뒤 사용자 결정(번복 두 번) - 처음엔 "타이틀만 가로 길이를 20% 늘려라", 그다음엔
+  // "가로폭이 갑자기 커졌다, 가로폭만 원래대로 20% 줄여라(세로는 유지)" - 결과적으로
+  // 가로는 세로(1.2배)와 다른 배율 0.96(=1.2*0.8)을 쓴다. 부제는 처음부터 그대로 네 칸이고,
+  // 제목만 transform-origin: left로 가로가 살짝 줄어 오른쪽 빈 칸을 그만큼 덜 먹는다.
+  test("가로 6등분 - 왼쪽 한 칸 아이콘, 가운데 네 칸(x0.96) 제목, 부제는 네 칸", async ({ page }) => {
     const [nav, icon, title, sub] = await Promise.all([
       page.locator(".nav-app-title").boundingBox(),
       page.locator(".nav-app-icon").boundingBox(),
@@ -127,13 +129,13 @@ test.describe("App Title / Settings 자리와 크기", () => {
       page.locator(".nav-app-subtitle").boundingBox(),
     ]);
     const cell = nav.width / 6;
-    // 제목은 가운데 네 칸(약 66%)에서 20% 더 늘어나고, 부제는 원래 네 칸 그대로다.
-    expect(title.width).toBeCloseTo(cell * 4 * 1.2, 0);
+    // 제목은 가운데 네 칸(약 66%)에서 가로만 0.96배, 부제는 원래 네 칸 그대로다.
+    expect(title.width).toBeCloseTo(cell * 4 * 0.96, 0);
     expect(sub.width).toBeCloseTo(cell * 4, 0);
-    // 왼쪽 시작 위치는 그대로다(transform-origin: left - 늘어난 만큼 오른쪽으로만 자란다).
+    // 왼쪽 시작 위치는 그대로다(transform-origin: left - 배율은 오른쪽으로만 적용된다).
     expect(title.x - nav.x).toBeCloseTo(cell, 0);
-    // 오른쪽 한 칸이었던 여백은 제목이 20% 더 먹은 만큼 줄어든다.
-    expect(nav.x + nav.width - (title.x + title.width)).toBeCloseTo(cell * 0.2, 0);
+    // 오른쪽 한 칸이었던 여백은 제목의 가로 배율만큼 달라진다(0.96배라 살짝 남는다).
+    expect(nav.x + nav.width - (title.x + title.width)).toBeCloseTo(cell * 1.16, 0);
     // 아이콘은 왼쪽 한 칸 안의 정사각형이다(칸의 약 70%).
     expect(icon.width).toBeLessThan(cell);
     expect(icon.width).toBeGreaterThan(cell * 0.6);
