@@ -309,3 +309,59 @@ def language_base(filename: str | None) -> str:
 
     stem = _GROUP_RE.sub(drop_group, stem)
     return re.sub(r"\s+", " ", stem).strip(" _-").casefold()
+
+
+# ----------------------------------------------------------------------
+# 디스크 번호를 제목 뒤에 붙이기(사용자 결정 - 옵션)
+# ----------------------------------------------------------------------
+#: 여러 장짜리 게임은 파일명으로만 몇 번째 장인지 알 수 있는데, ES-DE는 목록에 파일명을
+#: 보여주지 않아 제목이 전부 똑같이 보인다. 그래서 **Apply할 때** 제목 뒤에 장 번호를
+#: 붙인다(옵션을 켰을 때만). 파일명은 건드리지 않는다.
+#:
+#: `{n}`은 장 번호, `{total}`은 총 장수, `{word}`는 Disc/Disk다. 총 장수를 모르면
+#: `{total}`이 있는 형식은 번호만 쓰는 형식으로 자동으로 내려간다.
+DISC_FORMATS = {
+    "paren_word_slash": " ({word} {n}/{total})",
+    "paren_word": " ({word} {n})",
+    "bracket_word_slash": " [{word} {n}/{total}]",
+    "bracket_word_of": " [{word} {n} of {total}]",
+    "paren_bare": " ({n}/{total})",
+    "bracket_bare": " [{n}/{total}]",
+}
+DEFAULT_DISC_FORMAT = "paren_word_slash"
+
+#: 플로피를 쓰는 System은 "Disk", 그 밖(CD 기반)은 "Disc"라고 부른다(사용자 결정).
+_DISK_SYSTEMS = frozenset({
+    "msx", "msx2", "msxturbor", "pc88", "pc98", "x1", "x68000",
+    "apple2", "apple2gs", "c64", "amiga", "amigacd32", "atarist", "fmtowns",
+})
+
+
+def disc_word(system: str | None) -> str:
+    return "Disk" if str(system or "").strip().lower() in _DISK_SYSTEMS else "Disc"
+
+
+def disc_suffix(filename: str | None, system: str | None = None,
+                fmt: str | None = None) -> str:
+    """파일명에서 장 번호를 읽어 제목 뒤에 붙일 꼬리표를 만든다. 없으면 빈 문자열."""
+    from app import gameid                  # 순환 import를 피해 여기서 부른다
+
+    key = gameid.key_of(filename)
+    if not key.disc:
+        return ""
+    template = DISC_FORMATS.get(fmt or DEFAULT_DISC_FORMAT, DISC_FORMATS[DEFAULT_DISC_FORMAT])
+    if not key.disc_total and "{total}" in template:
+        # 총 장수를 모르면 번호만 쓴다 - "1/" 같은 반쪽짜리 표기를 만들지 않는다.
+        template = (DISC_FORMATS["paren_word"] if template.startswith(" (")
+                    else " [{word} {n}]")
+    return template.format(n=str(key.disc).upper(), total=key.disc_total,
+                           word=disc_word(system))
+
+
+def with_disc_suffix(title: str, filename: str | None, system: str | None = None,
+                     fmt: str | None = None) -> str:
+    """제목에 장 번호를 붙인다. 이미 붙어 있으면 그대로 둔다(Apply를 두 번 해도 늘지 않는다)."""
+    suffix = disc_suffix(filename, system, fmt)
+    if not suffix or not str(title or "").strip():
+        return title
+    return title if title.rstrip().endswith(suffix.strip()) else f"{title.rstrip()}{suffix}"

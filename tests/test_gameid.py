@@ -125,6 +125,44 @@ class PickTargetTests(unittest.TestCase):
     def test_no_candidate(self):
         self.assertEqual(pick_target("Game.zip", []), (None, "none"))
 
+class DiscSuffixTests(unittest.TestCase):
+    """제목 뒤에 장 번호 붙이기(사용자 결정 - 옵션). ES-DE는 목록에 파일명을 보여주지
+    않아 여러 장짜리 게임의 제목이 전부 똑같아 보인다."""
+
+    def test_the_word_depends_on_the_system(self):
+        from app.title_affix import disc_suffix
+        self.assertIn("Disc", disc_suffix("Game (Disc 1 of 3).bin", "psx"))
+        self.assertIn("Disk", disc_suffix("Game (Disk 1 of 3).dsk", "msx2"))
+        self.assertIn("Disk", disc_suffix("Game (Disk 1 of 3).d88", "pc98"))
+
+    def test_every_format_produces_something_readable(self):
+        from app.title_affix import DISC_FORMATS, disc_suffix
+        for fmt in DISC_FORMATS:
+            got = disc_suffix("Game (Disc 2 of 4).bin", "psx", fmt)
+            self.assertIn("2", got, fmt)
+            self.assertTrue(got.startswith(" "), fmt)
+
+    def test_an_unknown_total_does_not_leave_a_dangling_slash(self):
+        from app.title_affix import disc_suffix
+        got = disc_suffix("Game (Disc 3).bin", "psx", "paren_word_slash")
+        self.assertNotIn("/", got)
+        self.assertIn("3", got)
+
+    def test_a_game_without_discs_gets_nothing(self):
+        from app.title_affix import disc_suffix, with_disc_suffix
+        self.assertEqual(disc_suffix("Plain.zip", "psx"), "")
+        self.assertEqual(with_disc_suffix("Plain", "Plain.zip", "psx"), "Plain")
+
+    def test_applying_twice_does_not_stack(self):
+        from app.title_affix import with_disc_suffix
+        once = with_disc_suffix("Snatcher", "Snatcher (Disk 1 of 3).dsk", "msx2")
+        twice = with_disc_suffix(once, "Snatcher (Disk 1 of 3).dsk", "msx2")
+        self.assertEqual(once, twice)
+        self.assertEqual(once.count("Disk"), 1)
+
+    def test_a_letter_disc_is_kept(self):
+        from app.title_affix import with_disc_suffix
+        self.assertIn("A", with_disc_suffix("Yu-No", "Yu-No (Disc A).chd", "saturn"))
 
 if __name__ == "__main__":
     unittest.main()

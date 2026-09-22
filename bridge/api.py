@@ -1683,6 +1683,28 @@ class Api:
         return ok({**result, "source": descriptor.get("sourceName"), "policy": policy,
                    "downgradedFrom": downgraded_from})
 
+    def _disc_title_option(self) -> dict:
+        """여러 장짜리 게임의 제목 뒤에 장 번호를 붙일지(사용자 결정 - 기본은 끔).
+
+        ES-DE는 목록에 파일명을 보여주지 않아, 여러 장짜리 게임은 제목이 전부 똑같이
+        보인다. 켜면 Apply할 때 제목 뒤에만 붙인다 - 파일명은 건드리지 않는다.
+        """
+        stored = (self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {}).get("metadata") or {}
+        fmt = stored.get("discTitleFormat")
+        return {
+            "enabled": bool(stored.get("discTitles")),
+            "format": fmt if fmt in title_affix.DISC_FORMATS else title_affix.DEFAULT_DISC_FORMAT,
+        }
+
+    @guarded
+    def disc_title_formats(self):
+        """설정 화면이 고를 수 있는 표기 목록. 예시는 실제 함수가 만든 것을 보여준다 -
+        설명과 동작이 어긋나지 않게."""
+        return ok([{"id": key,
+                    "sample": title_affix.disc_suffix("Game (Disc 1 of 3).bin", "psx", key).strip(),
+                    "sampleDisk": title_affix.disc_suffix("Game (Disk 1 of 3).dsk", "msx2", key).strip()}
+                   for key in title_affix.DISC_FORMATS])
+
     def _transfer_policy(self):
         stored = (self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {}).get("transfer") or {}
         merged = {**self.TRANSFER_DEFAULTS, **{k: v for k, v in stored.items() if k in self.TRANSFER_DEFAULTS}}
@@ -1734,7 +1756,8 @@ class Api:
 
         def run(cb):
             try:
-                result = apply_plan(plan, collection, cache, self.registry, provider, progress_cb=cb)
+                result = apply_plan(plan, collection, cache, self.registry, provider,
+                                    progress_cb=cb, disc_titles=self._disc_title_option())
                 # Apply가 건드린 System만 다시 읽어 Cache를 실제 상태에 맞춘다.
                 # 이걸 안 하면 방금 지운 게임이 목록에 남고 용량도 예전 값이 보인다.
                 # 전체 Full Scan은 규모가 커지면 감당이 안 되므로 범위를 좁힌다.

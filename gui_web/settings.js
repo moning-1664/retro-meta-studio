@@ -131,6 +131,23 @@
      * 안 그러면 나중에 바꾼 필드가 먼저 바꾼 필드를 예전 값으로 되돌려 보낸다("titleAffix"
      * 섹션도 한 단계 깊이까지만 병합되므로, 이 구역 하나는 항상 통째로 보내야 한다).
      */
+    /** 장 번호 표기 형식. 보기는 **백엔드가 실제로 만든 것**을 가져온다 - 설명과
+     * 동작이 어긋나지 않게 한다. */
+    function discFormatRow(s) {
+      const current = (s.metadata || {}).discTitleFormat || "paren_word_slash";
+      const el = select(current, [[current, current]], (v) => ctx.update("metadata", { discTitleFormat: v }));
+      window.api.discTitleFormats().then((r) => {
+        if (!r.ok) return;
+        const options = r.data.map((f) => [f.id, `${f.sample}   (플로피: ${f.sampleDisk})`]);
+        el.replaceChildren(...options.map(([value, text]) => {
+          const opt = h("option", { value }, [text]);
+          if (value === current) opt.selected = true;
+          return opt;
+        }));
+      });
+      return row("metadata.discTitleFormat", "표기 형식", el);
+    }
+
     function titleAffixEditor(s) {
       const REGIONS = [["kr", "한국(KR)"], ["en", "영어권(EN)"], ["jp", "일본(JP)"],
                        ["eu", "유럽(EU)"], ["global", "글로벌"]];
@@ -288,6 +305,14 @@
           + "실행은 Gamelist나 System 우클릭 메뉴에서 합니다.",
         ]));
         add(titleAffixEditor(s));
+
+        // 여러 장짜리 게임 - ES-DE는 목록에 파일명을 안 보여줘서 제목이 전부 같아 보인다.
+        add(h("div", { class: "stg-subsection-title" }, ["여러 장짜리 게임(Disc/Disk)"]));
+        add(row("metadata.discTitles", "제목 뒤에 장 번호 붙이기",
+          toggle(!!(s.metadata || {}).discTitles, (v) => ctx.update("metadata", { discTitles: v })),
+          "Apply할 때 제목 뒤에만 붙입니다. 파일명은 건드리지 않고, 두 번 적용해도 늘어나지 않습니다. "
+          + "CD를 쓰는 System은 Disc, 플로피를 쓰는 System(MSX, PC-98 등)은 Disk로 적습니다."));
+        add(discFormatRow(s));
       } else if (key === "transfer") {
         add(...section("Import / Export", "파일과 Metadata/Media를 옮길 때의 기본값입니다."));
         // 붙여넣기(bridge paste)가 이 값을 읽는다. 기본값은 예전 동작 그대로다.

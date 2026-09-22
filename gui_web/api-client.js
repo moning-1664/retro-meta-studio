@@ -356,6 +356,11 @@
       systems: [{ system: "ps2", count: 2, exists: true }],
       targetSystems: ["gba", "ps2", "snes"],
     }),
+    disc_title_formats: () => ok([
+      { id: "paren_word_slash", sample: "(Disc 1/3)", sampleDisk: "(Disk 1/3)" },
+      { id: "bracket_word_of", sample: "[Disc 1 of 3]", sampleDisk: "[Disk 1 of 3]" },
+      { id: "bracket_bare", sample: "[1/3]", sampleDisk: "[1/3]" },
+    ]),
     clipboard_items: () => {
       if (!mockClipboardUids.length) return Promise.resolve({ ok: false, error: "붙여넣을 항목이 없습니다." });
       const items = mockClipboardUids.map((uid) => {
@@ -895,6 +900,7 @@
       call("paste", id, mode || null, systemMap || null, targetMap || null, fallbackTarget || null),
     clipboardSystems: (id) => call("clipboard_systems", id),
     clipboardItems: () => call("clipboard_items"),
+    discTitleFormats: () => call("disc_title_formats"),
     validatePlan: (id) => call("validate_plan", id),
     startApply: (id) => call("start_apply", id),
 

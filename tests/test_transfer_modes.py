@@ -295,3 +295,54 @@ class MultiPasteDowngradesReplaceTests(unittest.TestCase):
             result = self.api.paste(self.d, mode)["data"]
             self.assertIsNone(result["downgradedFrom"], mode)
             self.assertEqual(result["policy"]["pasteMode"], mode)
+
+
+class DiscTitlesAreAppliedOnApplyTests(unittest.TestCase):
+    """옵션을 켜면 **Apply할 때** 제목 뒤에 장 번호가 붙는다(사용자 결정).
+    파일명은 건드리지 않는다."""
+
+    def setUp(self):
+        self.dir = temp_root("rms_disc_titles_")
+        self.src_root = build_custom_esde_tree(self.dir / "src", "psx", [
+            {"filename": "Metal Gear Solid (Disc 1 of 2).bin", "title": "Metal Gear Solid"},
+            {"filename": "Metal Gear Solid (Disc 2 of 2).bin", "title": "Metal Gear Solid"},
+        ])
+        self.dst_root = build_custom_esde_tree(self.dir / "dst", "psx", [])
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.s = self.api.create_collection("S", "es-de", str(self.src_root))["data"]["id"]
+        self.d = self.api.create_collection("D", "es-de", str(self.dst_root))["data"]["id"]
+        scan(self.api, self.s)
+        scan(self.api, self.d)
+
+    def _paste_and_apply(self):
+        uids = [r["romUid"] for r in self.api.list_rows(self.s, limit=50)["data"]["rows"]]
+        self.api.copy_selection(self.s, uids)
+        self.api.paste(self.d, "patch")
+        self.api.start_apply(self.d)
+        wait_idle(self.api)
+        return {r["file"]: r["title"] for r in self.api.list_rows(self.d, limit=50)["data"]["rows"]}
+
+    def test_off_by_default(self):
+        titles = self._paste_and_apply()
+        self.assertEqual(set(titles.values()), {"Metal Gear Solid"})
+
+    def test_on_appends_the_disc_number_to_the_title_only(self):
+        self.api.save_app_settings({"metadata": {"discTitles": True}})
+        titles = self._paste_and_apply()
+        self.assertEqual(titles["Metal Gear Solid (Disc 1 of 2).bin"], "Metal Gear Solid (Disc 1/2)")
+        self.assertEqual(titles["Metal Gear Solid (Disc 2 of 2).bin"], "Metal Gear Solid (Disc 2/2)")
+        # 파일명은 그대로다.
+        self.assertTrue((self.dst_root / "psx" / "Metal Gear Solid (Disc 1 of 2).bin").exists())
+
+    def test_the_chosen_format_is_used(self):
+        self.api.save_app_settings({"metadata": {"discTitles": True,
+                                                 "discTitleFormat": "bracket_word_of"}})
+        titles = self._paste_and_apply()
+        self.assertEqual(titles["Metal Gear Solid (Disc 1 of 2).bin"],
+                         "Metal Gear Solid [Disc 1 of 2]")
+
+    def test_an_unknown_format_falls_back_to_the_default(self):
+        self.api.save_app_settings({"metadata": {"discTitles": True, "discTitleFormat": "nope"}})
+        titles = self._paste_and_apply()
+        self.assertEqual(titles["Metal Gear Solid (Disc 1 of 2).bin"], "Metal Gear Solid (Disc 1/2)")

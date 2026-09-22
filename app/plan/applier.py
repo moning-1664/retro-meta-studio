@@ -37,16 +37,22 @@ from app.model.plan import (
     OP_ADD, OP_DELETE, OP_METADATA_EDIT, OP_STORAGE_CHANGE, OP_TITLE_EDIT,
     RESOLVE_OVERWRITE, RESOLVE_SKIP, STATUS_APPLIED, STATUS_FAILED, STATUS_PARTIAL, PlanEntry,
 )
+from app import title_affix
 from app.plan.builder import ACTION_CONFLICT, ACTION_IDENTICAL, classify_destination
 from utils import normalize_title
 
 
-def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) -> dict:
+def apply_plan(plan, collection, cache, registry, provider, progress_cb=None,
+               disc_titles=None) -> dict:
     """Plan을 실행한다.
 
     반환: {"applied", "failed", "partial", "skipped", "errors":[...], "systems":[...]}
     `systems`는 실제로 건드린 System 목록이다 - 호출부가 그 System만 다시 스캔해서
     Cache를 맞출 수 있도록 돌려준다(전체 Full Scan을 피하기 위함).
+
+    `disc_titles`: `{"enabled": bool, "format": str}`. 켜져 있으면 **여기서** 제목 뒤에
+    장 번호를 붙인다(사용자 결정 - "apply 할 때 붙이고 옵션에서 선택했을 때만").
+    파일명은 건드리지 않는다.
     """
     adapter = get_adapter(collection.frontend)
 
@@ -91,7 +97,8 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
     # 한 번에 기록한다. ROM 하나마다 gamelist.xml을 다시 쓰면 O(n^2)가 된다(계약 1).
     media_links: dict[str, dict[str, list]] = {}
 
-    prepared_adds = _apply_adds(adds, collection, adapter, provider, errors, media_links, step)
+    prepared_adds = _apply_adds(adds, collection, adapter, provider, errors, media_links, step,
+                                disc_titles)
     for entry in deletes:
         _apply_delete(entry, collection, adapter, cache, provider, errors)
         step(entry)
@@ -103,7 +110,7 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None) ->
         if reported < move_units[entry.key]:
             step(f"이동 중: {entry.system}", move_units[entry.key] - reported)
 
-    _apply_title_edits(retitles, collection, adapter, cache, errors, step)
+    _apply_title_edits(retitles, collection, adapter, cache, errors, step, disc_titles)
 
     _write_media_links(adds, collection, adapter, media_links, errors)
     # 백업은 **여기서** 정리한다. 복사가 끝난 시점이 아니라 그 항목의 작업 전체가
@@ -376,7 +383,7 @@ def _copy_prepared(prepared, errors, step):
             step(entry)
 
 
-def _entry_to_write(entry, adapter):
+def _entry_to_write(entry, adapter, disc_titles=None):
     """Plan 항목을 이 Collection에 적을 GameEntry로.
 
     ADD는 **다른 Collection에서 온 항목**을 이 Collection에 적는 것이다. 원본
@@ -389,13 +396,14 @@ def _entry_to_write(entry, adapter):
     2) 같은 Frontend라도 경로처럼 "그 자리에서만 참인 값"은 걷어내야 한다.
     """
     fields = entry.payload or (entry.source or {}).get("fields") or {}
+    fields = _disc_titled(fields, entry.filename, entry.system, disc_titles)
     source_raw = (entry.source or {}).get("frontend_raw")
     preserved = (adapter.strip_location_raw(source_raw)
                  if adapter.raw_is_mine(source_raw) else {})
     return GameEntry(filename=entry.filename, fields=fields, frontend_raw=preserved)
 
 
-def _write_metadata(prepared, adapter, errors, media_links):
+def _write_metadata(prepared, adapter, errors, media_links, disc_titles=None):
     """복사가 끝난 항목들의 메타데이터를 **System 단위로 한 번에** 쓴다.
 
     파일이 자리를 잡은 뒤에 쓴다 - 순서가 반대면 복사 실패 시 gamelist에만 있는 유령
@@ -415,7 +423,7 @@ def _write_metadata(prepared, adapter, errors, media_links):
     for system, group in by_system.items():
         layout = group[0]["layout"]
         try:
-            adapter.write_index(layout, [_entry_to_write(item["entry"], adapter)
+            adapter.write_index(layout, [_entry_to_write(item["entry"], adapter, disc_titles)
                                          for item in group])
         except Exception as e:  # noqa: BLE001
             for item in group:
@@ -444,7 +452,8 @@ def _write_metadata(prepared, adapter, errors, media_links):
             entry.status = STATUS_APPLIED
 
 
-def _apply_adds(adds, collection, adapter, provider, errors, media_links, step):
+def _apply_adds(adds, collection, adapter, provider, errors, media_links, step,
+                disc_titles=None):
     """ADD 전체를 세 단계로 실행한다: 준비 -> 묶어 복사 -> System당 메타데이터.
 
     항목마다 복사하고 항목마다 메타데이터를 쓰던 것을 묶은 것이다. **관찰 가능한
@@ -453,7 +462,7 @@ def _apply_adds(adds, collection, adapter, provider, errors, media_links, step):
     """
     prepared = [_prepare_add(entry, collection, adapter, provider) for entry in adds]
     _copy_prepared(prepared, errors, step)
-    _write_metadata(prepared, adapter, errors, media_links)
+    _write_metadata(prepared, adapter, errors, media_links, disc_titles)
     return prepared
 
 def _rollback_files(paths, errors, entry) -> bool:
@@ -518,6 +527,21 @@ def _apply_delete(entry, collection, adapter, cache, provider, errors):
 # ----------------------------------------------------------------------
 # TITLE EDIT (Title Prefix/Postfix 일괄 적용, 사용자 결정)
 # ----------------------------------------------------------------------
+def _disc_titled(fields, filename, system, disc_titles) -> dict:
+    """옵션이 켜져 있으면 제목 뒤에 장 번호를 붙인다. 꺼져 있으면 그대로 둔다.
+
+    ADD와 제목 편집이 **같은 함수**를 거치게 해서, 어느 경로로 들어와도 같은 결과가
+    나오게 한다. 두 번 Apply해도 꼬리표가 늘어나지 않는다(`with_disc_suffix` 참고).
+    """
+    if not (disc_titles or {}).get("enabled"):
+        return fields
+    name = (fields or {}).get("name")
+    if not str(name or "").strip():
+        return fields
+    return {**fields, "name": title_affix.with_disc_suffix(
+        name, filename, system, (disc_titles or {}).get("format"))}
+
+
 def _merged_fields(entry, row) -> dict:
     """이 항목이 실제로 쓸 필드. 제목 편집은 name 하나만, 기기 편집은 payload 전체다."""
     if entry.op == OP_METADATA_EDIT:
@@ -531,7 +555,7 @@ def _frontend_raw(entry, row):
     return row["frontend_raw"] if saved is None else saved
 
 
-def _apply_title_edits(entries, collection, adapter, cache, errors, step):
+def _apply_title_edits(entries, collection, adapter, cache, errors, step, disc_titles=None):
     """제목·메타데이터 편집을 System 단위로 한 번에 쓴다.
 
     ADD의 `_write_metadata`와 같은 이유(계약 1) - 항목마다 gamelist.xml을 다시 읽고
@@ -556,7 +580,7 @@ def _apply_title_edits(entries, collection, adapter, cache, errors, step):
                 step(entry)
                 continue
             rows_by_key[entry.key] = row
-            merged = _merged_fields(entry, row)
+            merged = _disc_titled(_merged_fields(entry, row), row["filename"], system, disc_titles)
             write_entries.append(GameEntry(filename=row["filename"], fields=merged,
                                            frontend_raw=_frontend_raw(entry, row)))
 
@@ -577,7 +601,7 @@ def _apply_title_edits(entries, collection, adapter, cache, errors, step):
             row = rows_by_key.get(entry.key)
             if row is None:
                 continue
-            merged = _merged_fields(entry, row)
+            merged = _disc_titled(_merged_fields(entry, row), row["filename"], system, disc_titles)
             title = (merged.get("name") or "").strip() or Path(row["filename"]).stem
             raw = _frontend_raw(entry, row)
             cache.update_metadata(row["rom_uid"], merged, title=title,
