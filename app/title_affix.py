@@ -288,3 +288,24 @@ def preview_titles(rows: list[dict], config: dict | None) -> list[dict]:
         result = compute_new_title(row.get("title") or "", row.get("filename"), config)
         out.append({"romUid": row["rom_uid"], "system": row["system"], "filename": row["filename"], **result})
     return out
+
+
+# ----------------------------------------------------------------------
+# 언어 태그 벗기기 - Archive -> Collection에서 `FF3.zip`과 `FF3(KR).zip`을 같은 게임으로 잇는다.
+# ----------------------------------------------------------------------
+def language_base(filename: str | None) -> str:
+    """파일명에서 **인식된 언어/지역 태그만** 벗긴 바탕 이름(확장자 제외, 소문자).
+
+    태그가 아닌 괄호((Disc 1), (Rev A), 제목 속 단어)는 그대로 둔다 - 다른 게임/판을 하나로 뭉치지
+    않기 위해서다. `normalize_title()`처럼 괄호를 통째로 버리지 않는 것이 이 함수의 요점이다.
+    """
+    stem = str(filename or "")
+    stem = stem[:stem.rfind(".")] if "." in stem else stem
+
+    def drop_group(match):
+        parts = [p for p in _GROUP_SPLIT_RE.split(match.group(1)) if p]
+        ok = parts and all(_WORD_RE.fullmatch(p) and p.lower() in _ALL_KEYWORDS for p in parts)
+        return " " if ok else match.group(0)
+
+    stem = _GROUP_RE.sub(drop_group, stem)
+    return re.sub(r"\s+", " ", stem).strip(" _-").casefold()
