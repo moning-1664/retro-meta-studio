@@ -50,7 +50,9 @@ def candidates_for(archive, collection_id, row, *, deep=True, limit=engine.DEFAU
 
     def fields_of(rom_identity_id):
         sources = archive.sources_of(rom_identity_id)
-        latest = max(sources, key=lambda s: s["updated_at"], default=None)
+        # 동점이면 나중에 기록된 것이 이긴다 - `ArchiveStore.resolve_fields()`와 같은 규칙이어야
+        # Match 점수가 실행할 때마다 달라지지 않는다(시계 해상도 때문에 동점이 실제로 생긴다).
+        latest = max(sources, key=lambda s: (s["updated_at"], s["record_id"]), default=None)
         return (latest or {}).get("fields") or {}
 
     kwargs = {"exclude_collection": collection_id, "limit": limit}

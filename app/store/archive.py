@@ -452,7 +452,13 @@ class ArchiveStore:
         if edited:
             return edited["fields"], edited["frontend_raw"]
         sources = self.sources_of(rom_identity_id)
-        latest = max(sources, key=lambda s: s["updated_at"], default=None)
+        # **동점일 때는 나중에 기록된 것(record_id가 큰 것)이 이긴다.** `updated_at`만 보면
+        # 두 출처가 같은 시계 눈금 안에 기록됐을 때(Windows의 time()은 해상도가 ~15.6ms라
+        # 흔하다) 승자가 임의로 갈린다 - 같은 입력에 같은 답이 나오지 않는다. 실제로
+        # "ROM만 먼저 읽고 곧바로 메타데이터를 수집"하면 두 출처의 시각이 같아져, 제목과
+        # 장르가 실행할 때마다 달라졌다. record_id는 AUTOINCREMENT라 기록 순서를 정확히
+        # 말해 준다.
+        latest = max(sources, key=lambda s: (s["updated_at"], s["record_id"]), default=None)
         return (latest or {}).get("fields") or {}, (latest or {}).get("frontend_raw") or {}
 
     def clear_preferred(self, rom_identity_id) -> bool:

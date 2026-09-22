@@ -446,18 +446,24 @@ class Api:
     APP_SETTINGS_KEY = "ui.settings"
     #: Collection → Collection 복사(붙여넣기) 정책의 기본값. Settings > Import / Export가 바꾼다.
     #: conflict가 "ask"면 지금처럼 Plan에 충돌로 남겨 사용자가 고른다.
-    #: unmatchedRom*은 **원본에 ROM 파일이 없는 항목**(Archive처럼 메타데이터만 있는 항목)의
-    #: 처리 방식이다(사용자 결정) - 기본은 아무것도 복사하지 않고, 켜면 Metadata/Media/Video를
-    #: 독립적으로 고른다. registry에는 평평하게 저장한다 - "transfer" 섹션 patch는 한 단계
-    #: 깊이까지만 병합되므로(save_app_settings), 중첩 객체로 두면 필드 하나만 바꿔도 나머지가
-    #: 지워진다.
+    #: unmatchedRom*은 **원본에 ROM이 없고 대상에도 그 게임이 없는 항목**(Archive처럼 메타데이터만
+    #: 있는 항목을 새로 붙이는 경우)의 처리 방식이다. Metadata/Media/Video를 독립적으로 고른다.
+    #:
+    #: **기본이 "copy"다(사용자 결정, 번복).** 예전 기본값은 "skip"이라, 원본에 ROM 파일이
+    #: 없다는 이유만으로 메타데이터와 미디어까지 통째로 버렸다 - 이 앱의 핵심 관리 대상은
+    #: Metadata/Media이고 ROM은 선택적 구성요소라는 원칙과 정면으로 어긋난다(실사용 리포트 -
+    #: Archive 성격의 Collection에서 84개를 복사했는데 76개가 "ROM 미매칭"으로 사라졌다).
+    #: 버릴지 말지는 아래 세 스위치로 고른다.
+    #:
+    #: registry에는 평평하게 저장한다 - "transfer" 섹션 patch는 한 단계 깊이까지만
+    #: 병합되므로(save_app_settings), 중첩 객체로 두면 필드 하나만 바꿔도 나머지가 지워진다.
     TRANSFER_DEFAULTS = {
         "includeRom": True, "includeMedia": True, "conflict": "ask",
         # 붙여넣기 모드(Patch/Overwrite/Replace) - app/plan/transfer.py
         "pasteMode": transfer.DEFAULT_MODE,
         #: ROM도 원본으로 교체할까(명시적 선택일 때만 - 기본은 대상 ROM을 지킨다)
         "replaceRom": False,
-        "unmatchedRomMode": "skip",
+        "unmatchedRomMode": "copy",
         "unmatchedRomMetadata": True, "unmatchedRomMedia": True, "unmatchedRomVideo": True,
     }
 
@@ -1515,7 +1521,8 @@ class Api:
         })
 
     @guarded
-    def paste(self, collection_id, mode=None, system_map=None, replace_rom=None, target_map=None):
+    def paste(self, collection_id, mode=None, system_map=None, replace_rom=None, target_map=None,
+              fallback_target=None):
         """붙여넣기. **Settings의 복사 정책(transfer)을 따른다.**
 
         `mode`(patch/overwrite/replace)가 이미 있는 항목을 어떻게 다룰지 정한다
@@ -1565,16 +1572,54 @@ class Api:
             if row is None:
                 return err(f"지목한 대상을 찾을 수 없습니다: {dest_key}")
             targets[str(source_key)] = row
+
+        # **화면에서 고른 행**(`fallback_target`). 자동으로 대상을 못 찾았을 때만 쓴다.
+        #
+        # 사용자 모델은 "행을 고르고 붙여넣으면 그 행에 붙는다"인데, 예전의 Ctrl+V는 고른 행을
+        # 아예 보지 않고 이름으로만 대상을 찾았다. 그래서 이름이 전혀 다른 두 게임
+        # (`Final Fantasy 7.zip` <-> `ff7.rom`)은 화면에서 대상을 골라 놓고 붙여넣어도 닿지
+        # 않았다(실사용 리포트). 이름으로 확실한 대상을 찾았으면 그쪽이 이긴다 - 고른 행을
+        # 무조건 이기게 하면, 다른 볼일로 남아 있던 선택이 조용히 덮어쓰기 대상이 된다.
+        # 확인 창은 띄우지 않는다. **Plan이 확인 역할을 한다** - Apply 전에는 아무것도 바뀌지 않는다.
+        fallback_row = None
+        if fallback_target and len(items) == 1:      # 여러 개를 한 행에 붙일 수는 없다
+            system, _, filename = str(fallback_target).partition("|")
+            fallback_row = target_cache.get_row_by_filename(system, filename)
+        # 같은 Collection 안에서 복사했다면, 이름으로 찾은 "확실한 대상"이 **원본 자기 자신**일
+        # 수 있다. 자기 자신에게 붙여넣는 것은 아무 일도 아니므로, 그것 때문에 사용자가 고른
+        # 행을 무시하면 안 된다(실사용 리포트 - 같은 nes 안에서 `Dragon Ball 2 (K).zip`을 복사해
+        # `Dragon Ball Z1 (K).zip`에 붙이려 했는데, 원본 자신이 대상으로 잡혀 아무 일도 없었다).
+        pasting_into_source = descriptor.get("sourceCollectionId") == collection_id
         unmatched = policy["unmatchedRom"]
+        # **대상 찾기는 한 곳에서만 한다.** 예전에는 여기서 `get_row_by_filename()`으로 정확한
+        # 파일명만 보고 "대상이 없다 = ROM 미매칭"으로 걸러 낸 뒤, 그 뒤의 transfer.prepare()가
+        # 다시 제 기준으로 대상을 찾았다. 두 기준이 달라서, 이름만 조금 다른 같은 게임
+        # (`Aleste [J].zip` vs `Aleste (Japan) ... .zip`)은 여기서 먼저 버려져 prepare()에
+        # 닿지도 못했다(실사용 버그 - "Compare에선 다르다고 나오는데 붙여넣으면 아무 일도 없다").
+        index = transfer.TargetIndex(target_cache, {item["system"] for item in items})
 
         prepared, extra_skipped = [], []
         for item in items:
             key = transfer.item_key(item)
-            existing = targets.get(key) or target_cache.get_row_by_filename(item["system"], item["filename"])
-            if item.get("rom") or existing is not None:
-                # ROM이 있거나, 대상 Game이 이미 있다. 대상이 있으면 이건 그냥 평범한
-                # Metadata/Media 갱신이다 - ROM 유무와 무관하게 모드(Patch/Overwrite/Replace)를
-                # 그대로 따른다. unmatchedRom 정책은 "ROM 없는 새 항목이 생기는" 경우만 본다.
+            existing = targets.get(key)
+            how = "manual" if existing is not None else None
+            if existing is None:
+                existing, how = index.find(item, accept_similar=(mode == transfer.MODE_REPLACE))
+                if (existing is not None and pasting_into_source and fallback_row is not None
+                        and (existing["system"], existing["filename"]) == (item["system"], item["filename"])
+                        and existing["rom_uid"] != fallback_row["rom_uid"]):
+                    existing, how = None, None      # 자기 자신이다 - 고른 행에 양보한다
+            if existing is None and fallback_row is not None:
+                # 이름으로는 확실한 대상을 못 찾았고, 화면에서 고른 행이 있다 - 그 행이 대상이다.
+                existing, how = fallback_row, "selected"
+                targets[key] = fallback_row        # prepare()도 같은 판단을 쓰게 한다
+            if item.get("rom") or existing is not None or how in ("similar", "ambiguous"):
+                # ROM이 있거나, 대상 Game이 이미 있거나, 비슷한 후보가 있다. 대상이 있으면 이건
+                # 그냥 평범한 Metadata/Media 갱신이다 - ROM 유무와 무관하게 모드(Patch/Overwrite/
+                # Replace)를 그대로 따른다. 비슷한 후보만 있는 경우도 여기로 흘려보낸다 -
+                # prepare()가 "직접 지목하세요"라고 정확한 이유를 붙여 준다(여기서 "ROM 미매칭"
+                # 이라고 엉뚱한 이유를 달면 사용자가 진짜 원인을 못 찾는다).
+                # unmatchedRom 정책은 "후보조차 없어 ROM 없는 새 항목이 생기는" 경우만 본다.
                 prepared.append({**item,
                                  "rom": item["rom"] if policy["includeRom"] else None,
                                  "media": item.get("media") if policy["includeMedia"] else []})
@@ -1582,7 +1627,9 @@ class Api:
             # 진짜 미매칭 - 원본에 ROM이 없고 대상 Game도 없어서, 붙이면 ROM 없는 새
             # 항목이 생긴다(unmatchedRom, 사용자 결정).
             if unmatched["mode"] != "copy":
-                extra_skipped.append({"filename": item["filename"], "reason": "ROM 미매칭 - 정책에 따라 건너뜀"})
+                extra_skipped.append({"filename": item["filename"],
+                                      "reason": "원본에 ROM이 없고 대상에도 같은 게임이 없습니다"
+                                                " - Settings의 정책에 따라 건너뜀"})
                 continue
             media = []
             for m in item.get("media") or []:
@@ -1591,7 +1638,9 @@ class Api:
                     media.append(m)
             fields = item.get("fields") if unmatched["metadata"] else {}
             if not unmatched["metadata"] and not media:
-                extra_skipped.append({"filename": item["filename"], "reason": "ROM 미매칭 - 정책에 따라 건너뜀"})
+                extra_skipped.append({"filename": item["filename"],
+                                      "reason": "원본에 ROM이 없고 대상에도 같은 게임이 없습니다"
+                                                " - Metadata/Media를 모두 끄면 남는 것이 없습니다"})
                 continue
             prepared.append({**item, "fields": fields, "media": media})
 
@@ -1599,7 +1648,8 @@ class Api:
         # 걷어 낸 항목은 "원본에 ROM이 없는" 항목이 아니다. 걷어 내고 나면 바뀔 것이 없는 항목은 Plan에
         # 올리지 않고 이유를 알린다.
         prepared, mode_skipped = transfer.prepare(prepared, target_cache, mode,
-                                                  replace_rom=replace_rom, targets=targets)
+                                                  replace_rom=replace_rom, targets=targets,
+                                                  index=index)
         extra_skipped.extend(mode_skipped)
 
         if not prepared:
@@ -1632,7 +1682,7 @@ class Api:
         stored = (self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {}).get("transfer") or {}
         merged = {**self.TRANSFER_DEFAULTS, **{k: v for k, v in stored.items() if k in self.TRANSFER_DEFAULTS}}
         conflict = merged["conflict"] if merged["conflict"] in ("ask", RESOLVE_SKIP, RESOLVE_OVERWRITE) else "ask"
-        mode = merged["unmatchedRomMode"] if merged["unmatchedRomMode"] in ("skip", "copy") else "skip"
+        mode = merged["unmatchedRomMode"] if merged["unmatchedRomMode"] in ("skip", "copy") else "copy"
         return {
             "pasteMode": transfer.normalize_mode(merged.get("pasteMode")),
             "replaceRom": bool(merged.get("replaceRom")),

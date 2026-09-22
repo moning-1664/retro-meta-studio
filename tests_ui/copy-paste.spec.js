@@ -196,3 +196,38 @@ test("System 이름이 'FBNEO ACT'처럼 길어도 앞 이름으로 아이콘을
   expect(found.mame).toContain("mame");
   expect(found.plain).toEqual(["snes"]);
 });
+
+// 고른 행이 대상이다(실사용 리포트) - 예전 Ctrl+V는 고른 행을 아예 보지 않고 이름으로만
+// 대상을 찾아서, 이름이 다른 게임에 붙이려 하면 아무 일도 일어나지 않았다.
+test.describe("고른 행을 대상으로 삼기", () => {
+  const pasteArgs = async (page) => {
+    const calls = [];
+    await page.exposeFunction("__paste", (args) => calls.push(args));
+    await page.evaluate(() => {
+      const original = window.api.paste;
+      window.api.paste = (...args) => { window.__paste(args); return original(...args); };
+    });
+    return calls;
+  };
+
+  test("행 하나를 고른 채 Ctrl+V를 누르면 그 행을 대상 후보로 보낸다", async ({ page }) => {
+    const calls = await pasteArgs(page);
+    await page.locator(".lrow", { hasText: "Final Fantasy X" }).click();
+    await page.keyboard.press("Control+c");
+    await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).click();
+    await page.keyboard.press("Control+v");
+    await expect.poll(() => calls.length).toBe(1);
+    expect(calls[0][5]).toBe("ps2|MGS2.iso");
+  });
+
+  test("여러 행을 골랐으면 대상 후보를 보내지 않는다", async ({ page }) => {
+    const calls = await pasteArgs(page);
+    await page.locator(".lrow", { hasText: "Final Fantasy X" }).click();
+    await page.keyboard.press("Control+c");
+    await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).click();
+    await page.locator(".lrow", { hasText: "Super Mario World" }).click({ modifiers: ["Control"] });
+    await page.keyboard.press("Control+v");
+    await expect.poll(() => calls.length).toBe(1);
+    expect(calls[0][5]).toBeFalsy();
+  });
+});

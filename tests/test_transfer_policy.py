@@ -50,7 +50,7 @@ class TransferPolicyTests(unittest.TestCase):
         result = self.paste_all()
         self.assertEqual(result["policy"], {
             "pasteMode": "overwrite", "replaceRom": True, "includeRom": True, "includeMedia": True, "conflict": "ask",
-            "unmatchedRom": {"mode": "skip", "metadata": True, "media": True, "video": True},
+            "unmatchedRom": {"mode": "copy", "metadata": True, "media": True, "video": True},
         })
         self.assertEqual(result["conflicts"], 1)
         self.assertEqual([e.filename for e in self.api._plan(self.d).conflict_entries()], ["FFX.iso"])
@@ -145,12 +145,23 @@ class UnmatchedRomPolicyTests(unittest.TestCase):
         self.assertTrue(r["ok"], r.get("error"))
         return r["data"]
 
-    def test_default_skips_unmatched_rom_entirely(self):
+    def test_default_brings_metadata_and_media_even_without_a_rom(self):
+        """기본값 번복(사용자 결정) - 이 앱의 관리 대상은 Metadata/Media이고 ROM은 선택적
+        구성요소다. 원본에 ROM이 없다는 이유로 메타데이터까지 버리던 예전 기본값(skip)은
+        그 원칙과 어긋났다."""
         result = self.paste_ghost()
+        self.assertEqual(result["added"], 1)
+        self.assertEqual(result["skipped"], [])
+        entry = self.api._plan(self.d).entries[0]
+        self.assertEqual(entry.payload.get("name"), "Ghost Game")
+        self.assertFalse(entry.source.get("rom"), "원본에 없던 ROM을 옮기려 했다")
+
+    def test_skip_is_still_available_when_asked_for(self):
+        result = self.paste_ghost(unmatchedRomMode="skip")
         self.assertEqual(result["added"], 0)
         self.assertEqual(len(self.api._plan(self.d).entries), 0)
         self.assertEqual([s["filename"] for s in result["skipped"]], ["Ghost.iso"])
-        self.assertIn("ROM 미매칭", result["skipped"][0]["reason"])
+        self.assertIn("정책에 따라 건너뜀", result["skipped"][0]["reason"])
 
     def test_copy_mode_with_everything_on_adds_metadata_and_media_and_video(self):
         result = self.paste_ghost(unmatchedRomMode="copy")
@@ -198,8 +209,9 @@ class UnmatchedRomPolicyTests(unittest.TestCase):
         scan(self.api, self.s, force=True)
         rows = self.api.list_rows(self.s, limit=10)["data"]["rows"]
         self.api.copy_selection(self.s, [r["romUid"] for r in rows])
+        self.api.save_app_settings({"transfer": {"unmatchedRomMode": "skip"}})
         result = self.api.paste(self.d, "overwrite")["data"]
-        self.assertEqual(result["added"], 1)   # RealGame만 (Ghost는 기본 정책으로 건너뜀)
+        self.assertEqual(result["added"], 1)   # RealGame만 (Ghost는 skip 정책에 걸린다)
         self.assertEqual([e.filename for e in self.api._plan(self.d).entries], ["RealGame.iso"])
         self.assertEqual([s["filename"] for s in result["skipped"]], ["Ghost.iso"])
 
@@ -236,12 +248,12 @@ class UnmatchedRomPolicyTests(unittest.TestCase):
     def test_settings_default_reads_as_nested_policy_shape(self):
         policy = self.api._transfer_policy()
         self.assertEqual(policy["unmatchedRom"],
-                         {"mode": "skip", "metadata": True, "media": True, "video": True})
+                         {"mode": "copy", "metadata": True, "media": True, "video": True})
 
-    def test_invalid_stored_mode_falls_back_to_skip(self):
+    def test_invalid_stored_mode_falls_back_to_the_default(self):
         self.api.save_app_settings({"transfer": {"unmatchedRomMode": "bogus"}})
         policy = self.api._transfer_policy()
-        self.assertEqual(policy["unmatchedRom"]["mode"], "skip")
+        self.assertEqual(policy["unmatchedRom"]["mode"], "copy")
 
 
 class WindowBoundsTests(unittest.TestCase):

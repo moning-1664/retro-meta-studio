@@ -4347,6 +4347,14 @@
     return null;
   }
 
+  /** 지금 고른 행이 **딱 하나**일 때 그 열쇠("system|파일명"). 아니면 null.
+   * 붙여넣기가 "이름으로는 대상을 못 찾겠을 때 고른 행에 붙인다"를 판단하는 데 쓴다. */
+  function selectedRowKey() {
+    if (S.selected.size !== 1) return null;
+    const row = rowByUid([...S.selected][0]);
+    return row ? `${row.system}|${row.file}` : null;
+  }
+
   async function copyTextToClipboard(text, message) {
     try {
       await navigator.clipboard.writeText(text);
@@ -6227,7 +6235,12 @@
       systemMap = await askPasteSystemMap();
       if (systemMap === null) return;                     // 사용자가 취소했다
     }
-    const r = await api.paste(S.activeId, currentPasteMode(), systemMap, null, targetMap);
+    // **고른 행이 하나면 그 행을 대상 후보로 함께 보낸다**(사용자 모델 - "행을 고르고
+    // 붙여넣으면 그 행에 붙는다"). 백엔드는 이름으로 확실한 대상을 못 찾았을 때만 이걸 쓴다.
+    // 이게 없으면 이름이 전혀 다른 두 게임(`FF7.zip` <-> `ff7.rom`)은 대상을 골라 놓고
+    // 붙여넣어도 닿지 않았다.
+    const fallback = !targetRow && S.selected.size === 1 ? selectedRowKey() : null;
+    const r = await api.paste(S.activeId, currentPasteMode(), systemMap, null, targetMap, fallback);
     if (!r.ok) { showToast(r.error, "error"); return; }
     const d = r.data;
     await refreshPlan();

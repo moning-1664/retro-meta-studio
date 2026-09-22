@@ -891,9 +891,9 @@
     planResolveAllConflicts: (id, resolution) => call("plan_resolve_all_conflicts", id, resolution),
     planClear: (id) => call("plan_clear", id),
     copySelection: (id, romUids) => call("copy_selection", id, romUids),
-    paste: (id, mode, systemMap, replaceRom, targetMap) =>
+    paste: (id, mode, systemMap, replaceRom, targetMap, fallbackTarget) =>
       call("paste", id, mode || null, systemMap || null, replaceRom == null ? null : !!replaceRom,
-           targetMap || null),
+           targetMap || null, fallbackTarget || null),
     clipboardSystems: (id) => call("clipboard_systems", id),
     clipboardItems: () => call("clipboard_items"),
     validatePlan: (id) => call("validate_plan", id),

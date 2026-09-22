@@ -739,3 +739,34 @@ class ArchiveIdentityMergeTests(unittest.TestCase):
         usa = store.ensure_rom_identity(game, "ps2", "game", filename="Game (USA).iso")
         eur = store.ensure_rom_identity(game, "ps2", "game", filename="Game (Europe).iso")
         self.assertNotEqual(usa, eur)
+
+
+class SameTimestampSourcesResolveDeterministicallyTests(unittest.TestCase):
+    """두 출처의 `updated_at`이 같을 때 어느 값을 쓸지가 **실행할 때마다 달라지면 안 된다.**
+
+    실제로 났던 일: ROM만 먼저 읽고(제목=파일명, 장르 없음) 곧바로 메타데이터를 수집하면
+    두 출처의 시각이 같은 눈금에 들어간다(Windows의 time()은 해상도가 ~15.6ms다).
+    `max(key=updated_at)`는 동점에서 순서대로 먼저 온 것을 돌려주므로, 같은 입력에
+    장르가 있었다 없었다 했다. 나중에 기록된 것(record_id가 큰 것)이 이겨야 한다.
+    """
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_tie_"))
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        configure(self.api, {"archiveDir": str(self.dir / "Archives")})
+        self.archive = self.api.archive
+
+    def test_the_later_record_wins_when_the_clock_ticks_the_same(self):
+        game = self.archive.ensure_game("1941", "1941")
+        rid = self.archive.ensure_rom_identity(game, "fbneo", "1941", filename="1941.zip")
+        self.archive.put_record(rid, "col-a", {"name": "1941"}, {})
+        self.archive.put_record(rid, "col-b", {"name": "1941 (World)", "genre": "Shooter"}, {})
+        # 두 출처의 시각을 같은 눈금으로 맞춘다 - 실제로 연달아 기록하면 이렇게 된다.
+        self.archive._conn.execute(
+            "UPDATE archive_records SET updated_at=? WHERE rom_identity_id=?",
+            (1_700_000_000.0, rid))
+        self.archive._conn.commit()
+        for _ in range(5):
+            fields, _raw = self.archive.resolve_fields(rid)
+            self.assertEqual(fields.get("genre"), "Shooter", "동점에서 승자가 흔들린다")

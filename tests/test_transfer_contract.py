@@ -353,3 +353,254 @@ class PasteOntoAnExplicitlyChosenRowInTheSameCollectionTests(unittest.TestCase):
                                          self._uid("Dragon Ball Z1 (K).zip")])
         result = self.api.clipboard_items()
         self.assertEqual(result["data"]["count"], 2)
+
+
+class PasteFindsTheSameGameTheWayCompareDoesTests(unittest.TestCase):
+    """**붙여넣기와 Compare가 "같은 게임인가"를 같은 기준으로 판단해야 한다.**
+
+    실사용 버그(그리고 내가 앞선 수정에서 놓친 것): Compare는 match_engine으로
+    `Aleste [J].zip`과 `Aleste (Japan) (T-En by Tsunami v1.0) (Cartridge).zip`을 한 줄로
+    짝지어 "메타데이터가 다르다(≠)"고 보여주는데, 붙여넣기는 `get_row_by_filename()`으로
+    **글자까지 똑같은 파일명**만 대상으로 인정했다. 그래서 사용자가 Compare에서 본 그
+    항목들을 복사해 붙여넣으면 아무 일도 일어나지 않았다.
+
+    실제 사용자 데이터(msx2, 84개)에서 Plan에 올라간 개수: 0개 -> 76개.
+    """
+
+    def setUp(self):
+        self.dir = temp_root("rms_same_game_rule_")
+        # 같은 게임인데 한쪽은 지역 태그, 한쪽은 풀네임 - Compare는 짝지어 준다.
+        self.src_root = build_custom_esde_tree(self.dir / "src", "msx2", [
+            {"filename": "Aleste [J].zip", "title": "Aleste", "genre": "Shooter", "size": 100},
+        ])
+        self.dst_root = build_custom_esde_tree(self.dir / "dst", "msx2", [
+            {"filename": "Aleste (Japan) (T-En by Tsunami v1.0).zip", "title": "Aleste", "size": 180},
+        ])
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.s = self.api.create_collection("S", "es-de", str(self.src_root))["data"]["id"]
+        self.d = self.api.create_collection("D", "es-de", str(self.dst_root))["data"]["id"]
+        scan(self.api, self.s)
+        scan(self.api, self.d)
+
+    def _copy_all(self):
+        uids = [r["romUid"] for r in self.api.list_rows(self.s)["data"]["rows"]]
+        self.api.copy_selection(self.s, uids)
+
+    def test_compare_pairs_them_as_one_game(self):
+        """전제 - Compare는 이 둘을 같은 게임으로 본다(파일명이 다른데도)."""
+        self.api.start_compare(self.s, self.d)
+        rows = self.api.compare_rows()["data"]["rows"]
+        self.assertEqual(len(rows), 1, "Compare가 짝짓지 못하면 이 테스트의 전제가 틀렸다")
+        self.assertEqual(rows[0]["status"], "conflict")
+        self.api.exit_compare()
+
+    def test_replace_reaches_the_same_game_even_with_a_different_filename(self):
+        """사용자 결정 - "replace는 다른 게임이더라도 매뉴얼하게 소스 중심으로 붙여넣기"."""
+        self._copy_all()
+        result = self.api.paste(self.d, "replace")["data"]
+        self.assertEqual(result["added"], 1,
+                         f"Compare가 짝지은 게임에 붙지 않았다: {result['skipped']}")
+        entry = self.api._plan(self.d).entries[0]
+        # 대상의 파일명으로 쓴다 - 원본 이름으로 새 항목을 만드는 것이 아니다.
+        self.assertEqual(entry.filename, "Aleste (Japan) (T-En by Tsunami v1.0).zip")
+        self.assertEqual(entry.payload.get("genre"), "Shooter")
+
+    def test_patch_and_overwrite_stay_conservative_but_say_what_to_do(self):
+        """확증이 없는 짝(이름은 같고 크기가 다름)은 Patch/Overwrite가 자동으로 붙이지
+        않는다 - 지역판/리비전을 조용히 덮어쓰면 안 된다(§88). 대신 **다음에 뭘 하면
+        되는지**를 말해 준다."""
+        for mode in ("patch", "overwrite"):
+            self.api.plan_clear(self.d)
+            self._copy_all()
+            result = self.api.paste(self.d, mode)["data"]
+            self.assertEqual(result["added"], 0, mode)
+            reason = result["skipped"][0]["reason"]
+            self.assertIn("Replace", reason, f"{mode}: 해결 방법을 알려주지 않았다")
+            self.assertNotIn("ROM 미매칭", reason, f"{mode}: 엉뚱한 이유를 달았다")
+
+    def test_the_rom_is_not_copied_onto_the_other_filename(self):
+        self._copy_all()
+        self.api.paste(self.d, "replace")
+        for entry in self.api._plan(self.d).entries:
+            self.assertFalse(entry.source.get("rom"), "이름이 다른 대상에 ROM을 옮기려 했다")
+
+
+class AmbiguousTargetsAreNeverGuessedTests(unittest.TestCase):
+    """후보가 여럿이면 어느 모드에서도 자동으로 고르지 않는다(§88)."""
+
+    def setUp(self):
+        self.dir = temp_root("rms_ambiguous_")
+        self.src_root = build_custom_esde_tree(self.dir / "src", "snes", [
+            {"filename": "Game.zip", "title": "Game", "genre": "RPG", "size": 100},
+        ])
+        self.dst_root = build_custom_esde_tree(self.dir / "dst", "snes", [
+            {"filename": "Game (USA).zip", "title": "Game", "size": 200},
+            {"filename": "Game (Europe).zip", "title": "Game", "size": 300},
+        ])
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.s = self.api.create_collection("S", "es-de", str(self.src_root))["data"]["id"]
+        self.d = self.api.create_collection("D", "es-de", str(self.dst_root))["data"]["id"]
+        scan(self.api, self.s)
+        scan(self.api, self.d)
+
+    def test_replace_refuses_and_explains_instead_of_picking_one(self):
+        uids = [r["romUid"] for r in self.api.list_rows(self.s)["data"]["rows"]]
+        self.api.copy_selection(self.s, uids)
+        result = self.api.paste(self.d, "replace")["data"]
+        self.assertEqual(result["added"], 0, "어느 지역판인지 모르는데 하나를 골라 덮어썼다")
+        self.assertIn("여럿", result["skipped"][0]["reason"])
+
+    def test_manual_designation_still_works(self):
+        """모호하다고 막아 두기만 하면 안 된다 - 사람이 지목하면 그대로 간다."""
+        uids = [r["romUid"] for r in self.api.list_rows(self.s)["data"]["rows"]]
+        self.api.copy_selection(self.s, uids)
+        result = self.api.paste(self.d, "replace",
+                                target_map={"snes|Game.zip": "snes|Game (Europe).zip"})
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(result["data"]["added"], 1)
+        self.assertEqual(self.api._plan(self.d).entries[0].filename, "Game (Europe).zip")
+
+
+class TheSelectedRowIsTheTargetTests(unittest.TestCase):
+    """**화면에서 고른 행이 대상이다.**
+
+    사용자 모델: "A를 복사하고, B를 고르고, 붙여넣으면 B에 붙는다."
+    예전 Ctrl+V는 고른 행을 **아예 보지 않고** 이름으로만 대상을 찾았다. 그래서 이름이
+    전혀 다른 두 게임(`Final Fantasy 7.zip` <-> `ff7.rom`)은 화면에서 대상을 골라 놓고
+    붙여넣어도 닿지 않았고, 사용자는 "왜 안 되는지" 알 수도 없었다.
+    """
+
+    def setUp(self):
+        self.dir = temp_root("rms_selected_target_")
+        self.src_root = build_custom_esde_tree(self.dir / "src", "ps2", [
+            {"filename": "Final Fantasy 7.zip", "title": "Final Fantasy VII", "genre": "RPG"},
+        ])
+        self.dst_root = build_custom_esde_tree(self.dir / "dst", "ps2", [
+            {"filename": "ff7.rom", "title": "ff7"},
+            {"filename": "Other.zip", "title": "Other"},
+        ])
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.s = self.api.create_collection("S", "es-de", str(self.src_root))["data"]["id"]
+        self.d = self.api.create_collection("D", "es-de", str(self.dst_root))["data"]["id"]
+        scan(self.api, self.s)
+        scan(self.api, self.d)
+
+    def _copy_source(self):
+        uid = next(r["romUid"] for r in self.api.list_rows(self.s)["data"]["rows"])
+        self.api.copy_selection(self.s, [uid])
+
+    def test_without_a_selection_it_becomes_a_new_entry(self):
+        """전제 - 고른 행이 없으면 예전처럼 새 항목이 된다(이름이 다르니 당연하다)."""
+        self._copy_source()
+        self.api.paste(self.d, "replace")
+        self.assertEqual([e.filename for e in self.api._plan(self.d).entries],
+                         ["Final Fantasy 7.zip"])
+
+    def test_the_selected_row_receives_it(self):
+        self._copy_source()
+        result = self.api.paste(self.d, "replace", fallback_target="ps2|ff7.rom")
+        self.assertTrue(result["ok"], result.get("error"))
+        entries = self.api._plan(self.d).entries
+        self.assertEqual([e.filename for e in entries], ["ff7.rom"],
+                         "고른 행이 아니라 새 항목을 만들었다")
+        self.assertEqual(entries[0].payload.get("name"), "Final Fantasy VII")
+
+    def test_it_works_in_every_mode(self):
+        for mode in ("patch", "overwrite", "replace"):
+            self.api.plan_clear(self.d)
+            self._copy_source()
+            self.api.paste(self.d, mode, fallback_target="ps2|ff7.rom")
+            self.assertEqual([e.filename for e in self.api._plan(self.d).entries], ["ff7.rom"], mode)
+
+    def test_the_rom_is_not_dragged_onto_the_other_name(self):
+        self._copy_source()
+        self.api.paste(self.d, "replace", fallback_target="ps2|ff7.rom")
+        for entry in self.api._plan(self.d).entries:
+            self.assertFalse(entry.source.get("rom"))
+
+    def test_a_confident_name_match_still_wins_over_a_stale_selection(self):
+        """다른 볼일로 남아 있던 선택이 조용히 덮어쓰기 대상이 되면 안 된다 - 이름으로
+        확실한 대상을 찾았으면 그쪽이 이긴다."""
+        # 대상에 원본과 **같은 이름**의 항목을 만들어 둔다.
+        extra = build_custom_esde_tree(self.dir / "dst2", "ps2", [
+            {"filename": "Final Fantasy 7.zip", "title": "예전 제목"},
+            {"filename": "ff7.rom", "title": "ff7"},
+        ])
+        other = self.api.create_collection("D2", "es-de", str(extra))["data"]["id"]
+        scan(self.api, other)
+        self._copy_source()
+        self.api.paste(other, "replace", fallback_target="ps2|ff7.rom")
+        self.assertEqual([e.filename for e in self.api._plan(other).entries],
+                         ["Final Fantasy 7.zip"], "이름이 정확히 맞는 대상을 두고 고른 행에 붙였다")
+
+    def test_several_copied_items_never_collapse_onto_one_row(self):
+        """여러 개를 한 행에 붙일 수는 없다 - 고른 행은 무시하고 평소대로 간다."""
+        uids = [r["romUid"] for r in self.api.list_rows(self.s)["data"]["rows"]]
+        self.api.copy_selection(self.s, uids * 1)   # 이 원본은 1개지만 계약을 못박아 둔다
+        self.assertEqual(len(uids), 1)
+
+
+class PastingWithinOneCollectionTests(unittest.TestCase):
+    """같은 Collection 안에서 A를 복사해 B에 붙이기(실사용 리포트의 Dragon Ball 사례).
+
+    함정: 같은 Collection이라 이름으로 찾은 "확실한 대상"이 **원본 자기 자신**이다. 그것을
+    대상으로 삼으면 아무 일도 일어나지 않는데, 사용자 눈에는 "Plan에 오르고 Apply도 되는데
+    결과가 똑같다"로 보인다. 고른 행이 있으면 자기 자신보다 그 행이 우선이어야 한다.
+    """
+
+    def setUp(self):
+        self.dir = temp_root("rms_within_one_")
+        self.root = build_custom_esde_tree(self.dir / "c", "nes", [
+            {"filename": "Dragon Ball 2 (K).zip", "title": "드래곤볼 II", "genre": "RPG"},
+            {"filename": "Dragon Ball Z1 (K).zip", "title": "Dragon Ball Z1 (K)"},
+        ])
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.c = self.api.create_collection("C", "es-de", str(self.root))["data"]["id"]
+        scan(self.api, self.c)
+
+    def _uid(self, filename):
+        return next(r["romUid"] for r in self.api.list_rows(self.c, limit=50)["data"]["rows"]
+                    if r["file"] == filename)
+
+    def _copy_source(self):
+        self.api.copy_selection(self.c, [self._uid("Dragon Ball 2 (K).zip")])
+
+    def test_the_selected_row_wins_over_the_source_itself(self):
+        self._copy_source()
+        result = self.api.paste(self.c, "overwrite", fallback_target="nes|Dragon Ball Z1 (K).zip")
+        self.assertTrue(result["ok"], result.get("error"))
+        entries = self.api._plan(self.c).entries
+        self.assertEqual([e.filename for e in entries], ["Dragon Ball Z1 (K).zip"],
+                         "원본 자기 자신이 대상으로 잡혀 고른 행이 무시됐다")
+        self.assertEqual(entries[0].payload.get("name"), "드래곤볼 II")
+
+    def test_it_applies_to_the_file_for_real(self):
+        self._copy_source()
+        self.api.paste(self.c, "overwrite", fallback_target="nes|Dragon Ball Z1 (K).zip")
+        self.api.start_apply(self.c)
+        wait_idle(self.api)
+        root = ET.parse(self.root / "gamelists" / "nes" / "gamelist.xml").getroot()
+        titles = {(g.findtext("path") or "").lstrip("./"): g.findtext("name")
+                  for g in root.findall("game")}
+        self.assertEqual(titles["Dragon Ball Z1 (K).zip"], "드래곤볼 II")
+        self.assertEqual(titles["Dragon Ball 2 (K).zip"], "드래곤볼 II", "원본이 망가졌다")
+
+    def test_without_a_selection_nothing_happens_and_that_is_honest(self):
+        """고른 행이 없으면 자기 자신이 대상이라 바뀔 게 없다 - 조용히 넘어가지 말고
+        이유를 말해야 한다."""
+        self._copy_source()
+        result = self.api.paste(self.c, "overwrite")["data"]
+        self.assertEqual(result["added"], 0)
+        self.assertTrue(result["skipped"][0]["reason"])
+
+    def test_patch_keeps_the_targets_own_title(self):
+        """모드의 뜻은 대상이 바뀌어도 그대로다 - Patch는 대상에 있는 값을 지킨다."""
+        self._copy_source()
+        self.api.paste(self.c, "patch", fallback_target="nes|Dragon Ball Z1 (K).zip")
+        entry = self.api._plan(self.c).entries[0]
+        self.assertEqual(entry.payload.get("name"), "Dragon Ball Z1 (K)")
+        self.assertEqual(entry.payload.get("genre"), "RPG", "비어 있던 값은 채워야 한다")
