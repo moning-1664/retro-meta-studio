@@ -29,11 +29,11 @@ test("요약 카드가 큰 표지와 요약 정보를 보여주고, 그 아래�
 
 test("탭을 바꿔도 저장 버튼은 Metadata 탭에서만 보인다", async ({ page }) => {
   await page.locator(".lrow").first().click();
-  await expect(page.locator(".detail-footer .btn")).toContainText("저장");
+  await expect(page.locator(".detail-save")).toContainText("저장");
   await page.locator(".detail-tab", { hasText: "ROM" }).click();
   await expect(page.locator(".detail-footer")).toHaveCount(0);
   await page.locator(".detail-tab", { hasText: "Metadata" }).click();
-  await expect(page.locator(".detail-footer .btn")).toContainText("저장");
+  await expect(page.locator(".detail-save")).toContainText("저장");
 });
 
 test("탭을 오갔다 와도 편집 중이던 값이 남아 있다(draft 보존)", async ({ page }) => {

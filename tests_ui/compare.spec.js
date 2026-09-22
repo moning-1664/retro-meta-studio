@@ -192,6 +192,38 @@ test.describe("가운데 Gamelist", () => {
   });
 });
 
+test.describe("미리보기 토글 (메뉴 정리 §8)", () => {
+  const previewButton = (page) => page.locator("#detail-top .detail-topspace .icon-btn[title*='미리보기']");
+
+  test("Compare에 들어오면 미리보기부터 켜진다", async ({ page }) => {
+    // 먼저 꺼 두고 들어가도 Compare는 무조건 켠 채로 시작한다.
+    await previewButton(page).click();
+    await expect(page.locator("#detail-panel")).toBeHidden();
+    await startCompare(page);
+    await openDetail(page, "Conflict Game");
+    await expect(page.locator("#detail-panel")).toBeVisible();
+    await expect(page.locator("#compare-left")).toBeVisible();
+  });
+
+  test("끄면 좌/우 둘 다 사라진다", async ({ page }) => {
+    await startCompare(page);
+    await openDetail(page, "Conflict Game");
+    await expect(page.locator("#compare-left")).toBeVisible();
+    await previewButton(page).click();
+    await expect(page.locator("#detail-panel")).toBeHidden();
+    await expect(page.locator("#compare-left")).toBeHidden();
+  });
+
+  test("다시 켜면 좌/우 둘 다 돌아온다", async ({ page }) => {
+    await startCompare(page);
+    await openDetail(page, "Conflict Game");
+    await previewButton(page).click();
+    await previewButton(page).click();
+    await expect(page.locator("#detail-panel")).toBeVisible();
+    await expect(page.locator("#compare-left")).toBeVisible();
+  });
+});
+
 test.describe("연산자로 Plan에 올리기", () => {
   async function spy(page) {
     await page.evaluate(() => {

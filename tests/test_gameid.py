@@ -166,3 +166,25 @@ class DiscSuffixTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DiscRetagTests(unittest.TestCase):
+    """"멀티 디스크 태그 적용"(System 우클릭) - 기존 꼬리표를 지우고 지금 고른 형식으로
+    다시 붙인다."""
+
+    def test_strip_removes_only_disc_looking_suffixes(self):
+        from app.title_affix import strip_disc_suffix
+        self.assertEqual(strip_disc_suffix("Metal Gear Solid (Disc 1/2)"), "Metal Gear Solid")
+        self.assertEqual(strip_disc_suffix("Metal Gear Solid [Disc 1 of 2]"), "Metal Gear Solid")
+        self.assertEqual(strip_disc_suffix("Metal Gear Solid (1/2)"), "Metal Gear Solid")
+        # 발매연도/지역/리비전은 디스크 표시가 아니다 - 지우면 안 된다.
+        self.assertEqual(strip_disc_suffix("Metal Gear Solid (1994)"), "Metal Gear Solid (1994)")
+        self.assertEqual(strip_disc_suffix("Metal Gear Solid (USA)"), "Metal Gear Solid (USA)")
+        self.assertEqual(strip_disc_suffix("Metal Gear Solid (Rev A)"), "Metal Gear Solid (Rev A)")
+
+    def test_retag_switches_the_format_instead_of_stacking(self):
+        from app.title_affix import retagged_disc_suffix
+        title = retagged_disc_suffix("Snatcher (Disk 1/3)", "Snatcher (Disk 1 of 3).dsk",
+                                     "msx2", "bracket_word_of")
+        self.assertEqual(title, "Snatcher [Disk 1 of 3]")
+        self.assertNotIn("(Disk 1/3)", title)

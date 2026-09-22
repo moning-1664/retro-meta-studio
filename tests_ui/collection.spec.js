@@ -49,10 +49,10 @@ test("탭 우클릭은 대화상자가 아니라 플로팅 메뉴다", async ({ 
   await expect(page.locator(".ctx-menu")).toHaveCount(0);
 });
 
-test("탭 우클릭 -> 이름 변경이 탭 제목에 반영된다", async ({ page }) => {
+test("탭 우클릭 -> Collection 정보에서 이름을 바꾸면 탭 제목에 반영된다", async ({ page }) => {
   await page.locator(".ctab:not(.archive)").first().click({ button: "right" });
-  await page.locator(".ctx-menu .ctx-item", { hasText: "이름 변경" }).click();
-  await page.locator(".modal-body .field-input").fill("이름 바꾼 컬렉션");
+  await page.locator(".ctx-menu .ctx-item", { hasText: "Collection 정보" }).click();
+  await page.locator(".modal-body input.field-input").first().fill("이름 바꾼 컬렉션");
   await modalButton(page, "저장").click();
   await expect(page.locator(".ctab:not(.archive)").first()).toContainText("이름 바꾼 컬렉션");
 });

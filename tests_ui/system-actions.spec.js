@@ -259,10 +259,10 @@ test.describe("ROM 없는 항목 정리", () => {
   });
 });
 
-// System 미디어 선택 삭제 - System 우클릭 메뉴(사용자 결정, 2026-09). Cover/Screenshot/
+// 미디어 선택 후 정리 - System 우클릭 메뉴(사용자 결정, 2026-09). Cover/Screenshot/
 // Video 등 media 종류를 체크박스로 골라 그 System 전체에서만 지운다.
-test.describe("System 미디어 선택 삭제", () => {
-  const mediaItem = (page) => page.locator(".ctx-menu .ctx-item", { hasText: "System 미디어 선택 삭제" });
+test.describe("미디어 선택 후 정리", () => {
+  const mediaItem = (page) => page.locator(".ctx-menu .ctx-item", { hasText: "미디어 선택 후 정리" });
   const mockTypes = (page, types) => page.evaluate((data) => {
     window.api.mediaCleanupPreview = async (id, system) => ({ ok: true, data: { system, types: data } });
   }, types);
@@ -375,8 +375,8 @@ test.describe("Storage 그룹 우클릭 메뉴", () => {
 
   test("System 메뉴의 그룹 단위 기능이 나온다", async ({ page }) => {
     await groupMenu(page);
-    for (const label of ["Title Prefix/Postfix 일괄 적용", "gamelist 만들기", "ROM 없는 항목 정리",
-                         "System 미디어 선택 삭제", "ROM 폴더", "Metadata 폴더", "Media 폴더"]) {
+    for (const label of ["언어 태그 적용", "gamelist 만들기", "ROM 없는 항목 정리",
+                         "미디어 선택 후 정리", "ROM 폴더", "Metadata 폴더", "Media 폴더"]) {
       await expect(item(page, label).first()).toBeVisible();
     }
   });
@@ -391,28 +391,28 @@ test.describe("Storage 그룹 우클릭 메뉴", () => {
     expect(await page.evaluate(() => window.__opened)).toEqual([["internal", "metadata"]]);
   });
 
-  test("Title Prefix/Postfix는 그 그룹의 System 전체를 대상으로 미리본다", async ({ page }) => {
+  test("언어 태그 적용은 그 그룹의 System 전체를 대상으로 미리본다", async ({ page }) => {
     await page.evaluate(() => {
       window.__preview = [];
       const original = window.api.titleAffixPreview;
       window.api.titleAffixPreview = (id, uids, system) => { window.__preview.push(system); return original(id, uids, system); };
     });
     await groupMenu(page);
-    await item(page, "Title Prefix/Postfix").click();
+    await item(page, "언어 태그 적용").click();
     await expect.poll(() => page.evaluate(() => window.__preview.length)).toBeGreaterThan(0);
     const system = (await page.evaluate(() => window.__preview))[0];
     expect(Array.isArray(system)).toBe(true);
     expect(system.length).toBeGreaterThan(1);
   });
 
-  test("미디어 선택 삭제는 그룹의 모든 System에서 지운다", async ({ page }) => {
+  test("미디어 선택 후 정리는 그룹의 모든 System에서 지운다", async ({ page }) => {
     await page.evaluate(() => {
       window.__cleaned = [];
       window.api.mediaCleanupPreview = async () => ({ ok: true, data: { types: [{ type: "covers", label: "Covers", count: 2, bytes: 100 }] } });
       window.api.mediaCleanup = async (id, system, types) => { window.__cleaned.push([system, types]); return { ok: true, data: { removed: 2, failed: [] } }; };
     });
     await groupMenu(page);
-    await item(page, "System 미디어 선택 삭제").click();
+    await item(page, "미디어 선택 후 정리").click();
     await page.locator(".media-clean-row input").first().check();
     await page.locator(".modal-actions .btn.danger", { hasText: "삭제" }).click();
     await expect.poll(() => page.evaluate(() => window.__cleaned.length)).toBeGreaterThan(1);

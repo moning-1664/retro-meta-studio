@@ -284,6 +284,28 @@
       });
       return ok({ added });
     },
+    // 멀티 디스크 태그 적용 - 목업은 파일명에서 "Disc N"/"Disk N" 표시를 찾아 흉내만 낸다
+    // (실제 판정은 app/title_affix.py의 gameid 기반 계산이다).
+    disc_retag_preview: (id, system) => {
+      const rows = titleAffixRows(null, system);
+      if (!rows.length) return Promise.resolve({ ok: false, error: "대상을 찾을 수 없습니다." });
+      const items = rows.map((r) => {
+        const m = mockFileOf(r).match(/\b(Dis[ck])\s*(\d+)/i);
+        const newTitle = m ? `${r.title} (${m[1]} ${m[2]})` : r.title;
+        return { romUid: r.romUid, system: r.system, filename: r.file,
+                oldTitle: r.title, newTitle, changed: newTitle !== r.title };
+      });
+      return ok({ items, changed: items.filter((i) => i.changed).length });
+    },
+    plan_disc_retag: (id, system) => {
+      const rows = titleAffixRows(null, system);
+      let added = 0;
+      rows.forEach((r) => {
+        const m = mockFileOf(r).match(/\b(Dis[ck])\s*(\d+)/i);
+        if (m) added += 1;
+      });
+      return ok({ added });
+    },
     start_archive_ingest: (id, scope) => {
       if (!mockArchiveConfig.archiveDir) {
         return Promise.resolve({ ok: false, error: "Archive 디렉토리를 먼저 정하세요." });
@@ -890,6 +912,8 @@
     planStorageChange: (id, system, storageId) => call("plan_storage_change", id, system, storageId),
     titleAffixPreview: (id, romUids, system) => call("title_affix_preview", id, romUids, system),
     planTitleEdit: (id, romUids, system) => call("plan_title_edit", id, romUids, system),
+    discRetagPreview: (id, system, fmt) => call("disc_retag_preview", id, system, fmt || null),
+    planDiscRetag: (id, system, fmt) => call("plan_disc_retag", id, system, fmt || null),
     planRemoveEntry: (id, key) => call("plan_remove_entry", id, key),
     planConflictPreview: (id, key, index) => call("plan_conflict_preview", id, key, index || 0),
     planResolveConflict: (id, key, resolution) => call("plan_resolve_conflict", id, key, resolution),

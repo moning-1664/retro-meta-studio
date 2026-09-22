@@ -8,22 +8,29 @@ const { openApp, modalButton } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
-async function openConvertPreview(page) {
+// Convert 전용 메뉴는 없앴다(메뉴 정리 §6) - 탭 우클릭 -> "Collection 정보" 안의
+// Convert 버튼이 지금의 유일한 진입점이다.
+async function openConvertFromTab(page) {
   await page.locator(".ctab:not(.archive)").first().click({ button: "right" });
-  await page.locator(".ctx-menu .ctx-item", { hasText: "Convert" }).click();
+  await page.locator(".ctx-menu .ctx-item", { hasText: "Collection 정보" }).click();
+  await page.locator(".modal-body button", { hasText: "Convert" }).click();
+}
+
+async function openConvertPreview(page) {
+  await openConvertFromTab(page);
   await expect(page.locator(".modal-title")).toHaveText("Convert");
   await modalButton(page, "다음").click();
   await expect(page.locator(".modal-title")).toHaveText("Convert 미리보기");
 }
 
-test("탭 우클릭에서 Convert를 시작한다", async ({ page }) => {
+test("Collection 정보에서 Convert를 시작한다", async ({ page }) => {
   await page.locator(".ctab:not(.archive)").first().click({ button: "right" });
-  await expect(page.locator(".ctx-menu .ctx-item", { hasText: "Convert" })).toBeVisible();
+  await page.locator(".ctx-menu .ctx-item", { hasText: "Collection 정보" }).click();
+  await expect(page.locator(".modal-body button", { hasText: "Convert" })).toBeVisible();
 });
 
 test("대상 Collection을 고르게 하고 원본 보존을 알린다", async ({ page }) => {
-  await page.locator(".ctab:not(.archive)").first().click({ button: "right" });
-  await page.locator(".ctx-menu .ctx-item", { hasText: "Convert" }).click();
+  await openConvertFromTab(page);
 
   // 자기 자신은 대상에 없어야 한다.
   const options = page.locator(".modal-body select option");

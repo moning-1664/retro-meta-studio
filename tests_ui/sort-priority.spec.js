@@ -24,10 +24,10 @@ test.describe("기본 동작", () => {
     expect(order.slice(0, 4)).toEqual(["seg", "icon-btn", "mini-select", "search-box"]);
   });
 
-  test("구분 없음이 기본이고, 옵션은 네 가지다", async ({ page }) => {
+  test("전체보기가 기본이고, 옵션은 네 가지다", async ({ page }) => {
     await expect(prioritySelect(page)).toHaveValue("");
     const labels = await prioritySelect(page).locator("option").allTextContents();
-    expect(labels).toEqual(["구분 없음", "ROM 우선", "메타데이터 우선", "미디어 우선"]);
+    expect(labels).toEqual(["전체보기", "ROM 우선", "메타데이터 우선", "미디어 우선"]);
   });
 
   test("메타데이터 우선 - 메타데이터 없는 항목(SMW)이 뒤로 간다", async ({ page }) => {
@@ -42,7 +42,7 @@ test.describe("기본 동작", () => {
     expect(files[0]).toBe("FFX.iso");
   });
 
-  test("구분 없음으로 되돌리면 원래 순서(제목순)로 돌아간다", async ({ page }) => {
+  test("전체보기로 되돌리면 원래 순서(제목순)로 돌아간다", async ({ page }) => {
     const original = await rowFiles(page);
     await prioritySelect(page).selectOption("metadata");
     await prioritySelect(page).selectOption("");

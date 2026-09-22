@@ -24,16 +24,18 @@
   // 가장 넓다. 목록만 훑어도 어떤 게임인지 알 수 있어야 하기 때문이다.
   //
   // `key`가 없는 컬럼(No., ★)은 정렬도 폭 조절도 하지 않는다.
+  // 기본 순서는 사용자 결정(메뉴 정리 §5): No/Favorite/Title/Description/Status/
+  // Rating/Genre/Region - File은 목록에 없었으므로 가장 덜 중요한 뒤쪽에 둔다.
   const COLUMNS = [
-    { id: "no", label: "No.", width: 23, fixed: true },
-    { id: "file", label: "File", key: "filename", width: 190 },
+    { id: "no", label: "No.", width: 34, fixed: true },
+    { id: "fav", label: "★", key: "favorite", width: 30, fixed: true },
     { id: "title", label: "Title", key: "title", width: 220 },
     { id: "desc", label: "Description", key: "desc", width: 390 },
-    { id: "region", label: "Region", key: "region", width: 78 },
-    { id: "rating", label: "Rating", key: "rating", width: 66 },
-    { id: "fav", label: "★", key: "favorite", width: 30, fixed: true },
-    { id: "genre", label: "Genre", key: "genre", width: 120 },
     { id: "status", label: "Status", width: 88, fixed: true },
+    { id: "rating", label: "Rating", key: "rating", width: 66 },
+    { id: "genre", label: "Genre", key: "genre", width: 120 },
+    { id: "region", label: "Region", key: "region", width: 78 },
+    { id: "file", label: "File", key: "filename", width: 190 },
   ];
   const COL_MIN_WIDTH = 50;
   const DEFAULT_COL_WIDTHS = Object.fromEntries(COLUMNS.map((c) => [c.id, c.width]));
@@ -51,9 +53,9 @@
   // ---- 컬럼 순서/표시 ------------------------------------------------------
   // **앱 전체 설정**(Settings > gamelist)이다 - Collection마다 다르게 둘 이유가 없고,
   // 폭은 화면 크기와 데이터에 따라 달라서 지금처럼 Collection별 ui_state에 남긴다.
-  // No.는 항상 맨 앞이고 Title은 숨길 수 없다(무엇의 목록인지 알 수 없게 된다).
+  // No./Title도 다른 컬럼과 똑같이 순서를 바꾸거나 숨길 수 있다(사용자 결정,
+  // 메뉴 정리 §5) - 다만 컬럼이 하나도 안 남는 빈 목록은 막는다(아래 isLastVisible).
   const COLUMN_BY_ID = Object.fromEntries(COLUMNS.map((c) => [c.id, c]));
-  const LOCKED_COLUMNS = new Set(["no", "title"]);
 
   function columnName(col) {
     return col.id === "fav" ? "★ Favorite" : col.label;
@@ -64,11 +66,16 @@
   function columnLayout() {
     const conf = (S.settings && S.settings.gamelist) || {};
     const order = (Array.isArray(conf.order) ? conf.order : [])
-      .filter((id, i, all) => COLUMN_BY_ID[id] && id !== "no" && all.indexOf(id) === i);
-    COLUMNS.forEach((c) => { if (c.id !== "no" && !order.includes(c.id)) order.push(c.id); });
+      .filter((id, i, all) => COLUMN_BY_ID[id] && all.indexOf(id) === i);
+    COLUMNS.forEach((c) => { if (!order.includes(c.id)) order.push(c.id); });
     const hidden = new Set((Array.isArray(conf.hidden) ? conf.hidden : [])
-      .filter((id) => COLUMN_BY_ID[id] && !LOCKED_COLUMNS.has(id)));
-    return { order: ["no", ...order], hidden };
+      .filter((id) => COLUMN_BY_ID[id]));
+    return { order, hidden };
+  }
+
+  /** 지금 보이는 컬럼이 이것 하나뿐인가 - 목록이 완전히 빈 화면이 되는 것만 막는다. */
+  function isLastVisible(id, order, hidden) {
+    return !hidden.has(id) && order.filter((x) => !hidden.has(x)).length <= 1;
   }
 
   //: Compare는 **한 행이 좌/우 두 항목의 짝**이라 일반 Gamelist와 컬럼 구성이 다르다
@@ -91,30 +98,30 @@
   }
 
   function saveColumnLayout(order, hidden) {
-    updateSettings("gamelist", { order: order.filter((id) => id !== "no"), hidden: [...hidden] });
+    updateSettings("gamelist", { order: [...order], hidden: [...hidden] });
   }
 
   function toggleColumn(id, visible) {
-    if (LOCKED_COLUMNS.has(id)) return;
     const { order, hidden } = columnLayout();
+    if (!visible && isLastVisible(id, order, hidden)) return;
     if (visible) hidden.delete(id); else hidden.add(id);
     saveColumnLayout(order, hidden);
   }
 
-  /** id를 targetId 앞(after면 뒤)으로 옮긴다. No. 앞으로는 못 간다. */
+  /** id를 targetId 앞(after면 뒤)으로 옮긴다. */
   function moveColumn(id, targetId, after) {
-    if (id === "no" || id === targetId || !COLUMN_BY_ID[id]) return;
+    if (id === targetId || !COLUMN_BY_ID[id]) return;
     const { order, hidden } = columnLayout();
     const rest = order.filter((x) => x !== id);
-    const at = targetId === "no" ? 1 : rest.indexOf(targetId) + (after ? 1 : 0);
-    rest.splice(Math.max(1, at), 0, id);
+    const at = rest.indexOf(targetId) + (after ? 1 : 0);
+    rest.splice(Math.max(0, at), 0, id);
     saveColumnLayout(rest, hidden);
   }
 
   function moveColumnBy(id, delta) {
     const { order } = columnLayout();
     const j = order.indexOf(id) + delta;
-    if (id === "no" || j < 1 || j >= order.length) return;
+    if (j < 0 || j >= order.length) return;
     moveColumn(id, order[j], delta > 0);
   }
 
@@ -742,9 +749,10 @@
     showModal("Archive 설정", body, [h("button", { class: "btn", onClick: closeModal }, ["닫기"])]);
   }
 
-  /** Settings > Metadata & Media > GameList Columns. 머리글 드래그/우클릭과 같은 값을 바꾼다.
-   * 순서는 ☰ 손잡이를 끌어 바꾼다(사용자 결정 - 위/아래 버튼보다 직관적). 손잡이에 초점이
-   * 있으면 ↑↓ 키로도 한 칸씩 옮긴다. No.는 늘 맨 앞이라 손잡이가 꺼져 있다. */
+  /** Settings > Metadata & Media > GameList Columns. 머리글 드래그/우클릭과 같은 값을 바꿔다.
+   * 순서는 ☰ 손잡이를 끌어 바꿔다(사용자 결정 - 위/아래 버튼보다 직관적). 손잡이에 초점이
+   * 있으면 ↑↓ 키로도 한 칸씨 옥긴다. No./Title도 다른 컴럼과 동일하게 옥기거나 숨길 수
+   * 있다 - 마지막 하나 남은 컴럼만 숨김 체크박스가 잠긴다(빈 목록 방지). */
   function columnSettingsEditor() {
     const wrap = h("div", { class: "stg-columns" });
     const draw = (focusId) => {
@@ -753,29 +761,26 @@
       const list = h("div", { class: "stg-column-list" });
       order.forEach((id) => {
         const col = COLUMN_BY_ID[id];
-        const locked = LOCKED_COLUMNS.has(id);
-        const fixed = id === "no";
+        const locked = isLastVisible(id, order, hidden);
         const check = h("input", { type: "checkbox", disabled: locked });
         check.checked = !hidden.has(id);
         check.addEventListener("change", () => { toggleColumn(id, check.checked); draw(); });
         const grip = h("button", {
-          class: "stg-column-grip", disabled: fixed, "aria-label": `${columnName(col)} 순서 바꾸기`,
-          title: fixed ? "No.는 항상 맨 앞입니다" : "끌어서 순서 바꾸기 (↑↓ 키도 됩니다)",
-        }, ["\u2630"]);
+          class: "stg-column-grip", "aria-label": `${columnName(col)} 순서 바꾸기`,
+          title: "끌어서 순서 바꾸기 (↑↓ 키도 됩니다)",
+        }, ["☰"]);
         const rowEl = h("div", { class: "stg-column-row" + (hidden.has(id) ? " off" : ""), "data-column": id }, [
           grip,
           h("label", { class: "stg-column-name" }, [check, h("span", {}, [columnName(col)])]),
-          locked ? h("span", { class: "stg-column-note" }, [fixed ? "항상 맨 앞" : "항상 표시"]) : null,
+          locked ? h("span", { class: "stg-column-note" }, ["마지막 컴럼"]) : null,
         ]);
-        if (!fixed) {
-          grip.addEventListener("keydown", (e) => {
-            if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
-            e.preventDefault();
-            moveColumnBy(id, e.key === "ArrowUp" ? -1 : 1);
-            draw(id);
-          });
-          grip.addEventListener("pointerdown", (e) => startColumnDrag(e, id, rowEl, list, () => draw()));
-        }
+        grip.addEventListener("keydown", (e) => {
+          if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+          e.preventDefault();
+          moveColumnBy(id, e.key === "ArrowUp" ? -1 : 1);
+          draw(id);
+        });
+        grip.addEventListener("pointerdown", (e) => startColumnDrag(e, id, rowEl, list, () => draw()));
         list.appendChild(rowEl);
       });
       wrap.appendChild(list);
@@ -1029,6 +1034,7 @@
       tab.appendChild(close);
       tab.addEventListener("click", () => selectTab(id));
       tab.addEventListener("contextmenu", (e) => { e.preventDefault(); openTabMenu(collection, e); });
+      tab.addEventListener("mouseenter", () => attachTabTooltip(tab, collection), { once: true });
       bindTabDrag(tab, id);
       bar.appendChild(tab);
     });
@@ -1102,9 +1108,24 @@
     });
   }
 
+  /** 탭에 갖다 대면 롬 개수/총 용량/Metadata 경로를 보여준다(사용자 결정, 메뉴 정리 §6).
+   * 매번 다시 불러오지 않도록 Collection당 한 번만 조회해 둔다. */
+  async function attachTabTooltip(tab, collection) {
+    if (!S.tabInfoCache) S.tabInfoCache = {};
+    if (!S.tabInfoCache[collection.id]) {
+      const r = await api.collectionDetail(collection.id);
+      if (!r.ok) return;
+      const d = r.data;
+      const size = formatBytes((d.totalRomBytes || 0) + (d.totalMediaBytes || 0));
+      S.tabInfoCache[collection.id] =
+        `롬 개수: ${formatCount(d.totalGames)}개 · 총 용량: ${size} · Metadata: ${d.rootPath || "-"}`;
+    }
+    tab.title = S.tabInfoCache[collection.id];
+  }
+
   /** Collection 탭 우클릭 - 다른 우클릭과 같은 플로팅 메뉴다(사용자 결정 - 예전의 버튼 대화상자 대신). */
   function openTabMenu(collection, event) {
-    const items = [{ label: "이름 변경…", icon: "tag", onSelect: () => promptRename(collection) }];
+    const items = [{ label: "Collection 정보…", icon: "info", onSelect: () => openCollectionInfo(collection) }];
     if (isDetached()) {
       items.push({ label: "메인 창으로 합치기", icon: "layoutList", onSelect: mergeIntoMain });
       showContextMenu(menuPoint(event), collection.name, collection.rootPath, items, collection.rootPath);
@@ -1112,7 +1133,6 @@
     }
     items.push({ label: "새 창으로 분리", icon: "previewPane", onSelect: () => detachTab(collection.id) });
     items.push("separator");
-    items.push({ label: "Convert…", icon: "arrowLeftRight", onSelect: () => openConvert(collection) });
     // Compare는 두 단계다(§54): 한 탭에서 기준을 정하고, 다른 탭에서 그 기준과 비교한다.
     // 기준을 정한 뒤 두 번째 탭을 고르기 전까지는 취소할 방법이 없었다(실사용 버그
     // 리포트) - 기준이 남아 있는 동안은 어느 탭을 우클릭하든 "기준 해제"를 같이 보여준다.
@@ -1139,21 +1159,58 @@
     showContextMenu(menuPoint(event), collection.name, collection.rootPath, items, collection.rootPath);
   }
 
-  function promptRename(collection) {
-    const input = h("input", { class: "field-input", value: collection.name });
-    const body = h("div", { class: "modal-body" }, [h("div", { class: "field-label" }, ["이름"]), input]);
-    showModal("이름 변경", body, [
-      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+  /** "Collection 정보" - 탭 우클릭의 "이름 변경"/"Convert"를 하나로 묶었다(사용자 결정,
+   * 메뉴 정리 §6). "Collection 추가"와 같은 필드 구성으로 지금 값을 보여주고, 이름/Target은
+   * 그 자리에서 고칠 수 있다. 경로는 만들 때 정한 저장소 구조라 여기서는 정보로만 보여준다 -
+   * 폴더를 옮기는 것은 되돌릴 수 없는 별개의 작업이라 이 화면의 범위 밖이다. Convert는
+   * 전용 진입점을 없앤 대신 여기서 계속 쓸 수 있게 버튼으로 남겼다(사용자 결정). */
+  async function openCollectionInfo(collection) {
+    const r = await api.collectionDetail(collection.id);
+    const detail = r.ok ? r.data : {};
+
+    const nameInput = h("input", { class: "field-input", value: collection.name });
+    const targetSel = h("select", { class: "field-input" }, [
+      h("option", { value: "" }, ["자동"]),
+      h("option", { value: "windows" }, ["Windows"]),
+      h("option", { value: "android" }, ["Android"]),
+      h("option", { value: "linux" }, ["Linux"]),
+    ]);
+    targetSel.value = collection.target || "";
+
+    const pathRows = (detail.storages || [collection]).map((s) => h("div", { class: "field-row" }, [
+      h("input", { class: "field-input", value: s.rootPath || collection.rootPath || "", disabled: true }),
+    ]));
+
+    const size = formatBytes((detail.totalRomBytes || 0) + (detail.totalMediaBytes || 0));
+    const statsRow = h("div", { class: "modal-hint" }, [
+      `롬 개수: ${formatCount(detail.totalGames || 0)}개 · 총 용량: ${size} · Frontend: ${collection.frontendLabel || collection.frontend}`,
+    ]);
+
+    const convertBtn = h("button", { class: "btn" }, [icon("arrowLeftRight", IC.sm), h("span", {}, ["Convert…"])]);
+    convertBtn.addEventListener("click", () => { closeModal(); openConvert(collection); });
+
+    const body = h("div", { class: "modal-body" }, [
+      statsRow,
+      h("div", { class: "field-label" }, ["이름"]), nameInput,
+      h("div", { class: "field-label" }, ["Target"]), targetSel,
+      h("div", { class: "field-label" }, ["저장 경로"]), ...pathRows,
+      h("div", { class: "field-label" }, ["다른 Frontend로"]), convertBtn,
+    ]);
+
+    showModal("Collection 정보", body, [
+      h("button", { class: "btn", onClick: closeModal }, ["닫기"]),
       h("button", { class: "btn primary", onClick: async () => {
-        const name = input.value.trim();
+        const name = nameInput.value.trim();
         closeModal();
-        if (!name) return;
-        await api.renameCollection(collection.id, name);
+        if (name && name !== collection.name) await api.renameCollection(collection.id, name);
+        if (targetSel.value !== (collection.target || "")) {
+          await api.updateCollectionTarget(collection.id, targetSel.value);
+        }
         await loadCollections();
         renderAll();
       } }, ["저장"]),
     ]);
-    setTimeout(() => input.focus(), 30);
+    setTimeout(() => nameInput.focus(), 30);
   }
 
   /** 떠나기 전에 지금 보던 자리를 기억한다(Dashboard/목록, 선택, 스크롤). 탭을 오가면 예전에는
@@ -1321,12 +1378,17 @@
     // 아무 데도 안 쓰인다면 애초에 묻지 않는 것이 맞다(실사용 피드백).
     // Target은 다르다 - esde_platform()이 이 값으로 custom_systems XML의 System
     // 정의(windows/android/linux 템플릿)와 경로 표기를 고른다. 그래서 이것만 남긴다.
+    // "Unknown"이라는 이름은 "아무 것도 안 정한다"처럼 읽히지만, 실제로는 조용히
+    // Windows(또는 기기 경로가 있으면 Android)로 정해진다(adapters/es_de.py
+    // esde_platform() 참고) - 화면에 그 사실이 보이지 않는 게 혼란의 원인이었다
+    // (실사용 피드백). 이름과 툴팁으로 실제 동작을 밝힌다.
     const targetSel = h("select", { class: "field-input" }, [
-      h("option", { value: "" }, ["Unknown"]),
+      h("option", { value: "" }, ["자동"]),
       h("option", { value: "windows" }, ["Windows"]),
       h("option", { value: "android" }, ["Android"]),
       h("option", { value: "linux" }, ["Linux"]),
     ]);
+    targetSel.title = "정하지 않으면 Windows로 만듭니다(단, 기기 경로가 있는 Storage를 붙이면 Android로 바뀝니다).";
     const frontendSel = h("select", { class: "field-input", id: "add-frontend" },
       frontends.map((f) => h("option", { value: f.id }, [f.label])));
 
@@ -2129,20 +2191,23 @@
       disabled: deviceOnly || !!(sys.conflict && sys.conflict.length),
       title: "ROM·gamelist·media 폴더 이름을 함께 바꿉니다.",
       onSelect: () => openRenameSystemFolder(sys, { storageId: sys.storageId, label: current ? current.label : sys.storageId, path: null }) });
-    items.push({ label: "gamelist 만들기", icon: "fileWarning",
-      title: "이 System에 gamelist가 없으면 ROM 파일명만 담아 만듭니다.",
-      onSelect: () => openMetadataBootstrap(S.activeId, [sys.system]) });
-    items.push({ label: "Title Prefix/Postfix 일괄 적용…", icon: "tag", disabled: titleAffixDisabled,
+    items.push({ label: "언어 태그 적용…", icon: "tag", disabled: titleAffixDisabled,
       title: titleAffixDisabled
         ? "지금 설정으로는 이 System에서 바뀔 제목이 없습니다. Settings > Metadata & Media에서 규칙을 확인하세요."
         : "이 System 전체 제목에서 기존 장식을 떼고, Settings에 설정한 지역별 표시를 다시 붙입니다.",
       onSelect: () => openTitleAffixDialog({ system: sys.system, label: sys.system.toUpperCase() }) });
+    items.push({ label: "멀티 디스크 태그 적용…", icon: "copy", disabled: deviceOnly,
+      title: deviceOnly ? deviceTip
+        : "여러 장짜리 게임의 제목 뒤에 붙은 장 번호 표시를 지우고, Settings에 고른 형식으로 다시 붙입니다.",
+      onSelect: () => openDiscRetagDialog(sys.system, sys.system.toUpperCase()) });
+    items.push({ label: "메타데이터 스크랩…", icon: "sparkles", disabled: true,
+      title: "준비 중입니다.", onSelect: () => {} });
     items.push("separator", {
       label: "ROM 없는 항목 정리", icon: "eraser", disabled: deviceOnly,
       title: deviceOnly ? deviceTip : "Metadata/Media는 있는데 ROM 파일이 없는 항목을 찾아 지웁니다.",
       onSelect: () => confirmOrphanCleanup(sys),
     }, {
-      label: "System 미디어 선택 삭제", icon: "imageOff", disabled: deviceOnly,
+      label: "미디어 선택 후 정리", icon: "imageOff", disabled: deviceOnly,
       title: deviceOnly ? deviceTip : "Cover/Screenshot/Video 등 media 종류를 골라 이 System 전체에서 지웁니다.",
       onSelect: () => confirmMediaCleanup(sys),
     });
@@ -2152,13 +2217,13 @@
       items.push({ label, icon: "folderOpen", onSelect: () => openSystemFolder(sys.system, kind) }));
     // 메뉴 최하단, 빨간색(사용자 결정). 누르면 경고 + "확인하였습니다" 체크 + 확인으로 한 번 더 묻는다.
     items.push("separator", {
-      label: "전체 삭제", icon: "trash", danger: true, disabled: deviceOnly,
+      label: "시스템 전체 삭제 (!)", icon: "trash", danger: true, disabled: deviceOnly,
       title: deviceOnly ? deviceTip : "이 System의 ROM·Metadata·Media를 디스크에서 지우고 목록에서 뺍니다.",
       onSelect: () => confirmRemoveSystem(sys),
     });
     showContextMenu(menuPoint(event), sys.system.toUpperCase(),
       `게임 ${formatCount(sys.count)} · ${current ? current.label : sys.storageId}`, items,
-      current ? current.rootPath : null);
+      current ? current.rootPath : null, systemIcon(sys.system, 15));
   }
 
   async function openSystemFolder(system, kind) {
@@ -2334,6 +2399,49 @@
       h("button", { class: "btn primary", onClick: async () => {
         closeModal();
         const r = await api.planTitleEdit(collectionId, target.romUids || null, target.system || null);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        if (collectionId === S.activeId) await refreshPlan();
+        showToast(`제목 ${formatCount(r.data.added)}개를 Plan에 올렸습니다. Apply를 누르면 반영됩니다.`);
+      } }, ["Plan에 추가"]),
+    ]);
+  }
+
+  /** 멀티 디스크 태그 적용(System 우클릭) - 기존 꼬리표를 지우고 지금 Settings에 고른
+   * 형식으로 다시 붙인다. Title Prefix/Postfix와 같은 D1 예외(Plan을 거치는 텍스트 편집). */
+  async function openDiscRetagDialog(system, label) {
+    const collectionId = S.activeId;
+    const preview = await api.discRetagPreview(collectionId, system);
+    if (!preview.ok) { showToast(preview.error, "error"); return; }
+    const items = preview.data.items;
+    const changed = items.filter((i) => i.changed);
+    if (!changed.length) {
+      showToast("이 System에 여러 장짜리 게임이 없거나, 이미 지금 형식으로 붙어 있습니다.", "warning");
+      return;
+    }
+
+    const LIMIT = 50;
+    const list = h("div", { class: "title-affix-list" });
+    changed.slice(0, LIMIT).forEach((item) => list.appendChild(h("div", { class: "title-affix-row" }, [
+      h("span", { class: "title-affix-old", title: item.oldTitle }, [item.oldTitle || "(제목 없음)"]),
+      icon("chevronRight", IC.sm),
+      h("span", { class: "title-affix-new", title: item.newTitle }, [item.newTitle]),
+    ])));
+    if (changed.length > LIMIT) {
+      list.appendChild(h("div", { class: "sysdel-file" }, [`… 외 ${formatCount(changed.length - LIMIT)}개`]));
+    }
+
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "modal-text" }, [
+        `${label} - 제목 ${formatCount(changed.length)}개가 바뀝니다. `
+        + "Plan에 추가한 뒤 목록 위 Apply를 눌러야 실제 파일에 반영됩니다.",
+      ]),
+      list,
+    ]);
+    showModal("멀티 디스크 태그 적용", body, [
+      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+      h("button", { class: "btn primary", onClick: async () => {
+        closeModal();
+        const r = await api.planDiscRetag(collectionId, system);
         if (!r.ok) { showToast(r.error, "error"); return; }
         if (collectionId === S.activeId) await refreshPlan();
         showToast(`제목 ${formatCount(r.data.added)}개를 Plan에 올렸습니다. Apply를 누르면 반영됩니다.`);
@@ -2729,7 +2837,7 @@
     const noSystems = "이 Storage에 붙은 System이 없습니다.";
     const label = storage.label;
     const items = [
-      { label: "Title Prefix/Postfix 일괄 적용…", icon: "tag", disabled: none,
+      { label: "언어 태그 적용…", icon: "tag", disabled: none,
         title: none ? noSystems : "이 그룹의 모든 System 제목에 Settings의 지역별 표시를 적용합니다.",
         onSelect: () => openTitleAffixDialog({ system: systemNames, label: `${label} 전체` }) },
       { label: "gamelist 만들기", icon: "fileWarning", disabled: none,
@@ -2739,7 +2847,7 @@
       { label: "ROM 없는 항목 정리", icon: "eraser", disabled: none || deviceOnly,
         title: none ? noSystems : "Metadata/Media는 있는데 ROM 파일이 없는 항목을 이 그룹 전체에서 찾아 지웁니다.",
         onSelect: () => confirmOrphanCleanupFor(systemNames, label.toUpperCase()) },
-      { label: "System 미디어 선택 삭제", icon: "imageOff", disabled: none || deviceOnly,
+      { label: "미디어 선택 후 정리", icon: "imageOff", disabled: none || deviceOnly,
         title: none ? noSystems : "media 종류를 골라 이 그룹의 모든 System에서 지웁니다.",
         onSelect: () => confirmMediaCleanupFor(systemNames, label.toUpperCase()) },
       "separator", { section: "폴더 열기 (상위 폴더)" },
@@ -3362,7 +3470,7 @@
     // Archive는 present/hasMetadata가 항상 참이라(§37) 이 정렬이 뜻이 없어 뺀다.
     if (!isArchive()) {
       const prioritySel = h("select", { class: "mini-select", title: "우선 정렬" }, [
-        h("option", { value: "" }, ["구분 없음"]),
+        h("option", { value: "" }, ["전체보기"]),
         h("option", { value: "rom" }, ["ROM 우선"]),
         h("option", { value: "metadata" }, ["메타데이터 우선"]),
         h("option", { value: "media" }, ["미디어 우선"]),
@@ -3615,13 +3723,13 @@
     });
   }
 
-  /** 머리글을 끌어 컬럼 순서를 바꾼다. 놓는 자리의 왼쪽/오른쪽 절반으로 앞/뒤를 정한다. */
+  /** 머리글을 끌어 컬럼 순서를 바꾼다. 놓는 자리의 왼쪽/오른쪽 절반으로 앞/뒤를 정한다.
+   * No./Title도 다른 컬럼과 동일하게 끌 수 있다(사용자 결정, 메뉴 정리 §5). */
   let draggingColumn = null;
   function bindColumnDrag(cell, id) {
     const clearMarks = () => cell.classList.remove("drop-before", "drop-after");
-    cell.draggable = id !== "no";
+    cell.draggable = true;
     cell.addEventListener("dragstart", (e) => {
-      if (id === "no") { e.preventDefault(); return; }
       draggingColumn = id;
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData("text/x-rms-column", id);
@@ -3636,7 +3744,7 @@
       if (!draggingColumn || draggingColumn === id) return;
       e.preventDefault();
       const rect = cell.getBoundingClientRect();
-      const after = id === "no" || e.clientX > rect.left + rect.width / 2;
+      const after = e.clientX > rect.left + rect.width / 2;
       cell.classList.toggle("drop-after", after);
       cell.classList.toggle("drop-before", !after);
     });
@@ -3655,12 +3763,12 @@
   function openColumnMenu(event) {
     const { order, hidden } = columnLayout();
     const items = [{ section: "컬럼 표시" }];
-    order.filter((id) => id !== "no").forEach((id) => {
-      const locked = LOCKED_COLUMNS.has(id);
+    order.forEach((id) => {
+      const locked = isLastVisible(id, order, hidden);
       const visible = !hidden.has(id);
       items.push({
         label: columnName(COLUMN_BY_ID[id]), icon: visible ? "check" : null, disabled: locked,
-        hint: locked ? "항상 표시" : null, title: locked ? "Title은 숨길 수 없습니다." : null,
+        hint: locked ? "마지막 컬럼" : null, title: locked ? "적어도 하나는 표시되어야 합니다." : null,
         onSelect: () => toggleColumn(id, !visible),
       });
     });
@@ -4291,12 +4399,15 @@
    * items: `{label, icon?, hint?, title?, danger?, disabled?, onSelect}`,
    * `{section: "제목"}`, 또는 `"separator"`. Esc·바깥 클릭·창 크기 변경으로 닫히고
    * ↑↓로 항목을 옮겨 Enter로 고른다. */
-  function showContextMenu(point, title, subtitle, items, headTip) {
+  function showContextMenu(point, title, subtitle, items, headTip, titleIcon) {
     closeContextMenu();
     const menu = h("div", { class: "ctx-menu", role: "menu" });
     if (title) {
+      const titleRow = titleIcon
+        ? h("div", { class: "ctx-title" }, [titleIcon, h("span", {}, [title])])
+        : h("div", { class: "ctx-title" }, [title]);
       menu.appendChild(h("div", { class: "ctx-head", title: headTip || null }, [
-        h("div", { class: "ctx-title" }, [title]),
+        titleRow,
         subtitle ? h("div", { class: "ctx-sub" }, [subtitle]) : null,
       ]));
     }
@@ -4416,11 +4527,7 @@
 
     showContextMenu(menuPoint(event), single ? (row.title || row.file) : `${formatCount(count)}개 선택됨`,
       single ? row.file : null, [
-        { label: "상세 보기", icon: "info", disabled: !single, onSelect: () => {
-          openDetail(row);
-          if (!S.previewOn) showToast("미리보기가 꺼져 있습니다 - Detail 윗줄의 미리보기를 켜세요.", "warning");
-        } },
-        { label: row.favorite ? "즐겨찾기 해제" : "즐겨찾기", icon: "star",
+        { label: row.favorite ? "즐겨찾기 해제" : "즐겨찾기에 추가", icon: "star",
           disabled: !single || !star || isArchive() || locked, onSelect: () => toggleFavorite(row, star) },
         { label: "RetroArch로 실행", icon: "play", hint: "더블클릭",
           disabled: !single || !!launchBlockReason(row), title: single ? launchBlockReason(row) : null,
@@ -4434,12 +4541,15 @@
             ? "지금 설정으로는 바뀔 제목이 없습니다. Settings > Metadata & Media에서 규칙을 확인하세요." : null,
           onSelect: () => openTitleAffixDialog({ romUids: [...S.selected],
             label: single ? (row.title || row.file) : `선택한 ${formatCount(count)}개` }) },
+        { label: "메타데이터 스크랩…", icon: "sparkles", disabled: true,
+          title: "준비 중입니다.", onSelect: () => {} },
         "separator",
         { label: "복사", icon: "copy", hint: "Ctrl+C", disabled: isArchive() || locked, onSelect: copySelectedRows },
         { label: "붙여넣기", icon: "upload", hint: "Ctrl+V", disabled: isArchive() || locked, onSelect: () => pasteClipboard() },
-        { label: "이 항목에 붙여넣기", icon: "upload",
+        { label: "이 항목으로 붙여넣기 - 다른 파일명 지정", icon: "upload",
           disabled: !single || isArchive() || locked,
-          title: "복사한 항목의 파일명이 달라도 이 항목에 지목해서 붙입니다(설정된 모드를 따릅니다)",
+          title: "복사한 항목의 파일명이 이 게임과 달라도, 이 게임을 대상으로 지목해서 붙입니다(설정된 모드를 따릅니다). "
+            + "예: 파일명이 전혀 다른 두 게임을 직접 이어 붙일 때.",
           onSelect: () => pasteClipboard(row) },
         { label: single ? "파일명 복사" : `파일명 ${formatCount(files.length)}개 복사`, icon: "copy",
           disabled: !files.length,
@@ -4849,6 +4959,11 @@
     S.compare = r.data;
     S.compareBase = null;
     S.compareFilter = keptFilter;
+    // Compare에 들어오면 항상 미리보기부터 켠다(사용자 결정, 메뉴 정리 §8) - 두 쪽을
+    // 나란히 보는 것이 Compare의 핵심이라, 이전 Collection에서 꺼 둔 채로 남아 있으면
+    // 안 된다.
+    S.previewOn = true;
+    saveUiState();
     resetList();
     renderAll();
     await reloadList();
@@ -5430,9 +5545,15 @@
     // 남으므로 다시 켤 토글이 사라지지 않고, 빠진 폭은 목록이 쓴다(사용자 요청 -
     // 예전엔 패널 전체 폭을 44px로 접어 윗줄의 GameList 헤더까지 재배치됐고, 그
     // 전엔 폭을 그대로 둬서 목록이 전혀 넓어지지 않았다).
+    //
+    // Compare 중에는 좌/우 두 기둥이 있고, `leftPanel`은 `panel`과 다른 DOM
+    // 노드다 - 끌 때 `panel`만 손대면 오른쪽만 사라졌다(실사용 버그 리포트,
+    // 메뉴 정리 §8). 둘 다 같은 상태를 따라가야 한다.
     panel.classList.toggle("off", !S.previewOn);
+    if (leftPanel) leftPanel.classList.toggle("off", !S.previewOn);
     if (!S.previewOn) {
       panel.classList.remove("open");
+      if (leftPanel) clear(leftPanel);
       return;
     }
     const state = S.detailState;
@@ -5517,12 +5638,18 @@
     inner.appendChild(body);
 
     if (state.tab === "metadata") {
-      const footer = h("div", { class: "detail-footer" });
+      const footer = h("div", { class: "detail-footer detail-footer-split" });
       const conflictInfo = !state.archive && currentSystemConflict(state.system);
-      const save = h("button", { class: "btn primary w-full detail-save", disabled: !!conflictInfo },
+      // 스크랩은 아직 없다(System/Gamelist 메뉴의 "메타데이터 스크랩…"과 같은 자리
+      // 표시) - 저장과 50:50으로 나란히 두어 나중에 자연스럽게 활성화되도록 미리
+      // 자리를 잡아 둔다(사용자 결정, 메뉴 정리 §7).
+      const scrap = h("button", { class: "btn detail-scrap", disabled: true, title: "준비 중입니다." },
+        [icon("sparkles", IC.md), h("span", {}, ["스크랩"])]);
+      const save = h("button", { class: "btn primary detail-save", disabled: !!conflictInfo },
         [icon("save", IC.md), h("span", {}, [conflictInfo ? "쓰기 막힘 - Storage 충돌" : "저장 (Ctrl+S)"])]);
       if (conflictInfo) save.title = "같은 System 폴더가 여러 Storage에 있습니다 - System 우클릭에서 한쪽을 지우거나 이름을 바꾸세요.";
       save.addEventListener("click", handleSaveDetail);
+      footer.appendChild(scrap);
       footer.appendChild(save);
       inner.appendChild(footer);
     }

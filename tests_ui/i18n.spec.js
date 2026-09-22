@@ -30,3 +30,16 @@ test("Settings > General에서 언어를 바꾸면 화면이 바뀌고, 한국�
   await select.selectOption("ko");
   await expect(page.locator(".stg-foot .btn")).toHaveText("확인");
 });
+
+test("언어 드롭다운은 각 언어를 자기 나라 표기로 보여준다 - 번역을 거치지 않는다", async ({ page }) => {
+  // "한국어"는 번역표에 "Korean"/"韓国語" 항목이 있는 흔한 문구다(i18n-data.js) - 이
+  // 드롭다운의 옵션이 h()의 일반 문자열 자식처럼 번역을 거치면, 화면 언어가 영어일 때
+  // "한국어" 옵션이 "Korean"으로 바뀌어 버린다(메뉴 정리 §9, 실사용 지적).
+  await page.locator(".settings-btn").click();
+  await page.locator(".stg-nav-item[data-section='general']").click();
+  const select = page.locator(".stg-row[data-key='general.language'] select");
+  await select.selectOption("en");
+  const labels = await select.locator("option").allTextContents();
+  expect(labels).toEqual(["한국어", "English", "日本語", "Español", "Français"]);
+  await select.selectOption("ko");
+});

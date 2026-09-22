@@ -116,6 +116,18 @@
     function textInput(placeholder) {
       return h("input", { class: "stg-control stg-text", placeholder, disabled: true });
     }
+    /** 1% 단위 슬라이더(사용자 결정, 메뉴 정리 §9) - 예전 6단계 select보다 세밀하게
+     * 고를 수 있다. 옆의 숫자는 지금 값을 그 자리에서 보여준다. */
+    function volumeSlider(value, onChange) {
+      const wrap = h("div", { class: "stg-range" });
+      const input = h("input", { type: "range", min: "0", max: "100", step: "1", value: String(value) });
+      const readout = h("span", { class: "stg-range-value" }, [`${value}%`]);
+      input.addEventListener("input", () => { readout.textContent = `${input.value}%`; });
+      input.addEventListener("change", () => onChange(Number(input.value)));
+      wrap.appendChild(input);
+      wrap.appendChild(readout);
+      return wrap;
+    }
     function section(title, desc) {
       return [h("div", { class: "stg-section-title" }, [title]),
               h("div", { class: "stg-section-desc" }, [desc])];
@@ -138,10 +150,13 @@
       const el = select(current, [[current, current]], (v) => ctx.update("metadata", { discTitleFormat: v }));
       window.api.discTitleFormats().then((r) => {
         if (!r.ok) return;
-        const options = r.data.map((f) => [f.id, `${f.sample}   (플로피: ${f.sampleDisk})`]);
-        el.replaceChildren(...options.map(([value, text]) => {
-          const opt = h("option", { value }, [text]);
-          if (value === current) opt.selected = true;
+        // 실제로 적용되는 예시만 보여준다(사용자 결정, 메뉴 정리 §9) - 플로피 표기까지
+        // 괄호로 함께 보여주면 "이게 무슨 뜻이냐"는 혼란만 더했다. Disc/Disk 중 어느
+        // 낱말이 붙는지는 System 종류(title_affix._DISK_SYSTEMS)가 정하고, 여기서는
+        // 형식(괄호/대괄호, 총 장수 표기 방식)만 고른다.
+        el.replaceChildren(...r.data.map((f) => {
+          const opt = h("option", { value: f.id }, [f.sample]);
+          if (f.id === current) opt.selected = true;
           return opt;
         }));
       });
@@ -240,10 +255,15 @@
       if (key === "general") {
         add(...section("General", "RetroMeta Studio의 전역 동작을 설정합니다."));
         const currentLanguage = (s.general && s.general.language) || "ko";
+        // 언어 이름은 **그 나라 고유 표기**로 보여준다(사용자 결정, 메뉴 정리 §9) - "한국어"
+        // 처럼 흔한 UI 문구와 겹치는 문자열은 i18n 번역표를 거치면 "Korean"처럼 옮겨져
+        // 버렸다. h()의 문자열 자식은 모두 번역을 거치므로, 이미 만든 Text 노드를 건네
+        // 그 통로를 피한다(h()는 노드를 그대로 붙이고 문자열만 옮긴다).
         add(row("general.language", "Language",
           select(currentLanguage,
-            window.RMSI18n ? window.RMSI18n.LANGS.map((code) => [code, window.RMSI18n.LABELS[code]])
-              : [["ko", "한국어"], ["en", "English"], ["ja", "日本語"], ["es", "Español"], ["fr", "Français"]],
+            (window.RMSI18n ? window.RMSI18n.LANGS.map((code) => [code, window.RMSI18n.LABELS[code]])
+              : [["ko", "한국어"], ["en", "English"], ["ja", "日本語"], ["es", "Español"], ["fr", "Français"]])
+              .map(([code, label]) => [code, document.createTextNode(label)]),
             (v) => ctx.update("general", { language: v })), null));
         add(row("general.startup", "Startup", soonSelect([["last", "마지막 상태 복원"], ["archive", "항상 Archive"]]), null, true));
         add(row("general.autoSave", "Auto Save", soonToggle(false), "편집한 Metadata를 자동 저장합니다.", true));
@@ -267,7 +287,7 @@
         // 정할 수 있게 했다 - Toolbar에서 그때그때 바꾼 값은 이 기본값과 별개다.
         add(row("navigation.defaultSortPriority", "Default sort priority",
           select(s.navigation && s.navigation.defaultSortPriority || "none", [
-            ["none", "구분 없음"], ["rom", "ROM 우선"],
+            ["none", "전체보기"], ["rom", "ROM 우선"],
             ["metadata", "메타데이터 우선"], ["media", "미디어 우선"],
           ], (v) => ctx.update("navigation", { defaultSortPriority: v })),
           "Collection을 새로 열 때 목록의 기본 우선 정렬입니다. Toolbar에서 그때그때 바꿀 수 있습니다."));
@@ -289,9 +309,8 @@
             (v) => ctx.update("media", { videoDelay: Number(v) })),
           "게임을 고르고 이 시간만큼 그대로 두면 재생합니다. 그 전에 다른 게임으로 넘기면 재생하지 않습니다."));
         add(row("media.videoSound", "소리", toggle(m.videoSound, (v) => ctx.update("media", { videoSound: v }))));
-        add(row("media.videoVolume", "음량",
-          select(m.videoVolume, [[20, "20%"], [40, "40%"], [60, "60%"], [70, "70%"], [85, "85%"], [100, "100%"]],
-            (v) => ctx.update("media", { videoVolume: Number(v) })),
+        add(row("media.videoVolume", "음량", volumeSlider(m.videoVolume,
+            (v) => ctx.update("media", { videoVolume: v })),
           "소리를 켰을 때의 재생 음량입니다."));
         add(row("media.videoLoop", "반복 재생", toggle(m.videoLoop, (v) => ctx.update("media", { videoLoop: v }))));
         add(row("media.overwrite", "Media overwrite", soonSelect([["ask", "Always ask"], ["replace", "Replace"], ["keep", "Keep existing"]]), null, true));
@@ -307,8 +326,9 @@
         add(titleAffixEditor(s));
 
         // 여러 장짜리 게임 - ES-DE는 목록에 파일명을 안 보여줘서 제목이 전부 같아 보인다.
-        add(h("div", { class: "stg-subsection-title" }, ["여러 장짜리 게임(Disc/Disk)"]));
-        add(row("metadata.discTitles", "제목 뒤에 장 번호 붙이기",
+        // 이름은 사용자 결정(메뉴 정리 §9) - "장 번호"는 비직관적이라 "디스크 번호"로 바꿨다.
+        add(h("div", { class: "stg-subsection-title" }, ["멀티디스크 태그"]));
+        add(row("metadata.discTitles", "제목 뒤에 디스크 번호 태그 붙이기",
           toggle(!!(s.metadata || {}).discTitles, (v) => ctx.update("metadata", { discTitles: v })),
           "Apply할 때 제목 뒤에만 붙입니다. 파일명은 건드리지 않고, 두 번 적용해도 늘어나지 않습니다. "
           + "CD를 쓰는 System은 Disc, 플로피를 쓰는 System(MSX, PC-98 등)은 Disk로 적습니다."));
@@ -324,7 +344,20 @@
           unmatchedRomMode: "skip", unmatchedRomMetadata: true, unmatchedRomMedia: true, unmatchedRomVideo: true,
           ...(s.transfer || {}),
         };
-        add(h("div", { class: "stg-subsection-title" }, ["Collection → Collection 복사 (Ctrl+C / Ctrl+V)"]));
+        // 이름은 사용자 결정(메뉴 정리 §9) - "Collection → Collection 복사 (Ctrl+C / Ctrl+V)"는
+        // 무엇을 하는 구역인지보다 조작 방법이 앞서 보였다.
+        //
+        // 아래 "같은 파일이 이미 있을 때"와 "ROM 미매칭일 때" 두 항목은 patch/overwrite/replace
+        // 규칙이 생기면서 없어져도 될 것 같다는 의견이 있었지만, 실제로는 그 규칙과
+        // **겹치지 않는** 별개의 경우를 다룬다(확인 후 남겨 둠, 메뉴 정리 §9):
+        //   - "같은 파일이 이미 있을 때"(transfer.conflict) - 이번 붙여넣기와 무관한 **엉뚱한
+        //     파일**이 대상 경로에 이미 있는 경우다(bridge/api.py 1705줄). patch/overwrite/replace는
+        //     "같은 게임의 필드를 어떻게 합칠지"를 정할 뿐, 파일 경로 충돌 자체는 다루지 않는다.
+        //   - "ROM 미매칭일 때"(unmatchedRomPolicy) - 원본에 대응하는 **대상 자체가 아예 없어
+        //     새로 만들어지는** 경우다(bridge/api.py 1654줄) - 기존 항목이 없으니 patch/overwrite/
+        //     replace를 적용할 대상도 없다.
+        // 지우면 이 두 경우의 동작을 더는 바꿀 수 없게 되므로, 이름만 정리하고 기능은 남겼다.
+        add(h("div", { class: "stg-subsection-title" }, ["Collection 간 복사 설정"]));
         add(row("transfer.pasteMode", "붙여넣기 모드",
           select(t.pasteMode, [["patch", "Patch - 보완(없는 것만 채움)"], ["overwrite", "Overwrite - 덮어쓰기(원본 값 적용)"],
                                ["replace", "Replace - 완전 교체(원본으로 다시 만듦)"]],

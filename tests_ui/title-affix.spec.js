@@ -135,7 +135,7 @@ test.describe("System 우클릭 - 전체 일괄 적용", () => {
   test("System 메뉴에 항목이 있고, 확인 후에만 Plan에 반영된다", async ({ page }) => {
     await configureRegion(page, "en", { mode: "prefix", text: "EN" });
     await rightClickSystem(page, "PS2");
-    await menuItem(page, "Title Prefix/Postfix 일괄 적용…").click();
+    await menuItem(page, "언어 태그 적용…").click();
     await expect(page.locator(".modal-title")).toHaveText("Title Prefix/Postfix");
     // PS2에는 FFX (K).iso와 MGS2 (U).iso가 있다 - en 규칙은 MGS2 하나만 바꾼다.
     await expect(page.locator(".title-affix-row")).toHaveCount(1);
@@ -148,7 +148,7 @@ test.describe("System 우클릭 - 전체 일괄 적용", () => {
 
   test("아무 구역도 안 켜져 있으면 System 메뉴 항목도 흐리게 나온다", async ({ page }) => {
     await rightClickSystem(page, "PS2");
-    await expect(menuItem(page, "Title Prefix/Postfix 일괄 적용…")).toBeDisabled();
+    await expect(menuItem(page, "언어 태그 적용…")).toBeDisabled();
   });
 
   test("게임이 없는 System은 API를 부르지 않고 바로 흐리게 나온다", async ({ page }) => {
@@ -159,7 +159,7 @@ test.describe("System 우클릭 - 전체 일괄 적용", () => {
       window.api.titleAffixPreview = (...a) => { window.__previewCalls += 1; return original(...a); };
     });
     await rightClickSystem(page, "GBA");   // 목업에서 게임 0개
-    await expect(menuItem(page, "Title Prefix/Postfix 일괄 적용…")).toBeDisabled();
+    await expect(menuItem(page, "언어 태그 적용…")).toBeDisabled();
     expect(await page.evaluate(() => window.__previewCalls)).toBe(0);
   });
 });

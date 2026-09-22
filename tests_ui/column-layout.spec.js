@@ -1,13 +1,14 @@
-// GameList 컬럼 순서/표시 (stitch-v3 Phase 8).
+// GameList 컬럼 순서/표시 (stitch-v3 Phase 8; 메뉴 정리 §5 - 2026-09로 갱신).
 //
 // 머리글 드래그, 머리글 우클릭 메뉴, Settings 편집기가 **같은 설정 하나**
-// (Settings > gamelist)를 바꾼다. No.는 항상 맨 앞이고 Title은 숨길 수 없다.
+// (Settings > gamelist)를 바꾼다. No./Title도 다른 컬럼과 동일하게 순서를
+// 바꾸거나 숨길 수 있다 - 다만 마지막 하나 남은 컬럼은 숨길 수 없다(빈 목록 방지).
 const { test, expect } = require("@playwright/test");
 const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
-const HEADERS = ["No.", "File", "Title", "Description", "Region", "Rating", "★", "Genre", "Status"];
+const HEADERS = ["No.", "★", "Title", "Description", "Status", "Rating", "Genre", "Region", "File"];
 const headLabels = async (page) => (await page.locator("#list-head .lh").allTextContents()).map((t) => t.trim());
 const rowCellClasses = (page) => page.locator(".lrow").first().evaluate(
   (el) => [...el.children].map((c) => [...c.classList].find((k) => k.startsWith("lc-") && k !== "lc-text")));
@@ -32,7 +33,12 @@ test.describe("머리글 우클릭 - 컬럼 표시", () => {
     await expect(page.locator("#list-head .lh-region")).toHaveCount(1);
   });
 
-  test("Title은 숨길 수 없다", async ({ page }) => {
+  test("마지막 하나 남은 컬럼은 숨길 수 없다", async ({ page }) => {
+    // 하나만 남을 때까지 실제 메뉴 경로로 순서대로 끈다.
+    for (const label of ["No.", "★ Favorite", "Description", "Status", "Rating", "Genre", "Region", "File"]) {
+      await page.locator("#list-head").click({ button: "right" });
+      await menuItem(page, label).click();
+    }
     await page.locator("#list-head").click({ button: "right" });
     await expect(menuItem(page, "Title")).toBeDisabled();
   });
@@ -58,8 +64,7 @@ test.describe("머리글 드래그 - 컬럼 순서", () => {
   test("Genre를 File 앞에 놓으면 머리글과 행이 같은 순서가 된다", async ({ page }) => {
     await page.locator(".lh-genre").dragTo(page.locator(".lh-file"), { targetPosition: { x: 4, y: 8 } });
     await expect.poll(() => headLabels(page)).toEqual(
-      ["No.", "Genre", "File", "Title", "Description", "Region", "Rating", "★", "Status"]);
-    expect((await rowCellClasses(page)).slice(0, 3)).toEqual(["lc-no", "lc-genre", "lc-file"]);
+      ["No.", "★", "Title", "Description", "Status", "Rating", "Region", "Genre", "File"]);
     expect(await templatesMatch(page)).toBe(true);
   });
 
@@ -68,14 +73,15 @@ test.describe("머리글 드래그 - 컬럼 순서", () => {
     const box = await target.boundingBox();
     await page.locator(".lh-file").dragTo(target, { targetPosition: { x: Math.round(box.width * 0.75), y: 8 } });
     await expect.poll(() => headLabels(page)).toEqual(
-      ["No.", "Title", "Description", "File", "Region", "Rating", "★", "Genre", "Status"]);
+      ["No.", "★", "Title", "Description", "File", "Status", "Rating", "Genre", "Region"]);
   });
 
-  test("No.는 끌 수 없고 늘 맨 앞이다", async ({ page }) => {
-    await expect(page.locator(".lh-no")).toHaveAttribute("draggable", "false");
-    await page.locator(".lh-title").dragTo(page.locator(".lh-no"), { targetPosition: { x: 2, y: 8 } });
+  test("No.도 다른 컬럼처럼 끌어 옮길 수 있다", async ({ page }) => {
+    await expect(page.locator(".lh-no")).toHaveAttribute("draggable", "true");
+    await page.locator(".lh-no").dragTo(page.locator(".lh-title"), { targetPosition: { x: 40, y: 8 } });
     const labels = await headLabels(page);
-    expect(labels[0]).toBe("No.");
+    expect(labels[0]).not.toBe("No.");
+    expect(labels).toContain("No.");
   });
 
   test("끌어 옮겨도 정렬 클릭은 그대로 된다", async ({ page }) => {
@@ -92,12 +98,12 @@ test.describe("Settings - GameList Columns", () => {
     await expect(page.locator(".stg-columns")).toBeVisible();
   };
 
-  test("현재 순서대로 나열하고, No.와 Title은 끌 수 없다", async ({ page }) => {
+  test("현재 순서대로 나열하고, No.와 Title도 끌 수 있다", async ({ page }) => {
     await openColumns(page);
     const ids = await page.locator(".stg-column-row").evaluateAll((rows) => rows.map((r) => r.dataset.column));
-    expect(ids).toEqual(["no", "file", "title", "desc", "region", "rating", "fav", "genre", "status"]);
-    await expect(page.locator(".stg-column-row[data-column='no'] input")).toBeDisabled();
-    await expect(page.locator(".stg-column-row[data-column='title'] input")).toBeDisabled();
+    expect(ids).toEqual(["no", "fav", "title", "desc", "status", "rating", "genre", "region", "file"]);
+    await expect(page.locator(".stg-column-row[data-column='no'] input")).toBeEnabled();
+    await expect(page.locator(".stg-column-row[data-column='title'] input")).toBeEnabled();
   });
 
   test("체크를 끄면 목록에서 바로 빠진다", async ({ page }) => {
@@ -119,19 +125,18 @@ test.describe("Settings - GameList Columns", () => {
     await expect(title).toHaveClass(/drop-after/);
     await page.mouse.up();
     await expect.poll(() => headLabels(page)).toEqual(
-      ["No.", "Title", "File", "Description", "Region", "Rating", "★", "Genre", "Status"]);
+      ["No.", "★", "Title", "File", "Description", "Status", "Rating", "Genre", "Region"]);
     await page.locator(".stg-column-row[data-column='desc'] input").uncheck();
     await page.locator(".stg-column-reset").click();
     await expect.poll(() => headLabels(page)).toEqual(HEADERS);
   });
 
-  test("손잡이에 초점이 있으면 ↑↓ 키로 옮기고, No. 손잡이는 꺼져 있다", async ({ page }) => {
+  test("손잡이에 초점이 있으면 ↑↓ 키로 옮긴다", async ({ page }) => {
     await openColumns(page);
-    await expect(page.locator(".stg-column-row[data-column='no'] .stg-column-grip")).toBeDisabled();
     await page.locator(".stg-column-row[data-column='file'] .stg-column-grip").focus();
-    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowUp");
     await expect.poll(() => headLabels(page)).toEqual(
-      ["No.", "Title", "File", "Description", "Region", "Rating", "★", "Genre", "Status"]);
+      ["No.", "★", "Title", "Description", "Status", "Rating", "Genre", "File", "Region"]);
     await expect(page.locator(".stg-column-row[data-column='file'] .stg-column-grip")).toBeFocused();
   });
 

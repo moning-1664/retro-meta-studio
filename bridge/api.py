@@ -1446,6 +1446,34 @@ class Api:
         return ok({"items": changes, "changed": sum(1 for c in changes if c["changed"])})
 
     @guarded
+    def disc_retag_preview(self, collection_id, system, fmt=None):
+        """"멀티 디스크 태그 적용"(System 우클릭) 미리보기 - 기존 꼬리표를 지우고 설정에
+        고른(또는 넘겨받은) 형식으로 다시 붙인다. 디스크가 아닌 항목은 바뀌지 않는다."""
+        collection, cache, _provider = self._plan_context(collection_id)
+        rows = self._title_affix_rows(cache, system=system)
+        if not rows:
+            return err("대상을 찾을 수 없습니다.")
+        fmt = fmt or self._disc_title_option()["format"]
+        changes = title_affix.preview_disc_retag(rows, fmt)
+        return ok({"items": changes, "changed": sum(1 for c in changes if c["changed"])})
+
+    @guarded
+    def plan_disc_retag(self, collection_id, system, fmt=None):
+        """미리보기에서 확인한 대로 Plan에 올린다(Title Prefix/Postfix와 같은 D1 예외 -
+        Plan을 거치는 텍스트 편집)."""
+        collection, cache, _provider = self._plan_context(collection_id)
+        rows = self._title_affix_rows(cache, system=system)
+        if not rows:
+            return err("대상을 찾을 수 없습니다.")
+        blocked = self._ensure_writable(collection, sorted({row["system"] for row in rows}))
+        if blocked:
+            return blocked
+        fmt = fmt or self._disc_title_option()["format"]
+        changes = title_affix.preview_disc_retag(rows, fmt)
+        result = builder.plan_title_edit(self._plan(collection_id), cache, changes)
+        return ok(result)
+
+    @guarded
     def plan_title_edit(self, collection_id, rom_uids=None, system=None):
         """미리보기에서 확인한 대로 Plan에 올린다. 실제 파일은 Apply를 눌러야 바뀐다(사용자 결정).
 

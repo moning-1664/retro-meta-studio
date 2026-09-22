@@ -365,3 +365,43 @@ def with_disc_suffix(title: str, filename: str | None, system: str | None = None
     if not suffix or not str(title or "").strip():
         return title
     return title if title.rstrip().endswith(suffix.strip()) else f"{title.rstrip()}{suffix}"
+
+
+#: `with_disc_suffix()`가 만들 수 있는 모양(여섯 형식)을 전부 인식해 제목 끝에서 뗀다 -
+#: "멀티 디스크 태그 적용"(System 우클릭)이 형식을 바꿔 다시 붙이기 전에, **어떤 형식으로
+#: 붙어 있었든** 먼저 지워야 두 번 붙지 않는다.
+#: 두 갈래뿐이다 - "Disc/Disk 낱말이 있는 것"이거나 "번호/총장수 형태(분수)인 것". 그냥
+#: 숫자 하나만 괄호에 든 것("(1994)" 같은 발매연도)은 **디스크 표시가 아니므로** 지우면
+#: 안 된다 - 두 조건 다 없으면 매치하지 않게 한다.
+_DISC_SUFFIX_RE = re.compile(
+    r"\s*[\(\[]\s*(?:dis[ck]\s+[0-9a-z]+(?:\s*(?:/|of)\s*[0-9a-z]+)?"
+    r"|[0-9a-z]+\s*(?:/|of)\s*[0-9a-z]+)\s*[\)\]]\s*$",
+    re.IGNORECASE)
+
+
+def strip_disc_suffix(title: str) -> str:
+    """제목 끝에 붙은 디스크 꼬리표를 뗀다. 없으면 그대로 돌려준다."""
+    if not str(title or "").strip():
+        return title
+    stripped = _DISC_SUFFIX_RE.sub("", title)
+    return stripped if stripped.strip() else title
+
+
+def retagged_disc_suffix(title: str, filename: str | None, system: str | None = None,
+                         fmt: str | None = None) -> str:
+    """**기존 꼬리표를 지우고** 지금 고른 형식으로 다시 붙인다(사용자 결정 - "멀티 디스크
+    태그 적용"). `with_disc_suffix()`와 달리 이미 다른 형식으로 붙어 있어도 새로 바꾼다."""
+    return with_disc_suffix(strip_disc_suffix(title), filename, system, fmt)
+
+
+def preview_disc_retag(rows: list[dict], fmt: str | None) -> list[dict]:
+    """"멀티 디스크 태그 적용"(System 우클릭) 미리보기. `preview_titles()`와 같은 모양
+    (`app/plan/builder.plan_title_edit()`가 그대로 받는다) - 디스크가 아닌 항목은
+    `changed=False`로 그대로 돌려준다."""
+    out = []
+    for row in rows:
+        old = row.get("title") or ""
+        new = retagged_disc_suffix(old, row.get("filename"), row.get("system"), fmt)
+        out.append({"romUid": row["rom_uid"], "system": row["system"], "filename": row["filename"],
+                    "oldTitle": old, "newTitle": new, "changed": new != old})
+    return out

@@ -8,7 +8,7 @@ const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
-const HEADERS = ["No.", "File", "Title", "Description", "Region", "Rating", "★", "Genre", "Status"];
+const HEADERS = ["No.", "★", "Title", "Description", "Status", "Rating", "Genre", "Region", "File"];
 
 test.describe("컬럼 구성", () => {
   test("이전 프로젝트의 아홉 개 컬럼이 그대로 있다", async ({ page }) => {
@@ -88,11 +88,12 @@ test.describe("컬럼 폭 조절", () => {
   });
 
   test("끌면 그 컬럼이 넓어진다", async ({ page }) => {
+    const titleIndex = HEADERS.indexOf("Title");
     const widthOf = () => page.locator("#list-head").evaluate(
-      (el) => parseFloat(getComputedStyle(el).gridTemplateColumns.split(" ")[1]));
+      (el, i) => parseFloat(getComputedStyle(el).gridTemplateColumns.split(" ")[i]), titleIndex);
     const before = await widthOf();
 
-    const handle = page.locator(".lh-file .col-resize");
+    const handle = page.locator(".lh-title .col-resize");
     const box = await handle.boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();

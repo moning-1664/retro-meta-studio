@@ -135,7 +135,7 @@ test("메뉴의 즐겨찾기로 별표를 켜고 끈다", async ({ page }) => {
   const star = page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).locator(".fav-btn");
   await expect(star).toHaveText("☆");
   await rightClick(page, "Metal Gear Solid 2");
-  await menuItem(page, "즐겨찾기").click();
+  await menuItem(page, "즐겨찾기에 추가").click();
   await expect(star).toHaveText("★");
 });
 
@@ -187,11 +187,11 @@ test.describe("게임 한 개 단위 폴더 열기", () => {
 
 // 실사용 버그 - "Replace로 다른 이름의 게임에 덮어썼는데 결과가 똑같다". 원인은 평범한
 // Ctrl+V가 복사한 항목 자신의 자리로만 돌아가는 것이었다 - 파일명이 다른 대상에는 아예
-// 닿지 않았다. "이 항목에 붙여넣기"로 대상을 직접 지목한다.
-test.describe("이 항목에 붙여넣기", () => {
+// 닿지 않았다. "이 항목으로 붙여넣기 - 다른 파일명 지정"로 대상을 직접 지목한다.
+test.describe("이 항목으로 붙여넣기 - 다른 파일명 지정", () => {
   test("복사한 게 없으면 눌러도 되지만 비활성은 아니다 - 결과가 API에서 걸러진다", async ({ page }) => {
     await rightClick(page, "Final Fantasy X");
-    await expect(menuItem(page, "이 항목에 붙여넣기")).toBeVisible();
+    await expect(menuItem(page, "이 항목으로 붙여넣기 - 다른 파일명 지정")).toBeVisible();
   });
 
   test("정확히 하나를 복사했으면 target_map으로 이 행을 지목해서 붙인다", async ({ page }) => {
@@ -204,7 +204,7 @@ test.describe("이 항목에 붙여넣기", () => {
     await rightClick(page, "Metal Gear Solid 2");
     await page.keyboard.press("Control+c");
     await rightClick(page, "Final Fantasy X");
-    await menuItem(page, "이 항목에 붙여넣기").click();
+    await menuItem(page, "이 항목으로 붙여넣기 - 다른 파일명 지정").click();
 
     await expect.poll(() => calls.length).toBe(1);
     const [, , , targetMap] = calls[0];
@@ -215,7 +215,7 @@ test.describe("이 항목에 붙여넣기", () => {
     await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).click();
     await page.locator(".lrow", { hasText: "Final Fantasy X" }).click({ modifiers: ["Control"] });
     await page.keyboard.press("Control+c");
-    // 복사 뒤 다시 하나만 눌러 선택을 좁힌다 - "이 항목에 붙여넣기"는 지금 고른
+    // 복사 뒤 다시 하나만 눌러 선택을 좁힌다 - "이 항목으로 붙여넣기 - 다른 파일명 지정"는 지금 고른
     // 행이 하나일 때만 켜지고(대상을 하나 지목하는 기능이다), 거절은 그 하나에
     // 클립보드가 여럿 들어있을 때 일어난다.
     await page.locator(".lrow", { hasText: "Final Fantasy X" }).click();
@@ -227,7 +227,7 @@ test.describe("이 항목에 붙여넣기", () => {
       const original = window.api.paste;
       window.api.paste = (...args) => { window.__pasted(args); return original(...args); };
     });
-    await menuItem(page, "이 항목에 붙여넣기").click();
+    await menuItem(page, "이 항목으로 붙여넣기 - 다른 파일명 지정").click();
     await expect(page.locator("#toast")).toContainText("하나만 복사했을 때만");
     expect(calls.length).toBe(0);
   });
@@ -239,6 +239,6 @@ test.describe("이 항목에 붙여넣기", () => {
     // 안 고른 행을 우클릭하면 그 한 행으로 선택이 다시 좁혀진다.
     await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).click({ button: "right" });
     await expect(page.locator("#status-bar")).toContainText("Selected 2");
-    await expect(menuItem(page, "이 항목에 붙여넣기")).toBeDisabled();
+    await expect(menuItem(page, "이 항목으로 붙여넣기 - 다른 파일명 지정")).toBeDisabled();
   });
 });

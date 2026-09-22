@@ -456,6 +456,8 @@ textarea.field-input { resize: none; line-height: 1.3; }
 .version-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
 
 .detail-footer { padding: 6px 10px 10px; flex-shrink: 0; background: var(--card2); }
+.detail-footer-split { display: flex; gap: 8px; }
+.detail-footer-split .btn { flex: 1 1 50%; justify-content: center; }
 .readonly-hint { display: flex; align-items: flex-start; gap: 6px; font-size:calc(9.5px * var(--font-scale)); color: var(--muted); line-height: 1.4; }
 
 .media-type-tabs.media-type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; border-radius: var(--radius-sm); background: var(--card3); border: 1px solid var(--border); margin-bottom: 8px; }

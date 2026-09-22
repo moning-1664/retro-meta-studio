@@ -182,10 +182,12 @@ body { font-size: var(--fs-body); }
      가로는 세로와 **다른 배율**을 쓴다 - 한때 가로에도 세로와 같은 1.2배를 그대로
      썼더니 "가로폭이 갑자기 커졌다"(실사용 피드백, 번복)는 문제가 났다. 세로 폭은
      그대로 두고 가로만 그 결과에서 20% 줄인다(1.2 * 0.8 = 0.96) - scaleX/scaleY를
-     따로 줘서 세로 비례는 건드리지 않는다. transform-origin은 왼쪽에 고정해
-     지금 있는 시작 위치에서만 늘고 준다(원래 칸(4/6)을 넘치는 만큼은 비워 둔
-     오른쪽 칸이 받아 준다). */
-  transform: scale(.96, 1.2); transform-origin: left center;
+     따로 줘서 세로 비례는 건드리지 않는다.
+     그 뒤 "제목이 여전히 크다"는 지적으로 가로/세로 배율을 각각 5%씩 더 줄였다
+     (0.96 * 0.95 = 0.912, 1.2 * 0.95 = 1.14) - 둘을 같은 비율로 줄여야 글자 비례가
+     그대로 유지된다. transform-origin은 왼쪽에 고정해 지금 있는 시작 위치에서만
+     늘고 준다(원래 칸(4/6)을 넘치는 만큼은 비워 둔 오른쪽 칸이 받아 준다). */
+  transform: scale(.912, 1.14); transform-origin: left center;
   line-height: 1.32; letter-spacing: .01em; white-space: nowrap;
   color: var(--app-title-ink);
   -webkit-text-stroke: calc(1.3px * var(--font-scale)) var(--app-title-outline);
@@ -1612,6 +1614,8 @@ button.sb-badge { cursor: pointer; }
 }
 .ctx-head { padding: 6px 9px 7px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
 .ctx-title { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctx-title:has(.sys-ic) { display: flex; align-items: center; gap: 6px; }
+.ctx-title:has(.sys-ic) span { overflow: hidden; text-overflow: ellipsis; }
 .ctx-sub { margin-top: 1px; font-size: var(--fs-caption); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ctx-section { padding: 6px 9px 3px; font-size: var(--fs-eyebrow); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .ctx-item {
@@ -1700,6 +1704,8 @@ button.sb-badge { cursor: pointer; }
   display: flex; flex-direction: column; flex: 0 0 214px; width: 214px; min-width: 214px; max-width: 214px;
   box-sizing: border-box; overflow: hidden; background: var(--chrome-sub); border-right: 1px solid var(--border);
 }
+/* 미리보기를 끄면 오른쪽(#detail-panel.off)과 똑같이 왼쪽도 사라진다(메뉴 정리 §8). */
+#center.compare-mode #compare-left.off { display: none; }
 #center.compare-mode #detail-panel,
 #center.compare-mode #detail-top {
   flex-basis: 214px; width: 214px; min-width: 214px; max-width: 214px;
