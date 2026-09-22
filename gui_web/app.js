@@ -140,6 +140,11 @@
   // ------------------------------------------------------------------
   // DOM 헬퍼
   // ------------------------------------------------------------------
+  function makeText(text) {
+    const node = document.createTextNode(window.RMSI18n ? window.RMSI18n.t(text) : text);
+    if (window.RMSI18n) window.RMSI18n.remember(node, text);
+    return node;
+  }
   function h(tag, props, children) {
     const el = document.createElement(tag);
     if (props) {
@@ -148,6 +153,10 @@
         if (k === "class") el.className = v;
         else if (k === "html") el.innerHTML = v;
         else if (k === "style") Object.assign(el.style, v);
+        else if ((k === "title" || k === "aria-label" || k === "placeholder") && typeof v === "string" && window.RMSI18n) {
+          el.setAttribute(k, window.RMSI18n.t(v));
+          window.RMSI18n.rememberAttr(el, k, v);
+        }
         else if (k === "dataset") Object.entries(v).forEach(([dk, dv]) => (el.dataset[dk] = dv));
         else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
         else el.setAttribute(k, v === true ? "" : v);
@@ -155,7 +164,8 @@
     }
     (children || []).forEach((c) => {
       if (c === null || c === undefined || c === false) return;
-      el.appendChild(typeof c === "string" || typeof c === "number" ? document.createTextNode(String(c)) : c);
+      el.appendChild(typeof c === "string" || typeof c === "number"
+        ? makeText(String(c)) : c);
     });
     return el;
   }
@@ -581,6 +591,7 @@
   // 다른 창이 보내는 알림(bridge/windows.py WindowManager.broadcast / merge).
   window.__rmsSettingsChanged = (stored) => {
     S.settings = mergeSettings(stored);
+    if (window.RMSI18n) window.RMSI18n.setLanguage((S.settings.general && S.settings.general.language) || "ko");
     applyAppearance(S.settings.appearance);
     renderAll();
     if (S.activeId) refreshListGeometry();
@@ -598,6 +609,10 @@
   async function loadAppSettings() {
     const r = await api.getAppSettings();
     S.settings = mergeSettings(r.ok ? r.data : null);
+    if (window.RMSI18n) {
+      window.RMSI18n.setLanguage((S.settings.general && S.settings.general.language)
+        || window.RMSI18n.getLanguage() || "ko");
+    }
     // 줄 높이나 컬럼 배치가 기본값과 다르면 이미 그린 목록을 다시 맞춘다.
     applyAppearance(S.settings.appearance);
     refreshListGeometry();
@@ -610,6 +625,7 @@
   function updateSettings(section, patch) {
     S.settings[section] = { ...(S.settings[section] || {}), ...patch };
     pendingSettings[section] = { ...(pendingSettings[section] || {}), ...patch };
+    if (section === "general" && patch && patch.language && window.RMSI18n) window.RMSI18n.setLanguage(patch.language);
     if (section === "appearance" && applyAppearance(S.settings.appearance)) refreshListGeometry();
     if (section === "navigation") renderNav();
     if (section === "gamelist") refreshListGeometry();
@@ -6729,6 +6745,9 @@
     renderDetailPanel();
     renderStatusBar();
   }
+
+  //: 언어가 바뀌면 동적으로 그린 화면을 원문에서 다시 그린다(i18n.js가 부른다).
+  window.__rmsRelocalize = () => { if (S.collections) renderAll(); };
 
   async function loadCollections() {
     const r = await api.listCollections();

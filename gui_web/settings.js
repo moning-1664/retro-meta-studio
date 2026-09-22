@@ -42,7 +42,10 @@
     while (root.firstChild) root.removeChild(root.firstChild);
     const overlay = h("div", { class: "modal-overlay stg-overlay" });
     const panel = h("div", { class: "stg-panel", role: "dialog", "aria-label": "Settings" });
-    const close = () => { while (root.firstChild) root.removeChild(root.firstChild); };
+    const close = () => {
+      window.__rmsSettingsRerender = null;
+      while (root.firstChild) root.removeChild(root.firstChild);
+    };
 
     const head = h("div", { class: "stg-head" }, [
       h("div", {}, [
@@ -82,6 +85,7 @@
       while (main.firstChild) main.removeChild(main.firstChild);
       main.appendChild(content(active));
     }
+    window.__rmsSettingsRerender = () => { if (root.contains(panel)) render(); };
 
     // ---------------------------------------------------------------- 컨트롤
     function row(key, label, control, help, soon) {
@@ -218,7 +222,12 @@
 
       if (key === "general") {
         add(...section("General", "RetroMeta Studio의 전역 동작을 설정합니다."));
-        add(row("general.language", "Language", soonSelect([["ko", "한국어"], ["en", "English"]]), null, true));
+        const currentLanguage = (s.general && s.general.language) || "ko";
+        add(row("general.language", "Language",
+          select(currentLanguage,
+            window.RMSI18n ? window.RMSI18n.LANGS.map((code) => [code, window.RMSI18n.LABELS[code]])
+              : [["ko", "한국어"], ["en", "English"], ["ja", "日本語"], ["es", "Español"], ["fr", "Français"]],
+            (v) => ctx.update("general", { language: v })), null));
         add(row("general.startup", "Startup", soonSelect([["last", "마지막 상태 복원"], ["archive", "항상 Archive"]]), null, true));
         add(row("general.autoSave", "Auto Save", soonToggle(false), "편집한 Metadata를 자동 저장합니다.", true));
         add(row("general.confirmDelete", "Confirm before delete", soonToggle(true), null, true));
