@@ -1834,6 +1834,10 @@
           () => setScope({ kind: "system", id: sys.system }));
         row.classList.add("nav-system");
         row.insertBefore(systemIcon(sys.system, 18), row.firstChild);
+        // 예전엔 이 줄에 우클릭이 아예 안 걸려 있었다 - "prefix 붙이기도 안 된다"는
+        // 지적의 진짜 원인이었다(메뉴 자체가 안 뜸). Collection의 System 메뉴 중
+        // Archive 데이터만으로 계산 가능한 것만 옮긴다(아래 openArchiveSystemMenu).
+        row.addEventListener("contextmenu", (e) => { e.preventDefault(); openArchiveSystemMenu(sys, e); });
         scroll.appendChild(row);
       });
       nav.appendChild(navDashboardRow());
@@ -2199,6 +2203,39 @@
     return r.ok && r.data.items.some((i) => i.changed);
   }
 
+  /** Archive System 우클릭 메뉴 - Collection의 System 메뉴 중 Archive 데이터만으로
+   * 계산 가능한 것만 옮긴다("Storage 옮기기"/"이름 바꾸기"/"미디어 정리"는 Collection의
+   * 실제 파일이 있어야 하는 동작이라 Archive에는 없다, 사용자 리포트로 정리). */
+  async function openArchiveSystemMenu(sys, event) {
+    const items = [
+      { label: "언어 태그 적용…", icon: "tag",
+        title: "이 System 전체 제목에서 기존 장식을 떼고, Settings에 설정한 지역별 표시를 다시 붙입니다. 바로 적용됩니다.",
+        onSelect: () => openTitleAffixDialog({ system: sys.system, label: sys.system.toUpperCase() }) },
+      { label: "멀티 디스크 태그 적용…", icon: "copy",
+        title: "여러 장짜리 게임의 제목 뒤에 붙은 장 번호 표시를 지우고, Settings에 고른 형식으로 다시 붙입니다. 바로 적용됩니다.",
+        onSelect: () => openDiscRetagDialog(sys.system, sys.system.toUpperCase()) },
+      "separator",
+      { label: "시스템 전체 Archive에서 지우기 (!)", icon: "trash", danger: true,
+        title: "이 System의 Archive 기록을 전부 지웁니다 - 실제 ROM/Media 파일은 그대로입니다.",
+        onSelect: () => confirmRemoveArchiveSystem(sys) },
+    ];
+    showContextMenu(menuPoint(event), sys.system.toUpperCase(),
+      `게임 ${formatCount(sys.count)}`, items, null, systemIcon(sys.system, 15));
+  }
+
+  async function confirmRemoveArchiveSystem(sys) {
+    showConfirm(`${sys.system.toUpperCase()} 전체 Archive에서 지우기`,
+      `이 System의 Archive 항목 ${formatCount(sys.count)}개를 지웁니다. 실제 ROM/Media 파일은 지워지지 `
+      + "않습니다 - 필요하면 해당 Collection에서 다시 수집할 수 있습니다.", true, async () => {
+        const r = await api.archiveDeleteSystem(sys.system);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        resetList();
+        renderAll();
+        await reloadList();
+        showToast(`${formatCount(r.data.deleted)}개를 Archive에서 지웠습니다.`);
+      });
+  }
+
   async function openSystemMenu(sys, storages, event) {
     const titleAffixDisabled = !sys.count || !(await titleAffixHasChangesForSystem(sys.system));
     const current = storages.find((s) => s.id === sys.storageId);
@@ -2404,7 +2441,10 @@
    * 달리 이 기능만 Plan을 거친다, app/model/plan.py의 OP_TITLE_EDIT 참고). */
   async function openTitleAffixDialog(target) {
     const collectionId = S.activeId;
-    const preview = await api.titleAffixPreview(collectionId, target.romUids || null, target.system || null);
+    const archive = isArchive();
+    const preview = archive
+      ? await api.archiveTitleAffixPreview(target.system)
+      : await api.titleAffixPreview(collectionId, target.romUids || null, target.system || null);
     if (!preview.ok) { showToast(preview.error, "error"); return; }
     const items = preview.data.items;
     const changed = items.filter((i) => i.changed);
@@ -2430,7 +2470,8 @@
       h("div", { class: "modal-text" }, [
         `${target.label} - 제목 ${formatCount(changed.length)}개가 바뀝니다`
         + (unchanged ? ` (변경 없음 ${formatCount(unchanged)}개 제외)` : "") + ". "
-        + "Plan에 추가한 뒤 목록 위 Apply를 눌러야 실제 파일에 반영됩니다.",
+        + (archive ? "Archive는 Plan을 거치지 않고 바로 적용됩니다."
+          : "Plan에 추가한 뒤 목록 위 Apply를 눌러야 실제 파일에 반영됩니다."),
       ]),
       list,
     ]);
@@ -2438,11 +2479,19 @@
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       h("button", { class: "btn primary", onClick: async () => {
         closeModal();
+        if (archive) {
+          const r = await api.archiveApplyTitleAffix(target.system);
+          if (!r.ok) { showToast(r.error, "error"); return; }
+          resetList();
+          await reloadList();
+          showToast(`제목 ${formatCount(r.data.applied)}개를 바꿨습니다.`);
+          return;
+        }
         const r = await api.planTitleEdit(collectionId, target.romUids || null, target.system || null);
         if (!r.ok) { showToast(r.error, "error"); return; }
         if (collectionId === S.activeId) await refreshPlan();
         showToast(`제목 ${formatCount(r.data.added)}개를 Plan에 올렸습니다. Apply를 누르면 반영됩니다.`);
-      } }, ["Plan에 추가"]),
+      } }, [archive ? "적용" : "Plan에 추가"]),
     ]);
   }
 
@@ -2450,7 +2499,10 @@
    * 형식으로 다시 붙인다. Title Prefix/Postfix와 같은 D1 예외(Plan을 거치는 텍스트 편집). */
   async function openDiscRetagDialog(system, label) {
     const collectionId = S.activeId;
-    const preview = await api.discRetagPreview(collectionId, system);
+    const archive = isArchive();
+    const preview = archive
+      ? await api.archiveDiscRetagPreview(system)
+      : await api.discRetagPreview(collectionId, system);
     if (!preview.ok) { showToast(preview.error, "error"); return; }
     const items = preview.data.items;
     const changed = items.filter((i) => i.changed);
@@ -2473,7 +2525,8 @@
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "modal-text" }, [
         `${label} - 제목 ${formatCount(changed.length)}개가 바뀝니다. `
-        + "Plan에 추가한 뒤 목록 위 Apply를 눌러야 실제 파일에 반영됩니다.",
+        + (archive ? "Archive는 Plan을 거치지 않고 바로 적용됩니다."
+          : "Plan에 추가한 뒤 목록 위 Apply를 눌러야 실제 파일에 반영됩니다."),
       ]),
       list,
     ]);
@@ -2481,11 +2534,19 @@
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       h("button", { class: "btn primary", onClick: async () => {
         closeModal();
+        if (archive) {
+          const r = await api.archiveApplyDiscRetag(system);
+          if (!r.ok) { showToast(r.error, "error"); return; }
+          resetList();
+          await reloadList();
+          showToast(`제목 ${formatCount(r.data.applied)}개를 바꿨습니다.`);
+          return;
+        }
         const r = await api.planDiscRetag(collectionId, system);
         if (!r.ok) { showToast(r.error, "error"); return; }
         if (collectionId === S.activeId) await refreshPlan();
         showToast(`제목 ${formatCount(r.data.added)}개를 Plan에 올렸습니다. Apply를 누르면 반영됩니다.`);
-      } }, ["Plan에 추가"]),
+      } }, [archive ? "적용" : "Plan에 추가"]),
     ]);
   }
 

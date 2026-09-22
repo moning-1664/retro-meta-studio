@@ -345,6 +345,11 @@
     archive_detail: () => ok(null),
     archive_edit: () => ok({ revision: 1, changed: true }),
     archive_delete: (ids) => ok({ deleted: (ids || []).length }),
+    archive_title_affix_preview: () => ok({ items: [], changed: 0 }),
+    archive_apply_title_affix: () => ok({ applied: 0 }),
+    archive_disc_retag_preview: () => ok({ items: [], changed: 0 }),
+    archive_apply_disc_retag: () => ok({ applied: 0 }),
+    archive_delete_system: () => ok({ deleted: 0 }),
     archive_set_preferred: (id, recordId) => ok({ romIdentityId: id, recordId }),
     archive_clear_preferred: (id) => ok({ romIdentityId: id, recordId: null }),
     archive_to_collection: () => ok({ updated: 0, planned: 0, skipped: [] }),
@@ -958,6 +963,11 @@
     archiveDetail: (romIdentityId) => call("archive_detail", romIdentityId),
     archiveEdit: (romIdentityId, fields) => call("archive_edit", romIdentityId, fields),
     archiveDelete: (romIdentityIds) => call("archive_delete", romIdentityIds),
+    archiveTitleAffixPreview: (system) => call("archive_title_affix_preview", system),
+    archiveApplyTitleAffix: (system) => call("archive_apply_title_affix", system),
+    archiveDiscRetagPreview: (system, fmt) => call("archive_disc_retag_preview", system, fmt || null),
+    archiveApplyDiscRetag: (system, fmt) => call("archive_apply_disc_retag", system, fmt || null),
+    archiveDeleteSystem: (system) => call("archive_delete_system", system),
     archiveSetPreferred: (romIdentityId, recordId) =>
       call("archive_set_preferred", romIdentityId, recordId),
     archiveClearPreferred: (romIdentityId) =>

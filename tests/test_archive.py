@@ -188,6 +188,55 @@ class ArchiveTests(unittest.TestCase):
         # 원본 ROM은 그대로다.
         self.assertTrue((self.source_root / "ps2" / "FFX.iso").exists())
 
+    def test_language_tag_apply_works_on_archive_rows_too(self):
+        """실사용 버그 리포트 - "System 우클릭 옵션들도 다 안 되던데(prefix 붙이기...)".
+        Archive의 System 목록엔 우클릭 메뉴 자체가 안 걸려 있었다. 순수 텍스트 계산
+        (app/title_affix.py)이라 Archive 데이터만으로도 그대로 계산 가능한지 확인한다."""
+        from tests.fixtures import build_custom_esde_tree
+
+        tagged_root = build_custom_esde_tree(self.dir / "tagged_src", "psx", [
+            {"filename": "Rogue Galaxy (USA).iso", "title": "Rogue Galaxy"},
+        ])
+        tagged_id = self.api.create_collection("Tagged", "es-de", str(tagged_root))["data"]["id"]
+        self.api.start_scan(tagged_id)
+        wait_idle(self.api)
+
+        self.assertTrue(self.api.save_app_settings({"titleAffix": {
+            "en": {"enabled": True, "mode": "prefix", "text": "EN"},
+        }})["ok"])
+        self.api.archive_ingest(tagged_id)
+
+        preview = self.api.archive_title_affix_preview("psx")
+        self.assertTrue(preview["ok"], preview.get("error"))
+        items = {i["filename"]: i for i in preview["data"]["items"]}
+        self.assertTrue(items["Rogue Galaxy (USA).iso"]["changed"])
+        self.assertEqual(items["Rogue Galaxy (USA).iso"]["newTitle"], "EN_Rogue Galaxy")
+
+        applied = self.api.archive_apply_title_affix("psx")
+        self.assertTrue(applied["ok"], applied.get("error"))
+        self.assertGreaterEqual(applied["data"]["applied"], 1)
+        rid = self._rid("Rogue Galaxy (USA).iso")
+        self.assertEqual(self.api.archive_detail(rid)["data"]["fields"]["name"], "EN_Rogue Galaxy")
+
+        # Collection의 gamelist.xml은 그대로다 - Archive 편집은 새어나가지 않는다(§40).
+        root = ET.parse(tagged_root / "gamelists" / "psx" / "gamelist.xml").getroot()
+        game = next(g for g in root.findall("game")
+                    if (g.findtext("path") or "").strip() == "./Rogue Galaxy (USA).iso")
+        self.assertEqual(game.findtext("name"), "Rogue Galaxy")
+
+    def test_deleting_a_whole_system_from_the_archive(self):
+        self.api.archive_ingest(self.src)
+        before = {r["file"] for r in self.api.archive_rows()["data"]["rows"]}
+        self.assertIn("FFX.iso", before)
+
+        result = self.api.archive_delete_system("ps2")
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertGreaterEqual(result["data"]["deleted"], 1)
+
+        after = {r["file"] for r in self.api.archive_rows()["data"]["rows"]}
+        self.assertNotIn("FFX.iso", after)
+        self.assertTrue((self.source_root / "ps2" / "FFX.iso").exists())
+
     def test_deleting_an_unknown_id_is_reported_not_silently_ignored(self):
         result = self.api.archive_delete(["no-such-id"])
         self.assertTrue(result["ok"])

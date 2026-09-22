@@ -24,6 +24,10 @@ async function openArchive(page, conflicts = { rid1: 2 }) {
     ] } });
     window.api.archiveChooseVersion = () => { pending = {}; return Promise.resolve({ ok: true, data: {} }); };
     window.api.archiveUids = () => Promise.resolve({ ok: true, data: rows.map((r) => r.romUid) });
+    const bySystem = {};
+    rows.forEach((r) => { bySystem[r.system] = (bySystem[r.system] || 0) + 1; });
+    window.api.archiveSystems = () => Promise.resolve({ ok: true,
+      data: Object.entries(bySystem).map(([system, count]) => ({ system, count })) });
   }, { rows: ROWS, conflicts });
   await page.locator(".ctab.archive").click();
   await expect(page.locator(".lrow").first()).toBeVisible();
@@ -92,6 +96,64 @@ test("Archive에서도 Ctrl+A로 전체를 고를 수 있다", async ({ page }) 
   await page.locator(".lrow").nth(0).click();
   await page.keyboard.press("Control+a");
   await expect(page.locator("#toast")).toContainText("2개를 선택");
+});
+
+test.describe("Archive System 우클릭", () => {
+  // 실사용 버그 리포트 - "System 우클릭 옵션들도 다 안 되던데(prefix 붙이기, 디렉토리
+  // 이동 등)". 확인해보니 Archive의 System 목록에는 우클릭 자체가 안 걸려 있었다.
+  // Collection의 실제 파일이 있어야 하는 항목(Storage 옮기기/이름 바꾸기/미디어 정리)은
+  // 뜻이 없어 안 옮기고, 순수 텍스트 계산과 삭제만 옮긴다.
+  const rightClickSystem = (page, name) => page.locator(".nav-system", { hasText: name }).click({ button: "right" });
+  const menuItem = (page, label) => page.locator(".ctx-menu .ctx-item", { hasText: label });
+
+  test("Collection에는 있는 항목들이 여기엔 없고, 옮긴 것만 있다", async ({ page }) => {
+    await openArchive(page);
+    await rightClickSystem(page, "PS2");
+    await expect(menuItem(page, "언어 태그 적용")).toBeVisible();
+    await expect(menuItem(page, "멀티 디스크 태그 적용")).toBeVisible();
+    await expect(menuItem(page, "시스템 전체 Archive에서 지우기")).toBeVisible();
+    await expect(menuItem(page, "Storage 옮기기")).toHaveCount(0);
+    await expect(menuItem(page, "이름 바꾸기")).toHaveCount(0);
+    await expect(menuItem(page, "미디어 선택 후 정리")).toHaveCount(0);
+  });
+
+  test("언어 태그 적용은 미리보기 후 Plan 없이 바로 적용된다", async ({ page }) => {
+    await openArchive(page);
+    await page.evaluate(() => {
+      window.api.archiveTitleAffixPreview = () => Promise.resolve({ ok: true, data: {
+        items: [{ romUid: "rid2", system: "ps2", filename: "FFX.iso",
+                 oldTitle: "Final Fantasy X", newTitle: "EN_Final Fantasy X", changed: true }],
+        changed: 1 } });
+      window.__applied = null;
+      window.api.archiveApplyTitleAffix = (system) => {
+        window.__applied = system;
+        return Promise.resolve({ ok: true, data: { applied: 1 } });
+      };
+    });
+    await rightClickSystem(page, "PS2");
+    await menuItem(page, "언어 태그 적용").click();
+    await expect(page.locator(".modal-title")).toHaveText("Title Prefix/Postfix");
+    await expect(page.locator(".modal-text")).toContainText("Plan을 거치지 않고 바로 적용");
+    await page.locator(".modal-actions .btn.primary", { hasText: "적용" }).click();
+    await expect.poll(() => page.evaluate(() => window.__applied)).toBe("ps2");
+    await expect(page.locator("#toast")).toContainText("1개를 바꿨습니다");
+  });
+
+  test("시스템 전체 지우기는 확인 후 archiveDeleteSystem을 부른다", async ({ page }) => {
+    await openArchive(page);
+    await page.evaluate(() => {
+      window.__deletedSystem = null;
+      window.api.archiveDeleteSystem = (system) => {
+        window.__deletedSystem = system;
+        return Promise.resolve({ ok: true, data: { deleted: 2 } });
+      };
+    });
+    await rightClickSystem(page, "PS2");
+    await menuItem(page, "시스템 전체 Archive에서 지우기").click();
+    await expect(page.locator(".modal-text")).toContainText("실제 ROM/Media 파일은 지워지지 않습니다");
+    await modalButton(page, "확인").click();
+    await expect.poll(() => page.evaluate(() => window.__deletedSystem)).toBe("ps2");
+  });
 });
 
 test.describe("Archive 행 우클릭 - 삭제", () => {

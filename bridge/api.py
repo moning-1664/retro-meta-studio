@@ -2241,6 +2241,76 @@ class Api:
                 deleted += 1
         return ok({"deleted": deleted})
 
+    # ------------------------------------------------------------------
+    # System 우클릭 - 언어 태그/멀티 디스크 태그 적용, 시스템 전체 삭제 (Archive판)
+    # ------------------------------------------------------------------
+    # 실사용 리포트 - "System 우클릭 옵션들도 다 안 되던데(prefix 붙이기, 디렉토리
+    # 이동 등)". 확인해보니 Archive의 System 목록에는 우클릭 메뉴 자체가 안 걸려
+    # 있었다(app.js). 메뉴가 있어야 뜻이 있는 항목만 옮긴다 - "Storage 옮기기"/
+    # "System 이름 바꾸기"/"미디어 정리"는 Collection의 실제 파일·Storage 개념이
+    # 있어야 하는 동작이라 Archive에는 그대로 옮길 수 없다(Archive는 여러 출처를
+    # 모은 색인이지 자신의 파일을 갖지 않는다, §37). 반대로 언어 태그/디스크 태그
+    # 적용(순수 텍스트 계산, app/title_affix.py)과 삭제(archive_delete)는 Archive
+    # 데이터만으로 완전히 계산되므로 그대로 옮길 수 있다.
+    def _archive_title_affix_rows(self, system):
+        rows = self.archive.list_rows(systems=[system], limit=None)
+        return [{"rom_uid": r["rom_identity_id"], "system": r["system"],
+                 "filename": r["filename"], "title": r["title"]} for r in rows]
+
+    @guarded
+    def archive_title_affix_preview(self, system):
+        rows = self._archive_title_affix_rows(system)
+        if not rows:
+            return err("대상을 찾을 수 없습니다.")
+        changes = title_affix.preview_titles(rows, self._title_affix_config())
+        return ok({"items": changes, "changed": sum(1 for c in changes if c["changed"])})
+
+    @guarded
+    def archive_apply_title_affix(self, system):
+        """미리보기에서 확인한 대로 **바로** 적용한다. Archive는 Plan을 거치지
+        않는다(D1 - 텍스트만 바뀌고 바이트는 안 움직인다) - archive_edit()과 같은
+        자리에서 즉시 쓴다."""
+        rows = self._archive_title_affix_rows(system)
+        changes = title_affix.preview_titles(rows, self._title_affix_config())
+        applied = 0
+        for change in changes:
+            if not change["changed"]:
+                continue
+            result = archive_service.edit(self.archive, change["romUid"], {"name": change["newTitle"]})
+            self._project_archive(result, [change["romUid"]])
+            applied += 1
+        return ok({"applied": applied})
+
+    @guarded
+    def archive_disc_retag_preview(self, system, fmt=None):
+        rows = self._archive_title_affix_rows(system)
+        if not rows:
+            return err("대상을 찾을 수 없습니다.")
+        fmt = fmt or self._disc_title_option()["format"]
+        changes = title_affix.preview_disc_retag(rows, fmt)
+        return ok({"items": changes, "changed": sum(1 for c in changes if c["changed"])})
+
+    @guarded
+    def archive_apply_disc_retag(self, system, fmt=None):
+        rows = self._archive_title_affix_rows(system)
+        fmt = fmt or self._disc_title_option()["format"]
+        changes = title_affix.preview_disc_retag(rows, fmt)
+        applied = 0
+        for change in changes:
+            if not change["changed"]:
+                continue
+            result = archive_service.edit(self.archive, change["romUid"], {"name": change["newTitle"]})
+            self._project_archive(result, [change["romUid"]])
+            applied += 1
+        return ok({"applied": applied})
+
+    @guarded
+    def archive_delete_system(self, system):
+        """"시스템 전체 삭제"의 Archive판 - 그 System의 Identity를 전부 지운다.
+        archive_delete()와 같은 이유로 실제 ROM/Media 파일은 그대로다."""
+        ids = [r["rom_identity_id"] for r in self.archive.list_rows(systems=[system], limit=None)]
+        return self.archive_delete(ids)
+
     @guarded
     def archive_revisions(self, rom_identity_id, source_collection_id):
         """한 출처의 Revision 이력(ARCHIVE_REVISION_POLICY.md §14 Revision History)."""
