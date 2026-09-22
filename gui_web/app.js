@@ -3270,6 +3270,7 @@
     bar.appendChild(h("div", { class: "cmp-group cmp-send-group" }, [
       sendSelected("toLeft", "\u276e", "고른 항목의 메타데이터+미디어를 왼쪽으로 덮어씁니다(Plan)"),
       sendSelected("toRight", "\u276f", "고른 항목의 메타데이터+미디어를 오른쪽으로 덮어씁니다(Plan)"),
+      manualLinkButton(),
     ]));
 
     // Swap/새로고침은 **아이콘만**이다(사용자 결정) - 글자까지 넣으면 한 줄이 비좁다.
@@ -3503,6 +3504,15 @@
       btn.title = S.selected.size
         ? `고른 항목의 메타데이터+미디어를 ${btn.dataset.dir === "toLeft" ? "왼쪽" : "오른쪽"}으로 덮어씁니다(Plan)`
         : "보낼 항목을 먼저 고르세요";
+    });
+    // 직접 잇기도 같다 - 한쪽에만 있는 두 항목을 좌우에서 하나씩 골랐을 때만 눌린다.
+    document.querySelectorAll(".cmp-link").forEach((btn) => {
+      const pair = manualLinkPair();
+      btn.disabled = !pair;
+      btn.title = pair
+        ? `«${pair.a.file}»와 «${pair.b.file}»를 직접 잉습니다`
+        : "한쪽에만 있는 항목을 좌우에서 하나씩, 둘만 고르면 직접 이을 수 있습니다";
+      btn.onclick = pair ? () => openManualLinkDialog(pair) : null;
     });
     // "Archive로"는 HERO의 메타데이터 보내기 아이콘으로 옮겨갔다(§4, §6) - 그
     // 버튼은 누를 때마다 scope를 새로 계산하는 플로팅 메뉴라서(openMetaTargetMenu),
@@ -4822,6 +4832,63 @@
   }
 
   /** 상단 `<` `>` - 고른 행들의 메타데이터+미디어를 반대쪽 Plan에 덮어쓰기로 올린다. */
+  /** 고른 두 행이 **서로 다른 쪽에만** 있는가. 그렇다면 사람이 직접 이을 수 있다.
+   *
+   * 자동 짝짓기는 이름이 닮았을 때만 잇는다 - `Final Fantasy 7.zip`과 `ff7.rom`은 같은 게임인데도
+   * 각각 "한쪽에만 있음"으로 남는다. 그때 둘을 골라 잇는 길이다. **Match 결과를 바꾸는 것이 아니라**
+   * 이번 전송의 대상을 지목하는 것이다. */
+  function manualLinkPair() {
+    if (S.selected.size !== 2) return null;
+    const rows = [...S.rowCache.values()].filter((r) => r && S.selected.has(r.key));
+    if (rows.length !== 2) return null;
+    const a = rows.find((r) => r.status === "only_a");
+    const b = rows.find((r) => r.status === "only_b");
+    return a && b ? { a, b } : null;
+  }
+
+  function manualLinkButton() {
+    const pair = manualLinkPair();
+    const btn = h("button", {
+      class: "cmp-link", disabled: !pair,
+      title: pair
+        ? `«${pair.a.file}»와 «${pair.b.file}»를 직접 잉습니다`
+        : "한쪽에만 있는 항목을 좌우에서 하나씩, 둘만 고르면 직접 이을 수 있습니다",
+    }, [icon("arrowLeftRight", IC.sm)]);
+    if (pair) btn.onclick = () => openManualLinkDialog(pair);
+    return btn;
+  }
+
+  /** 어느 쪽을 원본으로 삼을지 사람이 정한다 - 방향을 짐작해서 남의 메타데이터를 덮으면 안 된다. */
+  function openManualLinkDialog(pair) {
+    const send = async (source, target) => {
+      closeModal();
+      const r = await api.compareManualCopy(source.key, target.key, "replace");
+      if (!r.ok) { showToast(r.error, "error"); return; }
+      const d = r.data || {};
+      S.comparePlanned.add(`${source.key}|manual`);
+      renderListWindow();
+      showToast(`«${d.sourceFile}» → «${d.targetFile}», ${d.targetName}의 Plan에 올렸습니다.`);
+    };
+    const choice = (source, target) => {
+      const btn = h("button", { class: "btn picker-row" }, [
+        h("div", { class: "picker-main" }, [
+          h("div", { class: "picker-title truncate" }, [`${source.file} → ${target.file}`]),
+          h("div", { class: "picker-sub truncate" },
+            [`«${source.file}»의 내용으로 «${target.file}»를 채웁니다`]),
+        ]),
+      ]);
+      btn.addEventListener("click", () => send(source, target));
+      return btn;
+    };
+    showModal("직접 잉기", h("div", { class: "modal-body" }, [
+      h("div", { class: "modal-text" },
+        ["고른 두 항목을 같은 게임으로 보고 메타데이터와 미디어를 보냅니다. 어느 쪽을 원본으로 삼을까요?"]),
+      h("div", { class: "modal-hint" },
+        ["ROM 파일은 옮기지 않습니다. 이 작업은 Match 결과를 바꾸지 않고, 이번 전송의 대상만 지정합니다."]),
+      h("div", { class: "picker-list" }, [choice(pair.a, pair.b), choice(pair.b, pair.a)]),
+    ]), [h("button", { class: "btn", onClick: closeModal }, ["취소"])]);
+  }
+
   async function compareSendSelected(direction) {
     if (!S.selected.size) { showToast("보낼 항목을 먼저 고르세요.", "warning"); return; }
     const r = await api.compareCopyRows([...S.selected], direction, [...S.compareMediaSel]);

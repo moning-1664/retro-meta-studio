@@ -97,11 +97,36 @@ def decide(item, existing, mode, *, replace_rom=False) -> tuple[dict | None, str
     return {**item, "fields": fields, "frontend_raw": raw, "rom": rom, "media": media}, None
 
 
-def prepare(items, cache, mode, *, replace_rom=False) -> tuple[list, list]:
-    """붙여넣기 - 대상 Collection에서 같은 (System, 파일명)을 같은 게임으로 본다."""
+def item_key(item) -> str:
+    """전송 항목 하나를 가리키는 열쇠. Compare 행 열쇠와 같은 모양이라 화면에서 그대로 쓸 수 있다."""
+    return f"{item['system']}|{item['filename']}"
+
+
+def prepare(items, cache, mode, *, replace_rom=False, targets=None) -> tuple[list, list]:
+    """붙여넣기 - 어느 대상 행에 쓸지 정하고 구성요소별 의도를 계산한다.
+
+    같은 게임인지 아는 방법은 둘이다.
+
+    1. **사용자가 지목**(`targets`: 항목 열쇠 -> 대상 행). 자동 판단보다 우선한다 - 자동 Match가
+       못 붙였거나 다른 게임이라고 본 짝이라도, 사용자가 직접 고른 것이 더 정확한 정보다.
+       Match 결과를 바꾸지는 않는다. 이번 작업에 한해 "이 둘을 이어라"라고 승인한 것뿐이다.
+    2. 지목이 없으면 같은 (System, 파일명)을 같은 게임으로 본다.
+    """
+    targets = targets or {}
     prepared, skipped = [], []
     for item in items:
-        existing = cache.get_row_by_filename(item["system"], item["filename"])
+        chosen = targets.get(item_key(item))
+        if chosen is not None:
+            existing = chosen
+            # 지목한 대상의 이름으로 쓴다 - 그래야 gamelist의 그 항목에 들어가고, 미디어도 그
+            # 파일명으로 놓여 프론트엔드가 찾는다.
+            item = {**item, "system": chosen["system"], "filename": chosen["filename"]}
+            if not replace_rom:
+                # 이름이 다른 대상이다. ROM을 대상 이름으로 복사하면 확장자까지 바뀌어
+                # 에뮬레이터가 못 읽는 파일이 된다 - ROM 교체를 명시한 때만 손댄다.
+                item = {**item, "rom": None}
+        else:
+            existing = cache.get_row_by_filename(item["system"], item["filename"])
         out, reason = decide(item, existing, mode, replace_rom=replace_rom)
         if out is None:
             skipped.append({"filename": item["filename"], "reason": reason})

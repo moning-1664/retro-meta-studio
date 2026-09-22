@@ -664,6 +664,18 @@
         direction, metadataOnly: !!metadataOnly,
       });
     },
+    compare_manual_copy: (sourceKey, targetKey) => {
+      if (!mockCompare.on) return Promise.resolve({ ok: false, error: "Compare Mode가 아닙니다." });
+      const source = mockCompareRows.find((r) => r.key === sourceKey);
+      const target = mockCompareRows.find((r) => r.key === targetKey);
+      if (!source || !target) return Promise.resolve({ ok: false, error: "고른 항목을 찾을 수 없습니다." });
+      return ok({
+        added: 1, skipped: [], conflicts: 0,
+        targetId: source.status === "only_a" ? "c2" : "c1",
+        targetName: source.status === "only_a" ? "Android ES-DE" : "Master Library",
+        sourceFile: source.file, targetFile: target.file,
+      });
+    },
     compare_copy_rows: (keys, direction) => {
       if (!mockCompare.on) return Promise.resolve({ ok: false, error: "Compare Mode가 아닙니다." });
       return ok({
@@ -915,6 +927,8 @@
     compareDetail: (key) => call("compare_detail", key),
     compareCopyRow: (key, direction, metadataOnly) =>
       call("compare_copy_row", key, direction, !!metadataOnly),
+    compareManualCopy: (sourceKey, targetKey, mode) =>
+      call("compare_manual_copy", sourceKey, targetKey, mode || null, false),
     compareCopyRows: (keys, direction, mediaTypes) =>
       call("compare_copy_rows", keys, direction, true, true, null, false, mediaTypes && mediaTypes.length ? mediaTypes : null),
     exitCompare: () => call("exit_compare"),

@@ -479,3 +479,39 @@ test("Media 탭에서 여러 종류를 체크하면 상단 < >가 그 종류만 
   await expect.poll(() => calls.length).toBe(1);
   expect(calls[0][2]).toHaveLength(2);
 });
+
+// 직접 잇기 - 자동 짝짓기가 못 붙인 두 항목을 사람이 골라 잇는다(제안서 §5, §15.3-15.4).
+test("한쪽에만 있는 항목 둘을 고르면 직접 잇기가 열린다", async ({ page }) => {
+  await startCompare(page);
+  const calls = [];
+  await page.exposeFunction("__note", (args) => calls.push(args));
+  await page.evaluate(() => {
+    const original = window.api.compareManualCopy;
+    window.api.compareManualCopy = (a, b, mode) => { window.__note([a, b, mode]); return original(a, b, mode); };
+  });
+
+  // 고르기 전에는 누를 수 없다.
+  await expect(page.locator(".cmp-link")).toBeDisabled();
+
+  await page.locator(".lrow", { hasText: "Only Base" }).locator(".lc-srcTitle").click();
+  await page.locator(".lrow", { hasText: "Only Other" }).locator(".lc-dstTitle")
+    .click({ modifiers: ["Control"] });
+  await expect(page.locator(".cmp-link")).toBeEnabled();
+
+  await page.locator(".cmp-link").click();
+  // 방향을 사람이 고른다 - 두 가지가 다 제시된다.
+  await expect(page.locator(".modal-overlay .picker-row")).toHaveCount(2);
+  await page.locator(".modal-overlay .picker-row").first().click();
+
+  await expect.poll(() => calls.length).toBe(1);
+  expect(calls[0][0]).toBe("ps2|OnlyBase.iso");
+  expect(calls[0][1]).toBe("ps2|OnlyOther.iso");
+});
+
+test("같은 쪽 항목만 고르면 직접 잇기는 막혀 있다", async ({ page }) => {
+  await startCompare(page);
+  await page.locator(".lrow", { hasText: "Only Base" }).locator(".lc-srcTitle").click();
+  await page.locator(".lrow", { hasText: "Same Game" }).locator(".lc-srcTitle")
+    .click({ modifiers: ["Control"] });
+  await expect(page.locator(".cmp-link")).toBeDisabled();
+});

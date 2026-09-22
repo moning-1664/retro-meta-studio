@@ -1499,7 +1499,7 @@ class Api:
         })
 
     @guarded
-    def paste(self, collection_id, mode=None, system_map=None, replace_rom=None):
+    def paste(self, collection_id, mode=None, system_map=None, replace_rom=None, target_map=None):
         """붙여넣기. **Settings의 복사 정책(transfer)을 따른다.**
 
         `mode`(patch/overwrite/replace)가 이미 있는 항목을 어떻게 다룰지 정한다
@@ -1533,6 +1533,18 @@ class Api:
         mode = transfer.normalize_mode(mode or policy["pasteMode"])
         replace_rom = policy["replaceRom"] if replace_rom is None else bool(replace_rom)
         policy = {**policy, "pasteMode": mode, "replaceRom": replace_rom}
+
+        # **사용자가 지목한 대상**({"system|원본파일명": "system|대상파일명"}). 자동 판단(파일명 일치)이
+        # 못 붙인 짝을 사람이 직접 잇는 길이다(제안서 §5 - Replace는 Match 결과에 제한되지 않는다).
+        # 지목한 대상이 없으면 **조용히 새 항목을 만들지 않고 거절한다** - 사용자는 그 자리에 쓰라고
+        # 말한 것이지 새로 만들라고 한 것이 아니다.
+        targets, target_cache = {}, self.workspace.open(collection_id)
+        for source_key, dest_key in (target_map or {}).items():
+            dest_system, _, dest_filename = str(dest_key).partition("|")
+            row = target_cache.get_row_by_filename(dest_system, dest_filename)
+            if row is None:
+                return err(f"지목한 대상을 찾을 수 없습니다: {dest_key}")
+            targets[str(source_key)] = row
         unmatched = policy["unmatchedRom"]
 
         prepared, extra_skipped = [], []
@@ -1560,8 +1572,8 @@ class Api:
         # 모드는 **원본에 ROM이 없던 항목의 정책(위)을 거친 뒤에** 적용한다 - 모드가 대상에 이미 있는 ROM을
         # 걷어 낸 항목은 "원본에 ROM이 없는" 항목이 아니다. 걷어 내고 나면 바뀔 것이 없는 항목은 Plan에
         # 올리지 않고 이유를 알린다.
-        prepared, mode_skipped = transfer.prepare(prepared, self.workspace.open(collection_id), mode,
-                                                 replace_rom=replace_rom)
+        prepared, mode_skipped = transfer.prepare(prepared, target_cache, mode,
+                                                  replace_rom=replace_rom, targets=targets)
         extra_skipped.extend(mode_skipped)
 
         if not prepared:
@@ -2312,6 +2324,70 @@ class Api:
         return ok({"added": planned, "skipped": skipped, "requested": len(keys),
                    "targetId": target_id, "targetName": target_name, "direction": direction,
                    "metadataOnly": bool(metadata_only)})
+
+    @guarded
+    def compare_manual_copy(self, source_key, target_key, mode=None, replace_rom=False):
+        """**사용자가 직접 이은 두 항목** 사이의 전송(제안서 §5, §15.3-15.4).
+
+        자동 짝짓기는 파일명/제목이 비슷할 때만 잇는다. `Final Fantasy 7.zip`과 `ff7.rom`처럼
+        아무 공통점이 없으면 둘은 각각 "한쪽에만 있음"으로 남는데, 사람은 그것이 같은 게임임을 안다.
+        그럴 때 두 행을 고르고 이 경로로 보낸다.
+
+        **Match 결과는 바꾸지 않는다.** 이것은 "이번에 이 대상에 써라"라는 실행 승인이지
+        "이 둘은 같은 게임이다"라는 선언이 아니다(§15.8) - 선언은 `apply_match()`가 한다.
+
+        방향은 유추한다: 원본이 있는 쪽에서 대상이 있는 쪽으로 간다. 양쪽에 다 있거나 한쪽이
+        비어 있으면 무엇을 하려는지 알 수 없으므로 거절한다.
+        """
+        if not self._compare:
+            return err("Compare Mode가 아닙니다.")
+        if source_key == target_key:
+            return err("원본과 대상이 같은 항목입니다.")
+        rows = {f"{r['system']}|{r['file']}": r for r in self._compare["rows"]}
+        source_row, target_row = rows.get(source_key), rows.get(target_key)
+        if source_row is None or target_row is None:
+            return err("고른 항목을 찾을 수 없습니다.")
+
+        # 원본이 왼쪽에 있으면 대상은 오른쪽에 있어야 한다(그 반대도 마찬가지).
+        if source_row["left"] and target_row["right"] and not source_row["right"]:
+            side, other, to_right = source_row["left"], target_row["right"], True
+        elif source_row["right"] and target_row["left"] and not source_row["left"]:
+            side, other, to_right = source_row["right"], target_row["left"], False
+        else:
+            return err("한쪽에만 있는 항목 두 개를 서로 다른 쪽에서 골라야 잇을 수 있습니다.")
+
+        source_id = self._compare["baseId"] if to_right else self._compare["otherId"]
+        target_id = self._compare["otherId"] if to_right else self._compare["baseId"]
+        source = self.registry.get_collection(source_id)
+        target, target_cache, provider = self._plan_context(target_id)
+        if source is None or target is None:
+            return err("Collection을 찾을 수 없습니다.")
+        blocked = self._ensure_file_ops(target) or self._ensure_writable(target, [target_row["system"]])
+        if blocked:
+            return blocked
+
+        items, _bytes = clipboard.build_items(source, self.workspace.open(source_id), [side["romUid"]])
+        if not items:
+            return err("원본 항목을 읽지 못했습니다.")
+        existing = target_cache.get_row(int(other["romUid"]))
+        prepared, skipped = transfer.prepare(
+            items, target_cache, transfer.normalize_mode(mode or transfer.MODE_REPLACE),
+            replace_rom=bool(replace_rom),
+            targets={transfer.item_key(items[0]): existing})
+        if not prepared:
+            return ok({"added": 0, "skipped": skipped, "conflicts": 0, "targetId": target_id,
+                       "targetName": target.name, "targetFile": other["filename"]})
+
+        plan = self._plan(target_id)
+        result = builder.plan_add(plan, target, provider, prepared)
+        for conflict_key in result.pop("conflictKeys", []):
+            # 직접 지목해서 보낸 것이다 - 이번에 생긴 media 충돌은 다시 묻지 않는다.
+            if all(c.get("kind") != "rom" for c in (plan.get(conflict_key).conflicts or [])):
+                builder.resolve_conflict(plan, target, provider, conflict_key, RESOLVE_OVERWRITE)
+                result["conflicts"] = max(0, result.get("conflicts", 0) - 1)
+        result["skipped"] = [*skipped, *result.get("skipped", [])]
+        return ok({**result, "targetId": target_id, "targetName": target.name,
+                   "targetFile": other["filename"], "sourceFile": side["filename"]})
 
     @guarded
     def compare_copy_row(self, key, direction, metadata_only=False, overwrite=False, mode=None,
