@@ -1510,9 +1510,13 @@ class Api:
         빈 값으로 두면 원본 이름을 그대로 쓴다(없으면 그 이름으로 새로 생긴다).
 
         - ROM/Media를 빼기로 했으면 Plan에 올리기 전에 그 부분을 뺀다(메타데이터는 늘 간다).
-        - **원본에 ROM 파일이 없는 항목**(unmatched - Archive처럼 메타데이터만 있는 항목)은
-          `unmatchedRom` 정책을 따로 적용한다. 기본은 아무것도 복사하지 않고 건너뛴다.
-          "복사"를 골랐으면 Metadata/Media/Video를 독립적으로 골라 그것만 담는다.
+        - **`unmatchedRom` 정책은 대상 Game이 아예 없을 때만 적용된다.** 원본에 ROM이 없다는
+          것(Archive처럼 메타데이터만 있는 항목)과 대상 Game이 존재하지 않는다는 것은 다른
+          이야기다 - ROM이 없다고 Game이 없는 것은 아니다. 대상에 이미 그 Game이 있으면
+          (ROM이 있든 메타데이터만 있든) 이 정책과 무관하게 평소 모드(Patch/Overwrite/Replace)
+          그대로 메타데이터/미디어가 간다. 대상이 정말 없어서 **ROM 없는 새 항목**이
+          생기는 경우에만 `unmatchedRom` 정책이 끼어든다 - 기본은 아무것도 복사하지 않고
+          건너뛴다. "복사"를 골랐으면 Metadata/Media/Video를 독립적으로 골라 그것만 담는다.
         - 충돌 기본 처리가 skip/overwrite면 **이번 붙여넣기로 생긴 충돌만** 그렇게 정한다.
           원래 Plan에 있던 충돌은 사용자가 고를 몫이라 건드리지 않는다.
         """
@@ -1549,12 +1553,18 @@ class Api:
 
         prepared, extra_skipped = [], []
         for item in items:
-            if item.get("rom"):
+            key = transfer.item_key(item)
+            existing = targets.get(key) or target_cache.get_row_by_filename(item["system"], item["filename"])
+            if item.get("rom") or existing is not None:
+                # ROM이 있거나, 대상 Game이 이미 있다. 대상이 있으면 이건 그냥 평범한
+                # Metadata/Media 갱신이다 - ROM 유무와 무관하게 모드(Patch/Overwrite/Replace)를
+                # 그대로 따른다. unmatchedRom 정책은 "ROM 없는 새 항목이 생기는" 경우만 본다.
                 prepared.append({**item,
                                  "rom": item["rom"] if policy["includeRom"] else None,
                                  "media": item.get("media") if policy["includeMedia"] else []})
                 continue
-            # ROM 미매칭 - 이 항목의 원본에는 애초에 ROM 파일이 없었다(unmatchedRom, 사용자 결정).
+            # 진짜 미매칭 - 원본에 ROM이 없고 대상 Game도 없어서, 붙이면 ROM 없는 새
+            # 항목이 생긴다(unmatchedRom, 사용자 결정).
             if unmatched["mode"] != "copy":
                 extra_skipped.append({"filename": item["filename"], "reason": "ROM 미매칭 - 정책에 따라 건너뜀"})
                 continue

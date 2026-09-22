@@ -203,6 +203,23 @@ class UnmatchedRomPolicyTests(unittest.TestCase):
         self.assertEqual([e.filename for e in self.api._plan(self.d).entries], ["RealGame.iso"])
         self.assertEqual([s["filename"] for s in result["skipped"]], ["Ghost.iso"])
 
+    def test_the_unmatched_policy_never_gates_an_existing_target(self):
+        """제안서 - "ROM 없음"이 "Game 없음"은 아니다. 대상 Game이 이미 있으면(ROM이 있든
+        메타데이터만 있든) `unmatchedRom` 정책과 무관하게 평소 모드 그대로 메타데이터가
+        가야 한다 - 정책의 기본값(skip)에 걸려 조용히 버려지면 안 된다."""
+        write_file(self.dst / "ps2" / "Ghost.iso", b"r" * 256)
+        write_file(self.dst / "gamelists" / "ps2" / "gamelist.xml",
+                  '<?xml version="1.0"?><gameList>'
+                  '<game><path>./Ghost.iso</path><name>Old Title</name></game></gameList>')
+        scan(self.api, self.d, force=True)
+
+        result = self.paste_ghost()  # 기본 정책(unmatchedRomMode="skip")을 그대로 둔다
+        self.assertEqual(result["added"], 1, "대상이 이미 있는데도 기본 정책에 걸려 건너뛰었다")
+        self.assertEqual(result["skipped"], [])
+        entry = self.api._plan(self.d).entries[0]
+        self.assertEqual(entry.payload.get("name"), "Ghost Game")
+        self.assertFalse(entry.source.get("rom"), "대상에 이미 있는 ROM을 다시 옮기려 했다")
+
     def test_apply_copy_mode_writes_media_without_a_rom_file(self):
         self.paste_ghost(unmatchedRomMode="copy")
         job = self.api.start_apply(self.d)

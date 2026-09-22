@@ -1356,12 +1356,6 @@ window.RMS_I18N_TABLE = {
   "es": "Replace — sustituir la selección según Source",
   "fr": "Replace — remplacer la sélection selon Source"
  },
- "ROM 파일 복사": {
-  "en": "Copy ROM files",
-  "ja": "ROMファイルをコピー",
-  "es": "Copiar archivos ROM",
-  "fr": "Copier les fichiers ROM"
- },
  "끄면 ROM은 옮기지 않고 메타데이터(와 Media)만 붙여넣습니다. 이미 가진 ROM에 정보만 채울 때 씁니다.": {
   "en": "When off, ROMs are not copied; only Metadata and Media are pasted. Use this to fill information for ROMs you already have.",
   "ja": "オフにするとROMはコピーせず、MetadataとMediaのみ貼り付けます。既存ROMに情報だけ追加するときに使います。",
