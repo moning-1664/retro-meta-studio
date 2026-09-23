@@ -169,16 +169,6 @@ MIGRATIONS = (
         # 따로 들고 다니며 content_hash 계산에 포함시킨다.
         "ALTER TABLE archive_records ADD COLUMN media_fingerprint TEXT NOT NULL DEFAULT ''",
     )),
-    Migration(8, (
-        # Archive 안에서만 쓰는 즐겨찾기(사용자 결정 - "Archive도 Collection처럼 쓸 수
-        # 있어야 한다"). Collection의 별표는 Frontend 파일(ES-DE의 `<favorite>`)에
-        # 직접 쓰지만, Archive에는 그럴 파일이 없고 여러 출처를 모은 색인일 뿐이라
-        # **Archive 자신의 상태**로 따로 둔다 - 정리할 항목을 표시해 두는 용도다.
-        # Revision이 아니므로 archive_records가 아니라 Identity에 붙인다(별표를
-        # 켰다고 새 Revision이 생기면 안 된다).
-        "ALTER TABLE rom_identities ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0",
-        "CREATE INDEX ix_rom_identities_favorite ON rom_identities(favorite)",
-    )),
 )
 
 
@@ -322,15 +312,6 @@ class ArchiveStore:
             " JOIN games g ON g.game_id = r.game_id WHERE r.rom_identity_id=?",
             (rom_identity_id,)).fetchone()
         return dict(row) if row else None
-
-    def set_favorite(self, rom_identity_id, favorite=True) -> bool:
-        """Archive 안에서만 쓰는 즐겨찾기. **출처 Collection의 별표는 건드리지 않는다**
-        (§40 - Archive에서 고친 것은 자동으로 나가지 않는다)."""
-        with transaction(self._conn):
-            cur = self._conn.execute(
-                "UPDATE rom_identities SET favorite=? WHERE rom_identity_id=?",
-                (1 if favorite else 0, rom_identity_id))
-            return cur.rowcount > 0
 
     def delete_identity(self, rom_identity_id) -> bool:
         """Archive에서 이 Identity를 지운다. **실제 ROM/Media 파일은 건드리지 않는다**
@@ -595,14 +576,14 @@ class ArchiveStore:
     # 목록 조회 (Archive Gamelist - 스펙 §43)
     # ------------------------------------------------------------------
     def list_rows(self, *, search=None, systems=None, limit=None, offset=0,
-                  only_ids=None, favorites_only=False) -> list[dict]:
+                  only_ids=None) -> list[dict]:
         """Archive도 일반 Collection과 같은 Gamelist로 보여준다(§43).
 
         Collection 목록과 같은 모양으로 돌려줘서 UI가 같은 렌더링을 쓰게 한다.
         """
-        where, params = self._row_filter(search, systems, only_ids, favorites_only)
+        where, params = self._row_filter(search, systems, only_ids)
         sql = (
-            "SELECT r.rom_identity_id, r.game_id, r.system, r.filename, r.region, r.favorite,"
+            "SELECT r.rom_identity_id, r.game_id, r.system, r.filename, r.region,"
             "       g.title, g.title_norm,"
             "       (SELECT COUNT(DISTINCT source_collection_id) FROM archive_records"
             "         WHERE rom_identity_id = r.rom_identity_id) AS source_count,"
@@ -624,19 +605,16 @@ class ArchiveStore:
             params = [*params, int(limit), int(offset)]
         return [dict(r) for r in self._conn.execute(sql, params)]
 
-    def count_rows(self, *, search=None, systems=None, only_ids=None,
-                   favorites_only=False) -> int:
-        where, params = self._row_filter(search, systems, only_ids, favorites_only)
+    def count_rows(self, *, search=None, systems=None, only_ids=None) -> int:
+        where, params = self._row_filter(search, systems, only_ids)
         row = self._conn.execute(
             "SELECT COUNT(*) AS n FROM rom_identities r"
             f" JOIN games g ON g.game_id = r.game_id{where}", params).fetchone()
         return int(row["n"])
 
     @staticmethod
-    def _row_filter(search, systems, only_ids=None, favorites_only=False):
+    def _row_filter(search, systems, only_ids=None):
         clauses, params = [], []
-        if favorites_only:
-            clauses.append("r.favorite=1")
         if only_ids is not None:
             # 빈 목록이면 **아무것도 없다** - 조건을 빼 버리면 전체가 나와서 필터가 거꾸로 동작한다.
             ids = list(only_ids)

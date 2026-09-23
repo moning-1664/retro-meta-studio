@@ -1175,80 +1175,92 @@ class FallbackCrossesSourcesButNotTimeTests(unittest.TestCase):
                          "다른 출처가 가진 값까지 막혔다")
 
 
-class ArchiveFavouriteGoesIntoItsOwnGamelistTests(unittest.TestCase):
-    """Archive의 별표도 **Metadata에 쓴다** - Collection과 같은 방식이다(사용자 결정).
+class ArchiveFavouriteLivesInTheMetadataTests(unittest.TestCase):
+    """Archive의 별표도 **Metadata 안에** 있다 - Collection과 같은 방식이다(사용자 결정).
 
     Archive는 정해진 Frontend 형식으로 저장되는 Collection의 일종이고(디렉토리
     projection), DB는 그 형식이 담지 못하는 것(Revision/Preferred/출처)을 덧붙이는
-    층이다. 별표는 gamelist가 표현할 수 있는 값이므로 gamelist에 쓰고, DB 컬럼은
-    목록/필터가 쓰는 사본이다(Collection이 cache.set_favorite()을 같이 부르는 것과
-    같다). 출처 Collection의 gamelist는 건드리지 않는다(§40).
+    층이다. 그래서 별표는 gamelist가 표현할 수 있는 값이므로 `frontend_raw`에 적고
+    **DB에 따로 컬럼을 두지 않는다** - 같은 사실을 두 곳에 두면 어긋난다.
+
+    그 결과 하나가 상속이다: 출처 Collection의 gamelist에 별표가 있으면 Archive도
+    별표로 보인다. Metadata를 물려받는다는 뜻이 그것이다.
     """
 
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix="rms_arch_fav_"))
-        self.root = build_esde_tree(self.dir / "source")
+        self.root = build_esde_tree(self.dir / "source")   # FFX만 <favorite>true</favorite>
         self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
         self.addCleanup(self.api.close)
         self.cid = self.api.create_collection("C", "es-de", str(self.root))["data"]["id"]
         self.api.start_scan(self.cid)
         wait_idle(self.api)
         self.api.archive_ingest(self.cid)
-        self.rid = next(r["romIdentityId"] for r in self.api.archive_rows()["data"]["rows"]
-                        if r["file"] == "FFX.iso")
 
-    def _row(self):
-        return next(r for r in self.api.archive_rows()["data"]["rows"] if r["romIdentityId"] == self.rid)
+    def _rid(self, filename):
+        return next(r["romIdentityId"] for r in self.api.archive_rows()["data"]["rows"]
+                    if r["file"] == filename)
 
-    def test_it_starts_off_and_can_be_turned_on_and_back_off(self):
-        self.assertFalse(self._row()["favorite"])
+    def _row(self, filename):
+        return next(r for r in self.api.archive_rows()["data"]["rows"] if r["file"] == filename)
 
-        self.assertTrue(self.api.archive_set_favorite(self.rid, True)["ok"])
-        self.assertTrue(self._row()["favorite"])
-        self.assertTrue(self.api.archive_detail(self.rid)["data"]["favorite"])
+    def test_it_is_inherited_from_the_source_gamelist(self):
+        """출처 gamelist의 별표를 그대로 물려받는다 - Metadata를 물려받기 때문이다."""
+        self.assertTrue(self._row("FFX.iso")["favorite"], "출처의 별표가 안 따라왔다")
+        self.assertFalse(self._row("MGS2.iso")["favorite"])
+        self.assertTrue(self.api.archive_detail(self._rid("FFX.iso"))["data"]["favorite"])
 
-        self.api.archive_set_favorite(self.rid, False)
-        self.assertFalse(self._row()["favorite"])
+    def test_it_can_be_turned_on_and_back_off(self):
+        rid = self._rid("MGS2.iso")
+        self.assertTrue(self.api.archive_set_favorite(rid, True)["ok"])
+        self.assertTrue(self._row("MGS2.iso")["favorite"])
+
+        self.api.archive_set_favorite(rid, False)
+        self.assertFalse(self._row("MGS2.iso")["favorite"])
 
     def test_the_favourites_filter_narrows_the_list(self):
-        self.api.archive_set_favorite(self.rid, True)
-        rows = self.api.archive_rows(favorites_only=True)["data"]["rows"]
-        self.assertEqual([r["romIdentityId"] for r in rows], [self.rid])
-        self.assertGreater(len(self.api.archive_rows()["data"]["rows"]), 1, "전제: 항목이 더 있다")
+        self.api.archive_set_favorite(self._rid("MGS2.iso"), True)
+        starred = {r["file"] for r in self.api.archive_rows(favorites_only=True)["data"]["rows"]}
+        self.assertEqual(starred, {"FFX.iso", "MGS2.iso"})
+
+        self.api.archive_set_favorite(self._rid("FFX.iso"), False)
+        rows = self.api.archive_rows(favorites_only=True)["data"]
+        self.assertEqual([r["file"] for r in rows["rows"]], ["MGS2.iso"])
+        self.assertEqual(rows["total"], 1, "걸러낸 뒤의 개수가 맞아야 페이지가 어긋나지 않는다")
 
     def test_it_does_not_touch_the_source_collection(self):
-        """§40 - Archive에서 켠 별표가 Collection 파일로 새어나가면 안 된다."""
-        self.api.archive_set_favorite(self.rid, True)
+        """§40 - Archive에서 켠 별표가 출처 Collection 파일로 새어나가면 안 된다."""
+        self.api.archive_set_favorite(self._rid("MGS2.iso"), True)
         root = ET.parse(self.root / "gamelists" / "ps2" / "gamelist.xml").getroot()
         game = next(g for g in root.findall("game")
                     if (g.findtext("path") or "").strip() == "./MGS2.iso")
-        self.assertIsNone(game.find("favorite"), "Collection gamelist에 별표가 새어나갔다")
+        self.assertIsNone(game.find("favorite"), "출처 gamelist에 별표가 새어나갔다")
 
     def test_an_unknown_id_is_reported(self):
         self.assertFalse(self.api.archive_set_favorite("no-such-id", True)["ok"])
 
     def test_turning_it_on_does_not_add_another_source(self):
         """별표를 켠다고 출처가 늘어나면 안 된다 - 편집 층에 쓰는 것이다."""
-        before = len(self.api.archive_detail(self.rid)["data"]["sources"])
-        self.api.archive_set_favorite(self.rid, True)
-        self.assertEqual(len(self.api.archive_detail(self.rid)["data"]["sources"]), before)
+        rid = self._rid("MGS2.iso")
+        before = len(self.api.archive_detail(rid)["data"]["sources"])
+        self.api.archive_set_favorite(rid, True)
+        self.assertEqual(len(self.api.archive_detail(rid)["data"]["sources"]), before)
 
     def test_it_is_written_into_the_archive_own_gamelist(self):
         """이게 핵심이다 - DB에만 적으면 Archive 디렉토리를 읽는 Frontend는 모른다."""
-        archive_dir = self.dir / "Archive"
-        configure(self.api, {"frontend": "es-de", "archiveDir": str(archive_dir)})
+        configure(self.api, {"frontend": "es-de", "archiveDir": str(self.dir / "Archive")})
         self.api._apply_archive_config()
 
-        self.api.archive_set_favorite(self.rid, True)
-        self.assertEqual(self._archive_gamelist_favorite(), "true")
+        self.api.archive_set_favorite(self._rid("MGS2.iso"), True)
+        self.assertEqual(self._archive_gamelist_favorite("MGS2.iso"), "true")
 
-        self.api.archive_set_favorite(self.rid, False)
-        self.assertEqual(self._archive_gamelist_favorite(), "false",
+        self.api.archive_set_favorite(self._rid("MGS2.iso"), False)
+        self.assertEqual(self._archive_gamelist_favorite("MGS2.iso"), "false",
                          "해제는 태그를 지우는 것이 아니라 false로 적는 것이다")
 
-    def _archive_gamelist_favorite(self):
+    def _archive_gamelist_favorite(self, filename):
         path = self.dir / "Archive" / "gamelists" / "ps2" / "gamelist.xml"
         root = ET.parse(path).getroot()
         game = next(g for g in root.findall("game")
-                    if (g.findtext("path") or "").strip() == "./FFX.iso")
+                    if (g.findtext("path") or "").strip() == f"./{filename}")
         return game.findtext("favorite")

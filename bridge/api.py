@@ -1913,17 +1913,26 @@ class Api:
         값과 같아야 하므로 `resolve_fields()`로 같은 우선순위(Preferred →
         Archive 편집 → Latest)를 쓴다.
         """
-        query = {"search": search or None, "systems": systems or None,
-                 "favorites_only": bool(favorites_only)}
+        query = {"search": search or None, "systems": systems or None}
         if conflicts_only:
             # 사용자 결정 - "유사롬만 골라서 볼 수 있는 filter". 내용이 실제로 다른 것(=`[n]`이 붙는 것)만
             # 남긴다 - 고를 것이 있는 항목만 보여야 정리할 때 뜻이 있다.
             query["only_ids"] = list(conflict_service.conflict_counts(
                 self.archive, systems=systems or None))
-        rows = self.archive.list_rows(**query, limit=int(limit), offset=int(offset))
+        # **즐겨찾기는 Metadata 안에 있다**(frontend_raw의 `<favorite>`) - 별도 컬럼으로
+        # 복제하지 않는다(사용자 결정 - "DB는 gamelist가 못 담는 것만"). 그래서 SQL로는
+        # 못 거르고 resolve 뒤에 거른다. 사용자 DB(identity 2,992개)에서 전체 resolve가
+        # 0.28초라 페이지를 나누기 전에 걸러도 목록이 느려지지 않는다(실측).
+        favorites_only = bool(favorites_only)
+        page = (None, 0) if favorites_only else (int(limit), int(offset))
+        rows = self.archive.list_rows(**query, limit=page[0], offset=page[1])
+        adapter = get_adapter(self._archive_config()["frontend"])
         out_rows = []
         for r in rows:
-            fields, _ = self.archive.resolve_fields(r["rom_identity_id"])
+            fields, raw = self.archive.resolve_fields(r["rom_identity_id"])
+            starred = adapter.is_favorite(raw)
+            if favorites_only and not starred:
+                continue
             out_rows.append({
                 "romUid": r["rom_identity_id"], "romIdentityId": r["rom_identity_id"],
                 "system": r["system"], "file": r["filename"], "title": r["title"],
@@ -1931,8 +1940,8 @@ class Api:
                 # 예전에는 False로 박아뒀다. Archive에 media가 저장돼 있어도
                 # 목록에서는 영영 없는 것으로 보였다.
                 "hasMetadata": True, "hasMedia": bool(r["media_count"]),
-                # Archive 안에서만 쓰는 별표다(§40 - 출처 Collection의 것과 별개).
-                "favorite": bool(r["favorite"]),
+                # Metadata(frontend_raw)에 있는 별표를 그대로 읽는다.
+                "favorite": starred,
                 # ROM 위치가 기록돼 있으면 있는 것으로 본다. 없으면 메타데이터만 있는
                 # 항목이다(ROM only/Metadata only 표시는 화면이 이 값으로 가른다).
                 "present": bool(r["rom_count"]), "size": 0,
@@ -1942,10 +1951,14 @@ class Api:
                 "genre": fields.get("genre") or "",
                 "rating": fields.get("rating") or "",
             })
-        return ok({
-            "rows": out_rows,
-            "total": self.archive.count_rows(**query), "offset": int(offset),
-        })
+        if favorites_only:
+            # 전부 걸러낸 뒤 여기서 페이지를 나눈다 - 필터가 SQL 밖에 있으므로
+            # LIMIT/OFFSET도 여기서 맞춰야 개수와 페이지가 어긋나지 않는다.
+            total = len(out_rows)
+            out_rows = out_rows[int(offset):int(offset) + int(limit)]
+        else:
+            total = self.archive.count_rows(**query)
+        return ok({"rows": out_rows, "total": total, "offset": int(offset)})
 
     @guarded
     def archive_uids(self, systems=None):
@@ -1966,7 +1979,13 @@ class Api:
     @guarded
     def archive_detail(self, rom_identity_id):
         data = archive_service.detail(self.archive, rom_identity_id)
-        return ok(data) if data else err("Archive 항목을 찾을 수 없습니다.")
+        if not data:
+            return err("Archive 항목을 찾을 수 없습니다.")
+        # 별표는 Metadata(frontend_raw) 안에 있다 - DB에 따로 두지 않으므로 읽을 때
+        # 꺼낸다. Frontend마다 태그가 다르므로 Archive 설정의 Adapter에게 묻는다.
+        adapter = get_adapter(self._archive_config()["frontend"])
+        data["favorite"] = adapter.is_favorite(data.get("frontendRaw"))
+        return ok(data)
 
     @guarded
     def get_archive_media_image(self, rom_identity_id, media_label, thumbnail=False):
@@ -2210,9 +2229,10 @@ class Api:
         Archive는 정해진 Frontend 형식으로 저장되는 Collection의 일종이고(디렉토리
         projection), DB는 그 형식이 담지 못하는 것(Revision/Preferred/출처)을 덧붙이는
         층이라는 것이 이 앱의 구조다. 그래서 Collection의 set_favorite()과 똑같이
-        `frontend_raw`에 적고(= Archive 디렉토리의 gamelist.xml로 나간다), DB 컬럼은
-        목록/필터가 쓰는 사본으로 함께 갱신한다(Collection이 cache.set_favorite()을
-        같이 부르는 것과 같은 이유 - JSON 안을 뒤져 페이지를 나눌 수는 없다).
+        `frontend_raw`에 적는다(= Archive 디렉토리의 gamelist.xml로 나간다).
+        **DB에 따로 컬럼을 두지 않는다** - gamelist가 담을 수 있는 값을 DB가 또
+        들고 있으면 같은 사실이 두 곳에 남아 어긋난다. 목록은 읽을 때 raw에서
+        꺼내 쓴다(archive_rows).
 
         출처 Collection의 gamelist는 건드리지 않는다(§40) - 여기서 쓰는 것은 Archive
         자신의 Metadata다.
@@ -2236,7 +2256,6 @@ class Api:
         raw["extra"] = extra
 
         result = archive_service.edit(self.archive, rom_identity_id, fields, raw)
-        self.archive.set_favorite(rom_identity_id, bool(favorite))
         self._project_archive(result, [rom_identity_id])
         return ok({"romIdentityId": rom_identity_id, "favorite": bool(favorite)})
 

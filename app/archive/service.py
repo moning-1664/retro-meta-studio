@@ -158,8 +158,6 @@ def detail(archive, rom_identity_id) -> dict | None:
         "filename": identity["filename"] or identity["filename_norm"],
         "title": identity["title"],
         "region": identity["region"],
-        # Archive 안에서만 쓰는 별표(§40 - 출처 Collection의 것과 별개).
-        "favorite": bool(identity["favorite"]) if "favorite" in identity else False,
         "size": identity["size"],
         "sha256": identity["sha256"],
         "fields": fields,
