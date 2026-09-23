@@ -1903,7 +1903,8 @@ class Api:
         return ok({"jobId": job_id, "count": len(uids), "scope": kind})
 
     @guarded
-    def archive_rows(self, search=None, systems=None, limit=200, offset=0, conflicts_only=False):
+    def archive_rows(self, search=None, systems=None, limit=200, offset=0, conflicts_only=False,
+                     favorites_only=False):
         """Archive Gamelist. Collection 목록과 같은 모양으로 돌려준다(§43).
 
         Description/Genre/Rating은 `rom_identities`가 아니라 Revision의
@@ -1912,7 +1913,8 @@ class Api:
         값과 같아야 하므로 `resolve_fields()`로 같은 우선순위(Preferred →
         Archive 편집 → Latest)를 쓴다.
         """
-        query = {"search": search or None, "systems": systems or None}
+        query = {"search": search or None, "systems": systems or None,
+                 "favorites_only": bool(favorites_only)}
         if conflicts_only:
             # 사용자 결정 - "유사롬만 골라서 볼 수 있는 filter". 내용이 실제로 다른 것(=`[n]`이 붙는 것)만
             # 남긴다 - 고를 것이 있는 항목만 보여야 정리할 때 뜻이 있다.
@@ -1929,6 +1931,8 @@ class Api:
                 # 예전에는 False로 박아뒀다. Archive에 media가 저장돼 있어도
                 # 목록에서는 영영 없는 것으로 보였다.
                 "hasMetadata": True, "hasMedia": bool(r["media_count"]),
+                # Archive 안에서만 쓰는 별표다(§40 - 출처 Collection의 것과 별개).
+                "favorite": bool(r["favorite"]),
                 # ROM 위치가 기록돼 있으면 있는 것으로 본다. 없으면 메타데이터만 있는
                 # 항목이다(ROM only/Metadata only 표시는 화면이 이 값으로 가른다).
                 "present": bool(r["rom_count"]), "size": 0,
@@ -2199,6 +2203,44 @@ class Api:
         return ok(result)
 
     @guarded
+    def archive_set_favorite(self, rom_identity_id, favorite=True):
+        """즐겨찾기를 켜고 끈다. **Collection과 같은 방식이다**(사용자 결정).
+
+        별표는 gamelist가 표현할 수 있는 값이므로 Archive에서도 **Metadata에 쓴다** -
+        Archive는 정해진 Frontend 형식으로 저장되는 Collection의 일종이고(디렉토리
+        projection), DB는 그 형식이 담지 못하는 것(Revision/Preferred/출처)을 덧붙이는
+        층이라는 것이 이 앱의 구조다. 그래서 Collection의 set_favorite()과 똑같이
+        `frontend_raw`에 적고(= Archive 디렉토리의 gamelist.xml로 나간다), DB 컬럼은
+        목록/필터가 쓰는 사본으로 함께 갱신한다(Collection이 cache.set_favorite()을
+        같이 부르는 것과 같은 이유 - JSON 안을 뒤져 페이지를 나눌 수는 없다).
+
+        출처 Collection의 gamelist는 건드리지 않는다(§40) - 여기서 쓰는 것은 Archive
+        자신의 Metadata다.
+        """
+        identity = self.archive.get_identity(rom_identity_id)
+        if identity is None:
+            return err("Archive 항목을 찾을 수 없습니다.")
+        adapter = get_adapter(self._archive_config()["frontend"])
+        tag = getattr(adapter, "FAVORITE_TAG", None)
+        if not tag:
+            return err(f"{adapter.display_name}는 즐겨찾기를 지원하지 않습니다.")
+
+        # **해제는 태그를 지우는 것이 아니라 false로 적는 것이다** - Adapter는 모르는
+        # 태그를 버리지 않으므로, raw에서 빼도 이미 파일에 있는 요소는 남는다
+        # (Collection쪽 set_favorite()과 같은 이유).
+        fields, raw = self.archive.resolve_fields(rom_identity_id)
+        raw = dict(raw or {})
+        extra = [dict(item) for item in (raw.get("extra") or [])
+                 if (item.get("tag") or item.get("key")) != tag]
+        extra.append(adapter.favorite_raw(bool(favorite)))
+        raw["extra"] = extra
+
+        result = archive_service.edit(self.archive, rom_identity_id, fields, raw)
+        self.archive.set_favorite(rom_identity_id, bool(favorite))
+        self._project_archive(result, [rom_identity_id])
+        return ok({"romIdentityId": rom_identity_id, "favorite": bool(favorite)})
+
+    @guarded
     def archive_delete(self, rom_identity_ids):
         """Archive에서 이 항목들을 지운다. **실제 ROM/Media 파일은 지우지 않는다**(§37) -
         Archive는 파일을 복제하지 않고 경로만 들고 있으므로, 지우는 것은 Archive
@@ -2252,25 +2294,32 @@ class Api:
     # 모은 색인이지 자신의 파일을 갖지 않는다, §37). 반대로 언어 태그/디스크 태그
     # 적용(순수 텍스트 계산, app/title_affix.py)과 삭제(archive_delete)는 Archive
     # 데이터만으로 완전히 계산되므로 그대로 옮길 수 있다.
-    def _archive_title_affix_rows(self, system):
-        rows = self.archive.list_rows(systems=[system], limit=None)
+    def _archive_title_affix_rows(self, system=None, rom_identity_ids=None):
+        """대상 행을 title_affix가 아는 모양으로 바꾼다.
+
+        `rom_identity_ids`를 주면 그것만(Gamelist에서 고른 항목), 아니면 그 System
+        전체다(System 우클릭) - Collection 쪽 `_title_affix_rows()`와 같은 갈래다.
+        """
+        ids = [str(i) for i in (rom_identity_ids or [])]
+        rows = (self.archive.list_rows(only_ids=ids, limit=None) if ids
+                else self.archive.list_rows(systems=[system] if system else None, limit=None))
         return [{"rom_uid": r["rom_identity_id"], "system": r["system"],
                  "filename": r["filename"], "title": r["title"]} for r in rows]
 
     @guarded
-    def archive_title_affix_preview(self, system):
-        rows = self._archive_title_affix_rows(system)
+    def archive_title_affix_preview(self, system, rom_identity_ids=None):
+        rows = self._archive_title_affix_rows(system, rom_identity_ids)
         if not rows:
             return err("대상을 찾을 수 없습니다.")
         changes = title_affix.preview_titles(rows, self._title_affix_config())
         return ok({"items": changes, "changed": sum(1 for c in changes if c["changed"])})
 
     @guarded
-    def archive_apply_title_affix(self, system):
+    def archive_apply_title_affix(self, system, rom_identity_ids=None):
         """미리보기에서 확인한 대로 **바로** 적용한다. Archive는 Plan을 거치지
         않는다(D1 - 텍스트만 바뀌고 바이트는 안 움직인다) - archive_edit()과 같은
         자리에서 즉시 쓴다."""
-        rows = self._archive_title_affix_rows(system)
+        rows = self._archive_title_affix_rows(system, rom_identity_ids)
         changes = title_affix.preview_titles(rows, self._title_affix_config())
         return ok({"applied": self._archive_rename(changes)})
 

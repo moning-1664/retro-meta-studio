@@ -2443,7 +2443,7 @@
     const collectionId = S.activeId;
     const archive = isArchive();
     const preview = archive
-      ? await api.archiveTitleAffixPreview(target.system)
+      ? await api.archiveTitleAffixPreview(target.system || null, target.romUids || null)
       : await api.titleAffixPreview(collectionId, target.romUids || null, target.system || null);
     if (!preview.ok) { showToast(preview.error, "error"); return; }
     const items = preview.data.items;
@@ -2480,7 +2480,7 @@
       h("button", { class: "btn primary", onClick: async () => {
         closeModal();
         if (archive) {
-          const r = await api.archiveApplyTitleAffix(target.system);
+          const r = await api.archiveApplyTitleAffix(target.system || null, target.romUids || null);
           if (!r.ok) { showToast(r.error, "error"); return; }
           resetList();
           await reloadList();
@@ -4623,16 +4623,20 @@
 
     // 적용할 내용이 없으면 아예 고를 수 없게 미리 확인한다(사용자 결정) - 눌러서
     // "바뀔 게 없다"는 안내를 받는 것보다 흐리게 보이는 편이 직관적이다.
-    let titleAffixDisabled = isArchive() || locked;
+    // Archive에서도 연다 - 제목을 바꾸는 것은 순수 텍스트 계산이라 Archive 데이터만으로
+    // 계산된다(적용은 Plan 없이 편집 층에 바로 쓴다). 예전엔 isArchive()만 보고 막았다.
+    let titleAffixDisabled = locked;
     if (!titleAffixDisabled) {
-      const preview = await api.titleAffixPreview(S.activeId, [...S.selected], null);
+      const preview = isArchive()
+        ? await api.archiveTitleAffixPreview(null, [...S.selected])
+        : await api.titleAffixPreview(S.activeId, [...S.selected], null);
       titleAffixDisabled = !preview.ok || !preview.data.items.some((i) => i.changed);
     }
 
     showContextMenu(menuPoint(event), single ? (row.title || row.file) : `${formatCount(count)}개 선택됨`,
       single ? row.file : null, [
         { label: row.favorite ? "즐겨찾기 해제" : "즐겨찾기에 추가", icon: "star",
-          disabled: !single || !star || isArchive() || locked, onSelect: () => toggleFavorite(row, star) },
+          disabled: !single || !star || locked, onSelect: () => toggleFavorite(row, star) },
         { label: "RetroArch로 실행", icon: "play", hint: "더블클릭",
           disabled: !single || !!launchBlockReason(row), title: single ? launchBlockReason(row) : null,
           onSelect: () => launchGame(row) },
@@ -4838,14 +4842,18 @@
 
   async function toggleFavorite(row, button) {
     if (blockedInCompare("즐겨찾기를 변경")) return;
-    if (isArchive()) return;
+    // Archive의 별표는 **Archive 안에서만** 쓰는 표시다 - Collection은 Frontend
+    // 파일(ES-DE의 `<favorite>`)에 직접 쓰지만 Archive엔 그럴 파일이 없다(§40).
+    const archive = isArchive();
     const next = !row.favorite;
     // 눌린 것이 바로 보이게 먼저 바꾸고, 실패하면 되돌린다.
     row.favorite = next;
     button.textContent = next ? "★" : "☆";
     button.classList.toggle("on", next);
 
-    const r = await api.setFavorite(S.activeId, row.romUid, next);
+    const r = archive
+      ? await api.archiveSetFavorite(row.romIdentityId, next)
+      : await api.setFavorite(S.activeId, row.romUid, next);
     if (!r.ok) {
       row.favorite = !next;
       button.textContent = row.favorite ? "★" : "☆";
@@ -5604,7 +5612,7 @@
       S.detailState = {
         archive: true, romUid: d.romIdentityId, romIdentityId: d.romIdentityId,
         system: d.system, file: d.filename, fields: d.fields, size: d.size,
-        present: true, sha256: d.sha256, sources: d.sources,
+        present: true, sha256: d.sha256, sources: d.sources, favorite: !!d.favorite,
         // Revision 탭(renderSourcesTab)이 읽는 값들 - 예전엔 여기서 빠뜨려서, 목록의
         // [n] 충돌 뱃지는 보이는데 그 항목을 열면 Revision 탭이 늘 "수집된 Revision이
         // 없습니다"로 나왔다(실사용 버그 리포트 - 뭘 고를지가 곧 충돌 해소인데
@@ -5651,7 +5659,9 @@
     button.textContent = next ? "★" : "☆";
     button.classList.toggle("on", next);
 
-    const r = await api.setFavorite(S.activeId, state.romUid, next);
+    const r = state.archive
+      ? await api.archiveSetFavorite(state.romIdentityId, next)
+      : await api.setFavorite(S.activeId, state.romUid, next);
     if (!r.ok) {
       state.favorite = !next;
       button.textContent = state.favorite ? "★" : "☆";
@@ -5773,7 +5783,7 @@
     // 오른쪽 고정 자리)으로 옮기고, 파일명 자리는 항상 같은 폭을 갖고 넘치면
     // 말줄임으로 잘라 보여준다(.detail-filename의 text-overflow는 그대로 둔다).
     const header = h("div", { class: "detail-header" });
-    if (!state.archive) {
+    {
       const star = h("button", {
         class: "icon-btn fav-btn" + (state.favorite ? " on" : ""),
         title: state.favorite ? "즐겨찾기 해제" : "즐겨찾기",

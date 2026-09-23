@@ -158,6 +158,8 @@ def detail(archive, rom_identity_id) -> dict | None:
         "filename": identity["filename"] or identity["filename_norm"],
         "title": identity["title"],
         "region": identity["region"],
+        # Archive 안에서만 쓰는 별표(§40 - 출처 Collection의 것과 별개).
+        "favorite": bool(identity["favorite"]) if "favorite" in identity else False,
         "size": identity["size"],
         "sha256": identity["sha256"],
         "fields": fields,
@@ -193,7 +195,7 @@ def clear_preferred(archive, rom_identity_id) -> dict:
     return {"romIdentityId": rom_identity_id, "cleared": cleared}
 
 
-def edit(archive, rom_identity_id, fields) -> dict:
+def edit(archive, rom_identity_id, fields, frontend_raw=None) -> dict:
     """Archive의 Metadata를 직접 고친다(§40).
 
     **Collection에는 반영하지 않는다.** 사용자가 Archive → Collection을 명시적으로
@@ -204,7 +206,8 @@ def edit(archive, rom_identity_id, fields) -> dict:
     identity = archive.get_identity(rom_identity_id)
     if identity is None:
         raise KeyError("Archive 항목을 찾을 수 없습니다.")
-    revision, created = archive.put_record(rom_identity_id, ARCHIVE_EDIT_SOURCE, fields)
+    revision, created = archive.put_record(rom_identity_id, ARCHIVE_EDIT_SOURCE, fields,
+                                          frontend_raw)
     return {"revision": revision, "changed": created}
 
 

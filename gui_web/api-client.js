@@ -323,8 +323,9 @@
     }),
     get_archive_media_image: () => ok(null),
     get_archive_version_media_image: () => ok(null),
-    archive_rows: (search, systems, limit, offset, conflictsOnly) =>
-      ok({ rows: [], total: 0, offset: 0, conflictsOnly: !!conflictsOnly }),
+    archive_rows: (search, systems, limit, offset, conflictsOnly, favoritesOnly) =>
+      ok({ rows: [], total: 0, offset: 0, conflictsOnly: !!conflictsOnly,
+           favoritesOnly: !!favoritesOnly }),
     archive_uids: () => ok([]),
     archive_conflicts: () => ok({}),
     // 저장하면 "정해졌다"로 바뀐다 - 디렉토리를 정하기 전에는 수집이 거절되므로(사용자 결정)
@@ -345,6 +346,7 @@
     archive_detail: () => ok(null),
     archive_edit: () => ok({ revision: 1, changed: true }),
     archive_delete: (ids) => ok({ deleted: (ids || []).length }),
+    archive_set_favorite: (id, favorite) => ok({ romIdentityId: id, favorite: !!favorite }),
     archive_title_affix_preview: () => ok({ items: [], changed: 0 }),
     archive_apply_title_affix: () => ok({ applied: 0 }),
     archive_disc_retag_preview: () => ok({ items: [], changed: 0 }),
@@ -957,14 +959,19 @@
     getArchiveVersionMediaImage: (romIdentityId, sourceCollectionId, label, thumbnail) =>
       call("get_archive_version_media_image", romIdentityId, sourceCollectionId, label, !!thumbnail),
     archiveRows: (q) => call("archive_rows", q.search || null, q.systems || null,
-                             q.limit || 200, q.offset || 0, !!q.conflictsOnly),
+                             q.limit || 200, q.offset || 0, !!q.conflictsOnly,
+                             !!q.favoritesOnly),
     archiveUids: (systems) => call("archive_uids", systems || null),
     archiveSystems: () => call("archive_systems"),
     archiveDetail: (romIdentityId) => call("archive_detail", romIdentityId),
     archiveEdit: (romIdentityId, fields) => call("archive_edit", romIdentityId, fields),
     archiveDelete: (romIdentityIds) => call("archive_delete", romIdentityIds),
-    archiveTitleAffixPreview: (system) => call("archive_title_affix_preview", system),
-    archiveApplyTitleAffix: (system) => call("archive_apply_title_affix", system),
+    archiveSetFavorite: (romIdentityId, favorite) =>
+      call("archive_set_favorite", romIdentityId, !!favorite),
+    archiveTitleAffixPreview: (system, romIdentityIds) =>
+      call("archive_title_affix_preview", system, romIdentityIds || null),
+    archiveApplyTitleAffix: (system, romIdentityIds) =>
+      call("archive_apply_title_affix", system, romIdentityIds || null),
     archiveDiscRetagPreview: (system, fmt) => call("archive_disc_retag_preview", system, fmt || null),
     archiveApplyDiscRetag: (system, fmt) => call("archive_apply_disc_retag", system, fmt || null),
     archiveDeleteSystem: (system) => call("archive_delete_system", system),

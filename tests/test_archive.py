@@ -224,6 +224,34 @@ class ArchiveTests(unittest.TestCase):
                     if (g.findtext("path") or "").strip() == "./Rogue Galaxy (USA).iso")
         self.assertEqual(game.findtext("name"), "Rogue Galaxy")
 
+    def test_language_tag_can_be_applied_to_just_the_selected_rows(self):
+        """Gamelist에서 고른 항목만(행 우클릭). 예전엔 Archive라는 이유로 아예 막혀 있었다."""
+        from tests.fixtures import build_custom_esde_tree
+
+        root = build_custom_esde_tree(self.dir / "pick_src", "psx", [
+            {"filename": "One (USA).iso", "title": "One"},
+            {"filename": "Two (USA).iso", "title": "Two"},
+        ])
+        cid = self.api.create_collection("Pick", "es-de", str(root))["data"]["id"]
+        self.api.start_scan(cid)
+        wait_idle(self.api)
+        self.assertTrue(self.api.save_app_settings({"titleAffix": {
+            "en": {"enabled": True, "mode": "prefix", "text": "EN"},
+        }})["ok"])
+        self.api.archive_ingest(cid)
+
+        only = self._rid("One (USA).iso")
+        preview = self.api.archive_title_affix_preview(None, [only])
+        self.assertTrue(preview["ok"], preview.get("error"))
+        self.assertEqual([i["filename"] for i in preview["data"]["items"]], ["One (USA).iso"],
+                         "고른 항목 말고 다른 것까지 대상이 됐다")
+
+        self.api.archive_apply_title_affix(None, [only])
+        self.assertEqual(self.api.archive_detail(only)["data"]["fields"]["name"], "EN_One")
+        other = self._rid("Two (USA).iso")
+        self.assertEqual(self.api.archive_detail(other)["data"]["fields"]["name"], "Two",
+                         "고르지 않은 항목까지 바뀌었다")
+
     def test_deleting_a_whole_system_from_the_archive(self):
         self.api.archive_ingest(self.src)
         before = {r["file"] for r in self.api.archive_rows()["data"]["rows"]}
@@ -1145,3 +1173,82 @@ class FallbackCrossesSourcesButNotTimeTests(unittest.TestCase):
         fields = self.archive.resolve_fields(self.rid)[0]
         self.assertEqual(fields["developer"], "Square",
                          "다른 출처가 가진 값까지 막혔다")
+
+
+class ArchiveFavouriteGoesIntoItsOwnGamelistTests(unittest.TestCase):
+    """Archive의 별표도 **Metadata에 쓴다** - Collection과 같은 방식이다(사용자 결정).
+
+    Archive는 정해진 Frontend 형식으로 저장되는 Collection의 일종이고(디렉토리
+    projection), DB는 그 형식이 담지 못하는 것(Revision/Preferred/출처)을 덧붙이는
+    층이다. 별표는 gamelist가 표현할 수 있는 값이므로 gamelist에 쓰고, DB 컬럼은
+    목록/필터가 쓰는 사본이다(Collection이 cache.set_favorite()을 같이 부르는 것과
+    같다). 출처 Collection의 gamelist는 건드리지 않는다(§40).
+    """
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_arch_fav_"))
+        self.root = build_esde_tree(self.dir / "source")
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.cid = self.api.create_collection("C", "es-de", str(self.root))["data"]["id"]
+        self.api.start_scan(self.cid)
+        wait_idle(self.api)
+        self.api.archive_ingest(self.cid)
+        self.rid = next(r["romIdentityId"] for r in self.api.archive_rows()["data"]["rows"]
+                        if r["file"] == "FFX.iso")
+
+    def _row(self):
+        return next(r for r in self.api.archive_rows()["data"]["rows"] if r["romIdentityId"] == self.rid)
+
+    def test_it_starts_off_and_can_be_turned_on_and_back_off(self):
+        self.assertFalse(self._row()["favorite"])
+
+        self.assertTrue(self.api.archive_set_favorite(self.rid, True)["ok"])
+        self.assertTrue(self._row()["favorite"])
+        self.assertTrue(self.api.archive_detail(self.rid)["data"]["favorite"])
+
+        self.api.archive_set_favorite(self.rid, False)
+        self.assertFalse(self._row()["favorite"])
+
+    def test_the_favourites_filter_narrows_the_list(self):
+        self.api.archive_set_favorite(self.rid, True)
+        rows = self.api.archive_rows(favorites_only=True)["data"]["rows"]
+        self.assertEqual([r["romIdentityId"] for r in rows], [self.rid])
+        self.assertGreater(len(self.api.archive_rows()["data"]["rows"]), 1, "전제: 항목이 더 있다")
+
+    def test_it_does_not_touch_the_source_collection(self):
+        """§40 - Archive에서 켠 별표가 Collection 파일로 새어나가면 안 된다."""
+        self.api.archive_set_favorite(self.rid, True)
+        root = ET.parse(self.root / "gamelists" / "ps2" / "gamelist.xml").getroot()
+        game = next(g for g in root.findall("game")
+                    if (g.findtext("path") or "").strip() == "./MGS2.iso")
+        self.assertIsNone(game.find("favorite"), "Collection gamelist에 별표가 새어나갔다")
+
+    def test_an_unknown_id_is_reported(self):
+        self.assertFalse(self.api.archive_set_favorite("no-such-id", True)["ok"])
+
+    def test_turning_it_on_does_not_add_another_source(self):
+        """별표를 켠다고 출처가 늘어나면 안 된다 - 편집 층에 쓰는 것이다."""
+        before = len(self.api.archive_detail(self.rid)["data"]["sources"])
+        self.api.archive_set_favorite(self.rid, True)
+        self.assertEqual(len(self.api.archive_detail(self.rid)["data"]["sources"]), before)
+
+    def test_it_is_written_into_the_archive_own_gamelist(self):
+        """이게 핵심이다 - DB에만 적으면 Archive 디렉토리를 읽는 Frontend는 모른다."""
+        archive_dir = self.dir / "Archive"
+        configure(self.api, {"frontend": "es-de", "archiveDir": str(archive_dir)})
+        self.api._apply_archive_config()
+
+        self.api.archive_set_favorite(self.rid, True)
+        self.assertEqual(self._archive_gamelist_favorite(), "true")
+
+        self.api.archive_set_favorite(self.rid, False)
+        self.assertEqual(self._archive_gamelist_favorite(), "false",
+                         "해제는 태그를 지우는 것이 아니라 false로 적는 것이다")
+
+    def _archive_gamelist_favorite(self):
+        path = self.dir / "Archive" / "gamelists" / "ps2" / "gamelist.xml"
+        root = ET.parse(path).getroot()
+        game = next(g for g in root.findall("game")
+                    if (g.findtext("path") or "").strip() == "./FFX.iso")
+        return game.findtext("favorite")
