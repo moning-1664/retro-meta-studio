@@ -478,13 +478,29 @@ class ArchiveStore:
         """
         edited = self.latest_record(rom_identity_id, ARCHIVE_EDIT_SOURCE)
         preferred = self.get_preferred(rom_identity_id)
-        if preferred:
-            return self._with_edit(preferred["fields"], preferred["frontend_raw"], edited)
 
-        sources = sorted(self.sources_of(rom_identity_id),
+        # **fallback은 "다른 출처"에서만 한다 - 고른 판 자신의 이력에서는 하지 않는다.**
+        #
+        # 같은 출처의 Revision은 시간순 이력이라, 옛 판을 고른 것은 "그 시점으로
+        # 되돌리고 싶다"는 뜻이다. 여기서 나중 판의 값을 채워 넣으면 그 되돌리기를
+        # 무효로 만든다(tests/test_archive_revision_policy.py TC-A4 - R3에서 더한
+        # 설명이 R2를 골랐는데도 따라왔다). 반면 **다른 Collection**이 가진 값은
+        # 시간이 아니라 출처가 다른 것이라, 고른 판에 없으면 채워 주는 편이 맞다
+        # (Invariant 5-6 BestEffort).
+        #
+        # 편집 기록도 출처가 아니다 - 맨 위 층에서 따로 덮는다(_with_edit). 여기 섞으면
+        # 같은 값을 두 번 얹는 꼴이 되고, 출처 병합 순서까지 흔든다.
+        skip = {ARCHIVE_EDIT_SOURCE}
+        if preferred:
+            skip.add(preferred["source_collection_id"])
+        sources = sorted((s for s in self.sources_of(rom_identity_id)
+                          if s["source_collection_id"] not in skip),
                          key=lambda s: (s["updated_at"], s["record_id"]))
         if not sources:
-            return self._with_edit({}, {}, edited)
+            base, raw = ({}, {})
+            if preferred:
+                base, raw = dict(preferred["fields"] or {}), preferred["frontend_raw"] or {}
+            return self._with_edit(base, raw, edited)
 
         identity = self.get_identity(rom_identity_id)
         stem = str((identity or {}).get("filename") or "")
@@ -505,6 +521,26 @@ class ArchiveStore:
                     merged[key] = value
             if not raw:
                 raw = source["frontend_raw"] or {}
+
+        # **고른 판(Preferred)은 "그 판 전체"가 아니라 "그 판이 가진 값"이 이긴다**
+        # (ARCHIVE_REVISION_POLICY.md Invariant 5-6, BestEffort). 예전에는 Preferred가
+        # 있으면 그 레코드를 통째로 돌려줘서, 고른 판에 없는 값(설명 등)이 다른 출처에
+        # 멀쩡히 있어도 화면과 Archive->Collection Import에서 통째로 사라졌다
+        # (실사용 확인 - 버전을 고르는 순간 desc가 빈 값이 됐다).
+        #
+        # media는 이미 이 방식이다(app/archive/projection.py effective_media - media
+        # type마다 Preferred 출처를 먼저 보고 없으면 최신으로 내려간다). 같은 규칙을
+        # metadata에도 맞춘다.
+        #
+        # 출처 쪽에는 "일부러 지웠다"가 없다 - gamelist에 값이 없다는 것은 그 Collection이
+        # 그 정보를 모른다는 뜻(ABSENT)이지 삭제 의사가 아니다. 그래서 여기서는 **값이
+        # 찼는지**로 덮는다. 사용자가 일부러 지운 값(CLEARED)은 편집 층이 키 유무로
+        # 따로 지킨다(_with_edit).
+        if preferred:
+            for key, value in (preferred["fields"] or {}).items():
+                if self._filled(value):
+                    merged[key] = value
+            raw = preferred["frontend_raw"] or raw
         return self._with_edit(merged, raw, edited)
 
     @staticmethod

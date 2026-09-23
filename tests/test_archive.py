@@ -1009,3 +1009,139 @@ class ArchiveEditSitsOnTopOfWhateverIsUnderneathTests(unittest.TestCase):
         self.api.archive_edit(self.rid, {"name": "새 제목"})
         _fields, raw = self.archive.resolve_fields(self.rid)
         self.assertEqual(raw, {"attrib": {"id": "42"}}, "편집 한 번에 Frontend 고유 필드가 사라졌다")
+
+
+class PreferredPicksValuesNotWholeRevisionsTests(unittest.TestCase):
+    """고른 판(Preferred)은 **그 판이 가진 값**이 이긴다 - 그 판 전체로 갈아치우지 않는다.
+
+    ARCHIVE_REVISION_POLICY.md Invariant 5-6(BestEffort). 예전에는 Preferred가 있으면
+    그 레코드를 통째로 돌려줘서, 고른 판에 없는 값이 다른 출처에 멀쩡히 있어도 화면과
+    Archive -> Collection Import에서 함께 사라졌다.
+
+    media는 이미 이 방식이었다(projection.effective_media) - metadata만 어긋나 있었다.
+    """
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_pref_field_"))
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.archive = self.api.archive
+        game = self.archive.ensure_game("Game", "game")
+        self.rid = self.archive.ensure_rom_identity(game, "ps2", "game", filename="game.iso")
+
+    def _fields(self):
+        return self.archive.resolve_fields(self.rid)[0]
+
+    def _prefer(self, source):
+        self.api.archive_set_preferred(self.rid, self.archive.latest_record(self.rid, source)["record_id"])
+
+    def test_the_chosen_revision_overrides_a_value_the_merge_would_have_picked(self):
+        """병합만으로는 먼저 들어온 "One"이 이긴다 - 고른 판이 그것을 눌러야 한다."""
+        self.archive.put_record(self.rid, "a", {"name": "Game", "desc": "One"}, {})
+        self.archive.put_record(self.rid, "b", {"name": "Game", "desc": "Two"}, {})
+        self.assertEqual(self._fields()["desc"], "One", "전제: 병합은 먼저 들어온 값을 쓴다")
+
+        self._prefer("b")
+        self.assertEqual(self._fields()["desc"], "Two", "고른 판의 값이 반영되지 않았다")
+
+    def test_a_field_the_chosen_revision_lacks_still_comes_from_elsewhere(self):
+        self.archive.put_record(self.rid, "a", {"name": "Game", "desc": "설명", "genre": "RPG"}, {})
+        self.archive.put_record(self.rid, "b", {"name": "Game B"}, {})
+
+        self._prefer("b")
+        fields = self._fields()
+        self.assertEqual(fields["name"], "Game B", "고른 판의 값이 이겨야 한다")
+        self.assertEqual(fields["desc"], "설명", "고른 판에 없는 값이 통째로 사라졌다")
+        self.assertEqual(fields["genre"], "RPG")
+
+    def test_an_empty_value_in_the_chosen_revision_does_not_erase_the_others(self):
+        """출처에는 "일부러 지웠다"가 없다 - gamelist에 빈 값은 모른다는 뜻(ABSENT)이다."""
+        self.archive.put_record(self.rid, "a", {"name": "Game", "desc": "설명"}, {})
+        self.archive.put_record(self.rid, "b", {"name": "Game B", "desc": ""}, {})
+
+        self._prefer("b")
+        self.assertEqual(self._fields()["desc"], "설명")
+
+    def test_a_direct_edit_still_sits_on_top_of_the_chosen_revision(self):
+        self.archive.put_record(self.rid, "a", {"name": "Game", "desc": "설명"}, {})
+        self.archive.put_record(self.rid, "b", {"name": "Game B"}, {})
+        self._prefer("b")
+
+        self.api.archive_edit(self.rid, {"name": "내가 고친 제목"})
+        fields = self._fields()
+        self.assertEqual(fields["name"], "내가 고친 제목")
+        self.assertEqual(fields["desc"], "설명", "편집이 fallback까지 날렸다")
+
+
+class BestEffortReachesTheCollectionImportTests(unittest.TestCase):
+    """문서가 Invariant 6을 명시한 자리는 Archive -> Collection Import다 - 거기까지 간다."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_besteffort_"))
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        # 설명이 있는 출처와, 없는 출처(이쪽을 Preferred로 고른다).
+        rich = build_custom_esde_tree(self.dir / "rich", "ps2", [
+            {"filename": "FFX.iso", "title": "Final Fantasy X", "genre": "RPG"}])
+        plain = build_custom_esde_tree(self.dir / "plain", "ps2", [
+            {"filename": "FFX.iso", "title": "FFX 다른 제목"}])
+        self.rich = self.api.create_collection("Rich", "es-de", str(rich))["data"]["id"]
+        self.plain = self.api.create_collection("Plain", "es-de", str(plain))["data"]["id"]
+        for cid in (self.rich, self.plain):
+            self.api.start_scan(cid)
+            wait_idle(self.api)
+        self.api.archive_ingest(self.rich)
+        self.api.archive_ingest(self.plain)
+        self.rid = self.api.archive_rows()["data"]["rows"][0]["romIdentityId"]
+
+    def test_import_takes_the_chosen_title_but_keeps_the_genre_from_the_other_source(self):
+        sources = {s["collectionId"]: s["recordId"]
+                   for s in self.api.archive_detail(self.rid)["data"]["sources"]}
+        self.api.archive_set_preferred(self.rid, sources[self.plain])
+
+        self.api.archive_to_collection(self.plain, [self.rid])
+        row = next(r for r in self.api.list_rows(self.plain, limit=50)["data"]["rows"]
+                   if r["file"] == "FFX.iso")
+        self.assertEqual(row["title"], "FFX 다른 제목", "고른 판의 제목이 안 갔다")
+        self.assertEqual(row["genre"], "RPG", "고른 판에 없는 값이 Import에서 사라졌다")
+
+
+class FallbackCrossesSourcesButNotTimeTests(unittest.TestCase):
+    """fallback의 경계 - **다른 출처에서는 채우고, 같은 출처의 나중 판에서는 안 채운다.**
+
+    처음 고칠 때 이 구분을 놓쳐서 TC-A4(test_archive_revision_policy.py)가 깨졌다.
+    같은 출처의 Revision은 시간순 이력이라 옛 판을 고른 것은 "그 시점으로 되돌린다"는
+    뜻이고, 나중 판의 값을 끌어오면 그 되돌리기가 무효가 된다. 다른 Collection의 값은
+    시간이 아니라 출처가 다른 것이라 채워 주는 편이 맞다(Invariant 5-6).
+
+    두 경우를 **한 시나리오 안에** 같이 둬서 규칙이 흔들리면 바로 드러나게 한다.
+    """
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_fallback_edge_"))
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.archive = self.api.archive
+        game = self.archive.ensure_game("Game", "game")
+        self.rid = self.archive.ensure_rom_identity(game, "ps2", "game", filename="game.iso")
+
+        # 출처 "a": 옛 판(고를 대상)과 그 뒤에 desc를 더한 나중 판.
+        self.archive.put_record(self.rid, "a", {"name": "Game A", "genre": "RPG"}, {})
+        self.old_a = self.archive.latest_record(self.rid, "a")["record_id"]
+        self.archive.put_record(self.rid, "a", {"name": "Game A", "genre": "RPG",
+                                                "desc": "나중에 더한 설명"}, {})
+        # 출처 "b": 처음부터 developer를 갖고 있는 다른 Collection.
+        self.archive.put_record(self.rid, "b", {"name": "Game B", "developer": "Square"}, {})
+
+    def test_the_older_revision_of_the_same_source_does_not_come_back(self):
+        self.api.archive_set_preferred(self.rid, self.old_a)
+        fields = self.archive.resolve_fields(self.rid)[0]
+        self.assertEqual(fields["name"], "Game A")
+        self.assertNotIn("desc", {k: v for k, v in fields.items() if v},
+                         "되돌린 시점 이후에 더해진 값이 따라왔다")
+
+    def test_but_another_source_still_fills_what_the_chosen_revision_never_had(self):
+        self.api.archive_set_preferred(self.rid, self.old_a)
+        fields = self.archive.resolve_fields(self.rid)[0]
+        self.assertEqual(fields["developer"], "Square",
+                         "다른 출처가 가진 값까지 막혔다")
