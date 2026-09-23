@@ -352,6 +352,9 @@
     archive_disc_retag_preview: () => ok({ items: [], changed: 0 }),
     archive_apply_disc_retag: () => ok({ applied: 0 }),
     archive_delete_system: () => ok({ deleted: 0 }),
+    archive_orphan_preview: (system) => ok({ system, items: [] }),
+    archive_cleanup_orphans: () => ok({ deleted: 0 }),
+    archive_rom_folder: () => ok({ path: "D:\Roms\ps2" }),
     archive_set_preferred: (id, recordId) => ok({ romIdentityId: id, recordId }),
     archive_clear_preferred: (id) => ok({ romIdentityId: id, recordId: null }),
     archive_to_collection: () => ok({ updated: 0, planned: 0, skipped: [] }),
@@ -975,6 +978,9 @@
     archiveDiscRetagPreview: (system, fmt) => call("archive_disc_retag_preview", system, fmt || null),
     archiveApplyDiscRetag: (system, fmt) => call("archive_apply_disc_retag", system, fmt || null),
     archiveDeleteSystem: (system) => call("archive_delete_system", system),
+    archiveOrphanPreview: (system) => call("archive_orphan_preview", system),
+    archiveCleanupOrphans: (system) => call("archive_cleanup_orphans", system),
+    archiveRomFolder: (romIdentityId) => call("archive_rom_folder", romIdentityId),
     archiveSetPreferred: (romIdentityId, recordId) =>
       call("archive_set_preferred", romIdentityId, recordId),
     archiveClearPreferred: (romIdentityId) =>

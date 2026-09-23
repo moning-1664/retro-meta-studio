@@ -1264,3 +1264,48 @@ class ArchiveFavouriteLivesInTheMetadataTests(unittest.TestCase):
         game = next(g for g in root.findall("game")
                     if (g.findtext("path") or "").strip() == f"./{filename}")
         return game.findtext("favorite")
+
+
+class ArchiveSystemMenuBackendTests(unittest.TestCase):
+    """System 메뉴에서 새로 쓰는 것들 - ROM 없는 항목 정리, 원본 ROM 폴더."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_arch_sysmenu_"))
+        self.root = build_esde_tree(self.dir / "source")   # MetadataOnly.iso는 ROM이 없다
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.cid = self.api.create_collection("C", "es-de", str(self.root))["data"]["id"]
+        self.api.start_scan(self.cid)
+        wait_idle(self.api)
+        self.api.archive_ingest(self.cid)
+
+    def _rid(self, filename):
+        return next(r["romIdentityId"] for r in self.api.archive_rows()["data"]["rows"]
+                    if r["file"] == filename)
+
+    def test_orphan_preview_lists_only_entries_without_a_rom(self):
+        preview = self.api.archive_orphan_preview("ps2")
+        self.assertTrue(preview["ok"], preview.get("error"))
+        self.assertEqual([i["filename"] for i in preview["data"]["items"]], ["MetadataOnly.iso"])
+
+    def test_cleaning_them_up_leaves_the_rest_and_the_real_files_alone(self):
+        result = self.api.archive_cleanup_orphans("ps2")
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(result["data"]["deleted"], 1)
+
+        files = {r["file"] for r in self.api.archive_rows()["data"]["rows"]}
+        self.assertEqual(files, {"FFX.iso", "MGS2.iso"})
+        self.assertTrue((self.root / "ps2" / "FFX.iso").exists())
+        # 두 번 눌러도 지울 것이 없다.
+        self.assertEqual(self.api.archive_cleanup_orphans("ps2")["data"]["deleted"], 0)
+
+    def test_the_rom_folder_is_the_source_collection_one(self):
+        """Archive엔 자기 폴더가 없다 - 원본이 있는 자리를 돌려줘야 뜻이 있다."""
+        r = self.api.archive_rom_folder(self._rid("FFX.iso"))
+        self.assertTrue(r["ok"], r.get("error"))
+        self.assertEqual(Path(r["data"]["path"]), self.root / "ps2")
+
+    def test_an_entry_without_a_rom_says_so_instead_of_opening_something_wrong(self):
+        r = self.api.archive_rom_folder(self._rid("MetadataOnly.iso"))
+        self.assertFalse(r["ok"])
+        self.assertIn("ROM 위치", r["error"])

@@ -117,6 +117,65 @@ test("Detail의 Revision 탭에 버전들이 실제로 보인다", async ({ page
   await expect(rows.nth(1)).toContainText("Sons of Liberty");
 });
 
+test.describe("Revision 탭 - 무엇이 다른지 보여준다", () => {
+  // 실사용 지적 두 가지: (1) 고른 판을 ★로 표시해 즐겨찾기와 헷갈린다,
+  // (2) 판끼리 무엇이 달라서 다른 판인지 알 수 없다.
+  const openRevisions = async (page) => {
+    await openArchive(page);
+    await page.evaluate(() => {
+      window.api.archiveDetail = () => Promise.resolve({ ok: true, data: {
+        romIdentityId: "rid1", gameId: "g", system: "ps2", filename: "MGS2.iso",
+        title: "Metal Gear Solid 2", fields: { name: "MGS2" }, frontendRaw: {},
+        sources: [], media: [], romSources: [], edited: false, preferredRecordId: null,
+        versions: [
+          { recordIds: [11], sources: ["c1"], updatedAt: 1758400000,
+            fields: { name: "MGS2", desc: "같은 설명", developer: "Konami" },
+            media: { covers: 2048 } },
+          { recordIds: [12], sources: ["c2"], updatedAt: 1758300000,
+            fields: { name: "MGS2 Sons of Liberty", desc: "같은 설명" },
+            media: { covers: 2048, screenshots: 4096 } },
+        ] } });
+    });
+    await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).locator(".lc-title").click();
+    await page.locator(".detail-tab", { hasText: "Revision" }).click();
+  };
+
+  test("고른 판은 ★가 아니라 PREFERRED 배지로 알린다", async ({ page }) => {
+    await openRevisions(page);
+    // 별표는 Revision 목록에 없어야 한다 - 즐겨찾기와 다른 개념이다.
+    await expect(page.locator(".revision-row .fav-btn")).toHaveCount(0);
+    await expect(page.locator(".revision-row .revision-pick").first()).toHaveText("이 판 쓰기");
+    await expect(page.locator(".revision-badge")).toHaveCount(0);
+  });
+
+  test("값이 갈리는 필드만 강조해서 보여준다", async ({ page }) => {
+    await openRevisions(page);
+    const first = page.locator(".revision-row").first();
+    // Title은 판마다 달라서 강조된다.
+    await expect(first.locator(".revision-field.changed", { hasText: "Title" })).toBeVisible();
+    // Developer도 한쪽에만 있으니 다르다.
+    await expect(first.locator(".revision-field.changed", { hasText: "Developer" })).toBeVisible();
+    // Description은 둘이 같으므로 줄 자체를 만들지 않는다.
+    await expect(page.locator(".revision-field", { hasText: "Description" })).toHaveCount(0);
+  });
+
+  test("어느 출처의 언제 판인지 보여준다", async ({ page }) => {
+    await openRevisions(page);
+    await expect(page.locator(".revision-row").first().locator(".revision-when"))
+      .toHaveText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    await expect(page.locator(".revision-row").first().locator(".revision-source")).not.toBeEmpty();
+  });
+
+  test("미디어도 다른 것만 표시가 다르다", async ({ page }) => {
+    await openRevisions(page);
+    const first = page.locator(".revision-row").first();
+    // Screenshot은 둘째 판에만 있으니 갈린다 - 첫 판에서는 없음(off) 표시.
+    await expect(first.locator(".revision-chip.changed.off")).toHaveCount(1);
+    // Cover는 둘 다 같은 크기라 강조하지 않는다.
+    await expect(first.locator(".revision-chip:not(.changed)")).toHaveCount(1);
+  });
+});
+
 test("Archive에서도 Ctrl+A로 전체를 고를 수 있다", async ({ page }) => {
   // archiveUids()는 이미 있었고(HERO의 "메타데이터 가져오기"가 쓴다) 테스트도 있었는데,
   // Ctrl+A만 "아직 지원하지 않습니다" 경고만 띄우고 실제로는 부르지 않고 있었다.
@@ -167,6 +226,25 @@ test.describe("Archive System 우클릭", () => {
     await expect(page.locator("#toast")).toContainText("1개를 바꿨습니다");
   });
 
+  test("ROM 없는 항목 정리가 메뉴에 있고, 확인하면 정리한다", async ({ page }) => {
+    await openArchive(page);
+    await page.evaluate(() => {
+      window.__cleaned = null;
+      window.api.archiveOrphanPreview = (system) => Promise.resolve({ ok: true, data: {
+        system, items: [{ romIdentityId: "rid9", filename: "Ghost.iso", title: "유령 항목" }] } });
+      window.api.archiveCleanupOrphans = (system) => {
+        window.__cleaned = system;
+        return Promise.resolve({ ok: true, data: { deleted: 1 } });
+      };
+    });
+    await rightClickSystem(page, "PS2");
+    await menuItem(page, "ROM 없는 항목 정리").click();
+    await expect(page.locator(".modal-text")).toContainText("실제 ROM/Media 파일은 지워지지 않습니다");
+    await expect(page.locator(".sysdel-target")).toContainText("유령 항목");
+    await page.locator(".modal-actions .btn.danger", { hasText: "정리" }).click();
+    await expect.poll(() => page.evaluate(() => window.__cleaned)).toBe("ps2");
+  });
+
   test("시스템 전체 지우기는 확인 후 archiveDeleteSystem을 부른다", async ({ page }) => {
     await openArchive(page);
     await page.evaluate(() => {
@@ -182,6 +260,23 @@ test.describe("Archive System 우클릭", () => {
     await modalButton(page, "확인").click();
     await expect.poll(() => page.evaluate(() => window.__deletedSystem)).toBe("ps2");
   });
+});
+
+test("행 우클릭의 폴더 열기는 원본 ROM이 있는 자리를 연다", async ({ page }) => {
+  // Archive엔 자기 폴더가 없다 - Collection용 ROM/Metadata/Media 세 항목 대신
+  // "원본 ROM 폴더 열기" 하나만 둔다(사용자 지적).
+  await openArchive(page);
+  await page.evaluate(() => {
+    window.__opened = null;
+    window.api.archiveRomFolder = (rid) => {
+      window.__opened = rid;
+      return Promise.resolve({ ok: true, data: { path: "D:\Roms\ps2" } });
+    };
+  });
+  await page.locator(".lrow", { hasText: "Final Fantasy X" }).click({ button: "right" });
+  await expect(page.locator(".ctx-menu .ctx-item", { hasText: "ROM 폴더" })).toHaveCount(1);
+  await page.locator(".ctx-menu .ctx-item", { hasText: "원본 ROM 폴더 열기" }).click();
+  await expect.poll(() => page.evaluate(() => window.__opened)).toBe("rid2");
 });
 
 test.describe("Archive 행 우클릭 - 삭제", () => {

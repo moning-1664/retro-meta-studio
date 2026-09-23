@@ -668,20 +668,45 @@ body { font-size: var(--fs-body); }
    필드를 표로 늘어놓는 대신 제목과 설명만 보여준다 - 어느 판이 더 나은 설명을 갖고
    있는지가 실제 판단 기준이고, 나머지 필드는 Metadata 탭이 이미 보여준다. */
 .revision-row {
-  display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 10px;
   border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--card2); margin: 6px 10px;
 }
+/* 고른 판은 테두리로 알린다 - 별표를 쓰지 않는다(즐겨찾기와 헷갈렸다는 지적). */
 .revision-row.chosen { border-color: var(--accent); }
-.revision-main { flex: 1; min-width: 0; }
-.revision-title { font-size: var(--fs-body); color: var(--text); }
-/* 설명은 세 줄까지만. 더 보고 싶으면 Metadata 탭이 있다. */
-.revision-desc {
-  margin-top: 3px; font-size: var(--fs-caption); color: var(--muted);
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
-  overflow: hidden;
+.revision-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.revision-badge {
+  flex: none; padding: 1px 6px; border-radius: var(--radius-pill);
+  background: var(--accent); color: #fff; font-size: var(--fs-eyebrow); font-weight: 700;
+  letter-spacing: .04em;
 }
-.revision-meta { margin-top: 4px; font-size: var(--fs-eyebrow); color: var(--list-muted); }
+.revision-source { flex: 1; min-width: 0; font-size: var(--fs-caption); color: var(--text); font-weight: 600; }
+.revision-when { flex: none; font-size: var(--fs-eyebrow); color: var(--list-muted);
+  font-variant-numeric: tabular-nums; }
+/* 값이 갈리는 필드만 줄로 보여준다 - 다른 곳(Compare)과 같은 노란색 언어를 쓴다. */
+.revision-fields { display: flex; flex-direction: column; gap: 2px; }
+.revision-field {
+  display: flex; gap: 8px; align-items: baseline; padding: 2px 5px;
+  border-radius: var(--radius-xs); border: 1px solid transparent; font-size: var(--fs-caption);
+}
+.revision-field.changed {
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+}
+.revision-field-label { flex: none; width: 5.5em; color: var(--muted); font-size: var(--fs-eyebrow); }
+.revision-field-value {
+  flex: 1; min-width: 0; color: var(--text); word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.revision-media { display: flex; flex-wrap: wrap; gap: 4px; }
+.revision-chip {
+  padding: 1px 7px; border-radius: var(--radius-pill); border: 1px solid var(--border);
+  background: var(--card3); color: var(--text); font-size: var(--fs-eyebrow);
+}
+.revision-chip.off { color: var(--muted); opacity: .55; text-decoration: line-through; }
+.revision-chip.changed { border-color: var(--warning); color: var(--warning); opacity: 1; }
+.revision-pick { align-self: flex-end; }
+.revision-pick.on { border-color: var(--accent); color: var(--accent); }
 
 /* System을 끌어다 놓는 동안 그룹 전체가 받는다는 것을 보여준다. */
 .nav-group.drop-target {

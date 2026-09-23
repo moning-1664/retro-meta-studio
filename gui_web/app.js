@@ -2215,12 +2215,54 @@
         title: "여러 장짜리 게임의 제목 뒤에 붙은 장 번호 표시를 지우고, Settings에 고른 형식으로 다시 붙입니다. 바로 적용됩니다.",
         onSelect: () => openDiscRetagDialog(sys.system, sys.system.toUpperCase()) },
       "separator",
+      { label: "ROM 없는 항목 정리", icon: "eraser",
+        title: "ROM 위치가 한 번도 기록되지 않은 항목(메타데이터만 남은 것)을 Archive에서 지웁니다. "
+          + "실제 파일은 건드리지 않습니다.",
+        onSelect: () => confirmArchiveOrphanCleanup(sys) },
       { label: "시스템 전체 Archive에서 지우기 (!)", icon: "trash", danger: true,
         title: "이 System의 Archive 기록을 전부 지웁니다 - 실제 ROM/Media 파일은 그대로입니다.",
         onSelect: () => confirmRemoveArchiveSystem(sys) },
     ];
     showContextMenu(menuPoint(event), sys.system.toUpperCase(),
       `게임 ${formatCount(sys.count)}`, items, null, systemIcon(sys.system, 15));
+  }
+
+  /** Archive의 "ROM 없는 항목 정리" - Collection 쪽과 뜻은 같지만 지우는 것은
+   * Archive의 기록뿐이다(실제 파일은 애초에 Archive의 것이 아니다, §37). */
+  async function confirmArchiveOrphanCleanup(sys) {
+    const preview = await api.archiveOrphanPreview(sys.system);
+    if (!preview.ok) { showToast(preview.error, "error"); return; }
+    const items = preview.data.items || [];
+    if (!items.length) { showToast(`${sys.system.toUpperCase()}에 정리할 항목이 없습니다.`); return; }
+
+    const LIMIT = 50;
+    const list = h("div", { class: "sysdel-list" });
+    items.slice(0, LIMIT).forEach((item) => list.appendChild(h("div", { class: "sysdel-target" }, [
+      h("span", { class: "sysdel-path" }, [item.title || item.filename]),
+      h("span", { class: "sysdel-count" }, [item.filename]),
+    ])));
+    if (items.length > LIMIT) {
+      list.appendChild(h("div", { class: "sysdel-file" }, [`… 외 ${formatCount(items.length - LIMIT)}개`]));
+    }
+    const body = h("div", { class: "modal-body" }, [
+      h("div", { class: "modal-text" }, [
+        `ROM 위치가 기록되지 않은 항목 ${formatCount(items.length)}개를 Archive에서 지웁니다. `
+        + "실제 ROM/Media 파일은 지워지지 않습니다.",
+      ]),
+      list,
+    ]);
+    showModal(`${sys.system.toUpperCase()} - ROM 없는 항목 정리`, body, [
+      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+      h("button", { class: "btn danger", onClick: async () => {
+        closeModal();
+        const r = await api.archiveCleanupOrphans(sys.system);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        resetList();
+        renderAll();
+        await reloadList();
+        showToast(`${formatCount(r.data.deleted)}개를 Archive에서 지웠습니다.`);
+      } }, ["정리"]),
+    ]);
   }
 
   async function confirmRemoveArchiveSystem(sys) {
@@ -4691,7 +4733,17 @@
   function rowFolderItems(row, single) {
     // Archive 항목은 이 Collection의 파일 배치(adapter.layout)를 따르지 않는다 -
     // "폴더 열기"가 가리킬 자리 자체가 없다.
-    if (!single || isArchive()) return [];
+    if (!single) return [];
+    // Archive에는 자기 폴더가 없다 - 대신 **원본 ROM이 실제로 있는 자리**를 연다
+    // (사용자 지적 - Archive 자체 폴더를 열면 뜻이 없다).
+    if (isArchive()) {
+      return ["separator", { label: "원본 ROM 폴더 열기", icon: "folderOpen",
+        title: "이 항목의 ROM이 실제로 있는 Collection 폴더를 엽니다.",
+        onSelect: async () => {
+          const r = await api.archiveRomFolder(row.romIdentityId || row.romUid);
+          if (!r.ok) showToast(r.error, "error");
+        } }];
+    }
     return ["separator", { section: "폴더 열기" },
       { label: "ROM 파일", icon: "folderOpen", disabled: !row.present,
         title: row.present ? null : "ROM 파일이 없습니다.",
@@ -6348,6 +6400,44 @@
    * 보인다"). 출처가 둘이어도 내용이 같으면 고를 이유가 없다 - 고를 것이 있을 때만 여러 줄이
    * 나와야 그 선택이 뜻을 가진다. 묶는 규칙은 `[n]` 뱃지와 **같은 것**을 쓴다(app/archive/conflicts.py).
    */
+  //: Revision 줄에 보여줄 필드와 그 이름. Compare의 카드 구성과 같은 순서다.
+  const REVISION_FIELDS = [
+    ["name", "Title"], ["desc", "Description"], ["genre", "Genre"], ["developer", "Developer"],
+    ["publisher", "Publisher"], ["releasedate", "Release"], ["region", "Region"],
+    ["players", "Players"], ["rating", "Rating"],
+  ];
+
+  function revisionWhen(seconds) {
+    if (!seconds) return "";
+    const d = new Date(seconds * 1000);
+    const two = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
+  }
+
+  /** 판들 사이에서 **실제로 갈리는** 필드/미디어만 추린다.
+   *
+   * "버전 1/2/3"만 늘어놓으면 왜 셋인지 알 수 없다(실사용 지적) - 무엇이 다른지가
+   * 이 탭의 존재 이유다. 값이 모두 같은 필드는 굳이 줄마다 반복해서 보여주지 않는다. */
+  function revisionDifferences(versions) {
+    const differing = new Set();
+    REVISION_FIELDS.forEach(([key]) => {
+      const seen = new Set(versions.map((v) => String((v.fields || {})[key] || "").trim()));
+      if (seen.size > 1) differing.add(key);
+    });
+    const mediaTypes = new Set();
+    versions.forEach((v) => Object.keys(v.media || {}).forEach((t) => mediaTypes.add(t)));
+    const mediaDiffering = new Set();
+    mediaTypes.forEach((type) => {
+      const seen = new Set(versions.map((v) => String((v.media || {})[type] ?? "없음")));
+      if (seen.size > 1) mediaDiffering.add(type);
+    });
+    return { differing, mediaTypes: [...mediaTypes].sort(), mediaDiffering };
+  }
+
+  /** Revision 탭. **Preferred는 즐겨찾기(★)와 다른 것이다**(실사용 지적 - 같은 별표라
+   * 헷갈렸다). 별표는 게임 자체의 즐겨찾기고, 여기서 고르는 것은 "이 게임의 값을
+   * 어느 판에서 가져올지"다. 그래서 별표를 쓰지 않고 PREFERRED 배지와 글자 버튼으로
+   * 표시한다. */
   function renderSourcesTab(body) {
     const state = S.detailState;
     const versions = state.versions || [];
@@ -6358,38 +6448,60 @@
     if (versions.length === 1) {
       body.appendChild(h("div", { class: "modal-hint revision-single" },
         ["수집한 출처가 모두 같은 내용입니다 - 고를 것이 없습니다."]));
+    } else {
+      body.appendChild(h("div", { class: "modal-hint revision-single" },
+        [`서로 다른 판 ${formatCount(versions.length)}개입니다. 아래에 **다른 값만** 보여줍니다 - `
+         + "하나를 고르면 그 판의 값이 우선 쓰이고, 그 판에 없는 값은 다른 출처에서 채웁니다."]));
     }
 
     const preferredId = state.preferredRecordId || null;
     const sourceName = (id) => (id === "__archive__" ? "Archive에서 직접 편집"
       : (S.collections.find((c) => c.id === id) || {}).name || id);
+    const { differing, mediaTypes, mediaDiffering } = revisionDifferences(versions);
 
     versions.forEach((version, index) => {
       const chosen = (version.recordIds || []).includes(preferredId);
       const box = h("div", { class: "revision-row" + (chosen ? " chosen" : "") });
-
-      const main = h("div", { class: "revision-main" });
       const fields = version.fields || {};
-      main.appendChild(h("div", { class: "revision-title truncate" },
-                          [fields.name || state.file || "(제목 없음)"]));
-      main.appendChild(h("div", { class: "revision-desc" }, [fields.desc || "설명 없음"]));
-      // 어느 Collection들에서 온 내용인지 - 여럿이면 그만큼이 같은 내용이라는 뜻이다.
-      const names = (version.sources || []).map(sourceName);
-      const media = Object.keys(version.media || {}).length
-        ? ` · ${Object.entries(version.media).map(([t, size]) => `${t} ${formatBytes(size)}`).join(", ")}`
-        : "";
-      main.appendChild(h("div", { class: "revision-meta" },
-        [`버전 ${index + 1} · ${names.join(", ")}${media}`]));
-      box.appendChild(main);
 
-      // 별표 하나로 "이 판을 쓴다"를 정한다. 다시 누르면 자동 선택(Latest)으로 돌아간다.
-      const star = h("button", {
-        class: "fav-btn" + (chosen ? " on" : ""),
-        title: chosen ? "선택 해제 (가장 최근 판을 씁니다)" : "이 버전을 우선 사용",
-      }, [chosen ? "★" : "☆"]);
-      star.addEventListener("click", () =>
+      const head = h("div", { class: "revision-head" });
+      if (chosen) head.appendChild(h("span", { class: "revision-badge" }, ["PREFERRED"]));
+      head.appendChild(h("span", { class: "revision-source truncate" },
+        [(version.sources || []).map(sourceName).join(", ") || `버전 ${index + 1}`]));
+      head.appendChild(h("span", { class: "revision-when" }, [revisionWhen(version.updatedAt)]));
+      box.appendChild(head);
+
+      // 제목은 늘 보여준다(무엇에 대한 판인지 알아야 한다). 나머지는 갈리는 것만.
+      const rows = h("div", { class: "revision-fields" });
+      REVISION_FIELDS.forEach(([key, label]) => {
+        if (key !== "name" && !differing.has(key)) return;
+        const value = String(fields[key] || "").trim();
+        rows.appendChild(h("div", { class: "revision-field" + (differing.has(key) ? " changed" : "") }, [
+          h("span", { class: "revision-field-label" }, [label]),
+          h("span", { class: "revision-field-value" }, [value || "(없음)"]),
+        ]));
+      });
+      box.appendChild(rows);
+
+      if (mediaTypes.length) {
+        const chips = h("div", { class: "revision-media" });
+        mediaTypes.forEach((type) => {
+          const size = (version.media || {})[type];
+          chips.appendChild(h("span", {
+            class: "revision-chip" + (size == null ? " off" : "")
+              + (mediaDiffering.has(type) ? " changed" : ""),
+            title: size == null ? `${type} 없음` : `${type} ${formatBytes(size)}`,
+          }, [MEDIA_LABEL[type] || type]));
+        });
+        box.appendChild(chips);
+      }
+
+      const pick = h("button", { class: "btn compact revision-pick" + (chosen ? " on" : ""),
+        title: chosen ? "선택을 풀면 가장 최근 판을 씁니다." : "이 판의 값을 우선 씁니다." },
+        [chosen ? "선택 해제" : "이 판 쓰기"]);
+      pick.addEventListener("click", () =>
         togglePreferredRevision({ recordId: (version.recordIds || [])[0] }, chosen));
-      box.appendChild(star);
+      box.appendChild(pick);
 
       body.appendChild(box);
     });

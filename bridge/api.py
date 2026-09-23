@@ -2381,6 +2381,41 @@ class Api:
         return applied
 
     @guarded
+    def archive_orphan_preview(self, system):
+        """ROM이 한 번도 기록되지 않은 Archive 항목들(= 메타데이터만 남은 것).
+
+        Collection의 "ROM 없는 항목 정리"와 뜻은 같지만 지우는 대상이 다르다 -
+        Collection은 실제 gamelist 항목을 지우고, 여기서는 Archive의 기록만 지운다
+        (실제 ROM/Media 파일은 애초에 Archive의 것이 아니다, §37).
+        """
+        rows = [r for r in self.archive.list_rows(systems=[system], limit=None)
+                if not r["rom_count"]]
+        return ok({"system": system, "items": [
+            {"romIdentityId": r["rom_identity_id"], "filename": r["filename"],
+             "title": r["title"]} for r in rows]})
+
+    @guarded
+    def archive_cleanup_orphans(self, system):
+        rows = [r for r in self.archive.list_rows(systems=[system], limit=None)
+                if not r["rom_count"]]
+        return self.archive_delete([r["rom_identity_id"] for r in rows]) if rows else ok({"deleted": 0})
+
+    @guarded
+    def archive_rom_folder(self, rom_identity_id):
+        """그 항목의 ROM이 **실제로 있는 폴더**를 연다(사용자 지적 - Archive 자체 폴더가
+        아니라 원본이 있는 자리를 열어야 뜻이 있다). Archive는 경로만 들고 있으므로
+        (§37) 그 경로의 부모를 연다."""
+        sources = self.archive.rom_sources(rom_identity_id)
+        path = next((s["abs_path"] for s in sources if s.get("abs_path")), None)
+        if not path:
+            return err("이 항목에는 기록된 ROM 위치가 없습니다.")
+        parent = str(Path(path).parent)
+        if not Path(parent).exists():
+            return err(f"폴더가 없습니다: {parent}")
+        _reveal_path(parent)
+        return ok({"path": parent})
+
+    @guarded
     def archive_delete_system(self, system):
         """"시스템 전체 삭제"의 Archive판 - 그 System의 Identity를 전부 지운다.
         archive_delete()와 같은 이유로 실제 ROM/Media 파일은 그대로다."""
