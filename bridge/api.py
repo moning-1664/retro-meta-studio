@@ -1904,7 +1904,7 @@ class Api:
 
     @guarded
     def archive_rows(self, search=None, systems=None, limit=200, offset=0, conflicts_only=False,
-                     favorites_only=False):
+                     favorites_only=False, rom_identity_ids=None):
         """Archive Gamelist. Collection 목록과 같은 모양으로 돌려준다(§43).
 
         Description/Genre/Rating은 `rom_identities`가 아니라 Revision의
@@ -1914,6 +1914,10 @@ class Api:
         Archive 편집 → Latest)를 쓴다.
         """
         query = {"search": search or None, "systems": systems or None}
+        # 특정 항목만 다시 읽는다 - Archive에서 뭔가 바꾼 뒤 그 줄만 갱신할 때 쓴다.
+        # 행을 만드는 코드가 여기 한 곳뿐이어야 목록과 갱신이 어긋나지 않는다.
+        if rom_identity_ids is not None:
+            query["only_ids"] = [str(i) for i in rom_identity_ids]
         if conflicts_only:
             # 사용자 결정 - "유사롬만 골라서 볼 수 있는 filter". 내용이 실제로 다른 것(=`[n]`이 붙는 것)만
             # 남긴다 - 고를 것이 있는 항목만 보여야 정리할 때 뜻이 있다.

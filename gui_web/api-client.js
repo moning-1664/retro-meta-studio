@@ -323,9 +323,9 @@
     }),
     get_archive_media_image: () => ok(null),
     get_archive_version_media_image: () => ok(null),
-    archive_rows: (search, systems, limit, offset, conflictsOnly, favoritesOnly) =>
+    archive_rows: (search, systems, limit, offset, conflictsOnly, favoritesOnly, romIdentityIds) =>
       ok({ rows: [], total: 0, offset: 0, conflictsOnly: !!conflictsOnly,
-           favoritesOnly: !!favoritesOnly }),
+           favoritesOnly: !!favoritesOnly, romIdentityIds: romIdentityIds || null }),
     archive_uids: () => ok([]),
     archive_conflicts: () => ok({}),
     // 저장하면 "정해졌다"로 바뀐다 - 디렉토리를 정하기 전에는 수집이 거절되므로(사용자 결정)
@@ -960,7 +960,7 @@
       call("get_archive_version_media_image", romIdentityId, sourceCollectionId, label, !!thumbnail),
     archiveRows: (q) => call("archive_rows", q.search || null, q.systems || null,
                              q.limit || 200, q.offset || 0, !!q.conflictsOnly,
-                             !!q.favoritesOnly),
+                             !!q.favoritesOnly, q.romIdentityIds || null),
     archiveUids: (systems) => call("archive_uids", systems || null),
     archiveSystems: () => call("archive_systems"),
     archiveDetail: (romIdentityId) => call("archive_detail", romIdentityId),

@@ -5485,7 +5485,7 @@
                                                       v.recordIds[0]);
         if (!chosen.ok) { showToast(chosen.error, "error"); return; }
         delete S.matchCounts[row.romUid];
-        renderListWindow();
+        await refreshArchiveRows([row.romIdentityId || row.romUid]);
         showToast(`버전 ${i + 1}을 선택했습니다.`);
       });
       list.appendChild(option);
@@ -5588,6 +5588,44 @@
   // ------------------------------------------------------------------
   const fieldRefs = {};
 
+  /** Archive 상세 응답을 화면이 쓰는 모양으로 바꾼다. **한 곳에서만 만든다** -
+   * 예전에는 Revision을 고른 뒤 여기와 다른 모양으로 다시 만들어서, 파일명이 비고
+   * Media 탭이 깨졌다(`file`/`media` 키가 서로 달랐다). */
+  function archiveDetailState(d, tab) {
+    return {
+      archive: true, romUid: d.romIdentityId, romIdentityId: d.romIdentityId,
+      system: d.system, file: d.filename, fields: d.fields, size: d.size,
+      present: true, sha256: d.sha256, sources: d.sources, favorite: !!d.favorite,
+      // Revision 탭(renderSourcesTab)이 읽는 값들 - 예전엔 빠뜨려서 목록엔 [n] 충돌
+      // 뱃지가 붙는데 열어 보면 늘 "수집된 Revision이 없습니다"였다.
+      versions: d.versions, preferredRecordId: d.preferredRecordId,
+      media: (d.media || []).reduce((acc, m) => {
+        acc[MEDIA_LABEL[m.media_type] || m.media_type] = "pending"; return acc;
+      }, {}),
+      tab: tab || "metadata", draft: null,
+    };
+  }
+
+  /** Archive에서 무언가 바꾼 뒤 **그 줄만** 다시 읽어 목록에 반영한다.
+   *
+   * Effective State(Preferred/편집/별표)가 바뀌면 상세만이 아니라 목록도 같은 시점에
+   * 바뀌어야 한다 - 예전에는 renderListWindow()로 캐시를 다시 그리기만 해서, Revision을
+   * 골라도 상세만 바뀌고 Gamelist의 제목/설명은 옛 값 그대로였다(실사용 P0).
+   * 줄을 손으로 조립하지 않고 백엔드의 목록 코드를 그대로 다시 부른다 - 목록과 갱신이
+   * 서로 다른 규칙으로 값을 만들면 또 어긋난다. */
+  async function refreshArchiveRows(romIdentityIds) {
+    const ids = (romIdentityIds || []).filter(Boolean);
+    if (!ids.length || !isArchive()) return;
+    const r = await api.archiveRows({ romIdentityIds: ids, limit: ids.length });
+    if (!r.ok) return;
+    const fresh = new Map((r.data.rows || []).map((row) => [row.romIdentityId, row]));
+    for (const [index, row] of S.rowCache.entries()) {
+      const next = row && fresh.get(row.romIdentityId);
+      if (next) S.rowCache.set(index, next);
+    }
+    renderListWindow();
+  }
+
   async function openDetail(row) {
     stopMediaVideo();
     S.focused = row.romUid;
@@ -5608,22 +5646,7 @@
       const r = await api.archiveDetail(row.romIdentityId);
       if (stale()) return;
       if (!r.ok || !r.data) { showToast(r.error || "항목을 찾을 수 없습니다.", "error"); return; }
-      const d = r.data;
-      S.detailState = {
-        archive: true, romUid: d.romIdentityId, romIdentityId: d.romIdentityId,
-        system: d.system, file: d.filename, fields: d.fields, size: d.size,
-        present: true, sha256: d.sha256, sources: d.sources, favorite: !!d.favorite,
-        // Revision 탭(renderSourcesTab)이 읽는 값들 - 예전엔 여기서 빠뜨려서, 목록의
-        // [n] 충돌 뱃지는 보이는데 그 항목을 열면 Revision 탭이 늘 "수집된 Revision이
-        // 없습니다"로 나왔다(실사용 버그 리포트 - 뭘 고를지가 곧 충돌 해소인데
-        // 아무것도 안 보였다). 백엔드는 이미 매번 계산해서 주고 있었다
-        // (app/archive/service.py detail() -> conflict_service.versions_of()).
-        versions: d.versions, preferredRecordId: d.preferredRecordId,
-        media: (d.media || []).reduce((acc, m) => {
-          acc[MEDIA_LABEL[m.media_type] || m.media_type] = "pending"; return acc;
-        }, {}),
-        tab, draft: null,
-      };
+      S.detailState = archiveDetailState(r.data, tab);
       renderDetailPanel();
       renderStatusBar();
       return;
@@ -6383,13 +6406,13 @@
     // "한 version을 선택해도 바뀌는 것이 없다"). 목록의 [n] 뱃지도 함께 사라진다.
     const detail = await api.archiveDetail(state.romIdentityId);
     if (detail.ok && S.detailState === state) {
-      S.detailState = { ...detail.data, tab: state.tab, archive: true, romUid: state.romUid };
+      S.detailState = archiveDetailState(detail.data, state.tab);
     } else {
       state.preferredRecordId = chosen ? null : source.recordId;
     }
     delete S.matchCounts[state.romUid];
     renderDetailPanel();
-    renderListWindow();
+    await refreshArchiveRows([state.romIdentityId]);
     showToast(chosen ? "우선 버전을 해제했습니다. 가장 최근 판을 씁니다."
                      : "이 버전을 우선 사용합니다.");
   }
@@ -6495,7 +6518,7 @@
     if (state.archive) {
       // Archive 편집은 Collection에 자동 반영되지 않는다(스펙 §40). 그 사실을 매번 말해준다.
       showToast("Archive에 저장했습니다. Collection에 반영하려면 \"Collection으로 보내기\"를 누르세요.");
-      renderListWindow();
+      await refreshArchiveRows([state.romIdentityId]);
       return;
     }
 

@@ -29,6 +29,7 @@ async function openArchive(page, conflicts = { rid1: 2 }) {
     window.api.archiveSystems = () => Promise.resolve({ ok: true,
       data: Object.entries(bySystem).map(([system, count]) => ({ system, count })) });
   }, { rows: ROWS, conflicts });
+  await page.evaluate((rows) => { window.ROWS_FOR_TEST = rows; }, ROWS);
   await page.locator(".ctab.archive").click();
   await expect(page.locator(".lrow").first()).toBeVisible();
 }
@@ -62,6 +63,33 @@ test("버전을 고르면 뱃지가 사라진다", async ({ page }) => {
   await page.locator(".match-badge").click();
   await page.locator(".match-option").nth(1).click();
   await expect(page.locator(".match-badge")).toHaveCount(0);
+});
+
+test("[P0] 버전을 고르면 Gamelist 줄도 같이 바뀐다", async ({ page }) => {
+  // 실사용 P0 - "Revision을 하나 선택했는데 metadata에는 반영되는데 GameList에는
+  // 반영이 안된다". 예전엔 renderListWindow()로 캐시를 다시 그리기만 해서, 고른
+  // 값이 상세에만 보이고 목록의 제목/설명은 옛 값 그대로였다.
+  await openArchive(page);
+  await page.evaluate(() => {
+    // 버전을 고르면 백엔드의 Effective 값이 바뀐다 - 목록 재조회가 그 값을 준다.
+    let chosen = false;
+    const base = ROWS_FOR_TEST;
+    window.api.archiveChooseVersion = () => { chosen = true; return Promise.resolve({ ok: true, data: {} }); };
+    window.api.archiveRows = (q) => {
+      const rows = base.map((r) => (chosen && r.romIdentityId === "rid1"
+        ? { ...r, title: "고른 버전의 제목", desc: "고른 버전의 설명" } : r));
+      const wanted = q && q.romIdentityIds;
+      const out = wanted ? rows.filter((r) => wanted.includes(r.romIdentityId)) : rows;
+      return Promise.resolve({ ok: true, data: { rows: out, total: out.length, offset: 0 } });
+    };
+  });
+
+  await expect(page.locator(".lrow", { hasText: "Metal Gear Solid 2" })).toBeVisible();
+  await page.locator(".match-badge").click();
+  await page.locator(".match-option").nth(1).click();
+
+  await expect(page.locator(".lrow", { hasText: "고른 버전의 제목" })).toBeVisible();
+  await expect(page.locator(".lrow", { hasText: "Metal Gear Solid 2" })).toHaveCount(0);
 });
 
 test("Detail의 Revision 탭에 버전들이 실제로 보인다", async ({ page }) => {
