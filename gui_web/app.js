@@ -683,6 +683,7 @@
       reset: () => updateSettings("appearance", { ...DEFAULT_SETTINGS.appearance }),
       renderColumns: columnSettingsEditor,
       renderEmulator: emulatorSettingsEditor,
+      renderScraper: scraperSettingsEditor,
       renderArchive: () => archiveSettingsEditor(async () => { await loadArchiveConfigured(); if (isArchive()) refreshActive(); }),
       // 확인 버튼이 부른다(실사용 피드백 §7) - 값은 이미 바뀔 때마다 즉시
       // 적용돼 있지만(슬라이더 미리보기 등), 서버 저장은 300ms 묶어서 나간다.
@@ -867,7 +868,13 @@
     showToast._timer = setTimeout(() => { el.className = ""; }, 3200);
   }
 
-  function closeModal() { clear($("modal-root")); }
+  function closeModal() {
+    const root = $("modal-root");
+    const beforeClose = root && root.__beforeClose;
+    if (root) root.__beforeClose = null;
+    if (beforeClose) beforeClose();
+    clear(root);
+  }
 
   function showModal(title, bodyEl, actions) {
     const root = $("modal-root");
@@ -2238,6 +2245,13 @@
       { label: "멀티 디스크 태그 적용…", icon: "copy",
         title: "여러 장짜리 게임의 제목 뒤에 붙은 장 번호 표시를 지우고, Settings에 고른 형식으로 다시 붙입니다. 바로 적용됩니다.",
         onSelect: () => openDiscRetagDialog(sys.system, sys.system.toUpperCase()) },
+      { label: "메타데이터 스크랩…", icon: "sparkles", disabled: !sys.count,
+        title: "이 System의 Archive 항목을 순서대로 검토합니다.",
+        onSelect: async () => {
+          const ids = await api.archiveUids([sys.system]);
+          if (!ids.ok) { showToast(ids.error, "error"); return; }
+          openScrapeContext(ids.data);
+        } },
       "separator",
       { label: "ROM 없는 항목 정리", icon: "eraser",
         title: "ROM 위치가 한 번도 기록되지 않은 항목(메타데이터만 남은 것)을 Archive에서 지웁니다. "
@@ -2358,8 +2372,13 @@
       title: deviceOnly ? deviceTip
         : "여러 장짜리 게임의 제목 뒤에 붙은 장 번호 표시를 지우고, Settings에 고른 형식으로 다시 붙입니다.",
       onSelect: () => openDiscRetagDialog(sys.system, sys.system.toUpperCase()) });
-    items.push({ label: "메타데이터 스크랩…", icon: "sparkles", disabled: true,
-      title: "준비 중입니다.", onSelect: () => {} });
+    items.push({ label: "메타데이터 스크랩…", icon: "sparkles", disabled: !sys.count,
+      title: sys.count ? "이 System의 게임을 순서대로 검토합니다." : "스크랩할 게임이 없습니다.",
+      onSelect: async () => {
+        const ids = await api.listUids(S.activeId, { systems: [sys.system] });
+        if (!ids.ok) { showToast(ids.error, "error"); return; }
+        openScrapeContext(ids.data);
+      } });
     items.push("separator", {
       label: "ROM 없는 항목 정리", icon: "eraser", disabled: deviceOnly,
       title: deviceOnly ? deviceTip : "Metadata/Media는 있는데 ROM 파일이 없는 항목을 찾아 지웁니다.",
@@ -4743,8 +4762,10 @@
             ? "지금 설정으로는 바뀔 제목이 없습니다. Settings > Metadata & Media에서 규칙을 확인하세요." : null,
           onSelect: () => openTitleAffixDialog({ romUids: [...S.selected],
             label: single ? (row.title || row.file) : `선택한 ${formatCount(count)}개` }) },
-        { label: "메타데이터 스크랩…", icon: "sparkles", disabled: true,
-          title: "준비 중입니다.", onSelect: () => {} },
+        { label: single ? "메타데이터 스크랩…" : `메타데이터 스크랩… (${formatCount(count)}개)`,
+          icon: "sparkles", disabled: locked,
+          title: "선택한 게임을 순서대로 검토합니다.",
+          onSelect: () => openScrapeContext([...S.selected]) },
         "separator",
         { label: "복사", icon: "copy", hint: "Ctrl+C", disabled: locked, onSelect: copySelectedRows },
         { label: "붙여넣기", icon: "upload", hint: "Ctrl+V", disabled: locked,
@@ -5796,6 +5817,325 @@
     });
   }
 
+  function scraperSettingsEditor() {
+    const wrap = h("div", { class: "stg-scraper" }, [h("div", { class: "stg-info" }, ["설정을 불러오는 중…"])]);
+    const draw = async () => {
+      const result = await api.scraperSettings();
+      clear(wrap);
+      if (!result.ok) { wrap.appendChild(h("div", { class: "stg-info" }, [result.error])); return; }
+      const cfg = result.data;
+      wrap.appendChild(h("div", { class: "stg-info" }, [
+        cfg.devIdSet && cfg.devPasswordSet
+          ? `ScreenScraper 개발자 정보 설정됨 · 사용자 ${cfg.userId || "미로그인"}`
+          : "ScreenScraper 개발자 정보가 필요합니다.",
+      ]));
+      const status = h("div", { class: "stg-info" }, ["연결 상태를 확인하지 않았습니다."]);
+      const configure = h("button", { class: "btn", onClick: () => openScraperSetup(draw) }, ["연결 설정…"]);
+      const test = h("button", { class: "btn primary", disabled: !(cfg.devIdSet && cfg.devPasswordSet),
+        onClick: async () => {
+          test.disabled = true;
+          const started = await api.startScraperAccountStatus();
+          if (!started.ok) { status.textContent = started.error; test.disabled = false; return; }
+          const checked = await pollJob(started.data.jobId, "ScreenScraper 연결 확인");
+          test.disabled = false;
+          if (!checked.ok) { status.textContent = checked.error; return; }
+          status.textContent = `${scrapeQuotaText(checked.data)} · 동시 요청 ${checked.data.maxThreads || "확인 불가"}`;
+        } }, ["연결 테스트"]);
+      wrap.appendChild(h("div", { class: "stg-inline-actions" }, [configure, test]));
+      wrap.appendChild(status);
+    };
+    draw();
+    return wrap;
+  }
+
+  // ------------------------------------------------------------------
+  // Scraper review context
+  // ------------------------------------------------------------------
+  async function openScraperSetup(afterSave) {
+    const current = await api.scraperSettings();
+    const cfg = current.ok ? current.data : {};
+    const devId = h("input", { class: "field-input", placeholder: cfg.devIdSet ? "저장됨 - 바꿀 때만 입력" : "Dev ID" });
+    const devPassword = h("input", { class: "field-input", type: "password",
+      placeholder: cfg.devPasswordSet ? "저장됨 - 바꿀 때만 입력" : "Dev password" });
+    const softName = h("input", { class: "field-input", value: cfg.softName || "RetroMetaStudio" });
+    const userId = h("input", { class: "field-input", value: cfg.userId || "", placeholder: "ScreenScraper 사용자 ID" });
+    const userPassword = h("input", { class: "field-input", type: "password",
+      placeholder: cfg.userPasswordSet ? "저장됨 - 바꿀 때만 입력" : "사용자 비밀번호" });
+    const setupRow = (label, input, help) => h("label", { class: "scrape-setup-row" }, [
+      h("span", { class: "field-label" }, [label]), input,
+      help ? h("span", { class: "modal-hint" }, [help]) : null,
+    ]);
+    const body = h("div", { class: "modal-body scrape-setup" }, [
+      setupRow("Developer ID", devId), setupRow("Developer Password", devPassword),
+      setupRow("Software name", softName), setupRow("User ID", userId),
+      setupRow("User Password", userPassword,
+        "비밀번호는 Windows 보안 저장소에 암호화해 저장합니다."),
+    ]);
+    const card = showModal("ScreenScraper 연결", body, [
+      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+      h("button", { class: "btn primary", onClick: async () => {
+        const patch = { enabled: true, softName: softName.value.trim(), userId: userId.value.trim() };
+        if (devId.value) patch.devId = devId.value;
+        if (devPassword.value) patch.devPassword = devPassword.value;
+        if (userPassword.value) patch.userPassword = userPassword.value;
+        const saved = await api.saveScraperSettings(patch);
+        if (!saved.ok) { showToast(saved.error, "error"); return; }
+        closeModal();
+        if (afterSave) afterSave();
+      } }, ["저장"]),
+    ]);
+    card.classList.add("scrape-setup-card");
+  }
+
+  function scrapeQuotaText(quota) {
+    if (!quota) return "사용량 확인 중";
+    const used = Number(quota.requestsToday || 0);
+    const limit = Number(quota.requestsLimit || 0);
+    const prefix = quota.estimated ? "오늘 약 " : "오늘 ";
+    return limit ? `${prefix}${formatCount(used)} / ${formatCount(limit)}회` : `${prefix}${formatCount(used)}회`;
+  }
+
+  async function openScrapeContext(itemIds) {
+    const ids = [...new Set((itemIds || []).map(String))];
+    if (!ids.length) { showToast("스크랩할 게임을 선택하세요.", "error"); return; }
+    const settings = await api.scraperSettings();
+    if (!settings.ok) { showToast(settings.error, "error"); return; }
+    if (!settings.data.devIdSet || !settings.data.devPasswordSet) {
+      openScraperSetup(() => openScrapeContext(ids));
+      return;
+    }
+    const target = isArchive() ? "archive" : "collection";
+    const created = await api.createScrapeSession(target, isArchive() ? null : S.activeId, ids);
+    if (!created.ok) { showToast(created.error, "error"); return; }
+    const session = created.data;
+    let index = 0;
+    let searching = false;
+    let currentJobId = null;
+    let quota = session.quota;
+    let closed = false;
+
+    const body = h("div", { class: "modal-body scrape-context" });
+    const cancelSession = async () => {
+      closed = true;
+      if (currentJobId) await api.cancelJob(currentJobId);
+      await api.cancelScrapeSession(session.id);
+    };
+    const card = showModal("스크랩", body, []);
+    card.classList.add("scrape-context-card");
+    $("modal-root").__beforeClose = cancelSession;
+    const cancel = () => closeModal();
+
+    async function searchCurrent(query, systemHint) {
+      if (searching || closed) return;
+      searching = true;
+      draw();
+      const item = session.items[index];
+      const started = await api.startScrapeItem(session.id, item.id, query || item.query,
+                                                systemHint || item.system);
+      if (!started.ok) { searching = false; showToast(started.error, "error"); draw(); return; }
+      currentJobId = started.data.jobId;
+      const result = await pollJob(started.data.jobId, `${index + 1}/${session.items.length} ${item.filename}`);
+      currentJobId = null;
+      searching = false;
+      if (closed) return;
+      if (!result.ok) {
+        item.status = result.cancelled ? "cancelled" : "error";
+        item.error = result.error;
+      } else {
+        Object.assign(item, result.data.item || {});
+        quota = result.data.quota || quota;
+      }
+      draw();
+    }
+
+    function candidateCard(item, candidate) {
+      let expanded = false;
+      const previouslySelected = item.selectedCandidateId === candidate.candidate_id;
+      const selectedFields = new Set(previouslySelected
+        ? (item.selectedFields || []) : Object.keys(candidate.fields || {}));
+      const selectedMedia = new Set(previouslySelected ? (item.selectedMedia || []) : []);
+      const seenMediaTypes = new Set();
+      if (!previouslySelected) (candidate.media || []).forEach((media, mediaIndex) => {
+        if (["covers", "screenshots", "marquees", "wheel"].includes(media.media_type)
+            && !seenMediaTypes.has(media.media_type)) {
+          selectedMedia.add(mediaIndex);
+          seenMediaTypes.add(media.media_type);
+        }
+      });
+      const wrap = h("div", { class: "scrape-candidate" + (previouslySelected ? " selected" : "") });
+      const chooseButton = () => {
+        const choose = h("button", { class: "btn primary scrape-choose" },
+          [index + 1 < session.items.length ? "이 후보 선택 →" : "이 후보 선택"]);
+        choose.addEventListener("click", async () => {
+          const selectedFieldKeys = [...selectedFields];
+          const selected = await api.selectScrapeCandidate(session.id, item.id,
+                                                            candidate.candidate_id, selectedFieldKeys,
+                                                            [...selectedMedia]);
+          if (!selected.ok) { showToast(selected.error, "error"); return; }
+          item.selectedCandidateId = candidate.candidate_id;
+          item.selectedFields = selectedFieldKeys;
+          item.selectedMedia = [...selectedMedia];
+          item.status = "selected";
+          if (index + 1 < session.items.length) { index += 1; draw(); maybeSearch(); }
+          else draw();
+        });
+        return choose;
+      };
+      const redraw = () => {
+        clear(wrap);
+        wrap.classList.toggle("expanded", expanded);
+        const cover = (candidate.media || []).find((m) => m.media_type === "covers")
+          || (candidate.media || []).find((m) => m.media_type === "screenshots");
+        const thumb = cover
+          ? h("img", { class: "scrape-thumb", src: cover.url, alt: candidate.title, referrerpolicy: "no-referrer" })
+          : h("div", { class: "scrape-thumb empty" }, [icon("image", IC.md)]);
+        const toggle = h("button", { class: "icon-btn scrape-expand", title: expanded ? "접기" : "자세히" },
+          [expanded ? "∧" : "∨"]);
+        toggle.addEventListener("click", () => { expanded = !expanded; redraw(); });
+        wrap.appendChild(h("div", { class: "scrape-candidate-head" }, [thumb,
+          h("div", { class: "scrape-candidate-main" }, [
+            h("div", { class: "scrape-candidate-title" }, [candidate.title || "제목 없음"]),
+            h("div", { class: "scrape-candidate-meta" },
+              [[candidate.system || item.system, candidate.fields?.releasedate || "", candidate.fields?.region || ""]
+                .filter(Boolean).join(" · ")]),
+            h("div", { class: "scrape-badges" }, [
+              h("span", { class: "scrape-badge provider" }, [candidate.provider === "screenscraper" ? "SS" : candidate.provider]),
+              h("span", { class: "scrape-badge" }, [candidate.confidence_reason || "후보"]),
+            ]),
+          ]), toggle]));
+        if (!expanded) { wrap.appendChild(chooseButton()); return; }
+        if ((candidate.evidence || []).length) wrap.appendChild(h("div", { class: "scrape-evidence" },
+          candidate.evidence.map((value) => h("div", {}, [value]))));
+        const fields = h("div", { class: "scrape-fields" });
+        Object.entries(candidate.fields || {}).forEach(([key, value]) => {
+          if (value === "" || value === null || value === undefined) return;
+          const box = h("input", { type: "checkbox", value: key });
+          box.checked = selectedFields.has(key);
+          box.addEventListener("change", () => {
+            if (box.checked) selectedFields.add(key); else selectedFields.delete(key);
+          });
+          fields.appendChild(h("label", { class: "scrape-field" }, [box,
+            h("span", { class: "scrape-field-name" }, [key]),
+            h("span", { class: "scrape-field-current" }, [String(item.fields?.[key] || "비어 있음")]),
+            h("span", { class: "scrape-field-arrow" }, ["→"]),
+            h("span", { class: "scrape-field-value" }, [Array.isArray(value) ? value.join(", ") : String(value)]),
+          ]));
+        });
+        wrap.appendChild(fields);
+        if ((candidate.media || []).length) {
+          const mediaList = h("div", { class: "scrape-media-list" });
+          (candidate.media || []).forEach((media, mediaIndex) => {
+            const radio = h("input", { type: "checkbox" });
+            radio.checked = selectedMedia.has(mediaIndex);
+            radio.addEventListener("change", () => {
+              if (radio.checked) {
+                (candidate.media || []).forEach((other, otherIndex) => {
+                  if (other.media_type === media.media_type) selectedMedia.delete(otherIndex);
+                });
+                selectedMedia.add(mediaIndex);
+                redraw();
+              } else selectedMedia.delete(mediaIndex);
+            });
+            mediaList.appendChild(h("label", { class: "scrape-media-option" }, [
+              radio,
+              h("img", { src: media.url, alt: media.media_type, loading: "lazy", referrerpolicy: "no-referrer" }),
+              h("span", {}, [media.media_type]),
+              h("small", {}, [[media.region, media.language].filter(Boolean).join(" · ")]),
+            ]));
+          });
+          wrap.appendChild(mediaList);
+        }
+        wrap.appendChild(chooseButton());
+      };
+      redraw();
+      return wrap;
+    }
+
+    function allReviewed() {
+      return session.items.every((item) => ["selected", "skipped", "applied"].includes(item.status));
+    }
+
+    async function finish() {
+      const started = await api.startApplyScrapeSession(session.id);
+      if (!started.ok) { showToast(started.error, "error"); return; }
+      const applied = await pollJob(started.data.jobId, "스크랩 결과 적용");
+      if (!applied.ok) { if (!applied.cancelled) showToast(applied.error, "error"); return; }
+      const failedCount = (applied.data.failed || []).length;
+      const partialCount = (applied.data.partial || []).length;
+      if (failedCount || partialCount) {
+        const refreshed = await api.scrapeSession(session.id);
+        if (refreshed.ok) {
+          Object.assign(session, refreshed.data);
+          const retryIndex = session.items.findIndex((item) => item.status === "selected");
+          if (retryIndex >= 0) index = retryIndex;
+        }
+        showToast(`스크랩 적용: 완료 ${formatCount((applied.data.applied || []).length)}개`
+          + (partialCount ? ` · 일부 반영 ${formatCount(partialCount)}개` : "")
+          + (failedCount ? ` · 실패 ${formatCount(failedCount)}개` : ""),
+        failedCount ? "error" : "warning");
+        draw();
+        return;
+      }
+      $("modal-root").__beforeClose = null;
+      closed = true;
+      closeModal();
+      showToast(`${formatCount(applied.data.applied.length)}개 게임에 스크랩 결과를 적용했습니다.`
+        + (isArchive() ? "" : " 미디어 변경은 Plan에 추가되었습니다."));
+      await reloadList();
+      if (S.detailState) {
+        const row = rowByUid(S.detailState.romUid);
+        if (row) await openDetail(row);
+      }
+    }
+
+    function draw() {
+      clear(body);
+      const item = session.items[index];
+      const head = h("div", { class: "scrape-context-head" }, [
+        h("div", {}, [h("strong", {}, [`${index + 1} / ${session.items.length}`]),
+          h("span", { class: "scrape-current-file", title: item.filename }, [item.filename])]),
+        h("div", { class: "scrape-quota", title: "ScreenScraper 일일 요청 사용량" }, [scrapeQuotaText(quota)]),
+      ]);
+      const query = h("input", { class: "field-input scrape-query", value: item.query || "",
+                                  placeholder: "검색 키" });
+      const system = h("input", { class: "field-input scrape-system", value: item.system || "",
+                                   placeholder: "시스템 또는 ScreenScraper System ID" });
+      const retry = h("button", { class: "btn compact", disabled: searching,
+        onClick: () => searchCurrent(query.value.trim(), system.value.trim()) }, ["다시 스크랩"]);
+      body.appendChild(head);
+      body.appendChild(h("div", { class: "scrape-search-row" }, [query, system, retry]));
+      const candidates = h("div", { class: "scrape-candidates" });
+      if (searching) candidates.appendChild(h("div", { class: "panel-empty-state" }, ["검색 중…"]));
+      else if (item.error) candidates.appendChild(h("div", { class: "modal-text error" }, [item.error]));
+      else if (!(item.candidates || []).length && item.status !== "pending")
+        candidates.appendChild(h("div", { class: "panel-empty-state" },
+          ["후보가 없습니다. 검색 키나 시스템을 바꾸고 다시 스크랩하세요."]));
+      else (item.candidates || []).forEach((candidate) => candidates.appendChild(candidateCard(item, candidate)));
+      body.appendChild(candidates);
+
+      const previous = h("button", { class: "btn", disabled: index === 0 || searching,
+        onClick: () => { index -= 1; draw(); } }, ["이전"]);
+      const skip = h("button", { class: "btn", disabled: searching, onClick: async () => {
+        await api.skipScrapeItem(session.id, item.id); item.status = "skipped";
+        if (index + 1 < session.items.length) { index += 1; draw(); maybeSearch(); } else draw();
+      } }, ["건너뛰기"]);
+      const actions = h("div", { class: "scrape-actions" }, [previous, skip,
+        h("span", { class: "scrape-action-spacer" }),
+        h("button", { class: "btn", onClick: cancel }, ["취소"]),
+        h("button", { class: "btn primary", disabled: !allReviewed() || searching, onClick: finish },
+          ["선택 결과 적용"]),
+      ]);
+      body.appendChild(actions);
+    }
+
+    function maybeSearch() {
+      const item = session.items[index];
+      if (item.status === "pending") searchCurrent(item.query, item.system);
+    }
+    draw();
+    maybeSearch();
+  }
+
   async function confirmArchiveSystemRomDelete(sys) {
     showConfirm(`${sys.system.toUpperCase()} - Archive 보관 ROM 삭제`,
       `이 System의 항목 ${formatCount(sys.count)}개를 확인해 Archive ROM 디렉토리 안의 파일만 삭제합니다. `
@@ -6021,11 +6361,11 @@
     if (state.tab === "metadata") {
       const footer = h("div", { class: "detail-footer detail-footer-split" });
       const conflictInfo = !state.archive && currentSystemConflict(state.system);
-      // 스크랩은 아직 없다(System/Gamelist 메뉴의 "메타데이터 스크랩…"과 같은 자리
-      // 표시) - 저장과 50:50으로 나란히 두어 나중에 자연스럽게 활성화되도록 미리
-      // 자리를 잡아 둔다(사용자 결정, 메뉴 정리 §7).
-      const scrap = h("button", { class: "btn detail-scrap", disabled: true, title: "준비 중입니다." },
+      const scrap = h("button", { class: "btn detail-scrap", title: "이 게임의 메타데이터 후보 찾기" },
         [icon("sparkles", IC.md), h("span", {}, ["스크랩"])]);
+      scrap.addEventListener("click", () => openScrapeContext([
+        state.archive ? state.romIdentityId : state.romUid,
+      ]));
       const save = h("button", { class: "btn primary detail-save", disabled: !!conflictInfo },
         [icon("save", IC.md), h("span", {}, [conflictInfo ? "쓰기 막힘 - Storage 충돌" : "저장 (Ctrl+S)"])]);
       if (conflictInfo) save.title = "같은 System 폴더가 여러 Storage에 있습니다 - System 우클릭에서 한쪽을 지우거나 이름을 바꾸세요.";

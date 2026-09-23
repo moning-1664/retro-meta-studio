@@ -1836,6 +1836,65 @@ button.sb-badge { cursor: pointer; }
 .cmp-media-row.cover .cmp-tile-box { width: 60%; aspect-ratio: 3 / 4; margin: 0 auto; }
 .cmp-media-row.shot .cmp-tile-box { width: 100%; aspect-ratio: 4 / 3; }
 .cmp-media-row.trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+
+/* ------------------------------------------------------------ Scraper
+   Candidate content uses the same 297px reading width as Detail. The modal
+   adds only its own padding and title, so the card density is reusable by the
+   Archive revision panel later. */
+.scrape-context-card { width: 331px; max-width: calc(100vw - 24px); height: min(760px, calc(100vh - 28px)); }
+.scrape-context { width: 297px; max-width: 100%; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.scrape-context-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start;
+  padding: 8px 8px 6px; border-bottom: 1px solid var(--border); }
+.scrape-current-file { display: block; max-width: 165px; margin-top: 2px; color: var(--muted);
+  font-size: var(--fs-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scrape-quota { flex: 0 0 auto; padding: 3px 6px; border: 1px solid var(--border); border-radius: var(--radius-pill);
+  color: var(--warning); font-size: var(--fs-caption); white-space: nowrap; }
+.scrape-search-row { display: grid; grid-template-columns: minmax(0, 1fr) 72px auto; gap: 4px; padding: 7px 8px; }
+.scrape-query, .scrape-system { min-width: 0; height: 27px; }
+.scrape-candidates { min-height: 120px; flex: 1 1 auto; overflow: auto; padding: 0 7px 7px; }
+.scrape-candidate { margin: 5px 0; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card); overflow: hidden; }
+.scrape-candidate:hover { border-color: var(--accent); }
+.scrape-candidate.selected { border-color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
+.scrape-candidate-head { display: grid; grid-template-columns: 52px minmax(0, 1fr) 24px; gap: 7px;
+  align-items: center; min-height: 58px; padding: 5px; }
+.scrape-thumb { width: 52px; height: 52px; object-fit: contain; border-radius: 3px; background: var(--card2); }
+.scrape-thumb.empty { display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.scrape-candidate-main { min-width: 0; }
+.scrape-candidate-title { color: var(--text); font-weight: 650; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.scrape-candidate-meta { margin-top: 2px; color: var(--muted); font-size: var(--fs-caption);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scrape-badges { display: flex; gap: 3px; margin-top: 4px; overflow: hidden; }
+.scrape-badge { max-width: 130px; padding: 1px 4px; border-radius: 3px; background: var(--card3);
+  color: var(--muted); font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scrape-badge.provider { color: var(--accent); font-weight: 700; }
+.scrape-expand { width: 22px; height: 24px; padding: 0; }
+.scrape-evidence { padding: 5px 7px; border-top: 1px solid var(--border); color: var(--muted);
+  font-size: var(--fs-caption); line-height: 1.45; }
+.scrape-fields { border-top: 1px solid var(--border); }
+.scrape-field { display: grid; grid-template-columns: 17px 52px minmax(0, 1fr); gap: 3px 5px;
+  align-items: start; padding: 5px 7px; border-bottom: 1px solid var(--border); font-size: var(--fs-caption); }
+.scrape-field input { grid-row: 1 / span 2; margin: 2px 0 0; }
+.scrape-field-name { color: var(--muted); }
+.scrape-field-current { color: var(--muted); overflow-wrap: anywhere; }
+.scrape-field-arrow { display: none; }
+.scrape-field-value { grid-column: 2 / 4; color: var(--text); overflow-wrap: anywhere; max-height: 4.2em; overflow: hidden; }
+.scrape-media-list { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 6px;
+  border-top: 1px solid var(--border); }
+.scrape-media-option { position: relative; display: grid; grid-template-columns: 16px minmax(0, 1fr);
+  gap: 2px 4px; align-items: center; padding: 3px; border-radius: 3px; background: var(--card2);
+  color: var(--text); font-size: var(--fs-caption); overflow: hidden; }
+.scrape-media-option input { grid-row: 1 / span 3; margin: 0; }
+.scrape-media-option img { grid-column: 2; width: 100%; height: 58px; object-fit: contain; background: var(--card3); }
+.scrape-media-option span, .scrape-media-option small { grid-column: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scrape-media-option small { color: var(--muted); }
+.scrape-choose { width: calc(100% - 12px); margin: 6px; }
+.scrape-actions { flex: 0 0 auto; display: flex; gap: 4px; padding: 7px 8px; border-top: 1px solid var(--border); }
+.scrape-action-spacer { flex: 1; }
+.scrape-setup-card { width: 420px; max-width: calc(100vw - 24px); }
+.scrape-setup { display: grid; gap: 8px; }
+.scrape-setup-row { display: grid; gap: 4px; }
 .cmp-media-row.trio .cmp-tile-box { width: 100%; aspect-ratio: 1 / 1; }
 .cmp-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .cmp-chip {

@@ -431,7 +431,27 @@
       // Archive 수집/Apply는 결과의 개수를 화면이 그대로 읽는다. 빈 객체를 주면
       // 목업에서만 "undefined개 수집/적용"이 뜬다.
       result: jobId === "mock-archive-ingest" ? { ...mockLastIngest }
-        : jobId === "mock-job" ? { ...mockLastApply } : {},
+        : jobId === "mock-job" ? { ...mockLastApply }
+          : jobId === "mock-scraper-account" ? { requestsToday: 12, requestsLimit: 100,
+            requestsMinute: 1, requestsMinuteLimit: 20, maxThreads: 1, user: "mock" }
+          : jobId === "mock-scrape-apply" ? { applied: ["1"], partial: [], failed: [] }
+          : String(jobId).startsWith("mock-scrape-item:") ? (() => {
+            const parts = String(jobId).split(":");
+            const itemId = parts[1];
+            const query = decodeURIComponent(parts.slice(2).join(":"));
+            return { item: { id: itemId, query, status: "review", candidates: [{
+              candidate_id: `screenscraper:${itemId}`, provider: "screenscraper",
+              remote_game_id: itemId, title: query, system: "Mock System", confidence: 55,
+              confidence_reason: `검색어 "${query}"`, evidence: [`검색어 "${query}"`],
+              alternate_titles: [], source_url: "", media: [{ media_type: "covers",
+                url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'/%3E",
+                region: "kr", language: "ko", format: "png" }], fields: {
+                name: query, desc: "스크랩 후보 설명", genre: "Action", releasedate: "1999-01-01",
+              },
+            }], selectedCandidateId: null, selectedFields: [], selectedMedia: [] },
+              quota: { requestsToday: 12, requestsLimit: 100, requestsMinute: 1,
+                requestsMinuteLimit: 20, maxThreads: 1 } };
+          })() : {},
     }),
     cancel_job: () => ok(true),
     pick_folder: () => ok("D:\\ES-DE"),
@@ -831,6 +851,26 @@
       });
       return ok(JSON.parse(JSON.stringify(mockAppSettings)));
     },
+    scraper_settings: () => ok({ enabled: true, softName: "RetroMetaStudio",
+      userId: "", devIdSet: true, devPasswordSet: true, userPasswordSet: false }),
+    save_scraper_settings: (patch) => ok({ enabled: true, softName: patch.softName || "RetroMetaStudio",
+      userId: patch.userId || "", devIdSet: true, devPasswordSet: true,
+      userPasswordSet: !!patch.userPassword }),
+    start_scraper_account_status: () => ok({ jobId: "mock-scraper-account" }),
+    create_scrape_session: (target, collectionId, ids) => ok({
+      id: "mock-scrape-session", target, collectionId,
+      items: (ids || []).map((id, index) => ({ id: String(id), system: index ? "snes" : "ps2",
+        filename: `Game ${index + 1}.rom`, query: `Game ${index + 1}`, fields: {}, status: "pending",
+        candidates: [], selectedCandidateId: null, selectedFields: [], selectedMedia: [] })), quota: null,
+    }),
+    scrape_session: () => ok({ id: "mock-scrape-session", items: [] }),
+    start_scrape_item: (sessionId, itemId, query) =>
+      ok({ jobId: `mock-scrape-item:${itemId}:${encodeURIComponent(query || "Game")}` }),
+    select_scrape_candidate: () => ok(true),
+    skip_scrape_item: () => ok(true),
+    cancel_scrape_session: () => ok(true),
+    start_apply_scrape_session: () => ok({ jobId: "mock-scrape-apply" }),
+    archive_system_folder: () => ok("D:\\Archive\\roms\\ps2"),
     get_ui_state: (id) => ok({ ...mockUiState }),
     save_ui_state: (id, state) => {
       Object.assign(mockUiState, state || {});
@@ -928,6 +968,19 @@
     validateCollection: (id) => call("validate_collection", id),
     getAppSettings: () => call("get_app_settings"),
     saveAppSettings: (patch) => call("save_app_settings", patch),
+    scraperSettings: () => call("scraper_settings"),
+    saveScraperSettings: (patch) => call("save_scraper_settings", patch),
+    startScraperAccountStatus: () => call("start_scraper_account_status"),
+    createScrapeSession: (target, collectionId, itemIds) =>
+      call("create_scrape_session", target, collectionId, itemIds),
+    scrapeSession: (sessionId) => call("scrape_session", sessionId),
+    startScrapeItem: (sessionId, itemId, query, systemHint) =>
+      call("start_scrape_item", sessionId, itemId, query, systemHint),
+    selectScrapeCandidate: (sessionId, itemId, candidateId, fields, media) =>
+      call("select_scrape_candidate", sessionId, itemId, candidateId, fields, media),
+    skipScrapeItem: (sessionId, itemId) => call("skip_scrape_item", sessionId, itemId),
+    cancelScrapeSession: (sessionId) => call("cancel_scrape_session", sessionId),
+    startApplyScrapeSession: (sessionId) => call("start_apply_scrape_session", sessionId),
     getUiState: (id) => call("get_ui_state", id),
     saveUiState: (id, state) => call("save_ui_state", id, state),
     getRow: (id, romUid) => call("get_row", id, romUid),

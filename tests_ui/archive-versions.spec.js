@@ -307,9 +307,7 @@ test.describe("Archive System 우클릭", () => {
   });
 });
 
-test("행 우클릭의 폴더 열기는 원본 ROM이 있는 자리를 연다", async ({ page }) => {
-  // Archive엔 자기 폴더가 없다 - Collection용 ROM/Metadata/Media 세 항목 대신
-  // "원본 ROM 폴더 열기" 하나만 둔다(사용자 지적).
+test("행 우클릭의 ROM 폴더 열기는 현재 ROM 위치를 연다", async ({ page }) => {
   await openArchive(page);
   await page.evaluate(() => {
     window.__opened = null;
@@ -320,7 +318,7 @@ test("행 우클릭의 폴더 열기는 원본 ROM이 있는 자리를 연다", 
   });
   await page.locator(".lrow", { hasText: "Final Fantasy X" }).click({ button: "right" });
   await expect(page.locator(".ctx-menu .ctx-item", { hasText: "ROM 폴더" })).toHaveCount(1);
-  await page.locator(".ctx-menu .ctx-item", { hasText: "원본 ROM 폴더 열기" }).click();
+  await page.locator(".ctx-menu .ctx-item", { hasText: "ROM 폴더 열기" }).click();
   await expect.poll(() => page.evaluate(() => window.__opened)).toBe("rid2");
 });
 
@@ -329,13 +327,16 @@ test.describe("Archive 행 우클릭 - 삭제", () => {
   // 보이는데 눌러도 Collection용 API를 그대로 불러 매번 에러였다. ROM/메타데이터를
   // 따로 지우는 구분(Collection 전용)이 없다는 것도 이 메뉴가 확인해 준다.
   const rightClickRow = (page, text) => page.locator(".lrow", { hasText: text }).click({ button: "right" });
-  const menuItem = (page, label) => page.locator(".ctx-menu .ctx-item", { hasText: label });
+  const menuItem = (page, label) => page.locator(".ctx-menu .ctx-item").filter({
+    has: page.locator(".ctx-label", { hasText: new RegExp(`^${label}$`) }),
+  });
 
-  test("ROM 삭제/메타데이터 삭제는 없고 'Archive에서 지우기' 하나뿐이다", async ({ page }) => {
+  test("Archive 소유 ROM만 별도로 삭제할 수 있고 외부 원본·메타데이터 삭제는 없다", async ({ page }) => {
     await openArchive(page);
     await rightClickRow(page, "Final Fantasy X");
     await expect(menuItem(page, "ROM 삭제")).toHaveCount(0);
     await expect(menuItem(page, "메타데이터 삭제")).toHaveCount(0);
+    await expect(menuItem(page, "Archive 보관 ROM 삭제")).toBeVisible();
     await expect(menuItem(page, "Archive에서 지우기")).toBeVisible();
   });
 

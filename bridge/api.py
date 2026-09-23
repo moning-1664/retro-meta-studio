@@ -15,6 +15,7 @@ pywebview 브릿지. JS에서 부를 수 있는 유일한 표면이다.
 from __future__ import annotations
 
 import base64
+import hashlib
 import re
 import logging
 import shutil
@@ -22,6 +23,12 @@ from collections import OrderedDict
 import traceback
 import time
 from pathlib import Path
+from urllib.parse import urlparse
+
+try:
+    import requests
+except ImportError:  # Scraper를 쓰지 않는 설치와 테스트는 계속 동작해야 한다.
+    requests = None
 
 from adapters import get_adapter
 from adapters.base import MediaFile
@@ -47,6 +54,9 @@ from app.compare import engine as compare_engine
 from app.convert import service as convert_service
 from app.match import service as match_service
 from app.metadata import service as metadata_service
+from app.scrape import ScrapeService
+from app.scrape.providers import ScreenScraperClient, ScreenScraperConfig
+from app.scrape import secrets as scrape_secrets
 import storage
 from app.store.archive import ARCHIVE_EDIT_SOURCE, ArchiveStore
 from app.store.cache import KEY_MEDIA_TYPES
@@ -191,6 +201,8 @@ class Api:
         # 썸네일 캐시(LRU). 파일이 그대로면 인코딩 결과도 그대로다.
         self._thumb_cache: OrderedDict = OrderedDict()
         self._clipboard_dir = (Path(cache_dir).parent / "clipboard") if cache_dir else paths.CLIPBOARD_DIR
+        self._scrape_cache_dir = ((Path(cache_dir).parent / "scraper_media") if cache_dir
+                                  else (paths.CACHE_DIR / "scraper_media"))
         archive_path = (Path(cache_dir).parent / "archive.db") if cache_dir else paths.ARCHIVE_DB
         self.archive = ArchiveStore(archive_path)
         clipboard.prune(self._clipboard_dir)
@@ -206,6 +218,7 @@ class Api:
         self._compare = None
         # 영상 전용 로컬 서버(bridge/media_server.py). 처음 영상을 볼 때 켜진다.
         self._media_server = MediaServer()
+        self.scrape = ScrapeService(self._screen_scraper_client)
 
     def close(self):
         """앱 종료. 진행 중인 작업을 먼저 멈춘 뒤에 DB를 닫는다.
@@ -498,6 +511,7 @@ class Api:
 
     #: 앱 전역 설정(Settings 화면)이 registry의 app_settings에 들어가는 키.
     APP_SETTINGS_KEY = "ui.settings"
+    SCRAPER_SECRET_KEY = "scraper.secrets"
     #: Collection → Collection 복사(붙여넣기) 정책의 기본값. Settings > Import / Export가 바꾼다.
     #: conflict가 "ask"면 지금처럼 Plan에 충돌로 남겨 사용자가 고른다.
     #: unmatchedRom*은 **원본에 ROM이 없고 대상에도 그 게임이 없는 항목**(Archive처럼 메타데이터만
@@ -542,6 +556,241 @@ class Api:
                 merged[section] = value
         self.registry.set_setting(self.APP_SETTINGS_KEY, merged)
         return ok(merged)
+
+    def _screen_scraper_client(self):
+        public = (self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {}).get("scraper") or {}
+        protected = self.registry.get_setting(self.SCRAPER_SECRET_KEY, {}) or {}
+        return ScreenScraperClient(ScreenScraperConfig(
+            dev_id=scrape_secrets.load(protected.get("devId") or ""),
+            dev_password=scrape_secrets.load(protected.get("devPassword") or ""),
+            soft_name=str(public.get("softName") or "RetroMetaStudio"),
+            user_id=str(public.get("userId") or ""),
+            user_password=scrape_secrets.load(protected.get("userPassword") or ""),
+        ))
+
+    @guarded
+    def scraper_settings(self):
+        public = dict((self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {}).get("scraper") or {})
+        protected = self.registry.get_setting(self.SCRAPER_SECRET_KEY, {}) or {}
+        public.update({"devIdSet": bool(protected.get("devId")),
+                       "devPasswordSet": bool(protected.get("devPassword")),
+                       "userPasswordSet": bool(protected.get("userPassword"))})
+        return ok(public)
+
+    @guarded
+    def save_scraper_settings(self, patch):
+        if not isinstance(patch, dict):
+            return err("스크래퍼 설정 형식이 올바르지 않습니다.")
+        settings = dict(self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {})
+        public = dict(settings.get("scraper") or {})
+        for key in ("enabled", "softName", "userId"):
+            if key in patch:
+                public[key] = patch[key]
+        settings["scraper"] = public
+        self.registry.set_setting(self.APP_SETTINGS_KEY, settings)
+        protected = dict(self.registry.get_setting(self.SCRAPER_SECRET_KEY, {}) or {})
+        for key in ("devId", "devPassword", "userPassword"):
+            if key in patch and patch[key] is not None:
+                value = str(patch[key])
+                if value:
+                    protected[key] = scrape_secrets.store(f"scraper/{key}", value)
+                else:
+                    scrape_secrets.delete(protected.get(key) or "")
+                    protected.pop(key, None)
+        self.registry.set_setting(self.SCRAPER_SECRET_KEY, protected)
+        return self.scraper_settings()
+
+    @guarded
+    def start_scraper_account_status(self):
+        job_id = self.jobs.run(lambda cb: self._scraper_account_job(cb), mutates_state=False)
+        return ok({"jobId": job_id})
+
+    def _scraper_account_job(self, progress):
+        progress(0, 1, "ScreenScraper 계정 확인")
+        status = self._screen_scraper_client().account_status()
+        progress(1, 1, "연결됨")
+        return status
+
+    @guarded
+    def create_scrape_session(self, target, collection_id=None, item_ids=None):
+        target = str(target or "collection")
+        ids = [str(value) for value in (item_ids or [])]
+        if not ids:
+            return err("스크랩할 게임을 선택하세요.")
+        items = []
+        if target == "archive":
+            for identity_id in ids:
+                detail = archive_service.detail(self.archive, identity_id)
+                if detail is None:
+                    continue
+                path = next((source.get("abs_path") for source in detail.get("romSources") or []
+                             if source.get("abs_path") and Path(source["abs_path"]).is_file()), None)
+                items.append(self.scrape.item(
+                    identity_id, detail["system"], detail["filename"], detail.get("fields"),
+                    path=path, size=detail.get("size")))
+        else:
+            collection = self.registry.get_collection(collection_id)
+            if collection is None:
+                return err("Collection을 찾을 수 없습니다.")
+            cache = self.workspace.open(collection_id)
+            adapter = get_adapter(collection.frontend)
+            for uid in ids:
+                row = cache.get_row(int(uid))
+                if row is None:
+                    continue
+                layout = adapter.layout(collection, row["system"])
+                path = str(Path(layout.rom_dir) / row["filename"]) if layout.rom_dir else None
+                items.append(self.scrape.item(uid, row["system"], row["filename"], row["fields"],
+                                              path=path, size=row["size"]))
+        if not items:
+            return err("스크랩할 항목을 찾을 수 없습니다.")
+        session = self.scrape.sessions.create(target, collection_id, items)
+        return ok({"id": session["id"], "target": target, "collectionId": collection_id,
+                   "items": items, "quota": None})
+
+    @guarded
+    def scrape_session(self, session_id):
+        return ok(self.scrape.sessions.get(session_id))
+
+    @guarded
+    def start_scrape_item(self, session_id, item_id, query=None, system_hint=None):
+        # Search is network and hash I/O. Keep it outside the UI thread; it does
+        # not mutate Collection/Archive state until apply_scrape_session().
+        job_id = self.jobs.run(
+            lambda cb: self.scrape.search_item(str(session_id), str(item_id), query,
+                                                system_hint, progress=cb),
+            mutates_state=False)
+        return ok({"jobId": job_id})
+
+    @guarded
+    def select_scrape_candidate(self, session_id, item_id, candidate_id, fields=None, media=None):
+        return ok(self.scrape.select(str(session_id), str(item_id), str(candidate_id),
+                                     fields if fields is not None else None,
+                                     media if media is not None else None))
+
+    @guarded
+    def skip_scrape_item(self, session_id, item_id):
+        return ok(self.scrape.skip(str(session_id), str(item_id)))
+
+    @guarded
+    def cancel_scrape_session(self, session_id):
+        return ok(self.scrape.sessions.close(str(session_id)))
+
+    @guarded
+    def start_apply_scrape_session(self, session_id):
+        self.scrape.sessions.get(str(session_id))
+        # The existing save_fields/media_paste APIs perform their own target
+        # checks. A regular mutating job gives the operation the global write
+        # lock without marking its own target busy and blocking those APIs.
+        job_id = self.jobs.run(
+            lambda cb: self._apply_scrape_session(str(session_id), cb), mutates_state=True)
+        return ok({"jobId": job_id})
+
+    def _download_scrape_media(self, url, session_id, item_id, media_type):
+        parsed = urlparse(str(url or ""))
+        hostname = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not (hostname == "screenscraper.fr" or hostname.endswith(".screenscraper.fr")):
+            raise ValueError("허용되지 않은 미디어 주소입니다.")
+        if requests is None:
+            raise RuntimeError("미디어 다운로드 모듈(requests)이 설치되지 않았습니다.")
+        suffix = Path(parsed.path).suffix.lower()
+        if suffix not in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".avi", ".pdf"):
+            suffix = ".bin"
+        name = hashlib.sha256(str(url).encode("utf-8")).hexdigest() + suffix
+        folder = self._scrape_cache_dir / str(session_id) / str(item_id) / str(media_type)
+        folder.mkdir(parents=True, exist_ok=True)
+        destination = folder / name
+        if destination.is_file():
+            return str(destination)
+        temporary = destination.with_suffix(destination.suffix + ".part")
+        total = 0
+        try:
+            with requests.get(url, timeout=30, stream=True) as response:
+                response.raise_for_status()
+                with temporary.open("wb") as stream:
+                    for chunk in response.iter_content(1024 * 256):
+                        if not chunk:
+                            continue
+                        total += len(chunk)
+                        if total > 256 * 1024 * 1024:
+                            raise ValueError("미디어 파일이 허용 크기를 넘었습니다.")
+                        stream.write(chunk)
+            temporary.replace(destination)
+            return str(destination)
+        finally:
+            if temporary.exists():
+                temporary.unlink(missing_ok=True)
+
+    def _apply_scrape_session(self, session_id, progress):
+        session = self.scrape.sessions.get(str(session_id))
+        applied, partial, failed = [], [], []
+        selected = [item for item in session["items"] if self.scrape.proposal(item)]
+        for index, item in enumerate(selected, start=1):
+            progress(index - 1, max(1, len(selected)), item["filename"])
+            proposal = self.scrape.proposal(item)
+            if not proposal:
+                continue
+            applied_fields, applied_media, errors = {}, [], []
+            fields_failed = False
+            failed_media_indexes = []
+            if proposal["fields"]:
+                try:
+                    if session["target"] == "archive":
+                        result = self.archive_edit(item["id"], {**(item.get("fields") or {}),
+                                                                **proposal["fields"]})
+                    else:
+                        result = self.save_fields(session["collectionId"], int(item["id"]),
+                                                  proposal["fields"])
+                    if not result.get("ok"):
+                        raise ValueError(result.get("error"))
+                    applied_fields = proposal["fields"]
+                except Exception as exc:
+                    fields_failed = True
+                    errors.append(f"메타데이터: {exc}")
+            if proposal["media"]:
+                if session["target"] == "archive" and not self._archive_config().get("mediaInternal"):
+                    failed_media_indexes.extend(item.get("selectedMedia") or [])
+                    errors.append("미디어: Archive 내부 미디어 보관이 꺼져 있습니다.")
+                else:
+                    for media_index, media in zip(item.get("selectedMedia") or [], proposal["media"]):
+                        try:
+                            source_path = self._download_scrape_media(
+                                media["url"], session_id, item["id"], media["media_type"])
+                            source = {"kind": "scraper", "path": source_path}
+                            result = (self.archive_media_paste(item["id"], media["media_type"], source)
+                                      if session["target"] == "archive"
+                                      else self.media_paste(session["collectionId"], int(item["id"]),
+                                                            media["media_type"], source))
+                            if not result.get("ok"):
+                                raise ValueError(result.get("error"))
+                            applied_media.append(media)
+                        except Exception as exc:
+                            failed_media_indexes.append(media_index)
+                            errors.append(f'{media.get("media_type") or "미디어"}: {exc}')
+            changed = bool(applied_fields or applied_media)
+            if changed:
+                provenance = proposal["provenance"]
+                self.registry.add_scrape_provenance(
+                    target_kind=session["target"], collection_id=session.get("collectionId"),
+                    item_id=item["id"], provider=provenance["provider"],
+                    remote_game_id=provenance["remoteGameId"], source_url=provenance["sourceUrl"],
+                    evidence=provenance["evidence"], fields=applied_fields, media=applied_media)
+            if errors:
+                item["selectedFields"] = (item.get("selectedFields") or []) if fields_failed else []
+                item["selectedMedia"] = failed_media_indexes
+                item["status"] = "selected"
+                record = {"itemId": item["id"], "error": "; ".join(errors),
+                          "fieldsApplied": list(applied_fields),
+                          "mediaApplied": [media["media_type"] for media in applied_media]}
+                (partial if changed else failed).append(record)
+            else:
+                item.update({"selectedCandidateId": None, "selectedFields": [],
+                             "selectedMedia": [], "status": "applied"})
+                applied.append(item["id"])
+            progress(index, max(1, len(selected)), item["filename"])
+        if not failed and not partial:
+            self.scrape.sessions.close(str(session_id))
+        return {"applied": applied, "partial": partial, "failed": failed}
 
     # ------------------------------------------------------------------
     # Dashboard
@@ -2504,6 +2753,9 @@ class Api:
 
     def _media_source_path(self, source) -> str | None:
         """복사할 media 파일의 위치. source: {"kind": "archive"|"collection", "id", "uid", "key"}"""
+        if source.get("kind") == "scraper":
+            path = source.get("path")
+            return str(path) if path and _path_within(path, self._scrape_cache_dir) else None
         media_type = MEDIA_KEYS.get(source.get("key"), str(source.get("key") or "").lower())
         if source.get("kind") == "archive":
             item = archive_projection.effective_media(self.archive, str(source.get("uid"))).get(media_type)

@@ -27,7 +27,7 @@ test.describe("System 우클릭 메뉴", () => {
     await expect(menuItem(page, "멀티 디스크 태그 적용…")).toBeVisible();
     await expect(menuItem(page, "미디어 선택 후 정리")).toBeVisible();
     await expect(menuItem(page, "시스템 전체 삭제")).toBeVisible();
-    await expect(menuItem(page, "메타데이터 스크랩…")).toBeDisabled();
+    await expect(menuItem(page, "메타데이터 스크랩…")).toBeEnabled();
   });
 
 });
@@ -125,8 +125,8 @@ test.describe("Gamelist 행 우클릭 메뉴", () => {
     await expect(menuItem(page, "즐겨찾기에 추가")).toBeVisible();
   });
 
-  test("메타데이터 스크랩은 비활성으로 있다", async ({ page }) => {
+  test("메타데이터 스크랩을 시작할 수 있다", async ({ page }) => {
     await rightClickRow(page, "Final Fantasy X");
-    await expect(menuItem(page, "메타데이터 스크랩…")).toBeDisabled();
+    await expect(menuItem(page, "메타데이터 스크랩…")).toBeEnabled();
   });
 });

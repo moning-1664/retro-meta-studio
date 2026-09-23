@@ -1302,7 +1302,8 @@ class ArchiveSystemMenuBackendTests(unittest.TestCase):
 
     def test_the_rom_folder_is_the_source_collection_one(self):
         """Archive엔 자기 폴더가 없다 - 원본이 있는 자리를 돌려줘야 뜻이 있다."""
-        r = self.api.archive_rom_folder(self._rid("FFX.iso"))
+        with patch("bridge.api._reveal_path"):
+            r = self.api.archive_rom_folder(self._rid("FFX.iso"))
         self.assertTrue(r["ok"], r.get("error"))
         self.assertEqual(Path(r["data"]["path"]), self.root / "ps2")
 

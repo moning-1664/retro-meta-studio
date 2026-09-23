@@ -105,6 +105,22 @@ def _load(archive, *, systems=None, rom_identity_ids=None):
     for row in conn.execute(msql, [*IMPORTANT_MEDIA, *params]):
         media.setdefault(int(row["record_id"]), {})[row["media_type"]] = int(row["size"] or 0)
 
+    # Older callers and imported archives can add the compatibility reference
+    # after creating the revision.  Use it only when that revision has no
+    # immutable snapshot for the same type.
+    refs_sql = ("SELECT r.record_id,a.media_type,a.size FROM archive_records r"
+                " JOIN (SELECT rom_identity_id,source_collection_id,MAX(revision) AS rev"
+                "         FROM archive_records GROUP BY rom_identity_id,source_collection_id) m"
+                "   ON m.rom_identity_id=r.rom_identity_id"
+                "  AND m.source_collection_id=r.source_collection_id AND m.rev=r.revision"
+                " JOIN archive_media a ON a.rom_identity_id=r.rom_identity_id"
+                "  AND a.source_collection_id=r.source_collection_id"
+                " JOIN rom_identities i ON i.rom_identity_id=r.rom_identity_id"
+                f" WHERE a.media_type IN ({','.join('?' * len(IMPORTANT_MEDIA))}){cond}")
+    for row in conn.execute(refs_sql, [*IMPORTANT_MEDIA, *params]):
+        media.setdefault(int(row["record_id"]), {}).setdefault(
+            row["media_type"], int(row["size"] or 0))
+
     resolved = {r[0] for r in conn.execute("SELECT rom_identity_id FROM preferred_revisions")}
     return records, media, resolved
 

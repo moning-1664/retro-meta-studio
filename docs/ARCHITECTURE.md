@@ -49,7 +49,7 @@
 | `gui_web/` 전체 (app.js 4,011줄 + style.css 974줄) | 스펙 §34/§36/§75가 유지를 요구. Detail 패널·모달·토스트·드래그선택·시스템 아이콘 모두 재사용 |
 | `similar_rom.py` | Match 엔진의 휴리스틱 스코어링 + SHA256 |
 | `compare_engine.py` | Compare 매칭 인덱스 로직 |
-| `disk_utils.py`, `utils.py`, `scraper/`, `csv_engine.py`, `backup_engine.py` | 부가 기능, 손댈 이유 없음 |
+| `disk_utils.py`, `utils.py`, `csv_engine.py`, `backup_engine.py` | 부가 기능, 손댈 이유 없음 |
 
 ### 1.2 개조해서 재사용
 
@@ -66,6 +66,8 @@
 - `db.py` — MasterDB 스키마. 스펙 §92가 부활을 금지.
 - `gui/` 전체 (tkinter) — 유지비만 발생. **삭제 권장.**
 - `main_gui.py`, `headless_export*.py` — MasterDB 전제 진입점.
+- 기존 `scraper/screenscraper.py` — 새 Scraper 설계의 provider 계약과 후보 검토 흐름으로 대체.
+  구현 기준은 `SCRAPER_DESIGN.md`를 따른다.
 
 ---
 

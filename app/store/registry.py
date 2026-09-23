@@ -115,6 +115,26 @@ MIGRATIONS = (
         "ALTER TABLE collection_storages ADD COLUMN device_id TEXT",
         "ALTER TABLE collection_storages ADD COLUMN device_root TEXT",
     )),
+    Migration(4, (
+        """CREATE TABLE scrape_provenance (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               target_kind TEXT NOT NULL,
+               collection_id TEXT,
+               item_id TEXT NOT NULL,
+               provider TEXT NOT NULL,
+               remote_game_id TEXT,
+               source_url TEXT,
+               evidence_json TEXT NOT NULL DEFAULT '[]',
+               fields_json TEXT NOT NULL DEFAULT '{}',
+               applied_at REAL NOT NULL
+           )""",
+        "CREATE INDEX ix_scrape_provenance_target ON scrape_provenance(target_kind,collection_id,item_id)",
+    )),
+    Migration(5, (
+        # Migration 4가 개발 중 실행된 registry도 미디어 provenance를 잃지 않게
+        # 별도 버전으로 추가한다.
+        "ALTER TABLE scrape_provenance ADD COLUMN media_json TEXT NOT NULL DEFAULT '[]'",
+    )),
 )
 
 
@@ -400,6 +420,31 @@ class RegistryStore:
                 "INSERT INTO app_settings (key,value_json) VALUES (?,?)"
                 " ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json",
                 (key, json.dumps(value, ensure_ascii=False)))
+
+    def add_scrape_provenance(self, *, target_kind, collection_id, item_id,
+                              provider, remote_game_id=None, source_url=None,
+                              evidence=None, fields=None, media=None):
+        with transaction(self._conn):
+            self._conn.execute(
+                "INSERT INTO scrape_provenance"
+                " (target_kind,collection_id,item_id,provider,remote_game_id,source_url,"
+                " evidence_json,fields_json,media_json,applied_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (str(target_kind), collection_id, str(item_id), str(provider),
+                 str(remote_game_id or ""), str(source_url or ""),
+                 json.dumps(evidence or [], ensure_ascii=False),
+                 json.dumps(fields or {}, ensure_ascii=False),
+                 json.dumps(media or [], ensure_ascii=False), time.time()))
+
+    def scrape_provenance(self, target_kind, collection_id, item_id):
+        return [
+            {**dict(row), "evidence": json.loads(row["evidence_json"]),
+             "fields": json.loads(row["fields_json"]),
+             "media": json.loads(row["media_json"])}
+            for row in self._conn.execute(
+                "SELECT * FROM scrape_provenance WHERE target_kind=? AND collection_id IS ? AND item_id=?"
+                " ORDER BY applied_at DESC",
+                (str(target_kind), collection_id, str(item_id)))
+        ]
 
     # ------------------------------------------------------------------
     def _build_collection(self, row) -> Collection:

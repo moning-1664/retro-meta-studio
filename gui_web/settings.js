@@ -18,6 +18,7 @@
     ["general", "General", "프로그램의 기본 동작"],
     ["collections", "Collections", "Collection 열기와 세션"],
     ["metadata", "Metadata & Media", "목록과 메타데이터 표시"],
+    ["scraper", "Scraper", "외부 게임 정보 검색"],
     ["transfer", "Import / Export", "가져오기와 내보내기"],
     ["archive", "Archive", "저장 형식과 위치"],
     ["emulator", "Emulator", "RetroArch 연동"],
@@ -285,6 +286,10 @@
           "Apply할 때 제목 뒤에만 붙입니다. 파일명은 건드리지 않고, 두 번 적용해도 늘어나지 않습니다. "
           + "CD를 쓰는 System은 Disc, 플로피를 쓰는 System(MSX, PC-98 등)은 Disk로 적습니다."));
         add(discFormatRow(s));
+      } else if (key === "scraper") {
+        add(...section("Scraper", "ScreenScraper 계정과 요청 사용량을 관리합니다."));
+        add(ctx.renderScraper ? ctx.renderScraper()
+          : h("div", { class: "stg-info" }, ["Scraper 설정을 불러올 수 없습니다."]));
       } else if (key === "transfer") {
         add(...section("Import / Export", "파일과 Metadata/Media를 옮길 때의 기본값입니다."));
         // 붙여넣기(bridge paste)가 이 값을 읽는다. 기본값은 예전 동작 그대로다.

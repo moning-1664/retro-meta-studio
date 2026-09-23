@@ -147,23 +147,33 @@ def effective_media(archive, rid) -> dict[str, dict]:
         refs_by_source.setdefault(ref["source_collection_id"], []).append(ref)
 
     latest: dict[str, dict] = {}
+    def consider(source_id, ref, updated_at=0):
+        item = {**ref, "source_collection_id": source_id,
+                "updated_at": ref.get("updated_at", updated_at)}
+        current = latest.get(item["media_type"])
+        rank = (source_id == "__archive__",
+                source_id == (preferred["source_collection_id"] if preferred else None),
+                item["updated_at"])
+        cur_rank = ((current.get("source_collection_id") == "__archive__"),
+                    current.get("source_collection_id") ==
+                    (preferred["source_collection_id"] if preferred else None),
+                    current.get("updated_at", 0)) if current else None
+        if current is None or rank >= cur_rank:
+            latest[item["media_type"]] = item
+
     for source_id, record in by_source.items():
         snapshot = archive.media_of_revision(record["record_id"])
         refs = ([m for m in snapshot if m.get("state", "present") == "present"]
                 if snapshot else refs_by_source.get(source_id, []))
         for ref in refs:
-            item = {**ref, "source_collection_id": source_id,
-                    "updated_at": ref.get("updated_at", record.get("updated_at", 0))}
-            current = latest.get(item["media_type"])
-            rank = (source_id == "__archive__",
-                    source_id == (preferred["source_collection_id"] if preferred else None),
-                    item["updated_at"])
-            cur_rank = ((current.get("source_collection_id") == "__archive__"),
-                        current.get("source_collection_id") ==
-                        (preferred["source_collection_id"] if preferred else None),
-                        current.get("updated_at", 0)) if current else None
-            if current is None or rank >= cur_rank:
-                latest[item["media_type"]] = item
+            consider(source_id, ref, record.get("updated_at", 0))
+    # Compatibility/direct edits can have a media reference before they have a
+    # matching revision (legacy import and a just-pasted Archive-owned file).
+    for source_id, refs in refs_by_source.items():
+        if source_id in by_source:
+            continue
+        for ref in refs:
+            consider(source_id, ref)
     for media_type in cleared:
         latest.pop(media_type, None)
     return latest

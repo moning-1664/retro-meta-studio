@@ -36,3 +36,6 @@ playwright-report/
 # 앱 런타임 데이터 (registry/archive/cache DB, 클립보드 핸드오프 파일)
 db/
 clipboard/
+
+# Codex가 대화 첨부를 작업 공간에 풀어 둔 파일. 자격정보 이미지 등이 포함될 수 있다.
+.codex-remote-attachments/

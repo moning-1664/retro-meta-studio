@@ -614,7 +614,10 @@ RetroMeta Studio는 "파일을 직접 조작하는 관리자"보다 **"현재 Co
 검증된 기존 동작을 무조건 새 구조에 맞춰 재작성하지 않는다. 다음은 재사용을 우선한다.
 
 Metadata UI, Media UI, ROM UI, Gamelist UI, FileOperationEngine, Native MediaCopyWorker,
-기존 Frontend Adapter, 기존 Media Model, 기존 scraper infrastructure.
+기존 Frontend Adapter, 기존 Media Model.
+
+Scraper는 이 재사용 원칙의 예외다. 기존 구현의 계약을 승계하지 않고
+`SCRAPER_DESIGN.md`의 공급자·후보·변경안 구조로 새로 구현한다.
 
 새 아키텍처는 기존 기능을 대체하기 위한 것이 아니라 상위의 Collection / Archive / Plan
 구조를 재정의하기 위한 것이다.
