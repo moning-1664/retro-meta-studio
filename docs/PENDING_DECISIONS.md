@@ -3,22 +3,17 @@
 이 파일은 작업 중 판단이 필요했지만 사용자 확인 없이 진행하기보다 recommend만 실행하고
 미룬 항목을 모아둔다. 각 항목은 결정되면 지우고 `memory.md`에 결론을 남긴다.
 
-## 2026-09-09 — Archive Revision 정책 Phase D 착수 여부
+## 해결됨 — Archive Revision Phase D (2026-09-23 상태 확인)
 
-**배경**: `docs/ARCHIVE_REVISION_POLICY.md`의 Phase A(+일부 C)는 커밋 `b9b92eb`로
-구현됐다(계보 추적, Preferred Revision, 무제한 보존 기본값). 남은 Phase D는
-**VALUE/ABSENT/CLEARED 구분**과 **field-level BestEffort Import**인데, 이건
-메타데이터 편집 UI(저장/충돌 표시 화면)까지 고쳐야 하는 별도 작업이다.
+`docs/ARCHIVE_REVISION_POLICY.md`의 VALUE/ABSENT/CLEARED 동작과 field-level
+BestEffort는 현재 구현되어 있다. 출처 Revision의 빈 값은 ABSENT로 보고, Archive
+직접 편집에서 키가 있는 빈 값은 CLEARED로 보존한다. Preferred의 값이 비어 있으면
+다른 Revision의 값으로 보완하며, Archive 직접 편집은 그 결과 위에 적용된다.
 
-**recommend**: 지금 바로 착수하지 않는다. 이유:
-1. 현재 앱이 정상 동작하는 상태에서 UI 편집 흐름을 건드리는 것은 사용자가 실제로
-   그 화면을 쓸 때 회귀 위험이 있다 - 다른 Phase처럼 "필요성이 확인된 뒤" 진행하는 게
-   안전하다.
-2. `docs/TEST_MATRIX.md` §12의 ARCHIVE-002~004도 아직 TC로 정리되지 않아, Phase D를
-   시작하면 검증 하네스부터 새로 만들어야 한다(작지 않은 선행 작업).
-
-**다음에 물어볼 것**: Phase D(VALUE/ABSENT/CLEARED + field-level Import)를 언제
-진행할지, 아니면 스펙에서 실제로 필요해질 때까지 미룰지.
+현재 검증은 `tests/test_archive_revision_policy.py`와 `tests/test_archive_media.py`에
+있다. revision별 media tombstone과 Archive projection도 이 검증 범위에 포함한다.
+테스트 매트릭스의 미검증 항목은 정식 TC 추적이 없다는 뜻으로 유지하되, 구현 자체가
+미착수라고 기록하지 않는다.
 
 ## 2026-09-09 — Phase 8 (MTP Provider) 재평가
 

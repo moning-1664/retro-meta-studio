@@ -88,9 +88,8 @@ MIGRATIONS = (
     Migration(2, (
         # 표시용 원본 파일명. filename_norm은 매칭용이라 사람이 읽기엔 부적합하다.
         "ALTER TABLE rom_identities ADD COLUMN filename TEXT NOT NULL DEFAULT ''",
-        # ROM 원본 위치. Archive는 파일을 복제하지 않지만(§37), Archive -> Collection
-        # 복사에서 "어디서 가져올지"는 알아야 한다. media와 같은 취급이다(결정 D3):
-        # 경로가 살아 있으면 가져오고, 사라졌으면 그 항목만 건너뛴다.
+        # ROM 위치. 외부 Collection 원본과 Archive ROM 디렉토리의 보관 파일을
+        # 같은 표에서 추적하며, 실제 소유권은 현재 설정된 경로 경계로 판정한다.
         """CREATE TABLE archive_rom_sources (
                rom_identity_id TEXT NOT NULL REFERENCES rom_identities(rom_identity_id) ON DELETE CASCADE,
                source_collection_id TEXT NOT NULL,
@@ -169,6 +168,36 @@ MIGRATIONS = (
         # 따로 들고 다니며 content_hash 계산에 포함시킨다.
         "ALTER TABLE archive_records ADD COLUMN media_fingerprint TEXT NOT NULL DEFAULT ''",
     )),
+    Migration(8, (
+        # Revision별 Media 경로를 보존한다. archive_media는 출처별 현재 경로라서
+        # 다음 Export에서 같은 slot을 갱신해도 이전 Revision의 Media를 다시 열 수 없다.
+        """CREATE TABLE archive_record_media (
+               record_id INTEGER NOT NULL REFERENCES archive_records(record_id) ON DELETE CASCADE,
+               media_type TEXT NOT NULL,
+               abs_path TEXT NOT NULL,
+               size INTEGER NOT NULL DEFAULT 0,
+               updated_at REAL NOT NULL,
+               PRIMARY KEY (record_id, media_type)
+           )""",
+        # 기존 archive_media는 출처당 최신 상태였으므로 해당 최신 Revision에 연결한다.
+        """INSERT OR IGNORE INTO archive_record_media (record_id,media_type,abs_path,size,updated_at)
+           SELECT r.record_id,m.media_type,m.abs_path,m.size,m.updated_at
+             FROM archive_media m JOIN archive_records r
+               ON r.rom_identity_id=m.rom_identity_id
+              AND r.source_collection_id=m.source_collection_id
+              AND r.revision=(SELECT MAX(r2.revision) FROM archive_records r2
+                               WHERE r2.rom_identity_id=m.rom_identity_id
+                                 AND r2.source_collection_id=m.source_collection_id)""",
+        "CREATE INDEX ix_record_media_record ON archive_record_media(record_id)",
+    )),
+    Migration(9, (
+        "ALTER TABLE archive_record_media ADD COLUMN state TEXT NOT NULL DEFAULT 'present'",
+    )),
+    Migration(10, (
+        # 같은 크기의 파일 교체도 구분하고, 내부 snapshot 경로로 옮긴 뒤에도 같은
+        # media 상태의 fingerprint를 다시 만들 수 있어야 한다.
+        "ALTER TABLE archive_record_media ADD COLUMN mtime_ns INTEGER NOT NULL DEFAULT 0",
+    )),
 )
 
 
@@ -205,10 +234,18 @@ def media_fingerprint(media) -> str:
     바이트 수의 이미지) 실제 파일 교체는 mtime을 남긴다. 크기만 보면 이런
     교체를 "같은 상태"로 오판한다.
     """
-    items = sorted(
-        (str(m.get("media_type") or ""), str(m.get("rel_path") or ""),
-         int(m.get("size") or 0), int(m.get("mtime_ns") or 0))
-        for m in (media or []))
+    def fingerprint_item(item):
+        state = str(item.get("state") or "present")
+        media_type = str(item.get("media_type") or item.get("type") or "")
+        # Collection media는 기존처럼 rel_path를 identity에 포함한다. Archive 직접
+        # 편집은 내부 snapshot으로 옮기며 절대 경로가 바뀌므로 path 대신 size+mtime을
+        # 쓴다. 그래야 같은 파일을 다시 붙여도 불필요한 Revision이 생기지 않는다.
+        path = str(item.get("rel_path") or "")
+        if state != "present":
+            media_type = f"{media_type}\0{state}"
+        return (media_type, path, int(item.get("size") or 0), int(item.get("mtime_ns") or 0))
+
+    items = sorted(fingerprint_item(m) for m in (media or []))
     payload = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -313,10 +350,18 @@ class ArchiveStore:
             (rom_identity_id,)).fetchone()
         return dict(row) if row else None
 
+    def find_rom_identity(self, system, filename) -> dict | None:
+        row = self._conn.execute(
+            "SELECT r.*, g.title, g.title_norm FROM rom_identities r"
+            " JOIN games g ON g.game_id=r.game_id WHERE r.system=? AND r.rom_key=?",
+            (system, rom_key_of(filename))).fetchone()
+        return dict(row) if row else None
+
     def delete_identity(self, rom_identity_id) -> bool:
-        """Archive에서 이 Identity를 지운다. **실제 ROM/Media 파일은 건드리지 않는다**
-        (§37 - Archive는 파일을 복제하지 않고 경로만 들고 있다). 지우는 것은 Archive
-        자신의 기록(모아 둔 Revision/출처/Media 참조/Preferred 지정)뿐이다.
+        """Archive에서 이 Identity와 DB 기록만 지운다.
+
+        물리 파일 삭제는 호출자가 소유권을 확인한 뒤 별도로 수행한다. 이 메서드는
+        Revision/출처/Media 참조/Preferred 지정만 제거한다.
 
         `ON DELETE CASCADE`(archive_records/archive_media/archive_rom_sources/
         preferred_revisions 모두 rom_identity_id를 참조한다)가 나머지를 정리한다 -
@@ -371,6 +416,28 @@ class ArchiveStore:
                  json.dumps(fields or {}, ensure_ascii=False),
                  json.dumps(frontend_raw or {}, ensure_ascii=False), media_fp, time.time(),
                  (latest["record_id"] if latest else None), created_by))
+            record_id = int(self._conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+            if media is not None:
+                for item in media:
+                    path = item.get("abs_path") or item.get("rel_path") or item.get("path")
+                    media_type = item.get("media_type") or item.get("type")
+                    state = str(item.get("state") or "present")
+                    if not media_type or (state == "present" and not path):
+                        continue
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO archive_record_media"
+                        " (record_id,media_type,abs_path,size,updated_at,state,mtime_ns)"
+                        " VALUES (?,?,?,?,?,?,?)",
+                        (record_id, str(media_type), str(path or ""), int(item.get("size") or 0),
+                         time.time(), state, int(item.get("mtime_ns") or 0)))
+            elif latest:
+                self._conn.execute(
+                    "INSERT INTO archive_record_media"
+                    " (record_id,media_type,abs_path,size,updated_at,state,mtime_ns)"
+                    " SELECT ?,media_type,abs_path,size,updated_at,state,mtime_ns"
+                    " FROM archive_record_media"
+                    " WHERE record_id=?",
+                    (record_id, int(latest["record_id"])))
             self._apply_retention_locked(rom_identity_id, source_collection_id, retention)
             return revision, True
 
@@ -417,6 +484,31 @@ class ArchiveStore:
         row = self._conn.execute(
             "SELECT * FROM archive_records WHERE record_id=?", (record_id,)).fetchone()
         return self._record_dict(row) if row else None
+
+    def media_of_revision(self, record_id) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(
+            "SELECT media_type,abs_path,size,updated_at,state,mtime_ns FROM archive_record_media"
+            " WHERE record_id=? ORDER BY media_type", (record_id,))]
+
+    def record_ids_with_media(self) -> list[int]:
+        """Revision media가 있는 모든 record ID. 설정 적용 시 내부 보관에 쓴다."""
+        return [int(r["record_id"]) for r in self._conn.execute(
+            "SELECT DISTINCT record_id FROM archive_record_media"
+            " WHERE state='present' AND abs_path<>'' ORDER BY record_id")]
+
+    def update_revision_media_path(self, record_id, media_type, abs_path):
+        with transaction(self._conn):
+            self._conn.execute(
+                "UPDATE archive_record_media SET abs_path=? WHERE record_id=? AND media_type=?",
+                (str(abs_path), record_id, media_type))
+
+    def mark_revision_media_cleared(self, record_id, media_type):
+        with transaction(self._conn):
+            self._conn.execute(
+                "INSERT OR REPLACE INTO archive_record_media"
+                " (record_id,media_type,abs_path,size,updated_at,state,mtime_ns)"
+                " VALUES (?,?,?,0,?,'cleared',0)",
+                (record_id, media_type, "", time.time()))
 
     @staticmethod
     def _record_dict(row) -> dict:
@@ -576,12 +668,34 @@ class ArchiveStore:
     # 목록 조회 (Archive Gamelist - 스펙 §43)
     # ------------------------------------------------------------------
     def list_rows(self, *, search=None, systems=None, limit=None, offset=0,
-                  only_ids=None) -> list[dict]:
+                  only_ids=None, priority=None) -> list[dict]:
         """Archive도 일반 Collection과 같은 Gamelist로 보여준다(§43).
 
         Collection 목록과 같은 모양으로 돌려줘서 UI가 같은 렌더링을 쓰게 한다.
         """
         where, params = self._row_filter(search, systems, only_ids)
+        effective_media_exists = (
+            "SELECT 1 FROM archive_media pm"
+            " WHERE pm.rom_identity_id=r.rom_identity_id"
+            " AND NOT EXISTS (SELECT 1 FROM archive_records er"
+            " JOIN archive_record_media erm ON erm.record_id=er.record_id"
+            " WHERE er.rom_identity_id=r.rom_identity_id"
+            " AND er.source_collection_id='__archive__'"
+            " AND er.revision=(SELECT MAX(er2.revision) FROM archive_records er2"
+            " WHERE er2.rom_identity_id=r.rom_identity_id"
+            " AND er2.source_collection_id='__archive__')"
+            " AND erm.media_type=pm.media_type AND erm.state='cleared')"
+        )
+        priority_order = {
+            "rom": "CASE WHEN EXISTS (SELECT 1 FROM archive_rom_sources s"
+                   " WHERE s.rom_identity_id=r.rom_identity_id) THEN 0 ELSE 1 END,",
+            "metadata": "CASE WHEN EXISTS (SELECT 1 FROM archive_records ar"
+                        " JOIN json_each(ar.fields_json) jf"
+                        " WHERE ar.rom_identity_id=r.rom_identity_id"
+                        " AND jf.value IS NOT NULL AND trim(CAST(jf.value AS TEXT))<>'')"
+                        " THEN 0 ELSE 1 END,",
+            "media": f"CASE WHEN EXISTS ({effective_media_exists}) THEN 0 ELSE 1 END,",
+        }.get(priority, "")
         sql = (
             "SELECT r.rom_identity_id, r.game_id, r.system, r.filename, r.region,"
             "       g.title, g.title_norm,"
@@ -592,13 +706,22 @@ class ArchiveStore:
             # media가 실제로 수집돼 있는지. 목록이 이 값을 안 세면 UI가 "media 없음"을
             # 하드코딩하게 되고, 저장은 됐는데 화면에는 영영 안 나오는 상태가 된다.
             "       (SELECT COUNT(*) FROM archive_media"
-            "         WHERE rom_identity_id = r.rom_identity_id) AS media_count,"
+            "         WHERE rom_identity_id = r.rom_identity_id"
+            "           AND NOT EXISTS (SELECT 1 FROM archive_records er"
+            "             JOIN archive_record_media erm ON erm.record_id=er.record_id"
+            "             WHERE er.rom_identity_id=r.rom_identity_id"
+            "               AND er.source_collection_id='__archive__'"
+            "               AND er.revision=(SELECT MAX(er2.revision) FROM archive_records er2"
+            "                 WHERE er2.rom_identity_id=r.rom_identity_id"
+            "                   AND er2.source_collection_id='__archive__')"
+            "               AND erm.media_type=archive_media.media_type AND erm.state='cleared'))"
+            "       AS media_count,"
             # ROM 위치가 기록돼 있는지(실제 파일 존재는 실행할 때 확인한다 - 목록에서
             # 수천 개를 NAS까지 조회하면 목록이 멈춘다).
             "       (SELECT COUNT(*) FROM archive_rom_sources"
             "         WHERE rom_identity_id = r.rom_identity_id) AS rom_count"
             f" FROM rom_identities r JOIN games g ON g.game_id = r.game_id{where}"
-            " ORDER BY g.title_norm, r.filename"
+            f" ORDER BY {priority_order}g.title_norm, r.filename"
         )
         if limit is not None:
             sql += " LIMIT ? OFFSET ?"
@@ -775,6 +898,23 @@ class ArchiveStore:
             "SELECT * FROM archive_rom_sources WHERE rom_identity_id=? ORDER BY updated_at DESC",
             (rom_identity_id,))]
 
+    def delete_rom_source(self, rom_identity_id, source_collection_id, abs_path=None) -> bool:
+        """Forget one ROM location without deleting the file itself.
+
+        ``source_collection_id`` is normally unique per Archive identity.  The
+        optional path guard keeps a stale UI request from removing a source
+        whose location changed after ownership was calculated.
+        """
+        sql = ("DELETE FROM archive_rom_sources WHERE rom_identity_id=?"
+               " AND source_collection_id=?")
+        params = [rom_identity_id, source_collection_id]
+        if abs_path is not None:
+            sql += " AND abs_path=?"
+            params.append(str(abs_path))
+        with transaction(self._conn):
+            cur = self._conn.execute(sql, params)
+        return cur.rowcount > 0
+
     # ------------------------------------------------------------------
     # Media 참조
     # ------------------------------------------------------------------
@@ -790,3 +930,12 @@ class ArchiveStore:
     def media_refs(self, rom_identity_id) -> list[dict]:
         return [dict(r) for r in self._conn.execute(
             "SELECT * FROM archive_media WHERE rom_identity_id=? ORDER BY media_type", (rom_identity_id,))]
+
+    def delete_media_ref(self, rom_identity_id, media_type, source_collection_id) -> bool:
+        """Remove one source's reference without touching its media file."""
+        with transaction(self._conn):
+            cur = self._conn.execute(
+                "DELETE FROM archive_media WHERE rom_identity_id=? AND media_type=?"
+                " AND source_collection_id=?",
+                (rom_identity_id, media_type, source_collection_id))
+        return cur.rowcount > 0

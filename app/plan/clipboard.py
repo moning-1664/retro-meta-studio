@@ -62,27 +62,39 @@ def build_items(collection, cache, rom_uids) -> tuple[list, int]:
     return items, total_bytes
 
 
+def write_items(registry, items, clipboard_dir, *, source_collection_id, source_name,
+                total_bytes=None) -> dict:
+    """Write already resolved items to the shared handoff clipboard."""
+    if total_bytes is None:
+        total_bytes = sum(
+            int((item.get("rom") or {}).get("size") or 0)
+            + sum(int(media.get("size") or 0) for media in item.get("media") or [])
+            for item in items)
+    clipboard_dir = Path(clipboard_dir)
+    clipboard_dir.mkdir(parents=True, exist_ok=True)
+    handoff = clipboard_dir / f"{uuid.uuid4().hex}.json"
+    handoff.write_text(json.dumps({
+        "source_collection_id": source_collection_id,
+        "instance_id": registry.instance_id,
+        "items": items,
+    }, ensure_ascii=False), encoding="utf-8")
+
+    descriptor = {"path": str(handoff), "count": len(items), "bytes": total_bytes,
+                  "sourceCollectionId": source_collection_id, "sourceName": source_name,
+                  "instanceId": registry.instance_id, "at": time.time()}
+    registry.set_setting(CLIPBOARD_KEY, descriptor)
+    return descriptor
+
+
 def copy_selection(registry, collection, cache, rom_uids, clipboard_dir) -> dict:
     """선택 항목을 핸드오프 파일로 내보내고 registry에 위치를 기록한다.
 
     수천 개를 복사해도 registry에는 짧은 요약만 들어간다 - 실제 payload는 파일에 있다.
     """
     items, total_bytes = build_items(collection, cache, rom_uids)
-
-    clipboard_dir = Path(clipboard_dir)
-    clipboard_dir.mkdir(parents=True, exist_ok=True)
-    handoff = clipboard_dir / f"{uuid.uuid4().hex}.json"
-    handoff.write_text(json.dumps({
-        "source_collection_id": collection.id,
-        "instance_id": registry.instance_id,
-        "items": items,
-    }, ensure_ascii=False), encoding="utf-8")
-
-    descriptor = {"path": str(handoff), "count": len(items), "bytes": total_bytes,
-                  "sourceCollectionId": collection.id, "sourceName": collection.name,
-                  "instanceId": registry.instance_id, "at": time.time()}
-    registry.set_setting(CLIPBOARD_KEY, descriptor)
-    return descriptor
+    return write_items(registry, items, clipboard_dir,
+                       source_collection_id=collection.id, source_name=collection.name,
+                       total_bytes=total_bytes)
 
 
 def peek(registry) -> dict | None:

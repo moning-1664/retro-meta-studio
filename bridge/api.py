@@ -17,12 +17,14 @@ from __future__ import annotations
 import base64
 import re
 import logging
+import shutil
 from collections import OrderedDict
 import traceback
 import time
 from pathlib import Path
 
 from adapters import get_adapter
+from adapters.base import MediaFile
 from app import paths
 from app.model.collection import FRONTENDS, STORAGE_INTERNAL
 from app.model.constants import MEDIA_TYPES, VIDEO_MEDIA_TYPE, normalize_system
@@ -74,6 +76,17 @@ THUMBNAIL_CACHE_MAX = 256
 
 #: "캐시에 없음"과 "캐시된 값이 None(=그릴 수 없는 파일)"을 구분하는 표식.
 _MISS = object()
+
+
+def _path_within(path, root) -> bool:
+    """Whether ``path`` resolves inside ``root`` (the boundary is inclusive)."""
+    if not path or not root:
+        return False
+    try:
+        Path(path).resolve().relative_to(Path(root).resolve())
+        return True
+    except (OSError, ValueError):
+        return False
 
 
 def _sorted_systems(entries, games, *, with_storage=False, stats=None):
@@ -1904,7 +1917,7 @@ class Api:
 
     @guarded
     def archive_rows(self, search=None, systems=None, limit=200, offset=0, conflicts_only=False,
-                     favorites_only=False, rom_identity_ids=None):
+                     favorites_only=False, rom_identity_ids=None, priority=None):
         """Archive Gamelist. Collection 목록과 같은 모양으로 돌려준다(§43).
 
         Description/Genre/Rating은 `rom_identities`가 아니라 Revision의
@@ -1929,21 +1942,25 @@ class Api:
         # 0.28초라 페이지를 나누기 전에 걸러도 목록이 느려지지 않는다(실측).
         favorites_only = bool(favorites_only)
         page = (None, 0) if favorites_only else (int(limit), int(offset))
-        rows = self.archive.list_rows(**query, limit=page[0], offset=page[1])
-        adapter = get_adapter(self._archive_config()["frontend"])
+        rows = self.archive.list_rows(**query, limit=page[0], offset=page[1], priority=priority)
+        archive_cfg = self._archive_config()
+        adapter = get_adapter(archive_cfg["frontend"])
         out_rows = []
         for r in rows:
             fields, raw = self.archive.resolve_fields(r["rom_identity_id"])
             starred = adapter.is_favorite(raw)
             if favorites_only and not starred:
                 continue
+            rom_ownership = self._archive_rom_ownership(
+                r["rom_identity_id"], archive_cfg, check_exists=False)
             out_rows.append({
                 "romUid": r["rom_identity_id"], "romIdentityId": r["rom_identity_id"],
                 "system": r["system"], "file": r["filename"], "title": r["title"],
                 "sources": r["source_count"], "updatedAt": r["updated_at"],
                 # 예전에는 False로 박아뒀다. Archive에 media가 저장돼 있어도
                 # 목록에서는 영영 없는 것으로 보였다.
-                "hasMetadata": True, "hasMedia": bool(r["media_count"]),
+                "hasMetadata": any(v is not None and str(v).strip() for v in fields.values()),
+                "hasMedia": bool(r["media_count"]),
                 # Metadata(frontend_raw)에 있는 별표를 그대로 읽는다.
                 "favorite": starred,
                 # ROM 위치가 기록돼 있으면 있는 것으로 본다. 없으면 메타데이터만 있는
@@ -1954,6 +1971,10 @@ class Api:
                 "region": r["region"] or fields.get("region") or "",
                 "genre": fields.get("genre") or "",
                 "rating": fields.get("rating") or "",
+                # 목록 메뉴가 외부 연결 ROM을 물리적으로 지우지 않도록, ROM 경로
+                # 소유권만 가볍게 함께 준다. Media 전체 판정은 상세에서 계산한다.
+                "ownership": {"rom": {key: value for key, value in rom_ownership.items()
+                                        if key != "items"}},
             })
         if favorites_only:
             # 전부 걸러낸 뒤 여기서 페이지를 나눈다 - 필터가 SQL 밖에 있으므로
@@ -1977,8 +1998,253 @@ class Api:
         return ok([r["rom_identity_id"] for r in rows])
 
     @guarded
+    def archive_copy_selection(self, rom_identity_ids):
+        """Copy Archive items to the same handoff clipboard Collections use.
+
+        Reading a linked asset is allowed.  Archive-owned paths are preferred
+        when both an owned copy and an external source exist.
+        """
+        cfg = self._archive_config()
+        items = []
+        for rid in [str(value) for value in (rom_identity_ids or [])]:
+            identity = self.archive.get_identity(rid)
+            if identity is None:
+                continue
+            fields, raw = self.archive.resolve_fields(rid)
+            ownership = self._archive_rom_ownership(rid, cfg)
+            rom_item = next((item for item in ownership["items"]
+                             if item["mode"] == "internal" and item["present"]), None)
+            if rom_item is None:
+                rom_item = next((item for item in ownership["items"] if item["present"]), None)
+            rom = None
+            if rom_item:
+                path = Path(rom_item["path"])
+                try:
+                    rom = {"path": str(path), "size": int(path.stat().st_size)}
+                except OSError:
+                    rom = None
+
+            media = []
+            for media_type, ref in archive_projection.effective_media(self.archive, rid).items():
+                path = self._archive_media_display_path(rid, media_type, ref, cfg=cfg)
+                if path and Path(path).is_file():
+                    try:
+                        size = int(Path(path).stat().st_size)
+                    except OSError:
+                        continue
+                    media.append({"type": media_type, "path": str(path), "size": size})
+            items.append({
+                "system": identity["system"],
+                "filename": identity["filename"] or identity["filename_norm"],
+                "rom": rom, "media": media, "fields": fields, "frontend_raw": raw,
+            })
+        if not items:
+            return err("복사할 Archive 항목을 찾을 수 없습니다.")
+        return ok(clipboard.write_items(
+            self.registry, items, self._clipboard_dir,
+            source_collection_id="__archive__", source_name="Archive"))
+
+    @guarded
+    def archive_paste(self, mode=None, target_rom_identity_id=None):
+        """Paste handoff items into Archive using the shared transfer policy.
+
+        ROM bytes are internalized under Archive's configured ROM root and are
+        never overwritten.  Media follows ``mediaInternal`` through the normal
+        projection path; with it disabled the source remains a read-only link.
+        """
+        cfg = self._archive_config()
+        if not archive_projection.is_configured(cfg):
+            return err("Archive 디렉토리를 먼저 설정하세요.")
+        _descriptor, source_items = clipboard.read_items(self.registry)
+        if not source_items:
+            return err("붙여넣을 항목이 없습니다.")
+        if target_rom_identity_id and len(source_items) != 1:
+            return err("항목을 하나만 복사했을 때만 이 항목으로 붙여넣을 수 있습니다.")
+
+        target_identity = (self.archive.get_identity(str(target_rom_identity_id))
+                           if target_rom_identity_id else None)
+        if target_rom_identity_id and target_identity is None:
+            return err("붙여넣을 Archive 항목을 찾을 수 없습니다.")
+
+        rom_root = Path(cfg["romDir"] or cfg["archiveDir"])
+        normalized_mode = transfer.normalize_mode(mode)
+        pasted = copied_roms = 0
+        skipped, conflicts, changed_ids, record_ids = [], [], [], []
+        overwrite_media = {}
+
+        for source_item in source_items:
+            item = dict(source_item)
+            if target_identity:
+                target_filename = target_identity["filename"] or target_identity["filename_norm"]
+                if str(item.get("filename") or "") != str(target_filename):
+                    # A ROM must not be renamed to another extension/region merely
+                    # because the user targets a different metadata row.
+                    item["rom"] = None
+                item["system"] = target_identity["system"]
+                item["filename"] = target_filename
+                identity = target_identity
+            else:
+                item["system"] = normalize_system(cfg["frontend"], item.get("system") or "")
+                identity = self.archive.find_rom_identity(item["system"], item.get("filename") or "")
+
+            filename = str(item.get("filename") or "")
+            system = str(item.get("system") or "")
+            if not filename or Path(filename).name != filename or not system:
+                skipped.append({"filename": filename, "reason": "안전하지 않은 System 또는 파일명입니다."})
+                continue
+            if not _path_within(rom_root / system, rom_root):
+                skipped.append({"filename": filename, "reason": "Archive 경로 밖의 System은 사용할 수 없습니다."})
+                continue
+
+            existing = None
+            if identity:
+                existing_fields, existing_raw = self.archive.resolve_fields(identity["rom_identity_id"])
+                existing_media = list(archive_projection.effective_media(
+                    self.archive, identity["rom_identity_id"]).values())
+                existing = {
+                    "system": identity["system"],
+                    "filename": identity["filename"] or identity["filename_norm"],
+                    "present": any(Path(source["abs_path"]).is_file()
+                                   for source in self.archive.rom_sources(identity["rom_identity_id"])
+                                   if source.get("abs_path")),
+                    "fields": existing_fields, "frontend_raw": existing_raw,
+                    "media": existing_media,
+                }
+            prepared, reason = transfer.decide(item, existing, normalized_mode)
+            if prepared is None:
+                skipped.append({"filename": filename, "reason": reason})
+                continue
+
+            fields = prepared.get("fields") or {}
+            raw = prepared.get("frontend_raw") or {}
+            if identity is None:
+                title = (fields.get("name") or "").strip() or Path(filename).stem
+                game_id = self.archive.ensure_game(title, normalize_title(title))
+                rid = self.archive.ensure_rom_identity(
+                    game_id, system, normalize_title(Path(filename).stem), filename=filename,
+                    size=int((prepared.get("rom") or {}).get("size") or 0) or None,
+                    region=fields.get("region"), title=(fields.get("name") or None))
+            else:
+                rid = identity["rom_identity_id"]
+
+            rom = prepared.get("rom")
+            if rom and rom.get("path") and Path(rom["path"]).is_file():
+                destination = rom_root / system / filename
+                if not _path_within(destination, rom_root):
+                    skipped.append({"filename": filename, "reason": "Archive ROM 경로 밖으로 복사할 수 없습니다."})
+                    continue
+                if destination.exists() and Path(rom["path"]).resolve() != destination.resolve():
+                    conflicts.append({"filename": filename, "path": str(destination),
+                                      "reason": "Archive ROM 파일이 이미 있어 덮어쓰지 않았습니다."})
+                else:
+                    if not destination.exists():
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(rom["path"], destination)
+                        copied_roms += 1
+                    self.archive.put_rom_source(
+                        rid, archive_directory.DIRECTORY_SOURCE, destination,
+                        int(destination.stat().st_size))
+
+            media_state = self._archive_edit_media_state(rid)
+            changed_types = set()
+            for media in prepared.get("media") or []:
+                media_type = media.get("type") or media.get("media_type")
+                source = media.get("path") or media.get("abs_path")
+                if not media_type or not source or not Path(source).is_file():
+                    continue
+                stat = Path(source).stat()
+                self.archive.put_media_ref(rid, media_type, ARCHIVE_EDIT_SOURCE,
+                                           source, stat.st_size)
+                media_state[media_type] = {
+                    "media_type": media_type, "abs_path": str(source),
+                    "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "state": "present",
+                }
+                changed_types.add(media_type)
+
+            self.archive.put_record(rid, ARCHIVE_EDIT_SOURCE, fields, raw,
+                                    media=list(media_state.values()))
+            latest = self.archive.latest_record(rid, ARCHIVE_EDIT_SOURCE)
+            if latest:
+                record_ids.append(latest["record_id"])
+            if changed_types:
+                overwrite_media[rid] = changed_types
+            changed_ids.append(rid)
+            pasted += 1
+
+        projection = self._project_archive(
+            {"revisionRecordIds": record_ids}, changed_ids,
+            overwrite_media=overwrite_media) if changed_ids else None
+        return ok({"pasted": pasted, "copiedRoms": copied_roms,
+                   "skipped": skipped, "conflicts": conflicts, "projection": projection})
+
+    @guarded
     def archive_systems(self):
         return ok(self.archive.systems())
+
+    def _archive_rom_ownership(self, rom_identity_id, cfg=None, *, check_exists=True) -> dict:
+        """Classify recorded ROM paths by the configured Archive ROM root."""
+        cfg = cfg or self._archive_config()
+        root = (cfg.get("romDir") or cfg.get("archiveDir")) if cfg else None
+        items = []
+        for source in self.archive.rom_sources(rom_identity_id):
+            path = source.get("abs_path")
+            internal = _path_within(path, root)
+            items.append({
+                "sourceCollectionId": source.get("source_collection_id"),
+                "path": path,
+                "mode": "internal" if internal else "linked",
+                "present": bool(path and (Path(path).is_file() if check_exists else True)),
+            })
+        internal_count = sum(item["mode"] == "internal" for item in items)
+        linked_count = sum(item["mode"] == "linked" for item in items)
+        mode = ("mixed" if internal_count and linked_count else
+                "internal" if internal_count else "linked" if linked_count else "none")
+        return {"mode": mode, "internalCount": internal_count,
+                "linkedCount": linked_count, "items": items}
+
+    def _archive_media_ownership(self, rom_identity_id, cfg=None, *, check_exists=True) -> dict:
+        """Classify each effective media type by the file Archive displays."""
+        cfg = cfg or self._archive_config()
+        root = cfg.get("archiveDir") if cfg else None
+        types = {}
+        for media_type, item in archive_projection.effective_media(
+                self.archive, rom_identity_id).items():
+            display_path = self._archive_media_display_path(
+                rom_identity_id, media_type, item, require_exists=False, cfg=cfg)
+            internal = _path_within(display_path, root)
+            types[media_type] = {
+                "mode": "internal" if internal else "linked",
+                "path": display_path,
+                "present": bool(display_path and (Path(display_path).is_file()
+                                                    if check_exists else True)),
+            }
+        internal_count = sum(item["mode"] == "internal" for item in types.values())
+        linked_count = sum(item["mode"] == "linked" for item in types.values())
+        mode = ("mixed" if internal_count and linked_count else
+                "internal" if internal_count else "linked" if linked_count else "none")
+        return {"mode": mode, "internalCount": internal_count,
+                "linkedCount": linked_count, "types": types}
+
+    def _archive_ownership(self, rom_identity_id, cfg=None, *, check_exists=True) -> dict:
+        cfg = cfg or self._archive_config()
+        rom = self._archive_rom_ownership(rom_identity_id, cfg, check_exists=check_exists)
+        media = self._archive_media_ownership(rom_identity_id, cfg, check_exists=check_exists)
+        modes = {part["mode"] for part in (rom, media) if part["mode"] != "none"}
+        mode = ("mixed" if len(modes) > 1 or "mixed" in modes else
+                next(iter(modes)) if modes else "none")
+        return {"mode": mode, "rom": rom, "media": media,
+                # Metadata revisions and direct edits always live in Archive.
+                "metadata": {"mode": "internal"}}
+
+    @guarded
+    def archive_ownership_summary(self):
+        counts = {"internal": 0, "linked": 0, "mixed": 0, "none": 0}
+        cfg = self._archive_config()
+        for row in self.archive.list_rows(limit=None):
+            mode = self._archive_ownership(
+                row["rom_identity_id"], cfg, check_exists=False)["mode"]
+            counts[mode] = counts.get(mode, 0) + 1
+        return ok({**counts, "total": sum(counts.values())})
 
     @guarded
     def archive_detail(self, rom_identity_id):
@@ -1989,7 +2255,53 @@ class Api:
         # 꺼낸다. Frontend마다 태그가 다르므로 Archive 설정의 Adapter에게 묻는다.
         adapter = get_adapter(self._archive_config()["frontend"])
         data["favorite"] = adapter.is_favorite(data.get("frontendRaw"))
+        # 보관 파일과 외부 연결을 가리지 않고 실제 ROM이 하나라도 있는지 알려준다.
+        # 이 값은 Play/Core 제어의 공통 차단 조건에도 쓰인다.
+        data["present"] = any(Path(source["abs_path"]).is_file()
+                               for source in data.get("romSources", [])
+                               if source.get("abs_path"))
+        data["ownership"] = self._archive_ownership(rom_identity_id)
         return ok(data)
+
+    @guarded
+    def archive_system_folder(self, system, kind):
+        """설정된 Archive 투영 트리 또는 원본 미디어의 System 폴더를 연다."""
+        cfg = self._archive_config()
+        if not archive_projection.is_configured(cfg):
+            return err("Archive 디렉터리를 먼저 설정하세요.")
+        system = str(system or "")
+        known_systems = {row["system"] for row in self.archive.systems()}
+        if system not in known_systems:
+            return err(f"Archive에 없는 System입니다: {system}")
+        adapter = get_adapter(cfg["frontend"])
+        layout = adapter.layout(archive_projection.collection_for(cfg), system)
+        if kind == "rom":
+            path = Path(cfg["romDir"] or cfg["archiveDir"]) / system
+        elif kind == "metadata":
+            path = Path(layout.metadata_file).parent
+        elif kind == "media":
+            if cfg["mediaInternal"]:
+                path = Path(layout.media_dir)
+            else:
+                path = None
+                for row in self.archive.list_rows(systems=[system], limit=None):
+                    for item in archive_projection.effective_media(
+                            self.archive, row["rom_identity_id"]).values():
+                        resolved = self._archive_media_display_path(
+                            row["rom_identity_id"], item["media_type"], item)
+                        if resolved and Path(resolved).is_file():
+                            path = Path(resolved).parent
+                            break
+                    if path is not None:
+                        break
+                if path is None:
+                    return err(f"{system}에 열 수 있는 Media 파일이 없습니다.")
+        else:
+            return err(f"알 수 없는 Archive 폴더 종류입니다: {kind}")
+        if not path.is_dir():
+            return err(f"폴더가 없습니다: {path}")
+        _reveal_path(str(path))
+        return ok({"path": str(path)})
 
     @guarded
     def get_archive_media_image(self, rom_identity_id, media_label, thumbnail=False):
@@ -2000,37 +2312,86 @@ class Api:
         탭에서도 Collection용 경로를 부르고 있었고, 조회가 조용히 실패해서 **Archive에
         media가 저장되어 있는데도 영영 보이지 않았다.**
 
-        Archive는 파일을 복제하지 않고 원본 경로만 들고 있으므로(§37, D3), 그 경로가
-        사라졌으면 그 media만 건너뛴다.
+        mediaInternal 설정에 따라 Archive 복사본 또는 외부 원본을 표시한다. 선택된
+        경로가 사라졌으면 그 media만 건너뛴다.
         """
         media_type = MEDIA_KEYS.get(media_label, str(media_label).lower())
         item = archive_projection.effective_media(self.archive, rom_identity_id).get(media_type)
         if item is None:
             return ok(None)
-        return ok(self._encode_image(item["abs_path"], THUMBNAIL_MAX if thumbnail else None))
+        path = self._archive_media_display_path(rom_identity_id, media_type, item)
+        return ok(self._encode_image(path, THUMBNAIL_MAX if thumbnail else None) if path else None)
+
+    def _archive_media_display_path(self, rom_identity_id, media_type, item, *,
+                                    require_exists=True, cfg=None):
+        """Resolve the Archive's own frontend media copy when configured.
+
+        With mediaInternal disabled, Archive displays the source Collection file.
+        With it enabled, the configured Archive frontend tree is the source of
+        truth for display and export.
+        """
+        cfg = cfg or self._archive_config()
+        if not archive_projection.is_configured(cfg):
+            return item.get("abs_path")
+        if not cfg["mediaInternal"]:
+            # Revision snapshots may live under .rms even after the user turns
+            # internal media off.  In reference mode, resolve back to the
+            # compatibility index that still records the Collection source.
+            source_id = item.get("source_collection_id")
+            original = next((ref for ref in self.archive.media_refs(rom_identity_id)
+                             if ref.get("media_type") == media_type
+                             and ref.get("source_collection_id") == source_id), None)
+            return (original or item).get("abs_path")
+        identity = self.archive.get_identity(rom_identity_id)
+        if not identity:
+            return None
+        adapter = get_adapter(cfg["frontend"])
+        layout = adapter.layout(archive_projection.collection_for(cfg), identity["system"])
+        fields, _raw = self.archive.resolve_fields(rom_identity_id)
+        filename = identity["filename"] or identity["filename_norm"]
+        media = MediaFile(media_type=media_type, path=item["abs_path"],
+                          size=int(item.get("size") or 0))
+        for _src, dest in adapter.media_pairs(layout, filename, [media],
+                                             title=(fields.get("name") or None)):
+            if not require_exists or Path(dest).is_file():
+                return dest
+        return None
 
     @guarded
     def get_archive_version_media_image(self, rom_identity_id, source_collection_id, media_label,
-                                        thumbnail=False):
+                                        thumbnail=False, record_id=None):
         """`get_archive_media_image()`와 같지만 **정해진(preferred) 것이 아니라 특정
         출처의 것**을 돌려준다. 서로 다른 버전(§16)을 고르는 화면에서 "그 출처가 가진
         그림"을 실제로 보여줘야 문장(크기/일치율)만으로 못 하는 판단(둘이 진짜 같은
         그림인지)을 사람이 눈으로 할 수 있다(실사용 피드백 - "conflict 내용을 보니
         크기도 같다"는데도 문장만으로는 확인할 방법이 없었다)."""
         media_type = MEDIA_KEYS.get(media_label, str(media_label).lower())
-        item = next((m for m in self.archive.media_refs(rom_identity_id)
-                     if m["media_type"] == media_type
-                     and m["source_collection_id"] == source_collection_id), None)
+        item = None
+        if record_id is not None:
+            record = self.archive.record_by_id(int(record_id))
+            if record and record["rom_identity_id"] == str(rom_identity_id):
+                item = next((m for m in self.archive.media_of_revision(record_id)
+                             if m["media_type"] == media_type), None)
+        if item is None:
+            item = next((m for m in self.archive.media_refs(rom_identity_id)
+                         if m["media_type"] == media_type
+                         and m["source_collection_id"] == source_collection_id), None)
         if item is None:
             return ok(None)
-        return ok(self._encode_image(item["abs_path"], THUMBNAIL_MAX if thumbnail else None))
+        # Revision tiles must show that Revision's immutable snapshot. Resolving
+        # through the current frontend projection would make every historical
+        # version display the latest image instead.
+        path = (item.get("abs_path") if record_id is not None
+                else self._archive_media_display_path(rom_identity_id, media_type, item))
+        return ok(self._encode_image(path, THUMBNAIL_MAX if thumbnail else None) if path else None)
 
     @guarded
     def get_archive_media_video_url(self, rom_identity_id):
-        """Archive 항목의 영상 URL. Archive는 원본 경로만 들고 있으므로 그 파일이 사라졌으면 None."""
+        """Archive 항목의 영상 URL - 설정에 따라 자체 copy 또는 source를 쓴다."""
         item = next((m for m in self.archive.media_refs(rom_identity_id)
                      if m["media_type"] == VIDEO_MEDIA_TYPE), None)
-        url = self._media_server.url_for(item["abs_path"]) if item else None
+        path = self._archive_media_display_path(rom_identity_id, VIDEO_MEDIA_TYPE, item) if item else None
+        url = self._media_server.url_for(path) if path else None
         return ok({"url": url} if url else None)
 
     ARCHIVE_CONFIG_KEY = "archive.config"
@@ -2080,6 +2441,8 @@ class Api:
         # 디렉토리에 있는 것(직접 넣은 ROM, 고친 gamelist)도 함께 읽는다.
         synced = archive_directory.sync_from_directory(
             self.archive, cfg, storage.for_path(cfg["archiveDir"]))
+        archive_projection.snapshot_revision_media(
+            self.archive, cfg, self.archive.record_ids_with_media())
         projection = archive_projection.project(self.archive, cfg, progress_cb=progress_cb)
         return {"imported": imported, "synced": synced, "projection": projection}
 
@@ -2092,13 +2455,22 @@ class Api:
                                      target_ids=(), kind="archive-apply")
         return ok({"jobId": job_id})
 
-    def _project_archive(self, result, rom_identity_ids=None, progress_cb=None):
+    def _project_archive(self, result, rom_identity_ids=None, progress_cb=None,
+                         overwrite_media=None):
         """Archive가 바뀐 뒤 설정된 디렉토리에 반영한다. 설정이 없으면 아무것도 안 한다."""
         cfg = self._archive_config()
         if not archive_projection.is_configured(cfg):
             return None
         try:
+            record_ids = list((result or {}).get("revisionRecordIds") or []) if isinstance(result, dict) else []
+            if not record_ids:
+                for rid in rom_identity_ids or []:
+                    edited = self.archive.latest_record(rid, archive_service.ARCHIVE_EDIT_SOURCE)
+                    if edited:
+                        record_ids.append(edited["record_id"])
+            archive_projection.snapshot_revision_media(self.archive, cfg, record_ids)
             return archive_projection.project(self.archive, cfg, rom_identity_ids,
+                                              overwrite_media=overwrite_media,
                                               progress_cb=progress_cb)
         except JobCancelled:
             # job의 progress_cb가 던진다(bridge/jobs.py) - 그대로 올려보내야
@@ -2135,7 +2507,8 @@ class Api:
         media_type = MEDIA_KEYS.get(source.get("key"), str(source.get("key") or "").lower())
         if source.get("kind") == "archive":
             item = archive_projection.effective_media(self.archive, str(source.get("uid"))).get(media_type)
-            return item["abs_path"] if item else None
+            return (self._archive_media_display_path(str(source.get("uid")), media_type, item)
+                    if item else None)
         row = self.workspace.open(source.get("id")).get_row(int(source.get("uid")))
         item = next((m for m in (row["media"] if row else []) if m["media_type"] == media_type), None)
         return item["rel_path"] if item else None
@@ -2188,18 +2561,85 @@ class Api:
         src = self._media_source_path(source or {})
         if not src or not Path(src).is_file():
             return err("복사할 media를 찾을 수 없습니다.")
-        cfg = self._archive_config()
         # Archive 디렉토리가 있으면 거기에 두고 그것을 참조한다 - 원본 Collection이 사라져도
         # 남는다. 없으면 원본 위치를 그대로 가리킨다(Archive는 기본적으로 참조다).
+        source_stat = Path(src).stat()
         self.archive.put_media_ref(rom_identity_id, media_type, ARCHIVE_EDIT_SOURCE, src,
-                                   Path(src).stat().st_size)
-        fields, _raw = self.archive.resolve_fields(rom_identity_id)
-        self.archive.put_record(rom_identity_id, ARCHIVE_EDIT_SOURCE, fields, {})
-        projection = None
-        if archive_projection.is_configured(cfg):
-            projection = archive_projection.project(
-                self.archive, cfg, [rom_identity_id], overwrite_media={rom_identity_id: {media_type}})
+                                   source_stat.st_size)
+        fields, raw = self.archive.resolve_fields(rom_identity_id)
+        media = self._archive_edit_media_state(rom_identity_id)
+        media[media_type] = {"media_type": media_type, "abs_path": src,
+                             "size": source_stat.st_size,
+                             "mtime_ns": source_stat.st_mtime_ns, "state": "present"}
+        _revision, _created = self.archive.put_record(
+            rom_identity_id, ARCHIVE_EDIT_SOURCE, fields, raw,
+            media=list(media.values()))
+        edited = self.archive.latest_record(rom_identity_id, ARCHIVE_EDIT_SOURCE)
+        projection = self._project_archive(
+            {"revisionRecordIds": [edited["record_id"]]}, [rom_identity_id],
+            overwrite_media={rom_identity_id: {media_type}})
         return ok({"romIdentityId": rom_identity_id, "mediaType": media_type, "projection": projection})
+
+    def _archive_edit_media_state(self, rom_identity_id):
+        """Latest Archive edit media as a complete, per-type mutable snapshot."""
+        latest = self.archive.latest_record(rom_identity_id, ARCHIVE_EDIT_SOURCE)
+        items = self.archive.media_of_revision(latest["record_id"]) if latest else []
+        return {item["media_type"]: dict(item) for item in items}
+
+    @guarded
+    def archive_media_delete(self, rom_identity_id, media_key):
+        """Remove the currently effective source link for one media type.
+
+        The source file is never deleted. A tombstone keeps this media type
+        removed even when another Collection source still has a reference.
+        When Archive owns media, only its projected destination is unlinked.
+        """
+        rid = str(rom_identity_id)
+        identity = self.archive.get_identity(rid)
+        if identity is None:
+            return err("Archive 항목을 찾을 수 없습니다.")
+        media_type = MEDIA_KEYS.get(media_key, str(media_key or "").lower())
+        current = archive_projection.effective_media(self.archive, rid).get(media_type)
+        if current is None:
+            return err("Archive에 연결된 미디어가 없습니다.")
+
+        cfg = self._archive_config()
+        if archive_projection.is_configured(cfg) and cfg["mediaInternal"]:
+            adapter = get_adapter(cfg["frontend"])
+            collection = archive_projection.collection_for(cfg)
+            layout = adapter.layout(collection, identity["system"])
+            fields, _raw = self.archive.resolve_fields(rid)
+            filename = identity["filename"] or identity["filename_norm"]
+            media = MediaFile(media_type=media_type, path=current["abs_path"],
+                              size=int(current.get("size") or 0))
+            archive_root = Path(cfg["archiveDir"]).resolve()
+            for _src, dest in adapter.media_pairs(
+                    layout, filename, [media], title=(fields.get("name") or None)):
+                dest_path = Path(dest).resolve()
+                try:
+                    dest_path.relative_to(archive_root)
+                except ValueError:
+                    continue
+                # A configuration may point Archive at the source tree itself.
+                # Never unlink the source asset in that case.
+                if dest_path == Path(current["abs_path"]).resolve():
+                    continue
+                if dest_path.is_file():
+                    dest_path.unlink()
+
+        fields, raw = self.archive.resolve_fields(rid)
+        media = self._archive_edit_media_state(rid)
+        media[media_type] = {"media_type": media_type, "abs_path": "", "size": 0,
+                             "state": "cleared"}
+        self.archive.put_record(rid, archive_service.ARCHIVE_EDIT_SOURCE, fields, raw,
+                                media=list(media.values()))
+        edited = self.archive.latest_record(rid, archive_service.ARCHIVE_EDIT_SOURCE)
+        projection = self._project_archive(
+            {"revisionRecordIds": [edited["record_id"]]}, [rid],
+            overwrite_media={rid: {media_type}})
+        return ok({"romIdentityId": rid, "mediaType": media_type,
+                   "sourceCollectionId": current["source_collection_id"],
+                   "projection": projection})
 
     @guarded
     def archive_refresh(self):
@@ -2216,6 +2656,8 @@ class Api:
         cfg = self._archive_config()
         if not archive_projection.is_configured(cfg):
             return err("Archive 디렉토리가 설정되지 않았습니다.")
+        archive_projection.snapshot_revision_media(
+            self.archive, cfg, self.archive.record_ids_with_media())
         return ok(archive_projection.project(self.archive, cfg))
 
     @guarded
@@ -2265,10 +2707,11 @@ class Api:
 
     @guarded
     def archive_delete(self, rom_identity_ids):
-        """Archive에서 이 항목들을 지운다. **실제 ROM/Media 파일은 지우지 않는다**(§37) -
-        Archive는 파일을 복제하지 않고 경로만 들고 있으므로, 지우는 것은 Archive
-        자신의 기록(Revision/출처/Preferred 지정)뿐이다. 실제 파일을 지우려면
-        Collection 쪽에서 지워야 한다.
+        """Archive에서 이 항목들의 기록을 지운다.
+
+        이 명령은 소유권과 관계없이 Revision/출처/Preferred 지정만 제거한다. 물리
+        파일 삭제는 `archive_rom_delete`와 `archive_media_delete`처럼 자산 종류와
+        Archive 관리 경계를 명시하는 명령에서만 수행한다.
 
         Archive 우클릭 메뉴의 "삭제"가 예전엔 Collection용 `plan_delete()`를 그대로
         불러 `Collection_id`가 "__archive__" 같은 값이라 매번 "Collection을 찾을 수
@@ -2402,11 +2845,14 @@ class Api:
 
     @guarded
     def archive_rom_folder(self, rom_identity_id):
-        """그 항목의 ROM이 **실제로 있는 폴더**를 연다(사용자 지적 - Archive 자체 폴더가
-        아니라 원본이 있는 자리를 열어야 뜻이 있다). Archive는 경로만 들고 있으므로
-        (§37) 그 경로의 부모를 연다."""
-        sources = self.archive.rom_sources(rom_identity_id)
-        path = next((s["abs_path"] for s in sources if s.get("abs_path")), None)
+        """Archive 보관 또는 외부 연결 ROM이 실제로 기록된 폴더를 연다."""
+        ownership = self._archive_rom_ownership(rom_identity_id)
+        candidates = ownership["items"]
+        chosen = next((item for item in candidates
+                       if item["mode"] == "internal" and item["present"]), None)
+        chosen = chosen or next((item for item in candidates if item["present"]), None)
+        chosen = chosen or next((item for item in candidates if item.get("path")), None)
+        path = chosen.get("path") if chosen else None
         if not path:
             return err("이 항목에는 기록된 ROM 위치가 없습니다.")
         parent = str(Path(path).parent)
@@ -2414,6 +2860,78 @@ class Api:
             return err(f"폴더가 없습니다: {parent}")
         _reveal_path(parent)
         return ok({"path": parent})
+
+    @guarded
+    def archive_rom_delete(self, rom_identity_ids):
+        """Delete only ROM files that are inside Archive's configured ROM root.
+
+        External Collection paths stay linked and untouched.  An Archive-owned
+        source whose file is already missing is removed from the index as stale.
+        """
+        ids = [str(value) for value in (rom_identity_ids or [])]
+        if not ids:
+            return err("지울 ROM을 선택하세요.")
+        cfg = self._archive_config()
+        root = cfg.get("romDir") or cfg.get("archiveDir")
+        if not root:
+            return err("Archive ROM 디렉토리가 설정되지 않았습니다.")
+
+        deleted_files = removed_sources = linked_sources = 0
+        failures = []
+        for rid in ids:
+            ownership = self._archive_rom_ownership(rid, cfg)
+            linked_sources += ownership["linkedCount"]
+            for item in ownership["items"]:
+                if item["mode"] != "internal":
+                    continue
+                path = item.get("path")
+                # Recheck immediately before mutation; ownership may have been
+                # calculated before the configuration or source row changed.
+                if not _path_within(path, root):
+                    linked_sources += 1
+                    continue
+                try:
+                    target = Path(path)
+                    if target.is_file():
+                        target.unlink()
+                        deleted_files += 1
+                    elif target.exists():
+                        failures.append({"romIdentityId": rid, "path": path,
+                                         "reason": "ROM 경로가 파일이 아닙니다."})
+                        continue
+                    if self.archive.delete_rom_source(
+                            rid, item.get("sourceCollectionId"), path):
+                        removed_sources += 1
+                except OSError as exc:
+                    failures.append({"romIdentityId": rid, "path": path,
+                                     "reason": str(exc)})
+        if not deleted_files and not removed_sources and linked_sources and not failures:
+            return err("선택한 ROM은 원본 Collection에 연결되어 있어 Archive에서 파일을 삭제할 수 없습니다.")
+        return ok({"deletedFiles": deleted_files, "removedSources": removed_sources,
+                   "linkedSourcesKept": linked_sources, "failures": failures})
+
+    @guarded
+    def archive_media_delete_system(self, system):
+        """Remove only Archive-owned media copies for every item in a System."""
+        removed = linked_kept = 0
+        failures = []
+        cfg = self._archive_config()
+        for row in self.archive.list_rows(systems=[str(system or "")], limit=None):
+            rid = row["rom_identity_id"]
+            ownership = self._archive_media_ownership(rid, cfg)
+            for media_type, item in ownership["types"].items():
+                if item["mode"] != "internal":
+                    linked_kept += 1
+                    continue
+                result = self.archive_media_delete(rid, media_type)
+                if result.get("ok"):
+                    removed += 1
+                else:
+                    failures.append({"romIdentityId": rid, "mediaType": media_type,
+                                     "reason": result.get("error")})
+        if not removed and linked_kept and not failures:
+            return err("이 System의 Media는 모두 외부 원본 연결이라 Archive에서 파일을 삭제할 수 없습니다.")
+        return ok({"removed": removed, "linkedKept": linked_kept, "failures": failures})
 
     @guarded
     def archive_delete_system(self, system):
@@ -2444,8 +2962,13 @@ class Api:
         하므로 Plan에 올린다.
         """
         collection, cache, provider = self._plan_context(collection_id)
+        cfg = self._archive_config()
         result = archive_service.to_collection(self.archive, collection, cache, provider,
-                                               rom_identity_ids)
+                                               rom_identity_ids,
+                                               media_resolver=(
+                                                   lambda rid, media_type, item:
+                                                   self._archive_media_display_path(rid, media_type, item)
+                                               ) if cfg["mediaInternal"] else None)
         added = {"added": 0, "skipped": [], "conflicts": 0}
         if result["items"]:
             added = builder.plan_add(self._plan(collection_id), collection, provider,

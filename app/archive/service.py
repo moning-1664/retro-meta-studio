@@ -85,6 +85,8 @@ def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=No
     total = len(rows)
     ingested = revised = 0
     identity_ids: list[str] = []
+    revision_record_ids: list[int] = []
+    revised_identity_ids: list[str] = []
     for index, row in enumerate(rows, start=1):
         if progress_cb:
             progress_cb(index, total, row["filename"])
@@ -113,6 +115,11 @@ def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=No
         _revision, created = archive.put_record(
             rom_identity_id, collection.id, row["fields"], row["frontend_raw"],
             media=row["media"], **kwargs)
+        latest_record = archive.latest_record(rom_identity_id, collection.id)
+        if latest_record:
+            revision_record_ids.append(latest_record["record_id"])
+        if created:
+            revised_identity_ids.append(rom_identity_id)
         ingested += 1
         revised += 1 if created else 0
 
@@ -130,7 +137,9 @@ def ingest_collection(archive, collection, cache, rom_uids=None, *, retention=No
             "unchanged": ingested - revised, "sourceCollectionId": collection.id,
             # 화면에서 고른 대상과 실제로 들어간 대상이 같은지 확인할 수 있어야 한다.
             "ingestedRomUids": [r["rom_uid"] for r in rows],
-            "romIdentityIds": identity_ids}
+            "romIdentityIds": identity_ids,
+            "revisionRecordIds": revision_record_ids,
+            "revisedIdentityIds": revised_identity_ids}
 
 
 def detail(archive, rom_identity_id) -> dict | None:
@@ -144,6 +153,8 @@ def detail(archive, rom_identity_id) -> dict | None:
     `sources`는 실제 Collection 출처만 담는다 - 사용자가 직접 고친 기록은 Collection이
     아니므로 출처 비교(§44) 목록에 섞이면 안 되고, `edited` 플래그로만 알린다.
     """
+    from app.archive.projection import effective_media
+
     identity = archive.get_identity(rom_identity_id)
     if identity is None:
         return None
@@ -171,7 +182,9 @@ def detail(archive, rom_identity_id) -> dict | None:
              "revision": s["revision"], "updatedAt": s["updated_at"], "fields": s["fields"]}
             for s in sources
         ],
-        "media": archive.media_refs(rom_identity_id),
+        # 화면도 export/projection과 같은 effective media를 봐야 한다. 원본 참조를
+        # 그대로 주면 tombstone으로 제거한 항목이 상세에서 다시 살아난다.
+        "media": list(effective_media(archive, rom_identity_id).values()),
         "romSources": archive.rom_sources(rom_identity_id),
         # **같은 내용은 한 줄로 묶어서 준다**(실사용 피드백 - "Revision에 동일 버젼이 같이 보인다").
         # 출처가 둘이어도 내용이 같으면 고를 이유가 없다 - 실제로 다른 것만 골라야 뜻이 있다.
@@ -232,7 +245,8 @@ def _language_matches(index, system, filename):
     return sorted(found, key=lambda r: str(r["filename"]).casefold())
 
 
-def to_collection(archive, collection, cache, provider, rom_identity_ids) -> dict:
+def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
+                  media_resolver=None) -> dict:
     """Archive 항목을 대상 Collection으로 보낸다(§41, Scenario 8).
 
     반환: {"updated": n, "items": [...], "skipped": [...]}
@@ -285,9 +299,14 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids) -> dic
             if need_rom:
                 rom = next((s for s in archive.rom_sources(rom_identity_id)
                             if provider.exists(s["abs_path"])), None)
-            media = [{"type": m["media_type"], "path": m["abs_path"], "size": m["size"]}
-                     for m in archive.media_refs(rom_identity_id)
-                     if m["media_type"] not in have_media and provider.exists(m["abs_path"])]
+            from app.archive.projection import effective_media
+            media = []
+            for media_type, ref in effective_media(archive, rom_identity_id).items():
+                if media_type in have_media:
+                    continue
+                path = media_resolver(rom_identity_id, media_type, ref) if media_resolver else ref["abs_path"]
+                if path and provider.exists(path):
+                    media.append({"type": media_type, "path": path, "size": ref["size"]})
 
             if rom is None and not media:
                 if row is None:

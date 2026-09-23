@@ -472,6 +472,28 @@
     titlescreens: "TitleScreens", videos: "Videos", wheel: "Wheel",
   };
 
+  const OWNERSHIP_LABEL = {
+    internal: "Archive 보관", linked: "원본 연결", mixed: "혼합", none: "파일 없음",
+  };
+
+  function ownershipBadge(mode, compact) {
+    const value = OWNERSHIP_LABEL[mode] ? mode : "none";
+    const glyph = value === "internal" ? "hardDrive"
+      : value === "linked" ? "link" : value === "mixed" ? "arrowLeftRight" : "xCircle";
+    return h("span", {
+      class: `ownership-badge ${value}` + (compact ? " compact" : ""),
+      title: value === "internal" ? "Archive 관리 폴더 안의 파일"
+        : value === "linked" ? "외부 Collection의 원본 파일을 연결해서 사용"
+          : value === "mixed" ? "Archive 보관 파일과 외부 원본 연결이 함께 있음" : "연결된 파일 없음",
+    }, [icon(glyph, IC.xs), OWNERSHIP_LABEL[value]]);
+  }
+
+  function mediaOwnership(slot) {
+    const key = Object.keys(MEDIA_LABEL).find((name) => MEDIA_LABEL[name] === slot.key);
+    return key && S.detailState && S.detailState.ownership
+      ? S.detailState.ownership.media?.types?.[key] : null;
+  }
+
   const activeDetail = () => S.detail[S.activeId] || null;
   const activeScope = () => S.scope[S.activeId] || { kind: "all" };
 
@@ -1365,13 +1387,16 @@
   async function ensureDetail(id) {
     if (id === ARCHIVE_ID) {
       // Archive에는 Storage 개념이 없다. Collection 헤더와 같은 모양으로만 맞춘다.
-      const [systems, rows] = await Promise.all([api.archiveSystems(), api.archiveRows({ limit: 1 })]);
+      const [systems, rows, ownership] = await Promise.all([
+        api.archiveSystems(), api.archiveRows({ limit: 1 }), api.archiveOwnershipSummary(),
+      ]);
       S.detail[ARCHIVE_ID] = {
         id: ARCHIVE_ID, name: "Archive", frontendLabel: "보관소",
         target: null, os: null, arch: null, rootPath: "", storages: [],
         systemCount: (systems.ok ? systems.data : []).length,
         totalGames: rows.ok ? rows.data.total : 0,
         archiveSystems: systems.ok ? systems.data : [],
+        ownershipSummary: ownership.ok ? ownership.data : null,
       };
       return;
     }
@@ -2203,9 +2228,8 @@
     return r.ok && r.data.items.some((i) => i.changed);
   }
 
-  /** Archive System 우클릭 메뉴 - Collection의 System 메뉴 중 Archive 데이터만으로
-   * 계산 가능한 것만 옮긴다("Storage 옮기기"/"이름 바꾸기"/"미디어 정리"는 Collection의
-   * 실제 파일이 있어야 하는 동작이라 Archive에는 없다, 사용자 리포트로 정리). */
+  /** Archive System 우클릭 메뉴. 파일 작업은 소유권을 확인해 Archive 관리 루트 안의
+   * 자산만 바꾸고, 외부 Collection 연결은 그대로 둔다. */
   async function openArchiveSystemMenu(sys, event) {
     const items = [
       { label: "언어 태그 적용…", icon: "tag",
@@ -2219,16 +2243,31 @@
         title: "ROM 위치가 한 번도 기록되지 않은 항목(메타데이터만 남은 것)을 Archive에서 지웁니다. "
           + "실제 파일은 건드리지 않습니다.",
         onSelect: () => confirmArchiveOrphanCleanup(sys) },
+      { label: "Archive 보관 ROM 전체 삭제…", icon: "gamepad", danger: true,
+        title: "이 System에서 Archive ROM 디렉토리 안의 파일만 삭제합니다. 외부 원본 연결은 유지합니다.",
+        onSelect: () => confirmArchiveSystemRomDelete(sys) },
+      { label: "Archive 보관 Media 전체 삭제…", icon: "image", danger: true,
+        title: "이 System에서 Archive가 보관하는 Media 복사본만 삭제합니다. 외부 원본 연결은 유지합니다.",
+        onSelect: () => confirmArchiveSystemMediaDelete(sys) },
       { label: "시스템 전체 Archive에서 지우기 (!)", icon: "trash", danger: true,
         title: "이 System의 Archive 기록을 전부 지웁니다 - 실제 ROM/Media 파일은 그대로입니다.",
         onSelect: () => confirmRemoveArchiveSystem(sys) },
     ];
+    items.push("separator", { section: "Archive 폴더 열기" });
+    [["rom", "ROM 폴더", "설정한 Archive ROM 경로의 이 System 폴더를 엽니다."],
+      ["metadata", "Metadata 폴더", "Archive frontend 형식으로 저장한 이 System의 Metadata 폴더를 엽니다."],
+      ["media", "Media 폴더", "mediaInternal 설정에 따라 Archive 복사본 또는 원본 Media 폴더를 엽니다."]]
+      .forEach(([kind, label, title]) => items.push({ label, icon: "folderOpen", title,
+        onSelect: async () => {
+          const r = await api.archiveSystemFolder(sys.system, kind);
+          if (!r.ok) showToast(r.error, "error");
+        } }));
     showContextMenu(menuPoint(event), sys.system.toUpperCase(),
       `게임 ${formatCount(sys.count)}`, items, null, systemIcon(sys.system, 15));
   }
 
-  /** Archive의 "ROM 없는 항목 정리" - Collection 쪽과 뜻은 같지만 지우는 것은
-   * Archive의 기록뿐이다(실제 파일은 애초에 Archive의 것이 아니다, §37). */
+  /** Archive의 "ROM 없는 항목 정리" - Collection 쪽과 뜻은 같지만 여기서는
+   * Archive 기록만 지우며, 남아 있는 Media 파일은 건드리지 않는다. */
   async function confirmArchiveOrphanCleanup(sys) {
     const preview = await api.archiveOrphanPreview(sys.system);
     if (!preview.ok) { showToast(preview.error, "error"); return; }
@@ -3217,6 +3256,18 @@
         ]),
       ]),
     ]);
+    if (isArchive() && detail.ownershipSummary) {
+      const own = detail.ownershipSummary;
+      summary.appendChild(h("span", { class: "cheader-stats-divider", "aria-hidden": "true" }, ["|"]));
+      summary.appendChild(h("div", {
+        class: "cheader-stat-group ownership-summary",
+        title: "각 항목의 ROM과 Media 파일 소유 방식",
+      }, [
+        h("span", { class: "cheader-stat" }, [icon("hardDrive", IC.xs), `보관 ${formatCount(own.internal || 0)}`]),
+        h("span", { class: "cheader-stat" }, [icon("link", IC.xs), `연결 ${formatCount(own.linked || 0)}`]),
+        h("span", { class: "cheader-stat" }, [icon("arrowLeftRight", IC.xs), `혼합 ${formatCount(own.mixed || 0)}`]),
+      ]));
+    }
     if (detail.storages.length) {
       summary.appendChild(h("span", { class: "cheader-stats-divider", "aria-hidden": "true" }, ["|"]));
       const storageGroup = h("div", { class: "cheader-stat-group storages" });
@@ -3613,22 +3664,19 @@
     // 그 자리를 필터가 아니라 **1차 정렬 기준**으로 바꿨다 - "있는 항목"이
     // "없는 항목"보다 먼저 오고, 그 안에서는 기존 정렬(제목/파일명 등)이 그대로
     // 2차 기준이다. "구분 없음"은 예전과 똑같이 동작한다(1차 기준이 없을 뿐).
-    // Archive는 present/hasMetadata가 항상 참이라(§37) 이 정렬이 뜻이 없어 뺀다.
-    if (!isArchive()) {
-      const prioritySel = h("select", { class: "mini-select", title: "우선 정렬" }, [
-        h("option", { value: "" }, ["전체보기"]),
-        h("option", { value: "rom" }, ["ROM 우선"]),
-        h("option", { value: "metadata" }, ["메타데이터 우선"]),
-        h("option", { value: "media" }, ["미디어 우선"]),
-      ]);
-      prioritySel.value = S.sortPriority || "";
-      prioritySel.addEventListener("change", async (e) => {
-        S.sortPriority = e.target.value || null;
-        resetList();
-        await reloadList();
-      });
-      bar.appendChild(prioritySel);
-    }
+    const prioritySel = h("select", { class: "mini-select", title: "우선 정렬" }, [
+      h("option", { value: "" }, ["전체보기"]),
+      h("option", { value: "rom" }, ["ROM 우선"]),
+      h("option", { value: "metadata" }, ["메타데이터 우선"]),
+      h("option", { value: "media" }, ["미디어 우선"]),
+    ]);
+    prioritySel.value = S.sortPriority || "";
+    prioritySel.addEventListener("change", async (e) => {
+      S.sortPriority = e.target.value || null;
+      resetList();
+      await reloadList();
+    });
+    bar.appendChild(prioritySel);
 
     // 정렬 셀렉트는 따로 두지 않는다 - 목록 머리글(#list-head)이 Card 보기에서도
     // 그대로 보이고 클릭도 되므로(실사용 확인) 따로 둘 이유가 없다.
@@ -4660,6 +4708,10 @@
     const single = count === 1;
     const locked = isCompare();
     const files = [...S.selected].map((uid) => (rowByUid(uid) || {}).file).filter(Boolean);
+    const archiveOwnedRoms = isArchive() ? [...S.selected].filter((uid) => {
+      const mode = (rowByUid(uid) || {}).ownership?.rom?.mode;
+      return mode === "internal" || mode === "mixed";
+    }).length : 0;
     const star = document.querySelector(`.lrow[data-rom-uid="${row.romUid}"] .fav-btn, `
       + `.preview-card[data-rom-uid="${row.romUid}"] .fav-btn`);
 
@@ -4694,10 +4746,11 @@
         { label: "메타데이터 스크랩…", icon: "sparkles", disabled: true,
           title: "준비 중입니다.", onSelect: () => {} },
         "separator",
-        { label: "복사", icon: "copy", hint: "Ctrl+C", disabled: isArchive() || locked, onSelect: copySelectedRows },
-        { label: "붙여넣기", icon: "upload", hint: "Ctrl+V", disabled: isArchive() || locked, onSelect: () => pasteClipboard() },
+        { label: "복사", icon: "copy", hint: "Ctrl+C", disabled: locked, onSelect: copySelectedRows },
+        { label: "붙여넣기", icon: "upload", hint: "Ctrl+V", disabled: locked,
+          onSelect: () => pasteClipboard() },
         { label: "이 항목으로 붙여넣기 - 다른 파일명 지정", icon: "upload",
-          disabled: !single || isArchive() || locked,
+          disabled: !single || locked,
           title: "복사한 항목의 파일명이 이 게임과 달라도, 이 게임을 대상으로 지목해서 붙입니다(설정된 모드를 따릅니다). "
             + "예: 파일명이 전혀 다른 두 게임을 직접 이어 붙일 때.",
           onSelect: () => pasteClipboard(row) },
@@ -4706,13 +4759,20 @@
           onSelect: () => copyTextToClipboard(files.join("\n"),
             files.length > 1 ? `파일명 ${formatCount(files.length)}개를 복사했습니다.` : "파일명을 복사했습니다.") },
         "separator",
-        // Archive는 ROM/메타데이터를 따로 지울 수 없다 - Identity 하나가 여러 출처를
-        // 모은 것이라 "ROM만"/"메타데이터만"이라는 구분 자체가 없다(실사용 버그
-        // 리포트 후 정리 - 예전엔 이 셋이 그대로 보이는데 눌러도 매번 에러였다).
+        // Archive 보관 ROM은 파일만 지울 수 있다. 외부 연결은 물리 파일을 건드리지 않고,
+        // Identity 전체 삭제는 여전히 DB 기록만 제거한다.
         ...(isArchive()
-          ? [{ label: "Archive에서 지우기", icon: "trash", hint: "Del", danger: true, disabled: locked,
+          ? [
+              { label: "Archive 보관 ROM 삭제", icon: "gamepad", danger: true,
+                disabled: locked || !archiveOwnedRoms,
+                title: archiveOwnedRoms
+                  ? "Archive ROM 디렉토리 안의 파일만 삭제합니다. 외부 원본 연결은 유지합니다."
+                  : "선택한 항목에는 Archive가 보관하는 ROM 파일이 없습니다.",
+                onSelect: deleteArchiveOwnedRoms },
+              { label: "Archive에서 지우기", icon: "trash", hint: "Del", danger: true, disabled: locked,
                title: "실제 ROM/Media 파일은 지우지 않습니다 - Archive의 기록만 지웁니다.",
-               onSelect: () => deleteSelection() }]
+               onSelect: () => deleteSelection() },
+            ]
           : [
               { label: "삭제", icon: "trash", hint: "Del", danger: true, disabled: locked,
                 title: "ROM + 메타데이터 + 미디어를 모두 지웁니다", onSelect: () => deleteSelection(DELETE_ALL) },
@@ -4734,11 +4794,9 @@
     // Archive 항목은 이 Collection의 파일 배치(adapter.layout)를 따르지 않는다 -
     // "폴더 열기"가 가리킬 자리 자체가 없다.
     if (!single) return [];
-    // Archive에는 자기 폴더가 없다 - 대신 **원본 ROM이 실제로 있는 자리**를 연다
-    // (사용자 지적 - Archive 자체 폴더를 열면 뜻이 없다).
     if (isArchive()) {
-      return ["separator", { label: "원본 ROM 폴더 열기", icon: "folderOpen",
-        title: "이 항목의 ROM이 실제로 있는 Collection 폴더를 엽니다.",
+      return ["separator", { label: "ROM 폴더 열기", icon: "folderOpen",
+        title: "Archive 보관 파일 또는 연결된 원본 ROM이 실제로 있는 폴더를 엽니다.",
         onSelect: async () => {
           const r = await api.archiveRomFolder(row.romIdentityId || row.romUid);
           if (!r.ok) showToast(r.error, "error");
@@ -5486,14 +5544,14 @@
   /** 버전 하나의 Cover/Screenshot 미리보기 - 문장(크기)만으로는 "진짜 같은 그림인지"를
    * 눈으로 확인할 수 없었다(실사용 피드백 - work-mtp-0917에 있던 미리보기를 다시 가져옴).
    * 그 버전에 실린 여러 출처 중 첫 번째 것을 대표로 보여준다. */
-  function archiveVersionTile(romIdentityId, sourceId, label, key) {
+  function archiveVersionTile(romIdentityId, sourceId, label, key, recordId) {
     const tile = h("div", { class: "cmp-tile ver-tile" });
     tile.appendChild(h("div", { class: "cmp-tile-label" }, [label]));
     const box = h("div", { class: "cmp-tile-box" });
     if (sourceId) {
       const img = h("img", { alt: label });
       box.appendChild(img);
-      api.getArchiveVersionMediaImage(romIdentityId, sourceId, label, true).then((r) => {
+      api.getArchiveVersionMediaImage(romIdentityId, sourceId, label, true, recordId).then((r) => {
         if (r.ok && r.data) img.src = r.data; else tile.classList.add("empty");
       });
     } else {
@@ -5528,8 +5586,8 @@
       ]));
       const versionSource = (v.sources || [])[0] || null;
       option.appendChild(h("div", { class: "ver-tiles" }, [
-        archiveVersionTile(rid, versionSource, "Covers", "covers"),
-        archiveVersionTile(rid, versionSource, "Screenshots", "screenshots"),
+        archiveVersionTile(rid, versionSource, "Covers", "covers", (v.recordIds || [])[0]),
+        archiveVersionTile(rid, versionSource, "Screenshots", "screenshots", (v.recordIds || [])[0]),
       ]));
       option.addEventListener("click", async () => {
         closeModal();
@@ -5647,7 +5705,10 @@
     return {
       archive: true, romUid: d.romIdentityId, romIdentityId: d.romIdentityId,
       system: d.system, file: d.filename, fields: d.fields, size: d.size,
-      present: true, sha256: d.sha256, sources: d.sources, favorite: !!d.favorite,
+      present: !!d.present, sha256: d.sha256, sources: d.sources, favorite: !!d.favorite,
+      romSources: d.romSources || [],
+      ownership: d.ownership || { mode: "none", rom: { mode: "none" },
+        media: { mode: "none", types: {} }, metadata: { mode: "internal" } },
       // Revision 탭(renderSourcesTab)이 읽는 값들 - 예전엔 빠뜨려서 목록엔 [n] 충돌
       // 뱃지가 붙는데 열어 보면 늘 "수집된 Revision이 없습니다"였다.
       versions: d.versions, preferredRecordId: d.preferredRecordId,
@@ -5720,9 +5781,54 @@
   }
 
   function captureDraft() {
-    if (!S.detailState) return;
-    S.detailState.draft = S.detailState.draft || {};
-    Object.keys(fieldRefs).forEach((k) => { if (fieldRefs[k]) S.detailState.draft[k] = fieldRefs[k].value; });
+    const state = S.detailState;
+    if (!state) return;
+    state.draft = state.draft || {};
+    Object.keys(fieldRefs).forEach((k) => {
+      const input = fieldRefs[k];
+      if (!input) return;
+      const baseline = String((state.fields || {})[k] ?? "");
+      const value = String(input.value ?? "");
+      // Preserve ABSENT when an unrelated field changes. A blank value is
+      // CLEARED only when the user actually erased a populated field.
+      if (value === baseline) delete state.draft[k];
+      else state.draft[k] = value;
+    });
+  }
+
+  async function confirmArchiveSystemRomDelete(sys) {
+    showConfirm(`${sys.system.toUpperCase()} - Archive 보관 ROM 삭제`,
+      `이 System의 항목 ${formatCount(sys.count)}개를 확인해 Archive ROM 디렉토리 안의 파일만 삭제합니다. `
+      + "외부 Collection의 원본 ROM과 연결은 그대로 유지합니다.", true, async () => {
+        const ids = await api.archiveUids([sys.system]);
+        if (!ids.ok) { showToast(ids.error, "error"); return; }
+        const r = await api.archiveRomDelete(ids.data || []);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        resetList();
+        renderAll();
+        await reloadList();
+        showToast(`Archive 보관 ROM ${formatCount(r.data.deletedFiles || 0)}개를 삭제했습니다.`
+          + ((r.data.linkedSourcesKept || 0)
+            ? ` 원본 연결 ${formatCount(r.data.linkedSourcesKept)}개는 유지했습니다.` : ""));
+      });
+  }
+
+  async function confirmArchiveSystemMediaDelete(sys) {
+    showConfirm(`${sys.system.toUpperCase()} - Archive 보관 Media 삭제`,
+      "이 System에서 Archive가 보관하는 Media 복사본을 모두 삭제합니다. "
+      + "외부 Collection의 원본 Media와 연결은 그대로 유지합니다.", true, async () => {
+        const r = await api.archiveMediaDeleteSystem(sys.system);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        resetList();
+        renderAll();
+        await reloadList();
+        showToast(`Archive 보관 Media ${formatCount(r.data.removed || 0)}개를 삭제했습니다.`
+          + ((r.data.linkedKept || 0)
+            ? ` 원본 연결 ${formatCount(r.data.linkedKept)}개는 유지했습니다.` : "")
+          + ((r.data.failures || []).length
+            ? ` 실패 ${formatCount(r.data.failures.length)}개.` : ""),
+        (r.data.failures || []).length ? "warning" : "success");
+      });
   }
 
   /** 상세 패널의 별표. 목록의 별표와 같은 곳을 가리켜야 한다. */
@@ -5870,7 +5976,10 @@
     header.appendChild(h("div", { style: { minWidth: "0", flex: "1" } }, [
       h("div", { class: "detail-eyebrow" }, ["METADATA"]),
       h("div", { class: "detail-filename", title: state.file }, [state.file]),
-      h("div", { class: "detail-system" }, [systemIcon(state.system, 13), String(state.system).toUpperCase()]),
+      h("div", { class: "detail-system" }, [
+        systemIcon(state.system, 13), String(state.system).toUpperCase(),
+        state.archive ? ownershipBadge(state.ownership?.mode, true) : null,
+      ]),
     ]));
 
     // 파일명 복사는 Archive 항목에도 있다(예전부터 그랬다) - Play/Favorite만
@@ -5881,23 +5990,19 @@
     }, [icon("copy", IC.sm)]);
     header.appendChild(copyBtn);
 
-    if (!state.archive) {
-      // 실행은 아직 연결되지 않았다. **버튼을 없애는 대신 못 한다고 말한다** -
-      // 사라진 기능은 언제 돌아오는지 알 수 없지만, 눌러서 안내를 받으면 안다.
-      const target = { romUid: state.romUid, system: state.system, file: state.file, present: state.present };
-      const blocked = launchBlockReason(target);
-      const play = h("button", {
-        class: "icon-btn detail-launch", title: blocked || "RetroArch로 실행 (행 더블클릭도 됩니다)",
-        disabled: !!blocked,
-      }, [icon("play", IC.md)]);
-      play.addEventListener("click", () => launchGame(target));
-      header.appendChild(play);
-    }
+    const target = { romUid: state.romUid, system: state.system, file: state.file, present: state.present };
+    const blocked = launchBlockReason(target);
+    const play = h("button", {
+      class: "icon-btn detail-launch", title: blocked || "RetroArch로 실행 (행 더블클릭도 됩니다)",
+      disabled: !!blocked,
+    }, [icon("play", IC.md)]);
+    play.addEventListener("click", () => launchGame(target));
+    header.appendChild(play);
     inner.appendChild(header);
 
     const tabs = h("div", { class: "detail-tabs" });
     const tabDefs = state.archive
-      ? [["metadata", "Metadata"], ["media", "Media"], ["sources", "Revision"]]
+      ? [["metadata", "Metadata"], ["media", "Media"], ["rom", "ROM"], ["sources", "Revision"]]
       : [["metadata", "Metadata"], ["media", "Media"], ["rom", "ROM"]];
     tabDefs.forEach(([key, label]) => {
       const tab = h("button", { class: "detail-tab" + (state.tab === key ? " active" : "") }, [label]);
@@ -6110,12 +6215,19 @@
 
   function mediaTile(slot, media, extraClass) {
     const has = !!media[slot.key];
+    const ownership = has ? mediaOwnership(slot) : null;
     const zone = h("div", {
       class: ["media-tile", extraClass, has ? "" : "empty"].filter(Boolean).join(" "),
       title: slot.label + (has ? "" : " 없음"),
     });
     // 라벨은 그림 위에 겹쳐 놓는다 - 레이아웃 공간을 먹지 않아야 그림이 커진다.
     zone.appendChild(h("div", { class: "media-tile-label" }, [slot.label]));
+    if (ownership) {
+      zone.appendChild(h("div", {
+        class: `media-tile-owner ${ownership.mode}`,
+        title: OWNERSHIP_LABEL[ownership.mode] || "파일 없음",
+      }, [icon(ownership.mode === "internal" ? "hardDrive" : "link", IC.xs)]));
+    }
 
     // **비어 있어도 상자 크기는 그대로다.** 크기는 CSS가 정하고 그림은 그 안에
     // 맞춰 들어간다 - 그림 크기가 배치를 정하면 게임을 넘길 때마다 패널이 출렁인다.
@@ -6162,6 +6274,8 @@
     e.stopPropagation();
     // Archive든 Collection이든 붙여넣을 수 있다 - 가는 길만 다르다(Archive는 즉시, Collection은 Plan).
     const pasteOk = !!mediaClip;
+    const ownership = state.archive ? mediaOwnership(slot) : null;
+    const ownsMedia = ownership?.mode === "internal";
     showContextMenu(menuPoint(e), slot.label, mediaClip
       ? `복사해 둔 것: ${mediaClip.label} (${mediaClip.title})` : null, [
       { label: "미디어 복사", icon: "copy", disabled: !has, onSelect: () => {
@@ -6175,8 +6289,8 @@
       { label: "미디어 붙여넣기", icon: "upload", disabled: !pasteOk,
         title: mediaClip ? null : "복사한 미디어가 없습니다",
         onSelect: async () => {
-          // Archive는 그 자리에서 바뀌고(파일을 복제하지 않는다), Collection은 바이트가 움직이므로
-          // Plan을 거친다(D1) - Apply를 눌러야 실제 파일이 바뀐다.
+          // Archive는 그 자리에서 바뀌고, mediaInternal이면 Archive 내부 Revision 복사본에도
+          // 보관한다. Collection은 바이트가 움직이므로 Plan을 거친다(D1).
           const r = state.archive
             ? await api.archiveMediaPaste(state.romIdentityId, slot.key, mediaClip)
             : await api.mediaPaste(S.activeId, state.romUid, slot.key, mediaClip);
@@ -6184,12 +6298,36 @@
           if (state.archive) {
             state.media = { ...(state.media || {}), [slot.key]: true };
             renderDetailPanel();
+            await refreshArchiveRows([state.romIdentityId]);
             showToast(`${slot.label}을(를) 붙여넣었습니다.`);
             return;
           }
           await refreshPlan();
           showToast(`${slot.label}을(를) Plan에 올렸습니다. Apply를 누르면 반영됩니다.`);
         } },
+      ...(state.archive ? [{ label: ownsMedia ? "Archive 보관 미디어 삭제" : "Archive에서 미디어 연결 제거",
+        icon: "trash", danger: true,
+        disabled: !has,
+        title: ownsMedia
+          ? "Archive가 보관하는 복사본을 삭제하고 제거 상태를 기록합니다. 외부 원본은 그대로 둡니다."
+          : "외부 원본 파일은 건드리지 않고 Archive의 연결만 제거 상태로 기록합니다.",
+        onSelect: () => showConfirm(ownsMedia ? "Archive 보관 미디어 삭제" : "Archive 미디어 연결 제거",
+          ownsMedia
+            ? `${slot.label}의 Archive 보관 복사본을 삭제합니다. 외부 원본 파일은 삭제하지 않습니다.`
+            : `${slot.label} 연결을 Archive 항목에서 제거합니다. 외부 원본 파일은 삭제하지 않습니다.`,
+          true, async () => {
+            const r = await api.archiveMediaDelete(state.romIdentityId, slot.key);
+            if (!r.ok) { showToast(r.error, "error"); return; }
+            const detail = await api.archiveDetail(state.romIdentityId);
+            if (detail.ok && detail.data && S.detailState === state) {
+              S.detailState = archiveDetailState(detail.data, state.tab);
+              renderDetailPanel();
+            }
+            await refreshArchiveRows([state.romIdentityId]);
+            showToast(ownsMedia
+              ? `${slot.label}의 Archive 보관 복사본을 삭제했습니다. 외부 원본은 그대로입니다.`
+              : `${slot.label} 연결을 Archive에서 제거했습니다. 원본 파일은 그대로입니다.`);
+          }) }] : []),
     ]);
   }
 
@@ -6206,12 +6344,17 @@
     const row = h("div", { class: "media-flags" });
     MEDIA_FLAGS.forEach((slot) => {
       const has = !!media[slot.key];
+      const ownership = has ? mediaOwnership(slot) : null;
       row.appendChild(h("div", {
         class: "media-flag-item" + (has ? " on" : ""),
         title: `${slot.label}${has ? " 있음" : " 없음"}`,
       }, [
         icon(MEDIA_FLAG_ICONS[slot.key] || "image", 11),
         h("span", { class: "media-flag-label" }, [slot.label]),
+        ownership ? h("span", {
+          class: `media-flag-owner ${ownership.mode}`,
+          title: OWNERSHIP_LABEL[ownership.mode] || "파일 없음",
+        }, [icon(ownership.mode === "internal" ? "hardDrive" : "link", 9)]) : null,
       ]));
     });
     return row;
@@ -6536,6 +6679,7 @@
       ["System", String(state.system).toUpperCase()],
       ["크기", state.size ? formatBytes(state.size) : "-"],
       ["ROM 파일", state.present ? "있음" : "없음 (metadata만 존재)"],
+      ...(state.archive ? [["보관 방식", OWNERSHIP_LABEL[state.ownership?.rom?.mode] || "파일 없음"]] : []),
       ["SHA256", state.sha256 || "계산 안 됨"],
     ];
     const box = h("div", { class: "rom-info" });
@@ -6544,7 +6688,7 @@
         h("span", {}, [label]), h("span", { class: "truncate" }, [value])]));
     });
     body.appendChild(box);
-    if (!state.archive) body.appendChild(romCoreSection(state));
+    body.appendChild(romCoreSection(state));
   }
 
   /** ROM 탭의 RetroArch Core 선택(사용자 결정 - Detail 머리의 옵션 버튼과 대화상자 대신, 비어 있던
@@ -6683,14 +6827,12 @@
   // 충돌로 뜨고, 사용자가 "메타데이터만"을 고르면 ROM은 그대로 두고 메타데이터/
   // media만 채워진다(파일이 없는 조각만 옮겨진다는 뜻과 같다). 그래서 여기서는
   // 새 로직을 만들지 않고 Apply 흐름과 같은 충돌 다이얼로그를 그대로 쓴다.
-  // Archive 탭에는 이 방식이 안 맞는다 - Archive는 rom_uid가 아니라
-  // romIdentityId로 식별하고, 자기 전용 경로(Archive에 수집 / Collection으로
-  // 보내기)가 이미 있다.
   async function copySelectedRows() {
     if (blockedInCompare("복사")) return;
-    if (isArchive()) { showToast("Archive는 복사할 수 없습니다 - \"Collection으로 보내기\"를 쓰세요.", "warning"); return; }
     if (!S.selected.size) { showToast("복사할 항목을 선택하세요.", "warning"); return; }
-    const r = await api.copySelection(S.activeId, [...S.selected]);
+    const r = isArchive()
+      ? await api.archiveCopySelection([...S.selected])
+      : await api.copySelection(S.activeId, [...S.selected]);
     if (!r.ok) { showToast(r.error, "error"); return; }
     showToast(`${formatCount(r.data.count)}개 복사했습니다. 대상 System/Collection에서 Ctrl+V로 붙여넣으세요.`);
   }
@@ -6702,7 +6844,25 @@
    * 실제로 고르려던 대상 행은 전혀 건드리지 못했던 것이다). */
   async function pasteClipboard(targetRow) {
     if (blockedInCompare("붙여넣기")) return;
-    if (isArchive()) { showToast("Archive에는 붙여넣을 수 없습니다 - \"Archive에 수집\"을 쓰세요.", "warning"); return; }
+    if (isArchive()) {
+      const r = await api.archivePaste(currentPasteMode(), targetRow?.romIdentityId || targetRow?.romUid || null);
+      if (!r.ok) { showToast(r.error, "error"); return; }
+      const d = r.data || {};
+      await reloadList();
+      if (targetRow && S.detailState?.archive) {
+        const detail = await api.archiveDetail(targetRow.romIdentityId || targetRow.romUid);
+        if (detail.ok && detail.data) {
+          S.detailState = archiveDetailState(detail.data, S.detailState.tab);
+          renderDetailPanel();
+        }
+      }
+      showToast(`Archive에 ${formatCount(d.pasted || 0)}개를 붙여넣었습니다.`
+        + ((d.copiedRoms || 0) ? ` ROM ${formatCount(d.copiedRoms)}개를 보관 폴더로 복사했습니다.` : "")
+        + ((d.conflicts || []).length ? ` 기존 ROM ${formatCount(d.conflicts.length)}개는 덮어쓰지 않았습니다.` : "")
+        + ((d.skipped || []).length ? ` 건너뜀 ${formatCount(d.skipped.length)}개.` : ""),
+      (d.conflicts || []).length || (d.skipped || []).length ? "warning" : "success");
+      return;
+    }
     let systemMap = {};
     let targetMap = null;
     if (targetRow) {
@@ -6796,6 +6956,32 @@
   //: 우클릭 메뉴의 세 가지 삭제. "메타데이터 삭제"는 gamelist 항목과 미디어(영상 포함)를 함께 지운다.
   const DELETE_ALL = ["rom", "metadata", "media", "video"];
   const DELETE_META_AND_MEDIA = ["metadata", "media", "video"];
+
+  async function deleteArchiveOwnedRoms() {
+    if (blockedInCompare("ROM 삭제")) return;
+    const ids = [...S.selected];
+    if (!ids.length) return;
+    showConfirm("Archive 보관 ROM 삭제",
+      `선택한 ${formatCount(ids.length)}개 항목에서 Archive ROM 디렉토리 안의 파일만 삭제합니다. `
+      + "외부 Collection의 원본 연결은 그대로 유지합니다.", true, async () => {
+        const r = await api.archiveRomDelete(ids);
+        if (!r.ok) { showToast(r.error, "error"); return; }
+        const result = r.data || {};
+        await reloadList();
+        if (S.detailState?.archive && ids.map(String).includes(String(S.detailState.romIdentityId))) {
+          const detail = await api.archiveDetail(S.detailState.romIdentityId);
+          if (detail.ok && detail.data) {
+            S.detailState = archiveDetailState(detail.data, S.detailState.tab);
+            renderDetailPanel();
+          }
+        }
+        const kept = result.linkedSourcesKept || 0;
+        const failed = (result.failures || []).length;
+        showToast(`Archive 보관 ROM ${formatCount(result.deletedFiles || 0)}개를 삭제했습니다.`
+          + (kept ? ` 원본 연결 ${formatCount(kept)}개는 유지했습니다.` : "")
+          + (failed ? ` 실패 ${formatCount(failed)}개.` : ""), failed ? "warning" : "success");
+      });
+  }
 
   /** `parts`를 지운다(정하지 않으면 전부). 무엇이 지워지는지 확인창과 토스트가 그대로 말한다. */
   async function deleteSelection(parts) {

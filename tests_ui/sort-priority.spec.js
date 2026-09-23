@@ -67,9 +67,11 @@ test.describe("기본 동작", () => {
     await expect.poll(() => seen.includes("rom")).toBe(true);
   });
 
-  test("Archive 탭에는 우선 정렬이 없다(present/hasMetadata가 항상 참이라 뜻이 없다)", async ({ page }) => {
+  test("Archive 탭에서도 백엔드 우선 정렬 옵션을 사용할 수 있다", async ({ page }) => {
     await page.locator(".ctab.archive").click();
-    await expect(prioritySelect(page)).toHaveCount(0);
+    await expect(prioritySelect(page)).toBeVisible();
+    await prioritySelect(page).selectOption("metadata");
+    await expect(prioritySelect(page)).toHaveValue("metadata");
   });
 });
 

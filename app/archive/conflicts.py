@@ -97,13 +97,13 @@ def _load(archive, *, systems=None, rom_identity_ids=None):
     for row in conn.execute(sql, params):
         records.setdefault(row["rom_identity_id"], []).append(row)
 
-    media: dict[tuple[str, str], dict[str, int]] = {}
-    msql = ("SELECT m.rom_identity_id, m.source_collection_id, m.media_type, m.size"
-            " FROM archive_media m JOIN rom_identities i ON i.rom_identity_id = m.rom_identity_id"
-            f" WHERE m.media_type IN ({','.join('?' * len(IMPORTANT_MEDIA))}){cond}")
+    media: dict[int, dict[str, int]] = {}
+    msql = ("SELECT rm.record_id,rm.media_type,rm.size FROM archive_record_media rm"
+            " JOIN archive_records r ON r.record_id=rm.record_id"
+            " JOIN rom_identities i ON i.rom_identity_id=r.rom_identity_id"
+            f" WHERE rm.media_type IN ({','.join('?' * len(IMPORTANT_MEDIA))}){cond}")
     for row in conn.execute(msql, [*IMPORTANT_MEDIA, *params]):
-        media.setdefault((row["rom_identity_id"], row["source_collection_id"]),
-                         {})[row["media_type"]] = int(row["size"] or 0)
+        media.setdefault(int(row["record_id"]), {})[row["media_type"]] = int(row["size"] or 0)
 
     resolved = {r[0] for r in conn.execute("SELECT rom_identity_id FROM preferred_revisions")}
     return records, media, resolved
@@ -112,7 +112,7 @@ def _load(archive, *, systems=None, rom_identity_ids=None):
 def _entries(rid, rows, media) -> list[dict]:
     return [{"recordId": r["record_id"], "source": r["source_collection_id"],
              "updatedAt": r["updated_at"], "fields": json.loads(r["fields_json"]),
-             "media": media.get((rid, r["source_collection_id"]), {})}
+             "media": media.get(int(r["record_id"]), {})}
             for r in rows if r["source_collection_id"] != ARCHIVE_EDIT_SOURCE]
 
 

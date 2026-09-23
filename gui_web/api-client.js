@@ -323,9 +323,13 @@
     }),
     get_archive_media_image: () => ok(null),
     get_archive_version_media_image: () => ok(null),
-    archive_rows: (search, systems, limit, offset, conflictsOnly, favoritesOnly, romIdentityIds) =>
-      ok({ rows: [], total: 0, offset: 0, conflictsOnly: !!conflictsOnly,
+    archive_rows: (search, systems, limit, offset, conflictsOnly, favoritesOnly, romIdentityIds, priority) =>
+      ok({ rows: applyMockPriority([], priority), total: 0, offset: 0, conflictsOnly: !!conflictsOnly,
            favoritesOnly: !!favoritesOnly, romIdentityIds: romIdentityIds || null }),
+    archive_copy_selection: (ids) => ok({ count: (ids || []).length, bytes: 0,
+                                          sourceCollectionId: "__archive__", sourceName: "Archive" }),
+    archive_paste: () => ok({ pasted: 0, copiedRoms: 0, skipped: [], conflicts: [] }),
+    archive_ownership_summary: () => ok({ internal: 0, linked: 0, mixed: 0, none: 0, total: 0 }),
     archive_uids: () => ok([]),
     archive_conflicts: () => ok({}),
     // 저장하면 "정해졌다"로 바뀐다 - 디렉토리를 정하기 전에는 수집이 거절되므로(사용자 결정)
@@ -339,6 +343,8 @@
     start_archive_apply: () => ok({ jobId: "mock-archive-apply" }),
     archive_refresh: () => ok({ added: 0, romsLinked: 0, systems: 0 }),
     archive_media_paste: () => ok({}),
+    archive_media_delete: (romIdentityId, mediaKey) => ok({ romIdentityId, mediaType: mediaKey }),
+    archive_media_delete_system: () => ok({ removed: 0, linkedKept: 0, failures: [] }),
     media_paste: () => ok({ added: 1, skipped: [], conflicts: 0 }),
     archive_versions: () => ok({ romIdentityId: "", versions: [] }),
     archive_choose_version: () => ok({}),
@@ -355,6 +361,8 @@
     archive_orphan_preview: (system) => ok({ system, items: [] }),
     archive_cleanup_orphans: () => ok({ deleted: 0 }),
     archive_rom_folder: () => ok({ path: "D:\Roms\ps2" }),
+    archive_rom_delete: (ids) => ok({ deletedFiles: (ids || []).length, removedSources: (ids || []).length,
+                                      linkedSourcesKept: 0, failures: [] }),
     archive_set_preferred: (id, recordId) => ok({ romIdentityId: id, recordId }),
     archive_clear_preferred: (id) => ok({ romIdentityId: id, recordId: null }),
     archive_to_collection: () => ok({ updated: 0, planned: 0, skipped: [] }),
@@ -959,13 +967,18 @@
       call("get_archive_media_image", romIdentityId, label, !!thumbnail),
     // 버전(출처)마다 다른 그림을 미리 보려는 것 - preferred 하나만 주는 위 호출과 달리
     // sourceCollectionId를 지정한 그 출처의 것을 그대로 준다.
-    getArchiveVersionMediaImage: (romIdentityId, sourceCollectionId, label, thumbnail) =>
-      call("get_archive_version_media_image", romIdentityId, sourceCollectionId, label, !!thumbnail),
+    getArchiveVersionMediaImage: (romIdentityId, sourceCollectionId, label, thumbnail, recordId) =>
+      call("get_archive_version_media_image", romIdentityId, sourceCollectionId, label, !!thumbnail, recordId),
     archiveRows: (q) => call("archive_rows", q.search || null, q.systems || null,
                              q.limit || 200, q.offset || 0, !!q.conflictsOnly,
-                             !!q.favoritesOnly, q.romIdentityIds || null),
+                             !!q.favoritesOnly, q.romIdentityIds || null, q.priority || null),
+    archiveCopySelection: (romIdentityIds) => call("archive_copy_selection", romIdentityIds || []),
+    archivePaste: (mode, targetRomIdentityId) =>
+      call("archive_paste", mode || null, targetRomIdentityId || null),
     archiveUids: (systems) => call("archive_uids", systems || null),
+    archiveOwnershipSummary: () => call("archive_ownership_summary"),
     archiveSystems: () => call("archive_systems"),
+    archiveSystemFolder: (system, kind) => call("archive_system_folder", system, kind),
     archiveDetail: (romIdentityId) => call("archive_detail", romIdentityId),
     archiveEdit: (romIdentityId, fields) => call("archive_edit", romIdentityId, fields),
     archiveDelete: (romIdentityIds) => call("archive_delete", romIdentityIds),
@@ -981,12 +994,16 @@
     archiveOrphanPreview: (system) => call("archive_orphan_preview", system),
     archiveCleanupOrphans: (system) => call("archive_cleanup_orphans", system),
     archiveRomFolder: (romIdentityId) => call("archive_rom_folder", romIdentityId),
+    archiveRomDelete: (romIdentityIds) => call("archive_rom_delete", romIdentityIds || []),
     archiveSetPreferred: (romIdentityId, recordId) =>
       call("archive_set_preferred", romIdentityId, recordId),
     archiveClearPreferred: (romIdentityId) =>
       call("archive_clear_preferred", romIdentityId),
     archiveMediaPaste: (romIdentityId, key, source) =>
       call("archive_media_paste", romIdentityId, key, source),
+    archiveMediaDelete: (romIdentityId, key) =>
+      call("archive_media_delete", romIdentityId, key),
+    archiveMediaDeleteSystem: (system) => call("archive_media_delete_system", system),
     mediaPaste: (id, romUid, key, source) => call("media_paste", id, romUid, key, source),
     archiveConfig: () => call("archive_config"),
     saveArchiveConfig: (patch) => call("save_archive_config", patch),

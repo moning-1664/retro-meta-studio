@@ -143,6 +143,92 @@ class ArchiveMediaPipelineTests(unittest.TestCase):
         self.assertTrue(result["ok"], "파일 하나가 없다고 조회 자체가 실패하면 안 된다")
         self.assertIsNone(result["data"])
 
+    def test_removing_archive_media_unlinks_it_and_removes_only_the_archive_copy(self):
+        from pathlib import Path
+
+        self.api.archive_ingest(self.cid, scope={"kind": "all"})
+        rid = self._rid()
+        source = next(m["abs_path"] for m in self.api.archive.media_refs(rid)
+                      if m["media_type"] == "covers")
+        archive_dir = self.dir / "Archive"
+        configured = self.api.save_archive_config({
+            "frontend": "es-de", "archiveDir": str(archive_dir), "mediaInternal": True,
+        })
+        self.assertTrue(configured["ok"], configured.get("error"))
+        projected = self.api.archive_project()
+        self.assertTrue(projected["ok"], projected.get("error"))
+        copies = list(archive_dir.rglob("FFX.png"))
+        self.assertEqual(len(copies), 1)
+        self.assertTrue(copies[0].is_file())
+
+        removed = self.api.archive_media_delete(rid, "Covers")
+        self.assertTrue(removed["ok"], removed.get("error"))
+        self.assertTrue(any(m["media_type"] == "covers"
+                            for m in self.api.archive.media_refs(rid)),
+                        "원본 Collection의 Media 이력과 연결은 보존해야 한다")
+        from app.archive.projection import effective_media
+        self.assertNotIn("covers", effective_media(self.api.archive, rid),
+                         "Archive에서 CLEARED한 미디어가 fallback으로 되살아나면 안 된다")
+        self.assertTrue(Path(source).is_file(), "원본 Collection 미디어를 지우면 안 된다")
+        self.assertFalse(copies[0].exists(), "Archive의 투영 복사본만 지워야 한다")
+
+        refreshed = self.api.archive_refresh()
+        self.assertTrue(refreshed["ok"], refreshed.get("error"))
+        self.assertNotIn("covers", effective_media(self.api.archive, rid),
+                         "Archive 새로고침이 CLEARED 상태를 덮으면 안 된다")
+
+    def test_internal_media_setting_displays_the_archive_copy(self):
+        from base64 import b64decode
+        from pathlib import Path
+
+        self.api.archive_ingest(self.cid, scope={"kind": "all"})
+        rid = self._rid()
+        source = next(m["abs_path"] for m in self.api.archive.media_refs(rid)
+                      if m["media_type"] == "covers")
+        archive_dir = self.dir / "ArchiveInternal"
+        self.api.save_archive_config({
+            "frontend": "es-de", "archiveDir": str(archive_dir), "mediaInternal": True,
+        })
+        self.assertTrue(self.api.archive_project()["ok"])
+        archive_copy = next(archive_dir.rglob("FFX.png"))
+        original = archive_copy.read_bytes()
+        Path(source).write_bytes(b"source changed after copy")
+
+        result = self.api.get_archive_media_image(rid, "Covers")
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(b64decode(result["data"].split(",", 1)[1]), original)
+
+    def test_revision_media_uses_its_snapshot_not_the_current_archive_copy(self):
+        from base64 import b64decode
+
+        other_root = build_esde_tree(self.dir / "esde_revision")
+        write_file(other_root / "downloaded_media" / "ps2" / "covers" / "FFX.png", b"second-revision-cover")
+        other_cid = self.api.create_collection("C2", "es-de", str(other_root))["data"]["id"]
+        self.api.start_scan(other_cid)
+        wait_idle(self.api)
+        archive_dir = self.dir / "ArchiveRevisionMedia"
+        self.api.save_archive_config({
+            "frontend": "es-de", "archiveDir": str(archive_dir), "mediaInternal": True,
+        })
+
+        self.api.archive_ingest(self.cid, scope={"kind": "all"})
+        self.api.archive_ingest(other_cid, scope={"kind": "all"})
+        rid = self._rid()
+        versions = self.api.archive_versions(rid)["data"]["versions"]
+        records = [record_id for version in versions for record_id in version["recordIds"]]
+        self.assertEqual(len(records), 2)
+
+        images = []
+        for record_id in records:
+            source_id = self.api.archive.record_by_id(record_id)["source_collection_id"]
+            image = self.api.get_archive_version_media_image(
+                rid, source_id, "Covers", record_id=record_id)
+            self.assertTrue(image["ok"], image.get("error"))
+            self.assertIsNotNone(image["data"])
+            images.append(b64decode(image["data"].split(",", 1)[1]))
+        self.assertNotEqual(images[0], images[1],
+                            "Revision별 이미지가 현재 Archive frontend 복사본 하나로 합쳐졌다")
+
 
 if __name__ == "__main__":
     unittest.main()

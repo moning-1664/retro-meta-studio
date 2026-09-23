@@ -92,6 +92,29 @@ test("[P0] 버전을 고르면 Gamelist 줄도 같이 바뀐다", async ({ page 
   await expect(page.locator(".lrow", { hasText: "Metal Gear Solid 2" })).toHaveCount(0);
 });
 
+test("Archive에서 다른 필드를 저장해도 비어 있던 필드를 CLEARED로 만들지 않는다", async ({ page }) => {
+  await openArchive(page);
+  await page.evaluate(() => {
+    window.SAVED_ARCHIVE_FIELDS = null;
+    window.api.archiveDetail = () => Promise.resolve({ ok: true, data: {
+      romIdentityId: "rid1", system: "ps2", filename: "MGS2.iso",
+      fields: { name: "MGS2", genre: "Action" }, media: [], sources: [], versions: [],
+    } });
+    window.api.archiveEdit = (_rid, fields) => {
+      window.SAVED_ARCHIVE_FIELDS = fields;
+      return Promise.resolve({ ok: true, data: { revision: 1, changed: true } });
+    };
+  });
+  await page.locator(".lrow").first().click();
+  await expect(page.locator(".detail-save")).toBeVisible();
+  await page.locator(".title-input").fill("MGS2 Edited");
+  await page.locator(".detail-save").click();
+  await expect.poll(() => page.evaluate(() => window.SAVED_ARCHIVE_FIELDS)).toMatchObject({
+    name: "MGS2 Edited", genre: "Action",
+  });
+  expect(await page.evaluate(() => Object.hasOwn(window.SAVED_ARCHIVE_FIELDS, "developer"))).toBe(false);
+});
+
 test("Detail의 Revision 탭에 버전들이 실제로 보인다", async ({ page }) => {
   // 실사용 버그 리포트 - 목록엔 [n] 뱃지가 붙는데, 그 항목을 열어 Revision 탭으로
   // 가면 늘 "수집된 Revision이 없습니다"만 보였다. 원인은 화면이 archive_detail()의
@@ -115,6 +138,28 @@ test("Detail의 Revision 탭에 버전들이 실제로 보인다", async ({ page
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(0)).toContainText("Version one");
   await expect(rows.nth(1)).toContainText("Sons of Liberty");
+});
+
+test("Archive ROM 탭에서 파일 존재 여부와 RetroArch Core를 보여준다", async ({ page }) => {
+  await openArchive(page);
+  await page.evaluate(() => {
+    window.api.archiveDetail = () => Promise.resolve({ ok: true, data: {
+      romIdentityId: "rid1", system: "ps2", filename: "MGS2.iso", fields: { name: "MGS2" },
+      present: true, size: 4096, romSources: [{ abs_path: "C:/roms/MGS2.iso" }],
+      media: [], sources: [], versions: [],
+    } });
+    window.api.retroarchGameInfo = () => Promise.resolve({ ok: true, data: {
+      system: "ps2", file: "MGS2.iso", present: true, cores: ["pcsx2_libretro.dll"],
+      systemCore: "pcsx2_libretro.dll", gameCore: null,
+    } });
+  });
+  await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).locator(".lc-title").click();
+  await page.locator(".detail-tab", { hasText: "ROM" }).click();
+  await expect(page.locator(".rom-info")).toContainText("ROM 파일있음");
+  await expect(page.locator(".rom-core")).toContainText("RetroArch Core");
+  // PS2는 테스트 기본 Emulator 설정에서 아직 검증되지 않은 System이라 선택 UI 대신
+  // 기존 launchBlockReason의 설명을 보여야 한다.
+  await expect(page.locator(".rom-core")).toContainText("아직 검증되지 않았습니다");
 });
 
 test.describe("Revision 탭 - 무엇이 다른지 보여준다", () => {

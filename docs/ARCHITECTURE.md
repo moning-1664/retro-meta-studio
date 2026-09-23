@@ -206,18 +206,19 @@ archive_records(
   fields_json TEXT, frontend_raw_json TEXT, updated_at TEXT,
   UNIQUE(rom_identity_id, source_collection_id, revision)
 );
-archive_media(rom_identity_id, media_type, source_collection_id, rel_path);  -- 참조만 (§37)
+archive_media(rom_identity_id, media_type, source_collection_id, rel_path);  -- 현재 참조
+archive_record_media(record_id, media_type, abs_path, state);                -- Revision 스냅샷
 ```
 
 Revision 증가 조건은 `content_hash` 변경 시에만(§39). 같은 내용 재Import는 행을 만들지
 않는다. Retention 정책(None / Latest 1 / Latest 5 / 30 Days / Unlimited)은 `archive_records`에
 대한 정리 쿼리로 구현하며 기본값은 **Latest 5**를 권장한다.
 
-**Archive의 Media 취급(결정 D3).** Archive는 Media 파일을 복제하지 않고 원본 위치를
-가리키는 정보만 들고 있다가, Archive→Collection 복사 시 그 경로에서 실제 파일을 함께
-복사한다. 원본이 사라졌거나(외장 디스크 분리, 원본 Collection 삭제) 접근할 수 없으면
-**그 Media만 건너뛰고 나머지는 정상 진행한다** — 오류로 작업을 중단하지 않는다. 건너뛴
-항목은 결과 요약에 집계해서 사용자가 무엇이 빠졌는지 알 수 있게 한다.
+**Archive의 Media 취급(결정 D3).** `mediaInternal=false`이면 원본 Collection의 Media를
+연결해서 표시하고, `mediaInternal=true`이면 Frontend 규칙 위치에 Archive 전용 복사본을
+만들어 그 복사본을 표시한다. Revision의 과거 Media는 `.rms/revision-media`에 별도
+스냅샷으로 보존한다. 화면은 각 자산을 `Archive 보관` 또는 `원본 연결`로 표시한다.
+삭제는 Archive 관리 루트 안의 복사본에만 허용하며 외부 원본은 건드리지 않는다.
 
 ---
 
@@ -365,7 +366,7 @@ Phase 2까지가 "새 구조가 실제로 굴러가는지" 판가름하는 구�
 |---|---|---|
 | **D1** | **텍스트 메타데이터 편집은 Plan을 거치지 않고 Save 시 즉시 파일에 기록한다.** Plan은 저장 용량이 실제로 변하는 작업(ROM/Media 추가·삭제·이동·복사, Storage 변경, Convert)만 담는다 | 스펙 §25와 §35의 충돌을 "바이트가 움직이는가"라는 단일 기준으로 해소. 편집 반응성이 기존과 동일하게 유지되고, Plan의 의미가 Actual→Plan 용량 표시와 정확히 일치한다. 단, 아직 디스크에 없는(Plan `add`) 항목의 편집은 Plan 엔트리 payload로 들어간다(R7) |
 | **D2** | **Plan은 세션 한정. 앱 재시작 시 사라진다** | Plan 테이블 불필요 → 스키마·마이그레이션 부담 감소, Plan과 실제 파일 상태가 어긋난 채 되살아나는 위험 제거. 미확정 Plan을 둔 채 종료하려 하면 경고한다 |
-| **D3** | **Archive는 Media 경로 정보만 보관하고 복사 시 원본에서 함께 가져온다. 원본이 없으면 그 Media만 건너뛴다** | 스펙 §37(Archive는 Media 저장소가 아님)을 지키면서 실사용상 "메타데이터만 오고 이미지가 빠지는" 문제를 줄인다. 접근 불가를 오류가 아닌 부분 성공으로 처리해 외장 디스크 분리 상황에서 작업이 멈추지 않는다 |
+| **D3** | **Archive 자산은 경로 기준으로 `Archive 보관`과 `원본 연결`을 구분한다. `mediaInternal=true`이면 Media 복사본을 보관하고, 설정한 `romDir` 안의 ROM도 Archive 소유로 본다.** | Archive 관리 루트 안의 파일은 삭제·이동할 수 있다. 외부 Collection 경로는 읽기와 복사만 허용하고 물리 삭제하지 않는다. Revision Media는 과거 상태 보존을 위해 별도 스냅샷을 유지한다. |
 | **D4** | **기존 MasterDB 구조는 폐기. 이관 마이그레이션을 만들지 않는다** | `db.py`·`database/sqlite_db.py`의 기존 스키마·JSON 저장소를 모두 삭제한다. 메타데이터는 Collection을 스캔해서 채우고, 필요하면 Collection→Archive 경로로 수집한다. Phase 0의 레거시 정리 범위가 확정됨 |
 | **D5** | **앱 인스턴스를 여러 개 띄우는 것을 정식 지원한다.** 한쪽에서 복사하고 다른 쪽에서 붙여넣으면 파일과 메타데이터가 함께 넘어간다 | 스펙에 없던 요구사항. 단일 프로세스 전제를 깨므로 §9의 기반 작업이 Phase 0에 포함된다 |
 

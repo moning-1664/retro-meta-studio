@@ -196,21 +196,20 @@ class TCA3_MediaOnlyChange(ArchiveRevisionCase):
                          "Media만 바뀌었는데 Revision이 생기지 않았다")
         self.assertEqual(len(self._revisions()), before + 1)
 
-    def test_the_old_media_reference_is_not_recoverable_after_overwrite(self):
-        """**IMPLEMENTATION BUG.** `archive_media`는 `(identity, type, source)`당
-        슬롯이 하나뿐이라 `ON CONFLICT DO UPDATE`로 그 자리에서 덮어쓴다. cover-A를
-        가리키던 기록 자체가 사라지므로, "Revision A는 cover-A를 그대로 유지한다"는
-        정책(§6, Invariant 1)을 지킬 방법이 없다 - Revision이라는 개념 자체가 Media에는
-        없다.
-        """
+    def test_each_revision_keeps_its_media_snapshot(self):
+        """`archive_media` points at the source's current media; history belongs
+        to the revision record and must remain available after a later export."""
         self._export()
+        first = self._revisions()[0]
         self._replace_cover(b"cover-B" * 10)
         self._export()
 
-        media = self.api.archive.media_refs(self._identity_id())
-        self.assertEqual(len(media), 1, "media_type당 기록이 하나뿐이다 - 이력이 없다")
-        self.assertEqual(media[0]["size"], len(b"cover-B" * 10),
-                         "cover-A를 가리키던 이전 기록이 완전히 사라졌다")
+        revisions = self._revisions()
+        latest = max(revisions, key=lambda r: r["revision"])
+        old_media = self.api.archive.media_of_revision(first["record_id"])
+        new_media = self.api.archive.media_of_revision(latest["record_id"])
+        self.assertEqual(old_media[0]["size"], len(b"cover-A" * 10))
+        self.assertEqual(new_media[0]["size"], len(b"cover-B" * 10))
 
 
 # ======================================================================

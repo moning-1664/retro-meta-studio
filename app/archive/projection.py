@@ -98,19 +98,74 @@ def project(archive, config, rom_identity_ids=None, *, overwrite_media=None, pro
             "systems": len(by_system)}
 
 
-def effective_media(archive, rid) -> dict[str, dict]:
-    """이 항목에서 실제로 쓰는 media(type -> ref). 화면 표시와 디렉토리 쓰기가 같은 규칙을 쓴다.
+def snapshot_revision_media(archive, config, record_ids) -> int:
+    """Keep immutable media copies for new revisions when Archive owns media.
 
-    사용자가 버전을 골랐으면(Preferred) 그 출처의 것을 우선하고, 그다음은 가장 최근 것이다.
-    메타데이터만 고른 버전이고 그림은 다른 버전 것이면 고른 의미가 없다."""
+    The normal frontend media tree holds the currently resolved image. Revision
+    history uses private files under ``.rms/revision-media`` so a later export
+    replacing that frontend image cannot rewrite an older revision.
+    """
+    cfg = normalize_config(config)
+    if not cfg["mediaInternal"] or not cfg["archiveDir"]:
+        return 0
+    root = Path(cfg["archiveDir"]) / ".rms" / "revision-media"
+    copied = 0
+    for record_id in record_ids or []:
+        for media in archive.media_of_revision(record_id):
+            if media.get("state", "present") != "present":
+                continue
+            source = Path(media["abs_path"])
+            if not source.is_file():
+                continue
+            suffix = source.suffix
+            destination = root / str(record_id) / f"{media['media_type']}{suffix}"
+            if not destination.exists():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+                copied += 1
+            archive.update_revision_media_path(record_id, media["media_type"], destination)
+    return copied
+
+
+def effective_media(archive, rid) -> dict[str, dict]:
+    """Resolve one Media item per type using the selected/latest source Revision.
+
+    Revision snapshots keep historical media paths; ``archive_media`` remains
+    the compatibility index for the latest path from each source.
+    """
     preferred = archive.get_preferred(rid)
-    chosen = preferred["source_collection_id"] if preferred else None
+    edited = archive.latest_record(rid, "__archive__")
+    cleared = {m["media_type"] for m in archive.media_of_revision(edited["record_id"])
+               if m.get("state") == "cleared"} if edited else set()
+    latest_records = archive.sources_of(rid)
+    by_source = {r["source_collection_id"]: r for r in latest_records}
+    if preferred:
+        by_source[preferred["source_collection_id"]] = preferred
+    current_refs = archive.media_refs(rid)
+    refs_by_source: dict[str, list[dict]] = {}
+    for ref in current_refs:
+        refs_by_source.setdefault(ref["source_collection_id"], []).append(ref)
+
     latest: dict[str, dict] = {}
-    for ref in archive.media_refs(rid):
-        cur = latest.get(ref["media_type"])
-        rank = (ref["source_collection_id"] == chosen, ref["updated_at"])
-        if cur is None or rank >= (cur["source_collection_id"] == chosen, cur["updated_at"]):
-            latest[ref["media_type"]] = ref
+    for source_id, record in by_source.items():
+        snapshot = archive.media_of_revision(record["record_id"])
+        refs = ([m for m in snapshot if m.get("state", "present") == "present"]
+                if snapshot else refs_by_source.get(source_id, []))
+        for ref in refs:
+            item = {**ref, "source_collection_id": source_id,
+                    "updated_at": ref.get("updated_at", record.get("updated_at", 0))}
+            current = latest.get(item["media_type"])
+            rank = (source_id == "__archive__",
+                    source_id == (preferred["source_collection_id"] if preferred else None),
+                    item["updated_at"])
+            cur_rank = ((current.get("source_collection_id") == "__archive__"),
+                        current.get("source_collection_id") ==
+                        (preferred["source_collection_id"] if preferred else None),
+                        current.get("updated_at", 0)) if current else None
+            if current is None or rank >= cur_rank:
+                latest[item["media_type"]] = item
+    for media_type in cleared:
+        latest.pop(media_type, None)
     return latest
 
 
@@ -123,13 +178,18 @@ def _copy_media(archive, adapter, layout, rid, filename, fields, *, overwrite=()
         mf = MediaFile(media_type=media_type, path=ref["abs_path"], size=ref["size"])
         for src, dest in adapter.media_pairs(layout, filename, [mf], title=title):
             dest_path = Path(dest)
-            if dest_path.exists() and media_type not in overwrite:
-                continue
             if not Path(src).exists():
                 missing += 1
                 continue
             if dest_path.exists() and Path(src).resolve() == dest_path.resolve():
                 continue
+            if dest_path.exists() and media_type not in overwrite:
+                try:
+                    src_stat, dest_stat = Path(src).stat(), dest_path.stat()
+                    if src_stat.st_size == dest_stat.st_size and src_stat.st_mtime_ns == dest_stat.st_mtime_ns:
+                        continue
+                except OSError:
+                    pass
             dest_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest_path)
             copied += 1

@@ -7,6 +7,7 @@
 
 import tempfile
 import unittest
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -1309,3 +1310,30 @@ class ArchiveSystemMenuBackendTests(unittest.TestCase):
         r = self.api.archive_rom_folder(self._rid("MetadataOnly.iso"))
         self.assertFalse(r["ok"])
         self.assertIn("ROM 위치", r["error"])
+
+    def test_archive_system_folder_opens_existing_projection_folders(self):
+        archive_dir = self.dir / "Archive"
+        configure(self.api, {"frontend": "es-de", "archiveDir": str(archive_dir)})
+        expected = {
+            "metadata": archive_dir / "gamelists" / "ps2",
+            "media": archive_dir / "downloaded_media" / "ps2",
+        }
+        opened = []
+        with patch("bridge.api._reveal_path", side_effect=opened.append):
+            for kind, path in expected.items():
+                result = self.api.archive_system_folder("ps2", kind)
+                self.assertTrue(result["ok"], result.get("error"))
+                self.assertEqual(Path(result["data"]["path"]), path)
+        self.assertEqual([Path(path) for path in opened], list(expected.values()))
+
+    def test_archive_system_folder_reports_missing_rom_directory(self):
+        configure(self.api, {"frontend": "es-de", "archiveDir": str(self.dir / "Archive")})
+        result = self.api.archive_system_folder("ps2", "rom")
+        self.assertFalse(result["ok"])
+        self.assertIn("폴더가 없습니다", result["error"])
+
+    def test_archive_detail_reports_whether_a_source_rom_still_exists(self):
+        present = self.api.archive_detail(self._rid("FFX.iso"))
+        missing = self.api.archive_detail(self._rid("MetadataOnly.iso"))
+        self.assertTrue(present["data"]["present"])
+        self.assertFalse(missing["data"]["present"])
