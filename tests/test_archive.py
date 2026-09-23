@@ -936,3 +936,76 @@ class MergingSourcesFavoursWhatCameFirstTests(unittest.TestCase):
         self.archive.put_record(self.rid, "first", {"name": "1941 (World)", "desc": ""}, {})
         self.archive.put_record(self.rid, "second", {"desc": "진짜 설명"}, {})
         self.assertEqual(self._fields()["desc"], "진짜 설명")
+
+
+class ArchiveEditSitsOnTopOfWhateverIsUnderneathTests(unittest.TestCase):
+    """Archive 직접 편집은 **바탕 값 위에 덮는다** - 통째로 갈아치우지 않는다.
+
+    실사용 리포트로 드러난 두 가지를 고정한다.
+
+    1. Preferred를 고른 항목은 Archive에서 아무리 고쳐도 화면이 그대로였다 -
+       `resolve_fields()`가 Preferred에서 곧장 돌려주고 편집 기록을 보지도 않았다.
+       Preferred는 "어느 출처를 믿을지", 편집은 "내가 정한 값"이라 층위가 다르다.
+    2. 제목만 바꾸는 호출(`{"name": ...}`)이 나머지 값을 통째로 날렸다 - 편집 기록이
+       그대로 최종값이 되는 구조였기 때문이다.
+
+    덮는 기준은 **키의 유무**다. 화면 저장은 전체 필드를 보내므로 빈 값으로 온 키는
+    "일부러 지웠다"는 뜻이고 그대로 지켜야 한다(§11.3 CLEARED와 같은 취지).
+    """
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_edit_layer_"))
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.archive = self.api.archive
+        game = self.archive.ensure_game("Game", "game")
+        self.rid = self.archive.ensure_rom_identity(game, "ps2", "game", filename="game.iso")
+
+    def _fields(self):
+        return self.archive.resolve_fields(self.rid)[0]
+
+    def _preferred_to(self, source):
+        record = self.archive.latest_record(self.rid, source)
+        self.api.archive_set_preferred(self.rid, record["record_id"])
+
+    def test_an_edit_shows_up_even_when_a_revision_is_preferred(self):
+        self.archive.put_record(self.rid, "a", {"name": "Game A", "genre": "RPG"}, {})
+        self.archive.put_record(self.rid, "b", {"name": "Game B", "desc": "설명"}, {})
+        self._preferred_to("b")
+
+        self.api.archive_edit(self.rid, {"name": "내가 고친 제목"})
+        self.assertEqual(self._fields()["name"], "내가 고친 제목",
+                         "Preferred가 있으면 편집이 통째로 무시됐다")
+
+    def test_the_preferred_revision_still_supplies_what_the_edit_did_not_touch(self):
+        self.archive.put_record(self.rid, "b", {"name": "Game B", "desc": "설명", "genre": "RPG"}, {})
+        self._preferred_to("b")
+
+        self.api.archive_edit(self.rid, {"name": "새 제목"})
+        fields = self._fields()
+        self.assertEqual(fields["name"], "새 제목")
+        self.assertEqual(fields["desc"], "설명", "편집이 건드리지 않은 값이 사라졌다")
+        self.assertEqual(fields["genre"], "RPG")
+
+    def test_editing_one_field_does_not_wipe_the_merged_values(self):
+        """Preferred가 없을 때도 마찬가지다."""
+        self.archive.put_record(self.rid, "a", {"name": "Game A", "genre": "RPG",
+                                                "developer": "Square"}, {})
+        self.api.archive_edit(self.rid, {"name": "새 제목"})
+        fields = self._fields()
+        self.assertEqual(fields["name"], "새 제목")
+        self.assertEqual(fields["genre"], "RPG", "제목만 고쳤는데 다른 값이 날아갔다")
+        self.assertEqual(fields["developer"], "Square")
+
+    def test_a_value_the_user_cleared_stays_cleared(self):
+        """화면 저장은 전체 필드를 보낸다 - 빈 값으로 온 키는 되살리면 안 된다."""
+        self.archive.put_record(self.rid, "a", {"name": "Game A", "genre": "RPG"}, {})
+        self.api.archive_edit(self.rid, {"name": "Game A", "genre": ""})
+        self.assertEqual(self._fields()["genre"], "", "일부러 지운 값이 되살아났다")
+
+    def test_frontend_specific_fields_survive_a_plain_edit(self):
+        """직접 편집은 frontend_raw를 만들지 않는다 - 바탕의 것을 지켜야 한다."""
+        self.archive.put_record(self.rid, "a", {"name": "Game A"}, {"attrib": {"id": "42"}})
+        self.api.archive_edit(self.rid, {"name": "새 제목"})
+        _fields, raw = self.archive.resolve_fields(self.rid)
+        self.assertEqual(raw, {"attrib": {"id": "42"}}, "편집 한 번에 Frontend 고유 필드가 사라졌다")

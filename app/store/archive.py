@@ -476,17 +476,15 @@ class ArchiveStore:
         만들어 둔 출처의 제목은 파일명 그대로라, 그것이 먼저 들어왔다는 이유로 이기면
         `1941`이 `1941 (World)`를 영영 밀어낸다.
         """
+        edited = self.latest_record(rom_identity_id, ARCHIVE_EDIT_SOURCE)
         preferred = self.get_preferred(rom_identity_id)
         if preferred:
-            return preferred["fields"], preferred["frontend_raw"]
-        edited = self.latest_record(rom_identity_id, ARCHIVE_EDIT_SOURCE)
-        if edited:
-            return edited["fields"], edited["frontend_raw"]
+            return self._with_edit(preferred["fields"], preferred["frontend_raw"], edited)
 
         sources = sorted(self.sources_of(rom_identity_id),
                          key=lambda s: (s["updated_at"], s["record_id"]))
         if not sources:
-            return {}, {}
+            return self._with_edit({}, {}, edited)
 
         identity = self.get_identity(rom_identity_id)
         stem = str((identity or {}).get("filename") or "")
@@ -507,7 +505,30 @@ class ArchiveStore:
                     merged[key] = value
             if not raw:
                 raw = source["frontend_raw"] or {}
-        return merged, raw
+        return self._with_edit(merged, raw, edited)
+
+    @staticmethod
+    def _with_edit(base_fields, base_raw, edited):
+        """Archive에서 직접 고친 값을 바탕 값 **위에 덮는다**(통째로 바꾸지 않는다).
+
+        예전에는 Preferred가 있으면 거기서 곧장 돌려주고 편집 기록은 보지도 않았다.
+        그래서 **Preferred를 고른 항목은 Archive에서 아무리 고쳐도 화면이 그대로였다**
+        (실사용 리포트로 확인 - 저장은 됐다고 하는데 값이 안 바뀜). Preferred는 "어느
+        출처를 믿을지"를 고르는 것이고 편집은 "내가 정한 값"이라 층위가 다르다 - 편집이
+        바탕 위에 얹히는 것이 맞다.
+
+        덮는 기준은 **키가 있느냐**지 값이 찼느냐가 아니다. 화면의 저장(handleSaveDetail)은
+        전체 필드를 통째로 보내므로, 빈 값으로 온 키는 "사용자가 일부러 지웠다"는 뜻이라
+        그대로 지켜야 한다. 반대로 키 자체가 없으면 이번 편집이 건드리지 않은 값이므로
+        바탕 것이 그대로 보인다(일부 필드만 고치는 호출이 나머지를 날리지 않는다).
+
+        `frontend_raw`는 편집 기록에 없으면(직접 편집은 raw를 만들지 않는다) 바탕 것을
+        유지한다 - 예전에는 편집 한 번에 Frontend 고유 필드가 통째로 사라졌다.
+        """
+        if not edited:
+            return base_fields, base_raw
+        merged = {**(base_fields or {}), **(edited["fields"] or {})}
+        return merged, (edited["frontend_raw"] or base_raw)
 
     def clear_preferred(self, rom_identity_id) -> bool:
         with transaction(self._conn):

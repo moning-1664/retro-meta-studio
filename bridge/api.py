@@ -2272,14 +2272,7 @@ class Api:
         자리에서 즉시 쓴다."""
         rows = self._archive_title_affix_rows(system)
         changes = title_affix.preview_titles(rows, self._title_affix_config())
-        applied = 0
-        for change in changes:
-            if not change["changed"]:
-                continue
-            result = archive_service.edit(self.archive, change["romUid"], {"name": change["newTitle"]})
-            self._project_archive(result, [change["romUid"]])
-            applied += 1
-        return ok({"applied": applied})
+        return ok({"applied": self._archive_rename(changes)})
 
     @guarded
     def archive_disc_retag_preview(self, system, fmt=None):
@@ -2295,14 +2288,25 @@ class Api:
         rows = self._archive_title_affix_rows(system)
         fmt = fmt or self._disc_title_option()["format"]
         changes = title_affix.preview_disc_retag(rows, fmt)
+        return ok({"applied": self._archive_rename(changes)})
+
+    def _archive_rename(self, changes):
+        """제목만 바꾼 편집 기록을 남긴다 - **지금 보이는 값 전체에 제목만 얹어서** 쓴다.
+
+        화면의 저장(handleSaveDetail)과 같은 방식이다. 예전에는 `{"name": ...}` 하나만
+        보냈는데, 편집 기록은 덮어쓰기가 아니라 통째로 새로 쓰이므로(put_record) 그 전에
+        사용자가 Archive에서 직접 고쳐 둔 다른 값들이 이 한 번으로 사라졌다.
+        """
         applied = 0
         for change in changes:
             if not change["changed"]:
                 continue
-            result = archive_service.edit(self.archive, change["romUid"], {"name": change["newTitle"]})
-            self._project_archive(result, [change["romUid"]])
+            rid = change["romUid"]
+            fields, _raw = self.archive.resolve_fields(rid)
+            result = archive_service.edit(self.archive, rid, {**fields, "name": change["newTitle"]})
+            self._project_archive(result, [rid])
             applied += 1
-        return ok({"applied": applied})
+        return applied
 
     @guarded
     def archive_delete_system(self, system):
