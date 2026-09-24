@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 
+from app.archive.shared_cache import PORTABLE_APPLICATION_ID
 from app.store.archive import ARCHIVE_EDIT_SOURCE
 from app.store.sqlite import transaction
 
@@ -30,7 +32,11 @@ def legacy_db_path(archive_dir) -> Path:
 
 
 def has_legacy(archive_dir) -> bool:
-    return bool(archive_dir) and legacy_db_path(archive_dir).is_file()
+    if not archive_dir or not legacy_db_path(archive_dir).is_file():
+        return False
+    path = legacy_db_path(archive_dir)
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
+        return db.execute("PRAGMA application_id").fetchone()[0] != PORTABLE_APPLICATION_ID
 
 
 def _columns(conn, table) -> list[str]:
@@ -44,7 +50,7 @@ def _tables(conn) -> set[str]:
 def import_legacy(archive, archive_dir) -> dict:
     """옛 Archive DB를 현재 Archive로 병합한다. 반환: 가져온 개수 요약."""
     path = legacy_db_path(archive_dir)
-    if not path.is_file():
+    if not has_legacy(archive_dir):
         return {"found": False}
     old = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
     old.row_factory = sqlite3.Row

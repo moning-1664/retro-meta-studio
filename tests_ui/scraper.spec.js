@@ -96,3 +96,39 @@ test("취소는 진행 세션을 폐기한다", async ({ page }) => {
   await expect(page.locator(".scrape-context-card")).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => window.__scrapeCancelled)).toBe(1);
 });
+
+test("compact candidate card shows media availability", async ({ page }) => {
+  await openForRows(page);
+  const card = page.locator(".scrape-candidate").first();
+  await expect(card.locator(".scrape-candidate-desc")).toBeVisible();
+  await expect(card.locator(".scrape-media-mark.present")).toHaveCount(1);
+  await expect(card.locator(".scrape-media-mark:not(.present)")).toHaveCount(3);
+  await expect(card.locator(".scrape-choose")).toHaveText("선택");
+  const sizes = await card.evaluate((el) => ({
+    button: el.querySelector(".scrape-choose").getBoundingClientRect().width,
+    card: el.getBoundingClientRect().width,
+  }));
+  expect(sizes.button).toBeLessThan(sizes.card / 3);
+});
+
+test("candidate card includes rating, developer, genre and release year", async ({ page }) => {
+  await page.evaluate(() => {
+    const original = window.api.jobProgress;
+    window.api.jobProgress = async (...args) => {
+      const result = await original(...args);
+      const candidate = result.data?.result?.item?.candidates?.[0];
+      if (candidate) {
+        candidate.fields.rating = "16";
+        candidate.fields.developer = "Nintendo";
+        candidate.fields.genre = "Simulation";
+      }
+      return result;
+    };
+  });
+  await openForRows(page);
+  const card = page.locator(".scrape-candidate").first();
+  await expect(card.locator(".scrape-candidate-year")).toHaveText("1999");
+  await expect(card.locator(".scrape-candidate-stars")).toHaveText("★★★★☆");
+  await expect(card.locator(".scrape-candidate-facts")).toContainText("Nintendo");
+  await expect(card.locator(".scrape-candidate-facts")).toContainText("Simulation");
+});

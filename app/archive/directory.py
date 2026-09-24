@@ -19,6 +19,7 @@ gamelist.xml을 직접 고쳐도 새로고침하면 Archive에 나타나야 한�
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from adapters import get_adapter
@@ -73,6 +74,8 @@ def sync_from_directory(archive, config, provider, *, progress_cb=None) -> dict:
     }
 
     added = linked = media_linked = 0
+    timings = {"metadataSeconds": 0.0, "mediaSeconds": 0.0,
+               "romSeconds": 0.0, "databaseSeconds": 0.0}
     systems = _systems(provider, adapter, collection, cfg)
     progress_total = max(1, len(systems) * 4)
     if progress_cb:
@@ -87,21 +90,28 @@ def sync_from_directory(archive, config, provider, *, progress_cb=None) -> dict:
         rom_dir = _rom_root(cfg) / system
         if progress_cb:
             progress_cb(system_index * 4, progress_total, f"{system} · 메타데이터 읽기")
+        stage_started = time.perf_counter()
         index = adapter.read_index(provider, layout)
+        timings["metadataSeconds"] += time.perf_counter() - stage_started
         if progress_cb:
             progress_cb(system_index * 4 + 1, progress_total, f"{system} · 미디어 읽기")
+        stage_started = time.perf_counter()
         media_index = {stem: _dedup_media(items)
                        for stem, items in adapter.read_media_index(provider, layout, None).items()}
+        timings["mediaSeconds"] += time.perf_counter() - stage_started
         if progress_cb:
             progress_cb(system_index * 4 + 2, progress_total, f"{system} · ROM 읽기")
+        stage_started = time.perf_counter()
         roms = {
             name: rom_dir / name
             for name in adapter.list_roms(provider, type(layout)(
                 system=system, rom_dir=str(rom_dir), metadata_file=layout.metadata_file,
                 media_dir=layout.media_dir))
         }
+        timings["romSeconds"] += time.perf_counter() - stage_started
         if progress_cb:
             progress_cb(system_index * 4 + 3, progress_total, f"{system} · DB 반영")
+        stage_started = time.perf_counter()
 
         # 파일 하나마다 commit하던 것을 System 단위로 묶는다. transaction을 짧게 유지해
         # 다른 화면의 읽기 요청은 System 사이에 즉시 들어올 수 있다.
@@ -143,9 +153,12 @@ def sync_from_directory(archive, config, provider, *, progress_cb=None) -> dict:
                             media_item.path, media_item.size)
                         known_media[media_key] = value
                         media_linked += 1
+        timings["databaseSeconds"] += time.perf_counter() - stage_started
         if progress_cb:
             progress_cb((system_index + 1) * 4, progress_total, system)
-    return {"added": added, "romsLinked": linked, "mediaLinked": media_linked, "systems": len(systems)}
+    return {"added": added, "romsLinked": linked, "mediaLinked": media_linked,
+            "systems": len(systems),
+            "timings": {key: round(value, 3) for key, value in timings.items()}}
 
 
 def _dedup_media(media):

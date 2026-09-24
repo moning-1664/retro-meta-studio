@@ -14,7 +14,9 @@ gamelist/media는 Frontend Adapter가 쓴다 - Collection에 쓰는 코드와 �
 
 from __future__ import annotations
 
+import os
 import shutil
+import time
 from pathlib import Path
 
 from adapters import get_adapter
@@ -75,6 +77,7 @@ def project(archive, config, rom_identity_ids=None, *, overwrite_media=None, pro
 
     total = sum(len(items) for items in by_system.values())
     entries = copied = missing = 0
+    timings = {"resolveSeconds": 0.0, "mediaSeconds": 0.0, "writeIndexSeconds": 0.0}
     for system, items in by_system.items():
         layout = adapter.layout(collection, system)
         Path(layout.metadata_file).parent.mkdir(parents=True, exist_ok=True)
@@ -83,23 +86,30 @@ def project(archive, config, rom_identity_ids=None, *, overwrite_media=None, pro
             if progress_cb:
                 progress_cb(entries, max(1, total), f"{system} · {identity['filename']}")
             filename = identity["filename"] or identity["filename_norm"]
+            stage_started = time.perf_counter()
             fields, raw = archive.resolve_fields(rid)
+            timings["resolveSeconds"] += time.perf_counter() - stage_started
             batch.append(GameEntry(
                 filename=filename, fields=fields,
                 frontend_raw=raw if adapter.raw_is_mine(raw) else {}))
             if cfg["mediaInternal"]:
+                stage_started = time.perf_counter()
                 got, lost = _copy_media(archive, adapter, layout, rid, filename, fields,
                                         overwrite=(overwrite_media or {}).get(rid, ()))
+                timings["mediaSeconds"] += time.perf_counter() - stage_started
                 copied += got
                 missing += lost
             entries += 1
+        stage_started = time.perf_counter()
         adapter.write_index(layout, batch)
+        timings["writeIndexSeconds"] += time.perf_counter() - stage_started
         if progress_cb:
             progress_cb(entries, max(1, total), f"{system} · gamelist 저장")
     if progress_cb:
         progress_cb(total, max(1, total), "완료")
     return {"entries": entries, "mediaCopied": copied, "mediaMissing": missing,
-            "systems": len(by_system)}
+            "systems": len(by_system),
+            "timings": {key: round(value, 3) for key, value in timings.items()}}
 
 
 def snapshot_revision_media(archive, config, record_ids, *, progress_cb=None) -> int:
@@ -203,6 +213,11 @@ def _copy_media(archive, adapter, layout, rid, filename, fields, *, overwrite=()
         mf = MediaFile(media_type=media_type, path=ref["abs_path"], size=ref["size"])
         for src, dest in adapter.media_pairs(layout, filename, [mf], title=title):
             dest_path = Path(dest)
+            # An Archive read commonly records the frontend file itself as the
+            # source.  Comparing paths lexically avoids two remote stat calls
+            # (and resolve()) for every already-in-place media file.
+            if os.path.normcase(os.path.abspath(src)) == os.path.normcase(os.path.abspath(dest)):
+                continue
             if not Path(src).exists():
                 missing += 1
                 continue

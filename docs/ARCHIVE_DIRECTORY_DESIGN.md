@@ -1,5 +1,18 @@
 # Archive Directory Design (2026-09-21)
 
+## Portable DB cache (2026-09-24)
+
+The running SQLite WAL database remains on the local PC. After Archive Apply or
+an explicit directory refresh, the app publishes a consistent single-file
+snapshot to `<archive>/.rms/archive.db`. Another PC loads that snapshot into an
+empty local DB, or replaces a local DB only when it still matches the last
+snapshot that PC read. A changed shared snapshot is never overwritten by a
+stale local copy; the app reports a conflict and keeps the local DB.
+
+The Archive tab reads the local DB immediately. Directory reconciliation is
+explicit via "디렉터리 다시 읽기". Simultaneous edits on multiple PCs do not merge
+automatically. The snapshot is a cache exchange, not a multi-writer database.
+
 ## 문제
 - Archive의 진실이 `archive.db` 한 곳에 있어 사용자가 꺼내 쓸 수 없다.
 - 샘플(`Archives/`)을 보면 사용자 눈에 보이는 ES-DE 결과물이 매우 부분적이다

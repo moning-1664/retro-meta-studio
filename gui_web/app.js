@@ -683,7 +683,15 @@
       renderColumns: columnSettingsEditor,
       renderEmulator: emulatorSettingsEditor,
       renderScraper: scraperSettingsEditor,
-      renderArchive: () => archiveSettingsEditor(async () => { await loadArchiveConfigured(); if (isArchive()) refreshActive(); }),
+      renderArchive: () => archiveSettingsEditor(async () => {
+        await loadArchiveConfigured();
+        if (isArchive()) {
+          await ensureDetail(ARCHIVE_ID);
+          resetList();
+          renderAll();
+          await reloadList();
+        }
+      }),
       // 확인 버튼이 부른다(실사용 피드백 §7) - 값은 이미 바뀔 때마다 즉시
       // 적용돼 있지만(슬라이더 미리보기 등), 서버 저장은 300ms 묶어서 나간다.
       // "확인을 눌렀는데 화면은 닫혔고 저장은 아직 안 나갔다"가 없도록 그
@@ -700,6 +708,7 @@
    * Settings 화면과 Archive 첫 화면이 같은 편집기를 쓴다 - 같은 값을 두 곳에서 다르게 다루지 않는다. */
   function archiveSettingsEditor(onApplied) {
     const wrap = h("div", { class: "stg-archive" });
+    let lastDiagnostics = "";
     const draw = async () => {
       const [cfgR, feR] = await Promise.all([api.archiveConfig(), api.frontends()]);
       clear(wrap);
@@ -753,12 +762,38 @@
         if (!done.ok) { if (!done.cancelled) showToast(done.error, "error"); return; }
         const d = done.data || {};
         const p = d.projection || {};
-        showToast(`Archive에 ${formatCount(p.entries || 0)}개를 ${formatCount(p.systems || 0)}개 System으로 정리했습니다.`
+        const timing = d.timings || {};
+        const scan = d.synced?.timings || {};
+        const write = p.timings || {};
+        lastDiagnostics = `읽기 ${timing.scanSeconds ?? "?"}초 (메타 ${scan.metadataSeconds ?? "?"}, 미디어 ${scan.mediaSeconds ?? "?"}, ROM ${scan.romSeconds ?? "?"}, DB ${scan.databaseSeconds ?? "?"}) · Frontend ${timing.projectionSeconds ?? "?"}초 (미디어 ${write.mediaSeconds ?? "?"}, gamelist ${write.writeIndexSeconds ?? "?"}) · 공유 DB ${timing.sharedSeconds ?? "?"}초`;
+        showToast(`Archive에 ${formatCount(p.entries || 0)}개를 ${formatCount(p.systems || 0)}개 System으로 정리했습니다. (${timing.scanSeconds ?? "?"}초 읽기, ${timing.projectionSeconds ?? "?"}초 쓰기)`
           + (d.imported && d.imported.identities ? ` (이전 Archive ${formatCount(d.imported.identities)}개 가져옴)` : ""));
-        if (onApplied) onApplied();
+        if (d.sharedSnapshot?.status === "conflict")
+          showToast("다른 PC의 Archive DB가 변경되어 공유 DB를 덮어쓰지 않았습니다.", "warning");
+        else if (d.sharedSnapshot?.status === "error")
+          showToast(`Archive 공유 DB 저장 실패: ${d.sharedSnapshot.error}`, "warning");
+        if (onApplied) await onApplied();
         draw();
       });
-      wrap.appendChild(h("div", { class: "stg-column-actions" }, [status, apply]));
+      const rescan = h("button", { class: "btn archive-rescan", disabled: !cfg.configured },
+        ["디렉터리 다시 읽기"]);
+      rescan.addEventListener("click", async () => {
+        const started = await api.startArchiveRefresh();
+        if (!started.ok) { showToast(started.error, "error"); return; }
+        const done = await pollJob(started.data.jobId, "Archive 디렉터리 읽기");
+        if (!done.ok) { if (!done.cancelled) showToast(done.error, "error"); return; }
+        const scan = done.data?.timings || {};
+        lastDiagnostics = `읽기 ${done.data?.scanSeconds ?? "?"}초 (메타 ${scan.metadataSeconds ?? "?"}, 미디어 ${scan.mediaSeconds ?? "?"}, ROM ${scan.romSeconds ?? "?"}, DB ${scan.databaseSeconds ?? "?"})`;
+        status.textContent = lastDiagnostics;
+        showToast(`Archive 디렉터리 읽기 완료 (${done.data?.scanSeconds ?? "?"}초)`);
+        if (done.data?.sharedSnapshot?.status === "conflict")
+          showToast("다른 PC의 Archive DB가 변경되어 공유 DB를 덮어쓰지 않았습니다.", "warning");
+        if (onApplied) await onApplied();
+      });
+      wrap.appendChild(h("div", { class: "stg-help" },
+        ["저장된 DB를 먼저 표시합니다. 파일 변경분은 필요할 때 다시 읽으세요."]));
+      if (lastDiagnostics) status.textContent = lastDiagnostics;
+      wrap.appendChild(h("div", { class: "stg-column-actions" }, [status, apply, rescan]));
     };
     draw();
     return wrap;
@@ -766,7 +801,16 @@
 
   function openArchiveSettings() {
     const body = h("div", { class: "modal-body archive-settings" }, [
-      archiveSettingsEditor(async () => { closeModal(); await loadArchiveConfigured(); await refreshActive(); }),
+      archiveSettingsEditor(async () => {
+        closeModal();
+        await loadArchiveConfigured();
+        if (isArchive()) {
+          await ensureDetail(ARCHIVE_ID);
+          resetList();
+          renderAll();
+          await reloadList();
+        }
+      }),
     ]);
     showModal("Archive 설정", body, [h("button", { class: "btn", onClick: closeModal }, ["닫기"])]);
   }
@@ -1400,8 +1444,8 @@
   async function ensureDetail(id) {
     if (id === ARCHIVE_ID) {
       // Archive에는 Storage 개념이 없다. Collection 헤더와 같은 모양으로만 맞춘다.
-      const [systems, rows, ownership] = await Promise.all([
-        api.archiveSystems(), api.archiveRows({ limit: 1 }), api.archiveOwnershipSummary(),
+      const [systems, rows] = await Promise.all([
+        api.archiveSystems(), api.archiveRows({ limit: 1 }),
       ]);
       S.detail[ARCHIVE_ID] = {
         id: ARCHIVE_ID, name: "Archive", frontendLabel: "보관소",
@@ -1409,7 +1453,7 @@
         systemCount: (systems.ok ? systems.data : []).length,
         totalGames: rows.ok ? rows.data.total : 0,
         archiveSystems: systems.ok ? systems.data : [],
-        ownershipSummary: ownership.ok ? ownership.data : null,
+        ownershipSummary: null,
       };
       return;
     }
@@ -5944,6 +5988,7 @@
     const created = await api.createScrapeSession(target, isArchive() ? null : S.activeId, ids);
     if (!created.ok) { showToast(created.error, "error"); return; }
     const session = created.data;
+    const requestedMedia = settings.data.mediaTypes || ["covers", "screenshots", "wheel", "videos"];
     let index = 0;
     let searching = false;
     let currentJobId = null;
@@ -6000,8 +6045,7 @@
       });
       const wrap = h("div", { class: "scrape-candidate" + (previouslySelected ? " selected" : "") });
       const chooseButton = () => {
-        const choose = h("button", { class: "btn primary scrape-choose" },
-          [index + 1 < session.items.length ? "이 후보 선택 →" : "이 후보 선택"]);
+        const choose = h("button", { class: "btn primary scrape-choose", title: "이 후보 선택" }, ["선택"]);
         choose.addEventListener("click", async () => {
           const selectedFieldKeys = [...selectedFields];
           const selected = await api.selectScrapeCandidate(session.id, item.id,
@@ -6028,18 +6072,41 @@
         const toggle = h("button", { class: "icon-btn scrape-expand", title: expanded ? "접기" : "자세히" },
           [expanded ? "∧" : "∨"]);
         toggle.addEventListener("click", () => { expanded = !expanded; redraw(); });
+        const year = String(candidate.fields?.releasedate || "").match(/\d{4}/)?.[0] || "";
+        const rating = Number(candidate.fields?.rating);
+        const stars = Number.isFinite(rating) && rating > 0
+          ? "★★★★★".slice(0, Math.max(0, Math.min(5, Math.round(rating / 4))))
+            + "☆☆☆☆☆".slice(0, 5 - Math.max(0, Math.min(5, Math.round(rating / 4)))) : "";
+        const mediaPresent = new Set((candidate.media || []).map((media) => media.media_type));
+        const mediaMarks = h("div", { class: "scrape-media-marks", "aria-label": "검색한 미디어 종류" },
+          requestedMedia.map((type) => h("span", {
+            class: `scrape-media-mark${mediaPresent.has(type) ? " present" : ""}`,
+            title: `${MEDIA_LABEL[type] || type}: ${mediaPresent.has(type) ? "있음" : "결과 없음"}`,
+          }, [({ covers: "C", screenshots: "S", titlescreens: "T", videos: "▶",
+                 wheel: "W", marquees: "M", manuals: "B", "3dboxes": "3D" })[type]
+                 || (MEDIA_LABEL[type] || type).slice(0, 1)])));
+        const description = String(candidate.fields?.desc || "").replace(/\s+/g, " ").trim();
+        const facts = [candidate.fields?.developer, candidate.fields?.genre].filter(Boolean).join("  |  ");
         wrap.appendChild(h("div", { class: "scrape-candidate-head" }, [thumb,
           h("div", { class: "scrape-candidate-main" }, [
-            h("div", { class: "scrape-candidate-title" }, [candidate.title || "제목 없음"]),
-            h("div", { class: "scrape-candidate-meta" },
-              [[candidate.system || item.system, candidate.fields?.releasedate || "", candidate.fields?.region || ""]
-                .filter(Boolean).join(" · ")]),
-            h("div", { class: "scrape-badges" }, [
-              h("span", { class: "scrape-badge provider" }, [candidate.provider === "screenscraper" ? "SS" : candidate.provider]),
-              h("span", { class: "scrape-badge" }, [candidate.confidence_reason || "후보"]),
+            h("div", { class: "scrape-candidate-top" }, [
+              h("span", { class: "scrape-system-icon", title: candidate.system || item.system },
+                [systemIcon(item.system, 16)]),
+              h("div", { class: "scrape-candidate-title", title: candidate.title || "" },
+                [candidate.title || "제목 없음"]),
+              h("span", { class: "scrape-candidate-year", title: candidate.fields?.releasedate || "" }, [year]),
             ]),
-          ]), toggle]));
-        if (!expanded) { wrap.appendChild(chooseButton()); return; }
+            h("div", { class: "scrape-candidate-desc", title: description }, [description || "설명 없음"]),
+            mediaMarks,
+            h("div", { class: "scrape-candidate-bottom" }, [
+              h("span", { class: "scrape-candidate-stars", title: rating > 0 ? `평점 ${rating}/20` : "평점 없음" },
+                [stars]),
+              h("span", { class: "scrape-candidate-facts", title: facts }, [facts]),
+              chooseButton(),
+            ]),
+          ])]));
+        if (!expanded) { wrap.appendChild(toggle); return; }
+        wrap.appendChild(toggle);
         if ((candidate.evidence || []).length) wrap.appendChild(h("div", { class: "scrape-evidence" },
           candidate.evidence.map((value) => h("div", {}, [value]))));
         const fields = h("div", { class: "scrape-fields" });
@@ -6081,7 +6148,6 @@
           });
           wrap.appendChild(mediaList);
         }
-        wrap.appendChild(chooseButton());
       };
       redraw();
       return wrap;

@@ -18,6 +18,7 @@ import base64
 import hashlib
 import re
 import logging
+import sqlite3
 import shutil
 from collections import OrderedDict
 import traceback
@@ -49,6 +50,7 @@ from app.archive import conflicts as conflict_service
 from app.archive import directory as archive_directory
 from app.archive import legacy as archive_legacy
 from app.archive import projection as archive_projection
+from app.archive import shared_cache as archive_shared_cache
 from app.archive import service as archive_service
 from app.compare import engine as compare_engine
 from app.convert import service as convert_service
@@ -204,6 +206,20 @@ class Api:
         self._scrape_cache_dir = ((Path(cache_dir).parent / "scraper_media") if cache_dir
                                   else (paths.CACHE_DIR / "scraper_media"))
         archive_path = (Path(cache_dir).parent / "archive.db") if cache_dir else paths.ARCHIVE_DB
+        self._archive_path = Path(archive_path)
+        configured_archive = archive_projection.normalize_config(
+            self.registry.get_setting("archive.config", {}))["archiveDir"]
+        if configured_archive:
+            try:
+                known = self.registry.get_setting("archive.shared_snapshot_hashes", {}) or {}
+                digest = archive_shared_cache.seed_if_clean(
+                    Path(archive_path), configured_archive, known.get(configured_archive))
+                if digest:
+                    self.registry.set_setting("archive.shared_snapshot_hashes",
+                                              {**known, configured_archive: digest})
+                    log.info("Seeded local Archive DB from portable snapshot")
+            except (OSError, RuntimeError, sqlite3.DatabaseError) as exc:
+                log.warning("Could not load portable Archive snapshot: %s", exc)
         self.archive = ArchiveStore(archive_path)
         clipboard.prune(self._clipboard_dir)
         # 파일 복사 엔진 선택. 기본은 Robocopy다 - 서명 없는 자체 워커는 백신 행동
@@ -2666,6 +2682,21 @@ class Api:
 
     ARCHIVE_CONFIG_KEY = "archive.config"
 
+    def _publish_archive_snapshot(self, cfg, *, legacy_digest=None):
+        directory = cfg["archiveDir"]
+        known = self.registry.get_setting("archive.shared_snapshot_hashes", {}) or {}
+        try:
+            result = archive_shared_cache.publish(
+                self.archive, directory, known.get(directory), legacy_digest=legacy_digest)
+        except (OSError, sqlite3.DatabaseError) as exc:
+            log.warning("Could not publish portable Archive snapshot: %s", exc)
+            return {"status": "error", "error": str(exc)}
+        if result["status"] == "published":
+            self.registry.set_setting("archive.shared_snapshot_hashes", {**known, directory: result["digest"]})
+        elif result["status"] == "conflict":
+            log.warning("Portable Archive snapshot changed on another computer; local DB kept")
+        return {"status": result["status"]}
+
     def _archive_config(self) -> dict:
         return archive_projection.normalize_config(
             self.registry.get_setting(self.ARCHIVE_CONFIG_KEY, {}))
@@ -2692,6 +2723,22 @@ class Api:
                     Path(new[key]).mkdir(parents=True, exist_ok=True)
                 except OSError as e:
                     return err(f"폴더를 만들 수 없습니다: {e}")
+        if (new["archiveDir"] and new["archiveDir"] != old["archiveDir"]
+                and not self.archive.count_rows() and not self.jobs.active_jobs()):
+            # A newly selected Archive can show another PC's snapshot before
+            # any directory reconciliation.  The local DB is empty here, so no
+            # revisions or edits can be discarded by the replacement.
+            self.archive.close()
+            try:
+                digest = archive_shared_cache.seed_if_empty(self._archive_path, new["archiveDir"])
+                if digest:
+                    known = self.registry.get_setting("archive.shared_snapshot_hashes", {}) or {}
+                    self.registry.set_setting("archive.shared_snapshot_hashes",
+                                              {**known, new["archiveDir"]: digest})
+            except (OSError, RuntimeError, sqlite3.DatabaseError) as exc:
+                log.warning("Could not load selected Archive snapshot: %s", exc)
+            finally:
+                self.archive = ArchiveStore(self._archive_path)
         self.registry.set_setting(self.ARCHIVE_CONFIG_KEY, new)
         moved = (new["frontend"], new["archiveDir"]) != (old["frontend"], old["archiveDir"])
         return ok({**new, "configured": archive_projection.is_configured(new),
@@ -2704,10 +2751,15 @@ class Api:
         cfg = self._archive_config()
         if not archive_projection.is_configured(cfg):
             raise ValueError("Archive 디렉토리가 설정되지 않았습니다.")
+        started_at = time.perf_counter()
         imported = None
+        legacy_digest = None
         if archive_legacy.has_legacy(cfg["archiveDir"]):
+            legacy_digest = archive_shared_cache.fingerprint(
+                archive_legacy.legacy_db_path(cfg["archiveDir"]))
             imported = archive_legacy.import_legacy(self.archive, cfg["archiveDir"])
             log.info("legacy archive imported: %s", imported)
+        legacy_seconds = time.perf_counter() - started_at
         def phase(start, end, name):
             if progress_cb is None:
                 return None
@@ -2719,12 +2771,31 @@ class Api:
         # 디렉토리에 있는 것(직접 넣은 ROM, 고친 gamelist)도 함께 읽는다.
         synced = archive_directory.sync_from_directory(
             self.archive, cfg, storage.for_path(cfg["archiveDir"]), progress_cb=phase(0, 450, "읽기"))
+        scan_seconds = time.perf_counter() - started_at - legacy_seconds
         archive_projection.snapshot_revision_media(
             self.archive, cfg, self.archive.record_ids_with_media(),
             progress_cb=phase(450, 650, "Revision 미디어"))
+        snapshot_seconds = time.perf_counter() - started_at - legacy_seconds - scan_seconds
         projection = archive_projection.project(
-            self.archive, cfg, progress_cb=phase(650, 1000, "Frontend 쓰기"))
-        return {"imported": imported, "synced": synced, "projection": projection}
+            self.archive, cfg, progress_cb=phase(650, 950, "Frontend 쓰기"))
+        projection_seconds = (time.perf_counter() - started_at - legacy_seconds
+                              - scan_seconds - snapshot_seconds)
+        if progress_cb:
+            progress_cb(950, 1000, "공유 DB 저장")
+        shared = self._publish_archive_snapshot(cfg, legacy_digest=legacy_digest)
+        if progress_cb:
+            progress_cb(1000, 1000, "완료")
+        timings = {"legacySeconds": round(legacy_seconds, 3),
+                   "scanSeconds": round(scan_seconds, 3),
+                   "snapshotSeconds": round(snapshot_seconds, 3),
+                   "projectionSeconds": round(projection_seconds, 3),
+                   "sharedSeconds": round(time.perf_counter() - started_at
+                                          - legacy_seconds - scan_seconds
+                                          - snapshot_seconds - projection_seconds, 3)}
+        log.info("Archive apply timings: %s; scan stages: %s; projection stages: %s",
+                 timings, synced.get("timings"), projection.get("timings"))
+        return {"imported": imported, "synced": synced, "projection": projection,
+                "timings": timings, "sharedSnapshot": shared}
 
     @guarded
     def start_archive_apply(self):
@@ -2940,9 +3011,17 @@ class Api:
         if not archive_projection.is_configured(cfg):
             return err("Archive 디렉토리가 설정되지 않았습니다.")
         provider = storage.for_path(cfg["archiveDir"])
+        def refresh(cb):
+            started_at = time.perf_counter()
+            result = archive_directory.sync_from_directory(
+                self.archive, cfg, provider, progress_cb=cb)
+            result["scanSeconds"] = round(time.perf_counter() - started_at, 3)
+            result["sharedSnapshot"] = self._publish_archive_snapshot(cfg)
+            log.info("Archive refresh scan: %.3fs, systems=%s, stages=%s",
+                     result["scanSeconds"], result["systems"], result.get("timings"))
+            return result
         job_id = self.jobs.run_heavy(
-            lambda cb: archive_directory.sync_from_directory(
-                self.archive, cfg, provider, progress_cb=cb),
+            refresh,
             mutates_state=True, target_ids=("archive",), kind="archive-refresh")
         return ok({"jobId": job_id})
 

@@ -257,6 +257,13 @@ class ArchiveStore:
     def close(self):
         self._conn.close()
 
+    def backup_to(self, path):
+        """Create a consistent single-file snapshot of the live WAL database."""
+        from contextlib import closing
+        import sqlite3
+        with closing(sqlite3.connect(str(path))) as target, self._conn._lock:
+            self._conn._conn.backup(target)
+
     # ------------------------------------------------------------------
     # Identity
     # ------------------------------------------------------------------
