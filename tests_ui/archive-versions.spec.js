@@ -243,7 +243,7 @@ test.describe("Archive System 우클릭", () => {
     await rightClickSystem(page, "PS2");
     await expect(menuItem(page, "언어 태그 적용")).toBeVisible();
     await expect(menuItem(page, "멀티 디스크 태그 적용")).toBeVisible();
-    await expect(menuItem(page, "시스템 전체 Archive에서 지우기")).toBeVisible();
+    await expect(menuItem(page, "시스템 전체 삭제 (!)")).toBeVisible();
     await expect(menuItem(page, "Storage 옮기기")).toHaveCount(0);
     await expect(menuItem(page, "이름 바꾸기")).toHaveCount(0);
     await expect(menuItem(page, "미디어 선택 후 정리")).toHaveCount(0);
@@ -300,7 +300,7 @@ test.describe("Archive System 우클릭", () => {
       };
     });
     await rightClickSystem(page, "PS2");
-    await menuItem(page, "시스템 전체 Archive에서 지우기").click();
+    await menuItem(page, "시스템 전체 삭제 (!)").click();
     await expect(page.locator(".modal-text")).toContainText("실제 ROM/Media 파일은 지워지지 않습니다");
     await modalButton(page, "확인").click();
     await expect.poll(() => page.evaluate(() => window.__deletedSystem)).toBe("ps2");
@@ -320,6 +320,32 @@ test("행 우클릭의 ROM 폴더 열기는 현재 ROM 위치를 연다", async 
   await expect(page.locator(".ctx-menu .ctx-item", { hasText: "ROM 폴더" })).toHaveCount(1);
   await page.locator(".ctx-menu .ctx-item", { hasText: "ROM 폴더 열기" }).click();
   await expect.poll(() => page.evaluate(() => window.__opened)).toBe("rid2");
+});
+
+test("Archive Navigator에서도 Favorites 관점으로 볼 수 있다", async ({ page }) => {
+  await openArchive(page);
+  await expect(page.locator("#nav .nav-favorites")).toBeVisible();
+  await page.locator("#nav .nav-favorites").click();
+  await expect(page.locator("#nav .nav-favorites")).toHaveClass(/active/);
+});
+
+test("Archive 새로고침은 진행률을 보이고 취소 요청을 job에 전달한다", async ({ page }) => {
+  await openArchive(page);
+  await page.evaluate(() => {
+    window.__refreshCancelled = null;
+    window.api.startArchiveRefresh = () => Promise.resolve({ ok: true, data: { jobId: "slow-refresh" } });
+    window.api.jobProgress = () => Promise.resolve({ ok: true, data: window.__refreshCancelled ? {
+      current: 1, total: 10, label: "취소", done: true, error: "취소되었습니다.", cancelled: true,
+    } : { current: 1, total: 10, label: "PS2", done: false, error: null } });
+    window.api.cancelJob = (jobId) => {
+      window.__refreshCancelled = jobId;
+      return Promise.resolve({ ok: true, data: true });
+    };
+  });
+  await page.keyboard.press("F5");
+  await expect(page.locator(".job-progress-item")).toContainText("Archive 다시 읽는 중");
+  await page.locator(".job-progress-cancel").click();
+  await expect.poll(() => page.evaluate(() => window.__refreshCancelled)).toBe("slow-refresh");
 });
 
 test.describe("Archive 행 우클릭 - 삭제", () => {

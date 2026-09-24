@@ -72,6 +72,19 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(row["desc"], "A role-playing game.")
         self.assertEqual(row["genre"], "RPG")
 
+    def test_archive_page_load_uses_batched_metadata_queries(self):
+        """행 수만큼 revision/source 조회가 늘어나면 Archive 전환이 급격히 느려진다."""
+        self.api.archive_ingest(self.src)
+        statements = []
+        self.api.archive._conn.set_trace_callback(statements.append)
+        try:
+            rows = self.api.archive_rows(limit=200)["data"]["rows"]
+        finally:
+            self.api.archive._conn.set_trace_callback(None)
+        selects = [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
+        self.assertEqual(len(rows), 3)
+        self.assertLessEqual(len(selects), 8, selects)
+
     def test_archive_uids_returns_everything_not_just_a_page(self):
         """HERO의 "메타데이터 가져오기"가 쓴다(§4) - 화면 목록의 첫 페이지(limit=200)만
         가져오면 Archive가 그보다 크면 뒤가 조용히 빠진다."""
@@ -500,6 +513,22 @@ class ArchiveDirectoryTests(unittest.TestCase):
     def test_rejects_unknown_frontend(self):
         self.assertFalse(self.api.save_archive_config({"frontend": "nope"})["ok"])
 
+    def test_apply_progress_is_monotonic_across_scan_snapshot_and_projection(self):
+        saved = self.api.save_archive_config({"archiveDir": str(self.source_root)})
+        self.assertTrue(saved["ok"])
+        events = []
+        self.api._apply_archive_config(
+            lambda current, total, label: events.append((current, total, label)))
+        self.assertTrue(events)
+        self.assertEqual({total for _, total, _ in events}, {1000})
+        currents = [current for current, _, _ in events]
+        self.assertEqual(currents, sorted(currents))
+        self.assertEqual(currents[-1], 1000)
+        labels = "\n".join(label for _, _, label in events)
+        self.assertIn("읽기:", labels)
+        self.assertIn("Revision 미디어:", labels)
+        self.assertIn("Frontend 쓰기:", labels)
+
 
 class ArchiveConflictTests(unittest.TestCase):
     """`[n]`은 Archive 안에서 **중요한 값이 실제로 다를 때만** 뜬다."""
@@ -675,6 +704,85 @@ class ArchiveDirectoryRefreshTests(unittest.TestCase):
         result = self.api.archive_refresh()["data"]
         self.assertEqual((result["added"], result["romsLinked"]), (0, 1))
         self.assertTrue(self._rows()["Mario.sfc"]["present"])
+
+    def test_directory_rom_is_linked_even_when_an_external_source_already_exists(self):
+        game = self.api.archive.ensure_game("Zelda", "zelda")
+        rid = self.api.archive.ensure_rom_identity(game, "snes", "zelda", filename="Zelda.sfc")
+        self.api.archive.put_record(rid, "other-collection", {"name": "Zelda"}, {})
+        self.api.archive.put_rom_source(rid, "other-collection", self.dir / "source" / "Zelda.sfc", 3)
+        (self.rom_dir / "snes").mkdir(parents=True)
+        (self.rom_dir / "snes" / "Zelda.sfc").write_bytes(b"rom")
+
+        result = self.api.archive_refresh()["data"]
+
+        self.assertEqual(result["romsLinked"], 1)
+        sources = self.api.archive.rom_sources(rid)
+        self.assertEqual({row["source_collection_id"] for row in sources},
+                         {"other-collection", "__archive_dir__"})
+
+    def test_refresh_reports_each_system_and_can_be_cancelled_between_them(self):
+        for system in ("gba", "snes"):
+            (self.rom_dir / system).mkdir(parents=True)
+            (self.rom_dir / system / f"{system}.rom").write_bytes(b"rom")
+        seen = []
+
+        class Cancelled(Exception):
+            pass
+
+        def progress(current, total, label):
+            seen.append((current, total, label))
+            if current == 4:
+                raise Cancelled()
+
+        with self.assertRaises(Cancelled):
+            from app.archive import directory
+            from storage import for_path
+            directory.sync_from_directory(
+                self.api.archive, self.api._archive_config(), for_path(str(self.archive_dir)),
+                progress_cb=progress)
+        self.assertEqual(seen[0][0], 0)
+        self.assertEqual(seen[0][1], 8)
+        # 시스템 단위로 커밋하므로 완료된 시스템은 즉시 캐시로 사용할 수 있고,
+        # 취소된 다음 시스템의 불완전한 결과는 남지 않는다.
+        self.assertEqual(self.api.archive.count_rows(), 1)
+
+    def test_row_title_uses_the_resolved_archive_revision(self):
+        game = self.api.archive.ensure_game("SD 스내처 (1/4)", "sd 스내처")
+        rid = self.api.archive.ensure_rom_identity(
+            game, "msx", "sd snatcher", filename="SD Snatcher (Disk 1).dsk")
+        self.api.archive.put_record(rid, "source", {"name": "SD 스내처 (3/4)"}, {})
+        self.assertEqual(self._rows()["SD Snatcher (Disk 1).dsk"]["title"], "SD 스내처 (3/4)")
+
+
+class ArchivePrioritySortTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="rms_archive_priority_"))
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        configure(self.api, {"archiveDir": str(self.dir / "Archives")})
+        self.rows = {}
+        for name in ("Alpha", "Beta", "Gamma"):
+            game = self.api.archive.ensure_game(name, name.lower())
+            rid = self.api.archive.ensure_rom_identity(
+                game, "ps2", name.lower(), filename=f"{name}.iso")
+            self.api.archive.put_record(rid, "source", {"name": name}, {})
+            self.rows[name] = rid
+        self.api.archive.put_rom_source(
+            self.rows["Beta"], "source", self.dir / "Beta.iso", 1)
+        self.api.archive.put_media_ref(
+            self.rows["Gamma"], "covers", "source", self.dir / "Gamma.png", 1)
+
+    def _titles(self, priority):
+        return [row["title"] for row in self.api.archive_rows(priority=priority)["data"]["rows"]]
+
+    def test_rom_priority_puts_rows_with_rom_sources_first(self):
+        self.assertEqual(self._titles("rom")[0], "Beta")
+
+    def test_media_priority_puts_rows_with_media_first(self):
+        self.assertEqual(self._titles("media")[0], "Gamma")
+
+    def test_metadata_priority_keeps_all_rows_and_is_deterministic(self):
+        self.assertEqual(self._titles("metadata"), ["Alpha", "Beta", "Gamma"])
 
 
 class ArchiveRevisionGroupingTests(unittest.TestCase):

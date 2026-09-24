@@ -84,6 +84,8 @@ class ArchiveMediaPipelineTests(unittest.TestCase):
         row = next(r for r in self.api.archive_rows()["data"]["rows"]
                    if r["file"] == "FFX.iso")
         self.assertTrue(row["hasMedia"])
+        self.assertEqual(row["mediaLevel"], "partial")
+        self.assertEqual(row["videoLevel"], "ok")
 
     # --- 6. 화면이 실제로 부르는 조회 ---------------------------------------
     def test_the_image_can_actually_be_fetched_for_an_archive_entry(self):

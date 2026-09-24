@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +36,8 @@ class ScreenScraperConfig:
     user_id: str = ""
     user_password: str = ""
     timeout: float = 20.0
+    use_hashes: bool = True
+    media_types: tuple[str, ...] | None = None
 
     def validate(self):
         if not self.dev_id or not self.dev_password or not self.soft_name:
@@ -153,6 +157,8 @@ class ScreenScraperClient(ScrapeProvider):
         }
 
     def identify(self, identity: ScrapeIdentity) -> list[ScrapeCandidate]:
+        if not self.config.use_hashes:
+            return []
         if not identity.path or not Path(identity.path).is_file():
             return []
         hashes = hashes_of_file(identity.path)
@@ -186,8 +192,21 @@ class ScreenScraperClient(ScrapeProvider):
         games = response.get("jeux") or response.get("jeu") or []
         if isinstance(games, dict) and "jeu" in games:
             games = games["jeu"]
-        return [self._candidate(game, evidence=(f'검색어 "{query}"',), confidence=55)
-                for game in _list(games) if isinstance(game, dict)]
+        candidates = []
+        for game in _list(games):
+            if not isinstance(game, dict):
+                continue
+            candidate = self._candidate(game, evidence=(f'검색어 "{query}"',), confidence=55)
+            score = _title_similarity(query, candidate.title, candidate.alternate_titles)
+            # jeuRecherche는 관련 없는 단일 결과를 정상 응답으로 돌려주기도 한다. 제목이
+            # 거의 겹치지 않으면 선택을 강요하지 않고 "후보 없음"으로 처리한다.
+            if score < 0.45:
+                continue
+            confidence = max(45, min(95, round(score * 100)))
+            candidates.append(replace(
+                candidate, confidence=confidence,
+                confidence_reason=f"제목 유사도 {confidence}%"))
+        return candidates
 
     def _candidate(self, game: dict, *, evidence: tuple[str, ...], confidence: int) -> ScrapeCandidate:
         remote_id = str(game.get("id") or game.get("jeu_id") or "")
@@ -212,16 +231,22 @@ class ScreenScraperClient(ScrapeProvider):
             "rating": _text(game.get("note")),
         }
         media = []
+        allowed = set(MEDIA_TYPES.values() if self.config.media_types is None
+                      else self.config.media_types)
+        seen_media_types = set()
         for item in _list(game.get("medias")):
             if not isinstance(item, dict) or not item.get("url"):
                 continue
             media_type = MEDIA_TYPES.get(str(item.get("type") or "").lower())
-            if media_type:
+            # 같은 종류의 지역/언어 변형을 모두 보여주면 카드가 수십 장이 된다.
+            # API 응답의 우선순위가 높은 첫 항목 하나만 후보로 보낸다.
+            if media_type and media_type in allowed and media_type not in seen_media_types:
                 media.append(ScrapeMedia(media_type, str(item["url"]),
                                          str(item.get("region") or ""),
                                          str(item.get("langue") or ""),
                                          str(item.get("format") or ""),
                                          int(item["size"]) if str(item.get("size") or "").isdigit() else None))
+                seen_media_types.add(media_type)
         source_url = f"https://www.screenscraper.fr/gameinfos.php?gameid={remote_id}" if remote_id else ""
         return ScrapeCandidate(
             candidate_id=f"screenscraper:{remote_id or abs(hash((title, system_name)))}",
@@ -230,3 +255,24 @@ class ScreenScraperClient(ScrapeProvider):
             media=tuple(media), alternate_titles=tuple(dict.fromkeys(names)), evidence=evidence,
             confidence=confidence, confidence_reason=evidence[0] if evidence else "",
             source_url=source_url)
+
+
+def _title_similarity(query: str, title: str, alternate_titles=()) -> float:
+    def clean(value):
+        return re.sub(r"[^0-9a-z가-힣]+", " ", str(value or "").casefold()).strip()
+
+    wanted = clean(query)
+    if not wanted:
+        return 0.0
+    scores = []
+    for value in (title, *(alternate_titles or ())):
+        candidate = clean(value)
+        if not candidate:
+            continue
+        if candidate == wanted:
+            return 1.0
+        ratio = SequenceMatcher(None, wanted, candidate).ratio()
+        wanted_tokens, candidate_tokens = set(wanted.split()), set(candidate.split())
+        overlap = len(wanted_tokens & candidate_tokens) / max(1, len(wanted_tokens | candidate_tokens))
+        scores.append(max(ratio, overlap))
+    return max(scores, default=0.0)

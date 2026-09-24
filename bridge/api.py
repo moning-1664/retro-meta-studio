@@ -566,6 +566,10 @@ class Api:
             soft_name=str(public.get("softName") or "RetroMetaStudio"),
             user_id=str(public.get("userId") or ""),
             user_password=scrape_secrets.load(protected.get("userPassword") or ""),
+            # 큰 ROM을 매번 전부 읽는 해시 식별은 기본적으로 끈다. 사용자가 설정에서
+            # 명시적으로 켠 경우에만 CRC/MD5/SHA1을 계산한다.
+            use_hashes=bool(public.get("useHashes", False)),
+            media_types=tuple(public["mediaTypes"]) if "mediaTypes" in public else None,
         ))
 
     @guarded
@@ -583,7 +587,7 @@ class Api:
             return err("스크래퍼 설정 형식이 올바르지 않습니다.")
         settings = dict(self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {})
         public = dict(settings.get("scraper") or {})
-        for key in ("enabled", "softName", "userId"):
+        for key in ("enabled", "softName", "userId", "useHashes", "mediaTypes"):
             if key in patch:
                 public[key] = patch[key]
         settings["scraper"] = public
@@ -2194,22 +2198,34 @@ class Api:
         rows = self.archive.list_rows(**query, limit=page[0], offset=page[1], priority=priority)
         archive_cfg = self._archive_config()
         adapter = get_adapter(archive_cfg["frontend"])
+        row_ids = [str(row["rom_identity_id"]) for row in rows]
+        metadata_by_id = self.archive.resolve_fields_many(row_ids)
+        rom_sources_by_id = self.archive.rom_sources_many(row_ids)
         out_rows = []
         for r in rows:
-            fields, raw = self.archive.resolve_fields(r["rom_identity_id"])
+            rid = str(r["rom_identity_id"])
+            media_types = set(filter(None, (r["media_types"] or "").split(",")))
+            fields, raw = metadata_by_id.get(rid, ({}, {}))
             starred = adapter.is_favorite(raw)
             if favorites_only and not starred:
                 continue
-            rom_ownership = self._archive_rom_ownership(
-                r["rom_identity_id"], archive_cfg, check_exists=False)
+            rom_ownership = self._rom_ownership_from_sources(
+                rom_sources_by_id.get(rid, []), archive_cfg, check_exists=False)
             out_rows.append({
                 "romUid": r["rom_identity_id"], "romIdentityId": r["rom_identity_id"],
-                "system": r["system"], "file": r["filename"], "title": r["title"],
+                "system": r["system"], "file": r["filename"],
+                "title": fields.get("name") or r["title"],
                 "sources": r["source_count"], "updatedAt": r["updated_at"],
                 # 예전에는 False로 박아뒀다. Archive에 media가 저장돼 있어도
                 # 목록에서는 영영 없는 것으로 보였다.
                 "hasMetadata": any(v is not None and str(v).strip() for v in fields.values()),
-                "hasMedia": bool(r["media_count"]),
+                "hasMedia": bool(media_types),
+                "rom": "ok" if r["rom_count"] else "none",
+                "metaLevel": ("ok" if fields.get("name") and fields.get("desc")
+                              else "partial" if fields.get("name") or fields.get("desc") else "none"),
+                "mediaLevel": ("ok" if set(KEY_MEDIA_TYPES).issubset(media_types)
+                               else "partial" if media_types else "none"),
+                "videoLevel": "ok" if "videos" in media_types else "none",
                 # Metadata(frontend_raw)에 있는 별표를 그대로 읽는다.
                 "favorite": starred,
                 # ROM 위치가 기록돼 있으면 있는 것으로 본다. 없으면 메타데이터만 있는
@@ -2433,9 +2449,14 @@ class Api:
     def _archive_rom_ownership(self, rom_identity_id, cfg=None, *, check_exists=True) -> dict:
         """Classify recorded ROM paths by the configured Archive ROM root."""
         cfg = cfg or self._archive_config()
+        return self._rom_ownership_from_sources(
+            self.archive.rom_sources(rom_identity_id), cfg, check_exists=check_exists)
+
+    @staticmethod
+    def _rom_ownership_from_sources(sources, cfg, *, check_exists=True) -> dict:
         root = (cfg.get("romDir") or cfg.get("archiveDir")) if cfg else None
         items = []
-        for source in self.archive.rom_sources(rom_identity_id):
+        for source in sources:
             path = source.get("abs_path")
             internal = _path_within(path, root)
             items.append({
@@ -2687,12 +2708,22 @@ class Api:
         if archive_legacy.has_legacy(cfg["archiveDir"]):
             imported = archive_legacy.import_legacy(self.archive, cfg["archiveDir"])
             log.info("legacy archive imported: %s", imported)
+        def phase(start, end, name):
+            if progress_cb is None:
+                return None
+            def report(current, total, label):
+                ratio = max(0.0, min(1.0, float(current) / max(1, float(total))))
+                progress_cb(round(start + ((end - start) * ratio)), 1000,
+                            f"{name}: {label}")
+            return report
         # 디렉토리에 있는 것(직접 넣은 ROM, 고친 gamelist)도 함께 읽는다.
         synced = archive_directory.sync_from_directory(
-            self.archive, cfg, storage.for_path(cfg["archiveDir"]))
+            self.archive, cfg, storage.for_path(cfg["archiveDir"]), progress_cb=phase(0, 450, "읽기"))
         archive_projection.snapshot_revision_media(
-            self.archive, cfg, self.archive.record_ids_with_media())
-        projection = archive_projection.project(self.archive, cfg, progress_cb=progress_cb)
+            self.archive, cfg, self.archive.record_ids_with_media(),
+            progress_cb=phase(450, 650, "Revision 미디어"))
+        projection = archive_projection.project(
+            self.archive, cfg, progress_cb=phase(650, 1000, "Frontend 쓰기"))
         return {"imported": imported, "synced": synced, "projection": projection}
 
     @guarded
@@ -2901,6 +2932,19 @@ class Api:
             return err("Archive 디렉토리가 설정되지 않았습니다.")
         provider = storage.for_path(cfg["archiveDir"])
         return ok(archive_directory.sync_from_directory(self.archive, cfg, provider))
+
+    @guarded
+    def start_archive_refresh(self):
+        """Archive 디렉토리 재색인을 취소 가능한 background job으로 실행한다."""
+        cfg = self._archive_config()
+        if not archive_projection.is_configured(cfg):
+            return err("Archive 디렉토리가 설정되지 않았습니다.")
+        provider = storage.for_path(cfg["archiveDir"])
+        job_id = self.jobs.run_heavy(
+            lambda cb: archive_directory.sync_from_directory(
+                self.archive, cfg, provider, progress_cb=cb),
+            mutates_state=True, target_ids=("archive",), kind="archive-refresh")
+        return ok({"jobId": job_id})
 
     @guarded
     def archive_project(self):

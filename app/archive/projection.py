@@ -76,12 +76,12 @@ def project(archive, config, rom_identity_ids=None, *, overwrite_media=None, pro
     total = sum(len(items) for items in by_system.values())
     entries = copied = missing = 0
     for system, items in by_system.items():
-        if progress_cb:
-            progress_cb(entries, total, system)
         layout = adapter.layout(collection, system)
         Path(layout.metadata_file).parent.mkdir(parents=True, exist_ok=True)
         batch = []
         for rid, identity in items:
+            if progress_cb:
+                progress_cb(entries, max(1, total), f"{system} · {identity['filename']}")
             filename = identity["filename"] or identity["filename_norm"]
             fields, raw = archive.resolve_fields(rid)
             batch.append(GameEntry(
@@ -92,13 +92,17 @@ def project(archive, config, rom_identity_ids=None, *, overwrite_media=None, pro
                                         overwrite=(overwrite_media or {}).get(rid, ()))
                 copied += got
                 missing += lost
+            entries += 1
         adapter.write_index(layout, batch)
-        entries += len(batch)
+        if progress_cb:
+            progress_cb(entries, max(1, total), f"{system} · gamelist 저장")
+    if progress_cb:
+        progress_cb(total, max(1, total), "완료")
     return {"entries": entries, "mediaCopied": copied, "mediaMissing": missing,
             "systems": len(by_system)}
 
 
-def snapshot_revision_media(archive, config, record_ids) -> int:
+def snapshot_revision_media(archive, config, record_ids, *, progress_cb=None) -> int:
     """Keep immutable media copies for new revisions when Archive owns media.
 
     The normal frontend media tree holds the currently resolved image. Revision
@@ -110,8 +114,17 @@ def snapshot_revision_media(archive, config, record_ids) -> int:
         return 0
     root = Path(cfg["archiveDir"]) / ".rms" / "revision-media"
     copied = 0
-    for record_id in record_ids or []:
+    ids = list(record_ids or [])
+    if progress_cb:
+        progress_cb(0, max(1, len(ids)), "Revision 미디어 확인")
+    for index, record_id in enumerate(ids):
+        if progress_cb:
+            progress_cb(index, max(1, len(ids)), f"Revision {record_id}")
         for media in archive.media_of_revision(record_id):
+            # copy2 자체는 운영체제 호출이라 중간에 끊을 수 없지만, 파일 사이에는
+            # 반드시 취소 요청을 확인한다.
+            if progress_cb:
+                progress_cb(index, max(1, len(ids)), media.get("media_type") or "미디어")
             if media.get("state", "present") != "present":
                 continue
             source = Path(media["abs_path"])
@@ -124,6 +137,8 @@ def snapshot_revision_media(archive, config, record_ids) -> int:
                 shutil.copy2(source, destination)
                 copied += 1
             archive.update_revision_media_path(record_id, media["media_type"], destination)
+        if progress_cb:
+            progress_cb(index + 1, max(1, len(ids)), f"Revision {record_id}")
     return copied
 
 

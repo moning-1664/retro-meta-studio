@@ -568,8 +568,56 @@ class ArchiveStore:
         만들어 둔 출처의 제목은 파일명 그대로라, 그것이 먼저 들어왔다는 이유로 이기면
         `1941`이 `1941 (World)`를 영영 밀어낸다.
         """
-        edited = self.latest_record(rom_identity_id, ARCHIVE_EDIT_SOURCE)
-        preferred = self.get_preferred(rom_identity_id)
+        return self.resolve_fields_many([rom_identity_id]).get(str(rom_identity_id), ({}, {}))
+
+    def resolve_fields_many(self, rom_identity_ids) -> dict[str, tuple[dict, dict]]:
+        """여러 Archive 행의 effective metadata를 고정된 수의 query로 계산한다.
+
+        목록 한 페이지에서 ``resolve_fields()``를 행마다 호출하면 revision 수와
+        무관하게 행당 여러 query가 생긴다. 여기서는 latest source, preferred,
+        identity를 한 번씩 읽고 같은 병합 규칙을 Python에서 적용한다.
+        """
+        ids = list(dict.fromkeys(str(value) for value in (rom_identity_ids or []) if value))
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        latest_rows = self._conn.execute(
+            "SELECT ar.* FROM archive_records ar"
+            " JOIN (SELECT rom_identity_id,source_collection_id,MAX(revision) AS revision"
+            " FROM archive_records WHERE rom_identity_id IN (" + placeholders + ")"
+            " GROUP BY rom_identity_id,source_collection_id) latest"
+            " ON latest.rom_identity_id=ar.rom_identity_id"
+            " AND latest.source_collection_id=ar.source_collection_id"
+            " AND latest.revision=ar.revision",
+            ids).fetchall()
+        preferred_rows = self._conn.execute(
+            "SELECT ar.* FROM preferred_revisions p"
+            " JOIN archive_records ar ON ar.record_id=p.record_id"
+            " WHERE p.rom_identity_id IN (" + placeholders + ")",
+            ids).fetchall()
+        identity_rows = self._conn.execute(
+            "SELECT rom_identity_id,filename FROM rom_identities"
+            " WHERE rom_identity_id IN (" + placeholders + ")",
+            ids).fetchall()
+
+        sources_by_id = {rid: [] for rid in ids}
+        for row in latest_rows:
+            sources_by_id.setdefault(str(row["rom_identity_id"]), []).append(self._record_dict(row))
+        preferred_by_id = {
+            str(row["rom_identity_id"]): self._record_dict(row) for row in preferred_rows
+        }
+        filename_by_id = {
+            str(row["rom_identity_id"]): str(row["filename"] or "") for row in identity_rows
+        }
+        return {
+            rid: self._resolve_loaded_fields(
+                sources_by_id.get(rid, []), preferred_by_id.get(rid), filename_by_id.get(rid, ""))
+            for rid in ids
+        }
+
+    def _resolve_loaded_fields(self, all_sources, preferred, filename) -> tuple[dict, dict]:
+        edited = next((source for source in all_sources
+                       if source["source_collection_id"] == ARCHIVE_EDIT_SOURCE), None)
 
         # **fallback은 "다른 출처"에서만 한다 - 고른 판 자신의 이력에서는 하지 않는다.**
         #
@@ -585,7 +633,7 @@ class ArchiveStore:
         skip = {ARCHIVE_EDIT_SOURCE}
         if preferred:
             skip.add(preferred["source_collection_id"])
-        sources = sorted((s for s in self.sources_of(rom_identity_id)
+        sources = sorted((s for s in all_sources
                           if s["source_collection_id"] not in skip),
                          key=lambda s: (s["updated_at"], s["record_id"]))
         if not sources:
@@ -594,8 +642,7 @@ class ArchiveStore:
                 base, raw = dict(preferred["fields"] or {}), preferred["frontend_raw"] or {}
             return self._with_edit(base, raw, edited)
 
-        identity = self.get_identity(rom_identity_id)
-        stem = str((identity or {}).get("filename") or "")
+        stem = str(filename or "")
         stem = (stem[:stem.rfind(".")] if "." in stem else stem).strip().lower()
 
         def from_filename(value) -> bool:
@@ -634,6 +681,18 @@ class ArchiveStore:
                     merged[key] = value
             raw = preferred["frontend_raw"] or raw
         return self._with_edit(merged, raw, edited)
+
+    def rom_sources_many(self, rom_identity_ids) -> dict[str, list[dict]]:
+        ids = list(dict.fromkeys(str(value) for value in (rom_identity_ids or []) if value))
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        result = {rid: [] for rid in ids}
+        for row in self._conn.execute(
+                "SELECT * FROM archive_rom_sources WHERE rom_identity_id IN (" + placeholders + ")"
+                " ORDER BY updated_at DESC", ids):
+            result.setdefault(str(row["rom_identity_id"]), []).append(dict(row))
+        return result
 
     @staticmethod
     def _with_edit(base_fields, base_raw, edited):
@@ -686,6 +745,9 @@ class ArchiveStore:
             " AND er2.source_collection_id='__archive__')"
             " AND erm.media_type=pm.media_type AND erm.state='cleared')"
         )
+        effective_media_types = effective_media_exists.replace(
+            "SELECT 1 FROM archive_media pm",
+            "SELECT GROUP_CONCAT(DISTINCT pm.media_type) FROM archive_media pm", 1)
         priority_order = {
             "rom": "CASE WHEN EXISTS (SELECT 1 FROM archive_rom_sources s"
                    " WHERE s.rom_identity_id=r.rom_identity_id) THEN 0 ELSE 1 END,",
@@ -705,17 +767,7 @@ class ArchiveStore:
             "         WHERE rom_identity_id = r.rom_identity_id) AS updated_at,"
             # media가 실제로 수집돼 있는지. 목록이 이 값을 안 세면 UI가 "media 없음"을
             # 하드코딩하게 되고, 저장은 됐는데 화면에는 영영 안 나오는 상태가 된다.
-            "       (SELECT COUNT(*) FROM archive_media"
-            "         WHERE rom_identity_id = r.rom_identity_id"
-            "           AND NOT EXISTS (SELECT 1 FROM archive_records er"
-            "             JOIN archive_record_media erm ON erm.record_id=er.record_id"
-            "             WHERE er.rom_identity_id=r.rom_identity_id"
-            "               AND er.source_collection_id='__archive__'"
-            "               AND er.revision=(SELECT MAX(er2.revision) FROM archive_records er2"
-            "                 WHERE er2.rom_identity_id=r.rom_identity_id"
-            "                   AND er2.source_collection_id='__archive__')"
-            "               AND erm.media_type=archive_media.media_type AND erm.state='cleared'))"
-            "       AS media_count,"
+            f"       ({effective_media_types}) AS media_types,"
             # ROM 위치가 기록돼 있는지(실제 파일 존재는 실행할 때 확인한다 - 목록에서
             # 수천 개를 NAS까지 조회하면 목록이 멈춘다).
             "       (SELECT COUNT(*) FROM archive_rom_sources"

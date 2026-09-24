@@ -41,6 +41,12 @@ async function openTab(page, name) {
   await expect(page.locator(".ctab.active")).toContainText(name, { timeout: 20000 });
 }
 
+async function ingestCurrentToArchive(page) {
+  await page.locator("#collection-header .cheader-right .icon-btn[title*='메타데이터 보내기']").click();
+  await page.locator(".ctx-menu .ctx-item", { hasText: "Archive" }).click();
+  await expect(page.locator("#toast")).toContainText("수집 완료");
+}
+
 const targetRom = (n) => path.join(ws.targetRoot, "ps2", n);
 const targetCover = (n) => path.join(ws.targetRoot, "downloaded_media", "ps2", "covers", n);
 const sourceGamelist = () => path.join(ws.sourceRoot, "gamelists", "ps2", "gamelist.xml");
@@ -107,8 +113,7 @@ test.describe("Plan Execute가 실제로 파일을 옮긴다", () => {
 
     await openReal(page);
     await openTab(page, "Source");
-    await page.locator("#filter-bar .btn", { hasText: "Archive에 수집" }).click();
-    await expect(page.locator("#toast")).toContainText("수집 완료");
+    await ingestCurrentToArchive(page);
 
     // "보내기" 대상 선택 창은 이미 열려 있는 탭만 보여준다.
     await openTab(page, "Target");
@@ -120,14 +125,14 @@ test.describe("Plan Execute가 실제로 파일을 옮긴다", () => {
     await ffxRow.locator(".lc-file").click();
     await expect(page.locator(".sb-left")).toContainText("Selected 1");
 
-    await page.locator(".sb-actions .btn", { hasText: "Collection으로 보내기" }).click();
+    await page.locator("#archive-send-btn").click();
     await page.locator(".picker-row", { hasText: "Target" }).click();
     await expect(page.locator("#toast")).toBeVisible();
 
     await openTab(page, "Target");
-    await expect(page.locator("#filter-bar .btn", { hasText: /^Apply \(/ })).toBeVisible();
+    await expect(page.locator("#filter-bar .plan-actions .seg-btn", { hasText: "Apply" })).toBeVisible();
 
-    await page.locator("#filter-bar .btn", { hasText: /^Apply \(/ }).click();
+    await page.locator("#filter-bar .plan-actions .seg-btn", { hasText: "Apply" }).click();
     // Apply는 확인 모달을 한 번 거친다 - 실제 파일을 바꾸는 동작이기 때문이다.
     await page.locator(".modal-actions .btn.primary").click();
     await expect(page.locator("#toast")).toBeVisible();
@@ -162,8 +167,7 @@ test.describe("Cancel은 아무것도 바꾸지 않는다", () => {
     await openReal(page);
     await openTab(page, "Source");
     // 이전 테스트에서 이미 수집했을 수 있으니 한 번 더 눌러도 안전해야 한다(멱등).
-    await page.locator("#filter-bar .btn", { hasText: "Archive에 수집" }).click();
-    await expect(page.locator("#toast")).toContainText("수집 완료");
+    await ingestCurrentToArchive(page);
 
     await openTab(page, "Target");
     await page.locator(".ctab.archive").click();
@@ -174,16 +178,16 @@ test.describe("Cancel은 아무것도 바꾸지 않는다", () => {
     await mgs2Row.locator(".lc-file").click();
     await expect(page.locator(".sb-left")).toContainText("Selected 1");
 
-    await page.locator(".sb-actions .btn", { hasText: "Collection으로 보내기" }).click();
+    await page.locator("#archive-send-btn").click();
     await page.locator(".picker-row", { hasText: "Target" }).click();
     await expect(page.locator("#toast")).toBeVisible();
 
     await openTab(page, "Target");
-    await expect(page.locator("#filter-bar .btn", { hasText: /^Apply \(/ })).toBeVisible();
+    await expect(page.locator("#filter-bar .plan-actions .seg-btn", { hasText: "Apply" })).toBeVisible();
 
     // Plan 버리기는 목록 위 Cancel 버튼이다(예전에는 지우개 아이콘이었다).
     // 되돌릴 수 없는 동작이 아니지만 계산한 것을 버리는 것이라 한 번 확인한다.
-    await page.locator("#filter-bar .btn", { hasText: "Cancel" }).click();
+    await page.locator("#filter-bar .plan-actions .seg-btn", { hasText: "Cancel" }).click();
     await page.locator(".modal-actions .btn", { hasText: "확인" }).click();
     await expect(page.locator(".modal-actions")).toHaveCount(0);
 
@@ -238,7 +242,7 @@ test.describe("외부에서 파일이 바뀌면 다시 읽어 반영한다", () 
 
     await openReal(page);
     await openTab(page, "Source");
-    await page.locator("#filter-bar .icon-btn[title='다시 스캔']").click();
+    await page.locator("#collection-header .cheader-right .icon-btn[title='다시 스캔']").click();
     await expect(page.locator(".lrow", { hasText: "Ico" })).toBeVisible({ timeout: 20000 });
   });
 
@@ -247,7 +251,7 @@ test.describe("외부에서 파일이 바뀌면 다시 읽어 반영한다", () 
 
     await openReal(page);
     await openTab(page, "Source");
-    await page.locator("#filter-bar .icon-btn[title='다시 스캔']").click();
+    await page.locator("#collection-header .cheader-right .icon-btn[title='다시 스캔']").click();
     await expect(page.locator(".lrow", { hasText: "Ico" })).toHaveCount(0, { timeout: 20000 });
   });
 });

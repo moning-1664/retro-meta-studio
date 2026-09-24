@@ -59,7 +59,8 @@ async function openRomOnly(page) {
 
 //: 이 파일이 만드는 ROM 폴더의 System들. Archive는 실행 전체에서 공유되므로
 //  다른 spec이 넣은 항목(ps2 등)과 섞이지 않도록 여기서 걸러서 본다.
-const OURS = ["msx1", "nes", "famicom"];
+// Archive identity는 frontend alias를 정규화한다(msx1 -> msx).
+const OURS = ["msx", "nes", "famicom"];
 
 const archiveKeys = (page) => page.evaluate(async (ours) => {
   const r = await window.api.archiveRows({ limit: 500 });
@@ -106,19 +107,24 @@ test.describe("ROM만 있는 Collection", () => {
 });
 
 test.describe("Archive 수집 범위 - 실제 결과", () => {
+  const ingest = async (page, expectedScope) => {
+    await page.locator("#collection-header .cheader-right .icon-btn[title*='메타데이터 보내기']").click();
+    await expect(page.locator(".ctx-sub")).toContainText(expectedScope);
+    await page.locator(".ctx-menu .ctx-item", { hasText: "Archive" }).click();
+    await expect(page.locator("#toast")).toContainText("수집 완료", { timeout: 30000 });
+  };
+
   test("System 하나만 골라 수집하면 그 System만 들어간다", async ({ page }) => {
     await openReal(page);
     await openRomOnly(page);
 
     await page.locator(".nav-system", { hasText: "MSX1" }).click();
-    // 버튼이 대상을 미리 말한다 - 누르기 전에 확인할 수 있어야 한다.
-    await expect(page.locator("#archive-ingest-btn")).toContainText("MSX1 전체");
-    await page.locator("#archive-ingest-btn").click();
-    await expect(page.locator("#toast")).toContainText("수집 완료", { timeout: 30000 });
+    // 메뉴가 대상을 미리 말한다 - 실행 전에 확인할 수 있어야 한다.
+    await ingest(page, "MSX1 전체");
 
     // **여기가 핵심이다.** Archive에 실제로 무엇이 들어갔는지 본다.
     // MSX1만 골랐으므로 nes/famicom은 아직 하나도 없어야 한다.
-    expect(await archiveKeys(page)).toEqual(["msx1|Aleste.rom", "msx1|Nemesis.rom"]);
+    expect(await archiveKeys(page)).toEqual(["msx|Aleste.rom", "msx|Nemesis.rom"]);
   });
 
   test("고른 게임만 수집하면 그 게임만 들어간다", async ({ page }) => {
@@ -128,9 +134,7 @@ test.describe("Archive 수집 범위 - 실제 결과", () => {
     await page.locator(".nav-system", { hasText: "NES" }).click();
     await expect(page.locator(".lrow").first()).toBeVisible({ timeout: 30000 });
     await page.locator(".lrow").first().click();
-    await expect(page.locator("#archive-ingest-btn")).toContainText("선택한 1개");
-    await page.locator("#archive-ingest-btn").click();
-    await expect(page.locator("#toast")).toContainText("수집 완료", { timeout: 30000 });
+    await ingest(page, "선택한 1개");
 
     // 앞 테스트가 넣은 msx1 둘에 nes 하나만 더해져야 한다 - nes 전체가 아니다.
     const rows = await archiveKeys(page);
@@ -141,10 +145,9 @@ test.describe("Archive 수집 범위 - 실제 결과", () => {
   test("아무것도 고르지 않으면 Collection 전체가 들어간다", async ({ page }) => {
     await openReal(page);
     await openRomOnly(page);
+    await page.locator(".nav-all").click();
 
-    await expect(page.locator("#archive-ingest-btn")).toContainText("Collection 전체");
-    await page.locator("#archive-ingest-btn").click();
-    await expect(page.locator("#toast")).toContainText("수집 완료", { timeout: 30000 });
+    await ingest(page, "Collection 전체");
 
     const rows = await archiveKeys(page);
     expect(rows).toHaveLength(6);   // msx1 2 + nes 3 + famicom 1

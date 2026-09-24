@@ -24,18 +24,17 @@
   // 가장 넓다. 목록만 훑어도 어떤 게임인지 알 수 있어야 하기 때문이다.
   //
   // `key`가 없는 컬럼(No., ★)은 정렬도 폭 조절도 하지 않는다.
-  // 기본 순서는 사용자 결정(메뉴 정리 §5): No/Favorite/Title/Description/Status/
-  // Rating/Genre/Region - File은 목록에 없었으므로 가장 덜 중요한 뒤쪽에 둔다.
+  // 기본 순서는 사용자 결정: No/File/Title/Description/Status/Rating/Genre/Region.
   const COLUMNS = [
     { id: "no", label: "No.", width: 34, fixed: true },
-    { id: "fav", label: "★", key: "favorite", width: 30, fixed: true },
+    { id: "file", label: "File", key: "filename", width: 190 },
     { id: "title", label: "Title", key: "title", width: 220 },
     { id: "desc", label: "Description", key: "desc", width: 390 },
     { id: "status", label: "Status", width: 88, fixed: true },
     { id: "rating", label: "Rating", key: "rating", width: 66 },
     { id: "genre", label: "Genre", key: "genre", width: 120 },
     { id: "region", label: "Region", key: "region", width: 78 },
-    { id: "file", label: "File", key: "filename", width: 190 },
+    { id: "fav", label: "★", key: "favorite", width: 30, fixed: true },
   ];
   const COL_MIN_WIDTH = 50;
   const DEFAULT_COL_WIDTHS = Object.fromEntries(COLUMNS.map((c) => [c.id, c.width]));
@@ -1315,21 +1314,28 @@
     updateSettings("session", { tabs: S.tabs.filter((t) => t !== ARCHIVE_ID), active: S.activeId });
   }
 
+  let tabSelectionToken = 0;
+
   async function selectTab(id) {
     if (S.activeId === id) return;
     if (isDetached() && id !== S.window.collectionId) return;
     if (id !== ARCHIVE_ID && !S.tabs.includes(id)) { await openTab(id); return; }
     rememberTabState();
+    const token = ++tabSelectionToken;
     S.activeId = id;
     S.view = "list";
     resetList();
     if (id === ARCHIVE_ID) await loadArchiveConfigured();
+    if (token !== tabSelectionToken || S.activeId !== id) return;
     await ensureDetail(id);
+    if (token !== tabSelectionToken || S.activeId !== id) return;
     // 사용자가 맞춰 놓은 컬럼 폭과 정렬을 먼저 되살린 뒤에 그린다 - 나중에 불러오면
     // 기본값으로 한 번 그렸다가 다시 그려서 화면이 흔들린다.
     await loadUiState(id);
+    if (token !== tabSelectionToken || S.activeId !== id) return;
     renderAll();
     await reloadList();
+    if (token !== tabSelectionToken || S.activeId !== id) return;
     await refreshPlan();
     await restoreTabState(id);
     rememberSession();
@@ -1856,10 +1862,20 @@
 
     const scope = activeScope();
     if (isArchive()) {
-      const all = navRow("All", detail.totalGames, scope.kind === "all", () => setScope({ kind: "all" }));
+      const all = navRow("All", detail.totalGames, scope.kind === "all" && !S.favoritesOnly, () => {
+        S.favoritesOnly = false;
+        setScope({ kind: "all" });
+      });
       all.classList.add("nav-all");
       all.insertBefore(icon("database", IC.md), all.firstChild);
       lens.appendChild(all);
+      const favorites = navRow("Favorites", null, !!S.favoritesOnly, () => {
+        S.favoritesOnly = true;
+        setScope({ kind: "all" });
+      });
+      favorites.classList.add("nav-favorites");
+      favorites.insertBefore(icon("star", IC.md), favorites.firstChild);
+      lens.appendChild(favorites);
       (detail.archiveSystems || []).forEach((sys) => {
         const row = navRow(sys.system.toUpperCase(), sys.count,
           scope.kind === "system" && scope.id === sys.system,
@@ -2257,13 +2273,13 @@
         title: "ROM 위치가 한 번도 기록되지 않은 항목(메타데이터만 남은 것)을 Archive에서 지웁니다. "
           + "실제 파일은 건드리지 않습니다.",
         onSelect: () => confirmArchiveOrphanCleanup(sys) },
-      { label: "Archive 보관 ROM 전체 삭제…", icon: "gamepad", danger: true,
+      { label: "ROM 전체 삭제…", icon: "gamepad", danger: true,
         title: "이 System에서 Archive ROM 디렉토리 안의 파일만 삭제합니다. 외부 원본 연결은 유지합니다.",
         onSelect: () => confirmArchiveSystemRomDelete(sys) },
-      { label: "Archive 보관 Media 전체 삭제…", icon: "image", danger: true,
+      { label: "미디어 전체 삭제…", icon: "image", danger: true,
         title: "이 System에서 Archive가 보관하는 Media 복사본만 삭제합니다. 외부 원본 연결은 유지합니다.",
         onSelect: () => confirmArchiveSystemMediaDelete(sys) },
-      { label: "시스템 전체 Archive에서 지우기 (!)", icon: "trash", danger: true,
+      { label: "시스템 전체 삭제 (!)", icon: "trash", danger: true,
         title: "이 System의 Archive 기록을 전부 지웁니다 - 실제 ROM/Media 파일은 그대로입니다.",
         onSelect: () => confirmRemoveArchiveSystem(sys) },
     ];
@@ -4795,7 +4811,7 @@
                onSelect: () => deleteSelection() },
             ]
           : [
-              { label: "삭제", icon: "trash", hint: "Del", danger: true, disabled: locked,
+              { label: "Game 삭제", icon: "trash", hint: "Del", danger: true, disabled: locked,
                 title: "ROM + 메타데이터 + 미디어를 모두 지웁니다", onSelect: () => deleteSelection(DELETE_ALL) },
               { label: "ROM 삭제", icon: "gamepad", danger: true, disabled: locked,
                 title: "ROM 파일만 지웁니다 - 메타데이터와 미디어는 남습니다", onSelect: () => deleteSelection(["rom"]) },
@@ -5830,7 +5846,8 @@
           : "ScreenScraper 개발자 정보가 필요합니다.",
       ]));
       const status = h("div", { class: "stg-info" }, ["연결 상태를 확인하지 않았습니다."]);
-      const configure = h("button", { class: "btn", onClick: () => openScraperSetup(draw) }, ["연결 설정…"]);
+      const configure = h("button", { class: "btn", onClick: () => openScraperSetup(
+        () => openSettings("scraper")) }, ["연결 설정…"]);
       const test = h("button", { class: "btn primary", disabled: !(cfg.devIdSet && cfg.devPasswordSet),
         onClick: async () => {
           test.disabled = true;
@@ -5843,6 +5860,25 @@
         } }, ["연결 테스트"]);
       wrap.appendChild(h("div", { class: "stg-inline-actions" }, [configure, test]));
       wrap.appendChild(status);
+      const hash = h("input", { type: "checkbox" });
+      hash.checked = !!cfg.useHashes;
+      hash.addEventListener("change", () => api.saveScraperSettings({ useHashes: hash.checked }));
+      wrap.appendChild(h("label", { class: "scrape-setting-check" }, [hash,
+        h("span", {}, ["ROM 해시로 먼저 찾기 (큰 ROM은 느릴 수 있음)"])]));
+      const enabledMedia = new Set(cfg.mediaTypes || ["covers", "screenshots", "wheel", "videos"]);
+      const mediaChoices = h("details", { class: "scrape-media-settings" }, [
+        h("summary", {}, ["가져올 미디어 종류"]),
+      ]);
+      Object.entries(MEDIA_LABEL).forEach(([value, label]) => {
+        const box = h("input", { type: "checkbox" });
+        box.checked = enabledMedia.has(value);
+        box.addEventListener("change", () => {
+          if (box.checked) enabledMedia.add(value); else enabledMedia.delete(value);
+          api.saveScraperSettings({ mediaTypes: [...enabledMedia] });
+        });
+        mediaChoices.appendChild(h("label", { class: "scrape-setting-check" }, [box, h("span", {}, [label])]));
+      });
+      wrap.appendChild(mediaChoices);
     };
     draw();
     return wrap;
@@ -6100,8 +6136,10 @@
                                   placeholder: "검색 키" });
       const system = h("input", { class: "field-input scrape-system", value: item.system || "",
                                    placeholder: "시스템 또는 ScreenScraper System ID" });
+      query.addEventListener("input", () => { item.query = query.value; });
+      system.addEventListener("input", () => { item.systemHint = system.value; });
       const retry = h("button", { class: "btn compact", disabled: searching,
-        onClick: () => searchCurrent(query.value.trim(), system.value.trim()) }, ["다시 스크랩"]);
+        onClick: () => searchCurrent(item.query.trim(), (item.systemHint || item.system).trim()) }, ["다시 스크랩"]);
       body.appendChild(head);
       body.appendChild(h("div", { class: "scrape-search-row" }, [query, system, retry]));
       const candidates = h("div", { class: "scrape-candidates" });
@@ -7816,9 +7854,11 @@
     if (isArchive()) {
       // 디렉토리가 진실이다 - 직접 넣은 ROM이나 고친 gamelist를 먼저 읽어 들인다.
       // 설정이 없으면(configured 아님) 읽을 디렉토리가 없으므로 조용히 넘어간다.
-      const synced = await api.archiveRefresh();
-      if (synced.ok && synced.data
-          && (synced.data.added || synced.data.romsLinked || synced.data.mediaLinked)) {
+      const started = await api.startArchiveRefresh();
+      if (!started.ok) { showToast(started.error, "error"); return; }
+      const synced = await pollJob(started.data.jobId, "Archive 다시 읽는 중");
+      if (!synced.ok) { if (!synced.cancelled) showToast(synced.error, "error"); return; }
+      if (synced.data && (synced.data.added || synced.data.romsLinked || synced.data.mediaLinked)) {
         showToast(`Archive 디렉토리에서 ${synced.data.added}개 추가, ROM ${synced.data.romsLinked}개, `
           + `Media ${synced.data.mediaLinked || 0}개 연결`);
       }

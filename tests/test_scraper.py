@@ -121,6 +121,44 @@ class HashAndProviderTests(unittest.TestCase):
         self.assertNotIn("systemeid", http.calls[0][1]["params"])
         self.assertEqual(http.calls[1][1]["params"]["systemeid"], "58")
 
+    def test_unrelated_single_search_result_is_not_forced_as_a_candidate(self):
+        http = FakeHttp([FakeResponse({"response": {"jeux": [{
+            "id": "9", "nom": "Completely Different Racing Game",
+        }]}})])
+        self.assertEqual(ScreenScraperClient(config(), http).search("SD Snatcher", ""), [])
+
+    def test_only_one_media_per_requested_type_is_returned(self):
+        cfg = ScreenScraperConfig("developer", "secret", "RetroMetaStudio",
+                                  media_types=("covers", "videos"))
+        http = FakeHttp([FakeResponse({"response": {"jeux": [{
+            "id": "42", "nom": "Game", "medias": [
+                {"type": "box-2d", "url": "https://media.screenscraper.fr/a.png"},
+                {"type": "box-2d", "url": "https://media.screenscraper.fr/b.png"},
+                {"type": "ss", "url": "https://media.screenscraper.fr/shot.png"},
+                {"type": "video", "url": "https://media.screenscraper.fr/video.mp4"},
+            ],
+        }]}})])
+        found = ScreenScraperClient(cfg, http).search("Game", "")
+        self.assertEqual([item.media_type for item in found[0].media], ["covers", "videos"])
+
+    def test_empty_media_selection_returns_metadata_without_media(self):
+        cfg = ScreenScraperConfig("developer", "secret", "RetroMetaStudio", media_types=())
+        http = FakeHttp([FakeResponse({"response": {"jeux": [{
+            "id": "42", "nom": "Game", "medias": [
+                {"type": "box-2d", "url": "https://media.screenscraper.fr/a.png"},
+            ],
+        }]}})])
+        found = ScreenScraperClient(cfg, http).search("Game", "")
+        self.assertEqual(found[0].media, ())
+
+    def test_hash_identification_can_be_disabled_without_reading_the_rom(self):
+        cfg = ScreenScraperConfig("developer", "secret", "RetroMetaStudio", use_hashes=False)
+        http = FakeHttp([])
+        missing = self.dir / "large-rom-that-must-not-be-opened.iso"
+        self.assertEqual(ScreenScraperClient(cfg, http).identify(
+            ScrapeIdentity("ps2", missing.name, str(missing))), [])
+        self.assertEqual(http.calls, [])
+
     def test_quota_http_error_is_classified(self):
         provider = ScreenScraperClient(config(), FakeHttp([FakeResponse({}, status=429)]))
         with self.assertRaises(ScreenScraperError) as raised:

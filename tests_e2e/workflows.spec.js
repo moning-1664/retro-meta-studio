@@ -45,9 +45,9 @@ async function openTab(page, name) {
 test.describe("ES-DE Import", () => {
   test("Metadata 폴더와 ROM 폴더를 따로 지정해도 하나의 Collection이 된다", async ({ page }) => {
     await openReal(page);
-    await openTab(page, "Source");   // Import 버튼이 있으려면 활성 Collection이 있어야 한다
+    await openTab(page, "Source");
 
-    await page.locator(".icon-btn[title='Collection 가져오기 (Import)']").click();
+    await page.locator(".ctab-add").click();
     await expect(page.locator(".modal-title")).toHaveText("Collection 추가");
 
     // Metadata 디렉토리와 ROM 디렉토리는 각각 1급 필드다 - 어느 쪽을 넣어야 하는지
@@ -85,7 +85,8 @@ test.describe("Collection -> Archive", () => {
     await openReal(page);
     await openTab(page, "Source");
 
-    await page.locator("#filter-bar .btn", { hasText: "Archive에 수집" }).click();
+    await page.locator("#collection-header .cheader-right .icon-btn[title*='메타데이터 보내기']").click();
+    await page.locator(".ctx-menu .ctx-item", { hasText: "Archive" }).click();
     await expect(page.locator("#toast")).toContainText("수집 완료");
 
     await page.locator(".ctab.archive").click();
@@ -93,11 +94,11 @@ test.describe("Collection -> Archive", () => {
 
     const ffxRow = page.locator(".lrow", { hasText: "Final Fantasy X" });
     await expect(ffxRow).toBeVisible({ timeout: 20000 });
-    // FFX는 source에 커버가 있다 - Archive 목록에도 media 표시가 있어야 한다
-    // (Phase 7.13에서 hasMedia 하드코딩을 고친 부분의 실제 GUI 확인). 상태 기호는
-    // title 속성으로만 이유를 말하므로 클래스로 "정상"인지 본다 - `.muted`가 아니라
-    // `.ok`여야 media가 있다는 뜻이다.
-    await expect(ffxRow.locator(".status-mark")).toHaveClass(/\bok\b/);
+    // 목록의 Media 상태와 실제 Archive 복사본을 함께 확인한다.
+    await expect(ffxRow.locator('[data-status="mediaLevel"]')).not.toHaveClass(/lv-none/);
+    await expect.poll(() => fs.existsSync(path.join(
+      ws.archiveRoot, "downloaded_media", "ps2", "covers", "FFX.png")),
+    { timeout: 15000 }).toBe(true);
   });
 });
 
@@ -112,7 +113,8 @@ test.describe("Archive -> Collection", () => {
     await openReal(page);
     await openTab(page, "Source");
     // 이전 테스트에서 이미 수집했을 수 있으니 한 번 더 눌러도 안전해야 한다(멱등).
-    await page.locator("#filter-bar .btn", { hasText: "Archive에 수집" }).click();
+    await page.locator("#collection-header .cheader-right .icon-btn[title*='메타데이터 보내기']").click();
+    await page.locator(".ctx-menu .ctx-item", { hasText: "Archive" }).click();
     await expect(page.locator("#toast")).toContainText("수집 완료");
 
     // "보내기" 대상 선택 창은 **이미 열려 있는 탭만** 보여준다 - Target을 미리
@@ -127,15 +129,15 @@ test.describe("Archive -> Collection", () => {
     await mgs2Row.locator(".lc-file").click();
     await expect(page.locator(".sb-left")).toContainText("Selected 1");
 
-    await page.locator(".sb-actions .btn", { hasText: "Collection으로 보내기" }).click();
+    await page.locator("#archive-send-btn").click();
     await page.locator(".picker-row", { hasText: "Target" }).click();
     await expect(page.locator("#toast")).toBeVisible();
 
     // Target으로 건너가서 Plan을 확정한다 - 새 게임은 파일을 옮겨야 하므로 Plan에 올라간다.
     await openTab(page, "Target");
-    await expect(page.locator("#filter-bar .btn", { hasText: /^Apply \(/ }))
+    await expect(page.locator("#filter-bar .plan-actions .seg-btn", { hasText: "Apply" }))
       .toBeVisible({ timeout: 10000 });
-    await page.locator("#filter-bar .btn", { hasText: /^Apply \(/ }).click();
+    await page.locator("#filter-bar .plan-actions .seg-btn", { hasText: "Apply" }).click();
     await page.locator(".modal-actions .btn.primary").click();
     await expect(page.locator("#toast")).toBeVisible();
 
@@ -166,11 +168,11 @@ test.describe("Storage 이동", () => {
     // Navigation에는 Storage 그룹이 없다 - 사용자가 보는 것은 System 목록이다.
     // Storage 이동은 그 System의 우클릭 메뉴에서 한다.
     await page.locator(".nav-system", { hasText: "SNES" }).click({ button: "right" });
-    await page.locator(".picker-row", { hasText: "SD" }).click();
+    await page.locator(".ctx-menu .ctx-item", { hasText: "SD" }).click();
 
     // Auto Plan이 켜져 있으므로 Plan에 올라간다 - Apply까지 눌러 확정한다.
     await expect(page.locator("#toast")).toContainText("이동을 Plan에 올렸습니다");
-    await page.locator("#filter-bar .btn", { hasText: /^Apply \(/ }).click();
+    await page.locator("#filter-bar .plan-actions .seg-btn", { hasText: "Apply" }).click();
     await page.locator(".modal-actions .btn.primary").click();
     await expect(page.locator("#toast")).toBeVisible();
 
@@ -179,9 +181,12 @@ test.describe("Storage 이동", () => {
     await expect.poll(() => fs.existsSync(internalRom), { timeout: 15000 }).toBe(false);
 
     // 다시 읽어도(Reload) 같은 자리를 가리켜야 한다.
-    await page.locator(".icon-btn[title='다시 스캔']").click();
-    await page.locator(".nav-system", { hasText: "SNES" }).click({ button: "right" });
-    await expect(page.locator(".modal-body")).toContainText("SD", { timeout: 20000 });
+    await page.locator("#collection-header .cheader-right .icon-btn[title='다시 스캔']").click();
+    const sdGroup = page.locator(".nav-group", {
+      has: page.locator(".nav-group-name", { hasText: "SD" }),
+    });
+    await expect(sdGroup.locator(".nav-system", { hasText: "SNES" }))
+      .toBeVisible({ timeout: 20000 });
   });
 });
 

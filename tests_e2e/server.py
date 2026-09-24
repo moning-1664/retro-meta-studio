@@ -173,6 +173,12 @@ class Harness:
         self.base = Path(tempfile.mkdtemp(prefix="rms_e2e_"))
         self.roots = build_workspace(self.base)
         self.api = Api(registry_path=self.base / "registry.db", cache_dir=self.base / "cache")
+        # Archive 수집은 저장 위치를 정한 뒤에만 허용된다. 실제 앱과 같은 선행
+        # 조건을 갖춰야 E2E가 UI 위치 변경이 아닌 파일 이동 사슬을 검증한다.
+        self.archive_root = self.base / "archive"
+        configured = self.api.save_archive_config({"archiveDir": str(self.archive_root)})
+        if not configured.get("ok"):
+            raise RuntimeError(configured.get("error") or "Archive E2E 설정 실패")
         self.ids = {}
         for name in ("source", "target"):
             result = self.api.create_collection(
@@ -213,6 +219,7 @@ class Harness:
             "base": str(self.base),
             "sourceRoot": str(self.roots["source"]),
             "targetRoot": str(self.roots["target"]),
+            "archiveRoot": str(self.archive_root),
             "sourceId": self.ids["source"],
             "targetId": self.ids["target"],
             "freshMetaRoot": str(self.roots["fresh_meta"]),

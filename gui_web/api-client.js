@@ -342,6 +342,7 @@
     },
     start_archive_apply: () => ok({ jobId: "mock-archive-apply" }),
     archive_refresh: () => ok({ added: 0, romsLinked: 0, systems: 0 }),
+    start_archive_refresh: () => ok({ jobId: "mock-archive-refresh" }),
     archive_media_paste: () => ok({}),
     archive_media_delete: (romIdentityId, mediaKey) => ok({ romIdentityId, mediaType: mediaKey }),
     archive_media_delete_system: () => ok({ removed: 0, linkedKept: 0, failures: [] }),
@@ -1062,6 +1063,7 @@
     saveArchiveConfig: (patch) => call("save_archive_config", patch),
     startArchiveApply: () => call("start_archive_apply"),
     archiveRefresh: () => call("archive_refresh"),
+    startArchiveRefresh: () => call("start_archive_refresh"),
     archiveConflicts: (systems) => call("archive_conflicts", systems || null),
     archiveVersions: (romIdentityId) => call("archive_versions", romIdentityId),
     archiveChooseVersion: (romIdentityId, recordId) =>

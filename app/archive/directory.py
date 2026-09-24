@@ -25,6 +25,7 @@ from adapters import get_adapter
 from app.archive import projection
 from app.model.constants import normalize_system
 from app.store.archive import rom_key_of
+from app.store.sqlite import transaction
 from utils import normalize_title
 
 #: 디렉토리에서 읽은 항목의 출처. 실제 Collection이 아니고 사용자 편집도 아니다.
@@ -45,7 +46,7 @@ def _systems(provider, adapter, collection, cfg) -> list[str]:
     return sorted(systems)
 
 
-def sync_from_directory(archive, config, provider) -> dict:
+def sync_from_directory(archive, config, provider, *, progress_cb=None) -> dict:
     """반환: {"added": n, "romsLinked": n, "systems": n}"""
     cfg = projection.normalize_config(config)
     if not cfg["archiveDir"]:
@@ -56,64 +57,94 @@ def sync_from_directory(archive, config, provider) -> dict:
     known: dict[tuple[str, str], dict] = {}
     for row in archive._conn.execute(
             "SELECT i.rom_identity_id, i.system, i.rom_key,"
-            " (SELECT COUNT(*) FROM archive_rom_sources s"
-            "   WHERE s.rom_identity_id = i.rom_identity_id) AS roms FROM rom_identities i"):
-        known[(row["system"], row["rom_key"])] = {"rid": row["rom_identity_id"], "roms": row["roms"]}
+            " EXISTS(SELECT 1 FROM archive_rom_sources s"
+            "   WHERE s.rom_identity_id = i.rom_identity_id"
+            "     AND s.source_collection_id = ?) AS directory_rom FROM rom_identities i",
+            (DIRECTORY_SOURCE,)):
+        known[(row["system"], row["rom_key"])] = {
+            "rid": row["rom_identity_id"], "directory_rom": bool(row["directory_rom"]),
+        }
+
+    known_media = {
+        (row["rom_identity_id"], row["media_type"]): (row["abs_path"], int(row["size"]))
+        for row in archive._conn.execute(
+            "SELECT rom_identity_id,media_type,abs_path,size FROM archive_media"
+            " WHERE source_collection_id=?", (DIRECTORY_SOURCE,))
+    }
 
     added = linked = media_linked = 0
     systems = _systems(provider, adapter, collection, cfg)
-    for system in systems:
-        # Identity 키만 정규화한다(msx/msx1처럼 같은 플랫폼을 가리키는 다른 폴더명이
-        # ingest_collection과 다른 Identity로 갈리지 않게 - app/archive/service.py 참고).
-        # 폴더 자체(layout/rom_dir)는 실제 이 디렉토리의 이름 그대로 읽어야 한다.
+    progress_total = max(1, len(systems) * 4)
+    if progress_cb:
+        progress_cb(0, progress_total, "System 목록 확인")
+    for system_index, system in enumerate(systems):
+        if progress_cb:
+            progress_cb(system_index * 4, progress_total, system)
+        # NAS 탐색은 DB transaction 밖에서 한다. 기존 cache를 읽는 UI가 느린 네트워크
+        # scandir 때문에 막히지 않고, 끝난 System은 바로 화면에서 볼 수 있다.
         identity_system = normalize_system(cfg["frontend"], system)
         layout = adapter.layout(collection, system)
         rom_dir = _rom_root(cfg) / system
+        if progress_cb:
+            progress_cb(system_index * 4, progress_total, f"{system} · 메타데이터 읽기")
         index = adapter.read_index(provider, layout)
-        # downloaded_media도 gamelist/ROM과 같은 단계에서 읽는다 - stem(ROM 파일명에서
-        # 확장자를 뺀 이름)으로 짝짓는다(_scan_system과 같은 방식).
+        if progress_cb:
+            progress_cb(system_index * 4 + 1, progress_total, f"{system} · 미디어 읽기")
         media_index = {stem: _dedup_media(items)
                        for stem, items in adapter.read_media_index(provider, layout, None).items()}
-        roms = {}
-        for name in adapter.list_roms(provider, type(layout)(
+        if progress_cb:
+            progress_cb(system_index * 4 + 2, progress_total, f"{system} · ROM 읽기")
+        roms = {
+            name: rom_dir / name
+            for name in adapter.list_roms(provider, type(layout)(
                 system=system, rom_dir=str(rom_dir), metadata_file=layout.metadata_file,
-                media_dir=layout.media_dir)):
-            roms[name] = rom_dir / name
+                media_dir=layout.media_dir))
+        }
+        if progress_cb:
+            progress_cb(system_index * 4 + 3, progress_total, f"{system} · DB 반영")
 
-        for filename in sorted(set(index) | set(roms)):
-            key = (identity_system, rom_key_of(filename))
-            hit = known.get(key)
-            rom_path = roms.get(filename)
-            media = media_index.get(Path(filename).stem, [])
-            if hit is not None:
-                rid = hit["rid"]
-                if rom_path is not None and not hit["roms"]:
-                    archive.put_rom_source(rid, DIRECTORY_SOURCE, rom_path,
-                                           _size(provider, rom_path))
-                    hit["roms"] = 1
-                    linked += 1
-            else:
-                entry = index.get(filename)
-                fields = dict(entry.fields) if entry else {}
-                title = (fields.get("name") or "").strip() or Path(filename).stem
-                game_id = archive.ensure_game(title, normalize_title(title))
-                rid = archive.ensure_rom_identity(
-                    game_id, identity_system, normalize_title(Path(filename).stem), filename=filename,
-                    size=_size(provider, rom_path) if rom_path else None,
-                    # gamelist에서 읽은 제목만 진짜다 - ROM만 있는 항목의 제목은 파일명이라 넘기지 않는다.
-                    title=(fields.get("name") or "").strip() or None)
-                if entry is not None:
-                    archive.put_record(rid, DIRECTORY_SOURCE, fields, entry.frontend_raw)
+        # 파일 하나마다 commit하던 것을 System 단위로 묶는다. transaction을 짧게 유지해
+        # 다른 화면의 읽기 요청은 System 사이에 즉시 들어올 수 있다.
+        with transaction(archive._conn):
+            for filename in sorted(set(index) | set(roms)):
+                key = (identity_system, rom_key_of(filename))
+                hit = known.get(key)
+                rom_path = roms.get(filename)
+                media = media_index.get(Path(filename).stem, [])
+                if hit is not None:
+                    rid = hit["rid"]
+                    if rom_path is not None and not hit["directory_rom"]:
+                        archive.put_rom_source(rid, DIRECTORY_SOURCE, rom_path,
+                                               _size(provider, rom_path))
+                        hit["directory_rom"] = True
+                        linked += 1
                 else:
-                    # 메타데이터가 없어도 Gamelist에 나오려면 기록이 하나는 있어야 한다.
-                    archive.put_record(rid, DIRECTORY_SOURCE, {}, {})
-                if rom_path is not None:
-                    archive.put_rom_source(rid, DIRECTORY_SOURCE, rom_path, _size(provider, rom_path))
-                known[key] = {"rid": rid, "roms": 1 if rom_path else 0}
-                added += 1
-            for m in media:
-                archive.put_media_ref(rid, m.media_type, DIRECTORY_SOURCE, m.path, m.size)
-                media_linked += 1
+                    entry = index.get(filename)
+                    fields = dict(entry.fields) if entry else {}
+                    title = (fields.get("name") or "").strip() or Path(filename).stem
+                    game_id = archive.ensure_game(title, normalize_title(title))
+                    rid = archive.ensure_rom_identity(
+                        game_id, identity_system, normalize_title(Path(filename).stem), filename=filename,
+                        size=_size(provider, rom_path) if rom_path else None,
+                        title=(fields.get("name") or "").strip() or None)
+                    archive.put_record(
+                        rid, DIRECTORY_SOURCE, fields if entry is not None else {},
+                        entry.frontend_raw if entry is not None else {})
+                    if rom_path is not None:
+                        archive.put_rom_source(rid, DIRECTORY_SOURCE, rom_path, _size(provider, rom_path))
+                    known[key] = {"rid": rid, "directory_rom": bool(rom_path)}
+                    added += 1
+                for media_item in media:
+                    media_key = (rid, media_item.media_type)
+                    value = (str(media_item.path), int(media_item.size))
+                    if known_media.get(media_key) != value:
+                        archive.put_media_ref(
+                            rid, media_item.media_type, DIRECTORY_SOURCE,
+                            media_item.path, media_item.size)
+                        known_media[media_key] = value
+                        media_linked += 1
+        if progress_cb:
+            progress_cb((system_index + 1) * 4, progress_total, system)
     return {"added": added, "romsLinked": linked, "mediaLinked": media_linked, "systems": len(systems)}
 
 

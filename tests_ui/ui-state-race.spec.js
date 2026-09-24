@@ -50,6 +50,21 @@ test.describe("Collection 전환 race", () => {
       (el) => el.getBoundingClientRect().width);
     expect(Math.round(headWidth)).not.toBe(999);
   });
+
+  test("느린 Archive 응답 뒤에 Collection으로 돌아와도 Archive가 화면을 덮지 않는다", async ({ page }) => {
+    await page.evaluate(() => {
+      const original = window.api.archiveConfig;
+      window.api.archiveConfig = () => new Promise((resolve) => {
+        setTimeout(() => original().then(resolve), 500);
+      });
+    });
+    await page.locator(".ctab.archive").click();
+    await page.locator(".ctab", { hasText: "Master Library" }).click();
+    await page.waitForTimeout(700);
+    await expect(page.locator(".ctab", { hasText: "Master Library" })).toHaveClass(/active/);
+    await expect(page.locator(".lrow").first()).toContainText("Final Fantasy X");
+    await expect(page.locator("#toast")).not.toContainText("Collection을 찾을 수 없습니다");
+  });
 });
 
 test.describe("종료 직전 저장 flush", () => {

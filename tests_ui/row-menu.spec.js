@@ -23,7 +23,7 @@ test("우클릭하면 삭제 확인이 아니라 메뉴가 뜬다", async ({ pag
   await expect(page.locator(".ctx-menu")).toBeVisible();
   await expect(page.locator(".modal-title")).toHaveCount(0);
   await expect(page.locator(".ctx-title")).toHaveText("Final Fantasy X");
-  await expect(menuItem(page, "삭제")).toBeVisible();
+  await expect(menuItem(page, "Game 삭제")).toBeVisible();
   await expect(menuItem(page, "파일명 복사")).toBeVisible();
 });
 
@@ -41,7 +41,7 @@ test("메뉴의 삭제를 고르면 삭제를 요청하고 메뉴를 닫는다",
   });
 
   await rightClick(page, "Final Fantasy X");
-  await menuItem(page, "삭제").click();
+  await menuItem(page, "Game 삭제").click();
 
   await expect(page.locator(".ctx-menu")).toHaveCount(0);
   await expect.poll(() => deleted.length).toBeGreaterThan(0);
@@ -60,7 +60,7 @@ test.describe("부분 삭제", () => {
 
   test("삭제 메뉴가 세 가지로 갈리고 무엇이 지워지는지 툴팁이 말한다", async ({ page }) => {
     await rightClick(page, "Final Fantasy X");
-    await expect(menuItem(page, "삭제")).toHaveAttribute("title", /ROM \+ 메타데이터 \+ 미디어/);
+    await expect(menuItem(page, "Game 삭제")).toHaveAttribute("title", /ROM \+ 메타데이터 \+ 미디어/);
     await expect(menuItem(page, "ROM 삭제")).toHaveAttribute("title", /ROM 파일만/);
     await expect(menuItem(page, "메타데이터 삭제")).toHaveAttribute("title", /ROM은 남습니다/);
   });
@@ -68,7 +68,7 @@ test.describe("부분 삭제", () => {
   test("각 항목이 서로 다른 범위로 삭제를 요청한다", async ({ page }) => {
     await spy(page);
     await rightClick(page, "Final Fantasy X");
-    await menuItem(page, "삭제").click();
+    await menuItem(page, "Game 삭제").click();
     await rightClick(page, "Final Fantasy X");
     await menuItem(page, "ROM 삭제").click();
     await rightClick(page, "Final Fantasy X");

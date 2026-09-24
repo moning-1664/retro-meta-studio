@@ -8,7 +8,7 @@ const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
-const HEADERS = ["No.", "★", "Title", "Description", "Status", "Rating", "Genre", "Region", "File"];
+const HEADERS = ["No.", "File", "Title", "Description", "Status", "Rating", "Genre", "Region", "★"];
 const headLabels = async (page) => (await page.locator("#list-head .lh").allTextContents()).map((t) => t.trim());
 const rowCellClasses = (page) => page.locator(".lrow").first().evaluate(
   (el) => [...el.children].map((c) => [...c.classList].find((k) => k.startsWith("lc-") && k !== "lc-text")));
@@ -64,7 +64,7 @@ test.describe("머리글 드래그 - 컬럼 순서", () => {
   test("Genre를 File 앞에 놓으면 머리글과 행이 같은 순서가 된다", async ({ page }) => {
     await page.locator(".lh-genre").dragTo(page.locator(".lh-file"), { targetPosition: { x: 4, y: 8 } });
     await expect.poll(() => headLabels(page)).toEqual(
-      ["No.", "★", "Title", "Description", "Status", "Rating", "Region", "Genre", "File"]);
+      ["No.", "Genre", "File", "Title", "Description", "Status", "Rating", "Region", "★"]);
     expect(await templatesMatch(page)).toBe(true);
   });
 
@@ -73,7 +73,7 @@ test.describe("머리글 드래그 - 컬럼 순서", () => {
     const box = await target.boundingBox();
     await page.locator(".lh-file").dragTo(target, { targetPosition: { x: Math.round(box.width * 0.75), y: 8 } });
     await expect.poll(() => headLabels(page)).toEqual(
-      ["No.", "★", "Title", "Description", "File", "Status", "Rating", "Genre", "Region"]);
+      ["No.", "Title", "Description", "File", "Status", "Rating", "Genre", "Region", "★"]);
   });
 
   test("No.도 다른 컬럼처럼 끌어 옮길 수 있다", async ({ page }) => {
@@ -101,7 +101,7 @@ test.describe("Settings - GameList Columns", () => {
   test("현재 순서대로 나열하고, No.와 Title도 끌 수 있다", async ({ page }) => {
     await openColumns(page);
     const ids = await page.locator(".stg-column-row").evaluateAll((rows) => rows.map((r) => r.dataset.column));
-    expect(ids).toEqual(["no", "fav", "title", "desc", "status", "rating", "genre", "region", "file"]);
+    expect(ids).toEqual(["no", "file", "title", "desc", "status", "rating", "genre", "region", "fav"]);
     await expect(page.locator(".stg-column-row[data-column='no'] input")).toBeEnabled();
     await expect(page.locator(".stg-column-row[data-column='title'] input")).toBeEnabled();
   });
@@ -125,7 +125,7 @@ test.describe("Settings - GameList Columns", () => {
     await expect(title).toHaveClass(/drop-after/);
     await page.mouse.up();
     await expect.poll(() => headLabels(page)).toEqual(
-      ["No.", "★", "Title", "File", "Description", "Status", "Rating", "Genre", "Region"]);
+      ["No.", "Title", "File", "Description", "Status", "Rating", "Genre", "Region", "★"]);
     await page.locator(".stg-column-row[data-column='desc'] input").uncheck();
     await page.locator(".stg-column-reset").click();
     await expect.poll(() => headLabels(page)).toEqual(HEADERS);
@@ -136,7 +136,7 @@ test.describe("Settings - GameList Columns", () => {
     await page.locator(".stg-column-row[data-column='file'] .stg-column-grip").focus();
     await page.keyboard.press("ArrowUp");
     await expect.poll(() => headLabels(page)).toEqual(
-      ["No.", "★", "Title", "Description", "Status", "Rating", "Genre", "File", "Region"]);
+      ["File", "No.", "Title", "Description", "Status", "Rating", "Genre", "Region", "★"]);
     await expect(page.locator(".stg-column-row[data-column='file'] .stg-column-grip")).toBeFocused();
   });
 

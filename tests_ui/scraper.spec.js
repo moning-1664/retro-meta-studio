@@ -29,6 +29,18 @@ test("Settings에서 연결 상태와 일일 요청량을 확인한다", async (
   await page.getByRole("button", { name: "연결 테스트" }).click();
   await expect(page.locator(".stg-scraper")).toContainText("오늘 12 / 100회");
   await expect(page.locator(".stg-scraper")).toContainText("동시 요청 1");
+  await expect(page.locator(".stg-scraper")).toContainText("ROM 해시로 먼저 찾기");
+  await expect(page.locator(".scrape-media-settings summary")).toHaveText("가져올 미디어 종류");
+});
+
+test("연결 정보를 저장한 뒤에도 Settings의 Scraper 메뉴에 머문다", async ({ page }) => {
+  await page.locator(".settings-btn").click();
+  await page.locator(".stg-nav-item[data-section='scraper']").click();
+  await page.getByRole("button", { name: "연결 설정…" }).click();
+  await page.locator(".scrape-setup-card input").nth(0).fill("changed-dev");
+  await page.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.locator(".stg-panel")).toBeVisible();
+  await expect(page.locator(".stg-nav-item[data-section='scraper']")).toHaveClass(/active/);
 });
 
 test("단건 후보는 Detail 폭이며 접힌 상태에서도 바로 선택할 수 있다", async ({ page }) => {
