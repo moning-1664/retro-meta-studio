@@ -79,10 +79,16 @@ def _load(archive, *, systems=None, rom_identity_ids=None):
     if systems:
         where.append(f"i.system IN ({','.join('?' * len(systems))})")
         params.extend(systems)
-    if rom_identity_ids:
+    if rom_identity_ids is not None:
+        rom_identity_ids = list(rom_identity_ids)
+        if not rom_identity_ids:
+            return {}, {}, set()
         where.append(f"i.rom_identity_id IN ({','.join('?' * len(rom_identity_ids))})")
         params.extend(rom_identity_ids)
     cond = (" AND " + " AND ".join(where)) if where else ""
+    latest_filter = (f" WHERE rom_identity_id IN ({','.join('?' * len(rom_identity_ids))})"
+                     if rom_identity_ids is not None else "")
+    latest_params = rom_identity_ids or []
 
     records: dict[str, list[dict]] = {}
     sql = ("SELECT r.record_id, r.rom_identity_id, r.source_collection_id, r.updated_at,"
@@ -90,11 +96,11 @@ def _load(archive, *, systems=None, rom_identity_ids=None):
            " FROM archive_records r"
            " JOIN rom_identities i ON i.rom_identity_id = r.rom_identity_id"
            " JOIN (SELECT rom_identity_id, source_collection_id, MAX(revision) AS rev"
-           "         FROM archive_records GROUP BY rom_identity_id, source_collection_id) m"
+           f"         FROM archive_records{latest_filter} GROUP BY rom_identity_id, source_collection_id) m"
            "   ON m.rom_identity_id = r.rom_identity_id"
            "  AND m.source_collection_id = r.source_collection_id AND m.rev = r.revision"
            f" WHERE 1=1{cond}")
-    for row in conn.execute(sql, params):
+    for row in conn.execute(sql, [*latest_params, *params]):
         records.setdefault(row["rom_identity_id"], []).append(row)
 
     media: dict[int, dict[str, int]] = {}
@@ -110,18 +116,19 @@ def _load(archive, *, systems=None, rom_identity_ids=None):
     # immutable snapshot for the same type.
     refs_sql = ("SELECT r.record_id,a.media_type,a.size FROM archive_records r"
                 " JOIN (SELECT rom_identity_id,source_collection_id,MAX(revision) AS rev"
-                "         FROM archive_records GROUP BY rom_identity_id,source_collection_id) m"
+                f"         FROM archive_records{latest_filter} GROUP BY rom_identity_id,source_collection_id) m"
                 "   ON m.rom_identity_id=r.rom_identity_id"
                 "  AND m.source_collection_id=r.source_collection_id AND m.rev=r.revision"
                 " JOIN archive_media a ON a.rom_identity_id=r.rom_identity_id"
                 "  AND a.source_collection_id=r.source_collection_id"
                 " JOIN rom_identities i ON i.rom_identity_id=r.rom_identity_id"
                 f" WHERE a.media_type IN ({','.join('?' * len(IMPORTANT_MEDIA))}){cond}")
-    for row in conn.execute(refs_sql, [*IMPORTANT_MEDIA, *params]):
+    for row in conn.execute(refs_sql, [*latest_params, *IMPORTANT_MEDIA, *params]):
         media.setdefault(int(row["record_id"]), {}).setdefault(
             row["media_type"], int(row["size"] or 0))
 
-    resolved = {r[0] for r in conn.execute("SELECT rom_identity_id FROM preferred_revisions")}
+    resolved = {r[0] for r in conn.execute(
+        "SELECT rom_identity_id FROM preferred_revisions" + latest_filter, latest_params)}
     return records, media, resolved
 
 

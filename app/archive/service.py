@@ -167,7 +167,8 @@ def detail(archive, rom_identity_id) -> dict | None:
         "gameId": identity["game_id"],
         "system": identity["system"],
         "filename": identity["filename"] or identity["filename_norm"],
-        "title": identity["title"],
+        "title": (Path(identity["filename"] or identity["filename_norm"]).stem
+                  if archive.metadata_is_cleared(rom_identity_id) else identity["title"]),
         "region": identity["region"],
         "size": identity["size"],
         "sha256": identity["sha256"],
@@ -219,6 +220,7 @@ def edit(archive, rom_identity_id, fields, frontend_raw=None) -> dict:
         raise KeyError("Archive 항목을 찾을 수 없습니다.")
     revision, created = archive.put_record(rom_identity_id, ARCHIVE_EDIT_SOURCE, fields,
                                           frontend_raw)
+    archive.set_metadata_cleared(rom_identity_id, False)
     return {"revision": revision, "changed": created}
 
 

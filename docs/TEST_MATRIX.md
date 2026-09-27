@@ -166,7 +166,7 @@ Level: **U**nit / **I**ntegration(실제 filesystem·DB) / **G**UI / **E2E** / *
 | Cache ↔ 외부 filesystem | CACHE-EXT-001~004 (외부 추가/삭제/rename 후 Refresh) | 스캔 경로는 있으나 "외부 변경 → Refresh → 일치" 전용 TC 없음 |
 | Collection Load | COL-001~006 (metadata only / partial media / 깨진 gamelist) | 일부는 기존 테스트에 흩어져 있으나 매트릭스로 정리되지 않음 |
 | Archive | ARCHIVE-002~004 (Revision/Preferred/BestEffort 및 media 상태) | `tests/test_archive_revision_policy.py`, `tests/test_archive_media.py`, `tests_ui/archive-versions.spec.js`가 동작별로 검증한다. VALUE/ABSENT/CLEARED와 field-level BestEffort는 구현되어 있으나 ARCHIVE-002~004라는 정식 TC 추적표로는 아직 묶이지 않았다. Playwright UI는 mock API 범위이며 실제 filesystem E2E는 아래 NOT TESTED 항목 참고 |
-| Archive ownership | 보관/연결/혼합 판정, 전용 ROM·Media 삭제, Archive 복사·붙여넣기 | 2026-09-23 구현. 이번 변경에서는 테스트 실행 및 실제 filesystem E2E 확인 전 |
+| Archive ownership | 보관/연결/혼합 판정, 전용 ROM·Media 삭제, Archive 복사·붙여넣기 | 로컬 임시 폴더 기반 `tests/test_archive.py`와 Playwright `archive-versions.spec.js`에서 System 대상 신규 붙여넣기, 선택 Media 삭제, Metadata 삭제, 완전 소유 Game 삭제, 검색 필터 Ctrl+A를 검증했다. 실제 네트워크 경로 및 설치본에서의 소유권·파일 복사 E2E와 삭제 도중 I/O 실패 복구는 미검증 |
 | Collection → Collection | CC-001~003 (Exact/Similar/Unrelated 붙여넣기) | Match 단위 테스트는 있으나 붙여넣기 workflow TC 없음 |
 | Identity | ID-001~005 (region/system/한글 정규화) | `test_match.py`가 일부 덮으나 매트릭스 미정리 |
 | Media | MEDIA-001~005 (전 타입, preview, drag 교체) | GUI 상호작용 |
@@ -176,6 +176,10 @@ Level: **U**nit / **I**ntegration(실제 filesystem·DB) / **G**UI / **E2E** / *
 | Restart Recovery | REC-001~002 | 앱 재시작 필요 |
 | E2E-01~10 | 전체 사용자 여정 | 현재 Playwright는 **목업 모드**라 실제 filesystem에 닿지 않음 |
 
-> **현재 Playwright 62개는 목업 API 위에서 도는 UI 테스트다.** 화면 로직은 검증하지만
+> **현재 Playwright 617개는 목업 API 위에서 도는 UI 테스트다.** 화면 로직은 검증하지만
 > "GUI 성공 메시지 = 실제 파일 결과"는 **검증하지 않는다.** 그 연결은 위 E2E 항목이며
 > 아직 NOT TESTED다.
+
+2026-09-25 회귀 실행: Python `tests` 전체 1295 passed, 1 skipped, 1 xfailed,
+28 subtests passed. Playwright 전체 617 passed. 이후 Archive Media 정리 미리보기의
+불필요한 파일 stat을 제거했고 해당 Archive 대상 테스트 4개를 다시 통과했다.

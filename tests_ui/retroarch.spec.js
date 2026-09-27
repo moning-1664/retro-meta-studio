@@ -118,10 +118,10 @@ test.describe("실행", () => {
     expect(await page.evaluate(() => window.__launched)).toEqual([]);
   });
 
-  test("행 우클릭 메뉴에서도 실행과 Core 선택을 한다", async ({ page }) => {
+  test("행 우클릭 메뉴에는 실행만 남기고 Core 선택은 제거했다", async ({ page }) => {
     await row(page, "SMW.sfc").click({ button: "right" });
     await expect(page.locator(".ctx-menu .ctx-item", { hasText: "RetroArch로 실행" })).toBeEnabled();
-    await expect(page.locator(".ctx-menu .ctx-item", { hasText: "RetroArch Core 선택" })).toBeEnabled();
+    await expect(page.locator(".ctx-menu .ctx-item", { hasText: "RetroArch Core 선택" })).toHaveCount(0);
     await page.keyboard.press("Escape");
     await row(page, "FFX.iso").click({ button: "right" });
     await expect(page.locator(".ctx-menu .ctx-item", { hasText: "RetroArch로 실행" })).toBeDisabled();

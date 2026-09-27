@@ -220,6 +220,40 @@ class PasteIntoAnotherSystemTests(unittest.TestCase):
         rows = {r["file"]: r for r in self.api.list_rows(self.dst, limit=99)["data"]["rows"]}
         self.assertEqual(rows["1941.zip"]["system"], "ps2")
 
+    def test_system_target_preview_and_new_only_paste(self):
+        self._copy_1941()
+        preview = self.api.clipboard_system_target(self.dst, "ps2")
+        self.assertTrue(preview["ok"], preview.get("error"))
+        self.assertEqual(preview["data"]["count"], 1)
+        self.assertEqual(preview["data"]["duplicates"], [])
+        self.assertEqual(preview["data"]["items"][0]["system"], "fbneo act")
+        result = self.api.paste(self.dst, "patch", {"fbneo act": "ps2"}, None, None, True)
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(result["data"]["added"], 1)
+        self._apply()
+        self.assertTrue((self.dst_root / "ps2" / "1941.zip").exists())
+
+    def test_system_new_only_rejects_same_game_before_staging(self):
+        # Filename differs, but the shared game identity still sees the same game.
+        write_file(self.dst_root / "ps2" / "1941.iso", b"existing")
+        scan(self.api, self.dst)
+        self._copy_1941()
+        preview = self.api.clipboard_system_target(self.dst, "ps2")
+        self.assertEqual(preview["data"]["duplicates"][0]["targetFilename"], "1941.iso")
+        result = self.api.paste(self.dst, "overwrite", {"fbneo act": "ps2"}, None, None, True)
+        self.assertFalse(result["ok"])
+        self.assertIn("이미", result["error"])
+        self.assertEqual(self.api.plan_state(self.dst)["data"]["total"], 0)
+
+    def test_system_target_requires_clipboard_and_existing_system(self):
+        empty = self.api.clipboard_system_target(self.dst, "ps2")
+        self.assertEqual(empty["data"]["count"], 0)
+        self._copy_1941()
+        missing = self.api.clipboard_system_target(self.dst, "not-a-system")
+        self.assertFalse(missing["ok"])
+        result = self.api.paste(self.dst, "patch", {"fbneo act": "not-a-system"}, None, None, True)
+        self.assertFalse(result["ok"])
+
     def test_without_a_map_the_original_name_is_kept(self):
         self._copy_1941()
         self.api.paste(self.dst, "patch")

@@ -45,8 +45,11 @@ class ScrapeService:
         identity = ScrapeIdentity(system=str(system or ""), filename=str(filename or ""),
                                   path=str(path) if path else None,
                                   size=int(size) if size is not None else None)
+        # Search from the ROM filename, even when an existing localized
+        # gamelist title is present. The user can still edit the key manually.
+        query = identity.default_query
         return {"id": str(item_id), "system": identity.system, "filename": identity.filename,
-                "path": identity.path, "size": identity.size, "query": identity.default_query,
+                "path": identity.path, "size": identity.size, "query": query,
                 "fields": dict(fields or {}), "status": "pending", "candidates": [],
                 "selectedCandidateId": None, "selectedFields": [], "selectedMedia": []}
 
@@ -59,19 +62,25 @@ class ScrapeService:
         provider = self.provider_factory()
         if progress:
             progress(0, 3, "계정 사용량 확인")
-        quota = dict(session.get("quota") or provider.account_status())
+        # Account status is a separate network round trip. A slow quota call
+        # must not delay the actual game search or turn its timeout into a
+        # failed match. The UI refreshes quota independently.
+        quota = dict(session.get("quota") or {})
         request_count = 0
         if progress:
             progress(1, 3, "ROM 식별")
-        identity = ScrapeIdentity(item["system"], item["filename"], item.get("path"), item.get("size"))
+        selected_system = item["system"] if system_hint is None else str(system_hint)
+        identity = ScrapeIdentity(selected_system, item["filename"],
+                                  item.get("path"), item.get("size"))
         candidates = provider.identify(identity)
-        if identity.path and Path(identity.path).is_file():
+        if (identity.path and Path(identity.path).is_file()
+                and getattr(getattr(provider, "config", None), "use_hashes", True)):
             request_count += 1
         actual_query = str(query or item["query"]).strip()
         if not candidates:
             if progress:
                 progress(2, 3, f'"{actual_query}" 검색')
-            candidates = provider.search(actual_query, system_hint or item["system"])
+            candidates = provider.search(actual_query, selected_system)
             request_count += 1
         candidates = sorted(candidates, key=lambda c: (-c.confidence, c.title.lower()))
         item.update({"query": actual_query, "status": "review" if candidates else "not_found",

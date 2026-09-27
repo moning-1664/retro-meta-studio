@@ -19,7 +19,9 @@ from app.scrape.providers.screenscraper import (
     hashes_of_file,
 )
 from app.store.registry import RegistryStore
+from app.plan import builder
 from bridge.api import Api
+from tests.fixtures import build_esde_tree, wait_idle
 
 
 class FakeResponse:
@@ -71,6 +73,10 @@ class HashAndProviderTests(unittest.TestCase):
         self.assertEqual(result["sha1"], hashlib.sha1(data).hexdigest())  # noqa: S324
 
     def test_identify_sends_all_observed_hashes_without_overwriting_them(self):
+        item = ScrapeService.item("1", "msx", "Boogie Woogie Jungle [J].zip",
+                                  {"name": "부기 우기 정글"})
+        self.assertEqual(item["query"], "Boogie Woogie Jungle")
+
         path = self.dir / "게임 (K).rom"
         path.write_bytes(b"patched")
         http = FakeHttp([FakeResponse({"response": {"jeu": {
@@ -112,20 +118,57 @@ class HashAndProviderTests(unittest.TestCase):
         self.assertEqual(status["requestsLimit"], 0)
         self.assertEqual(status["maxThreads"], 2)
 
-    def test_search_only_sends_numeric_system_ids(self):
+    def test_search_maps_system_name_to_numeric_id(self):
         payload = {"response": {"jeux": []}}
         http = FakeHttp([FakeResponse(payload), FakeResponse(payload)])
         provider = ScreenScraperClient(config(), http)
-        provider.search("Game", "ps2")
+        provider.search("Game", "msx")
         provider.search("Game", "58")
-        self.assertNotIn("systemeid", http.calls[0][1]["params"])
+        self.assertEqual(http.calls[0][1]["params"]["systemeid"], "113")
         self.assertEqual(http.calls[1][1]["params"]["systemeid"], "58")
+
+    def test_search_rejects_other_system_results_and_unknown_names(self):
+        http = FakeHttp([FakeResponse({"response": {"jeux": [
+            {"id": "1", "nom": "Godzilla", "systeme": {"id": "113", "nom": "MSX"}},
+            {"id": "2", "nom": "Godzilla", "systeme": {"id": "58", "nom": "PS2"}},
+            {"id": "3", "nom": "Godzilla"},
+        ]}})])
+        provider = ScreenScraperClient(config(), http)
+        self.assertEqual([item.remote_game_id for item in provider.search("Godzilla", "msx")],
+                         ["1", "3"])
+        with self.assertRaises(ScreenScraperError):
+            provider.search("Godzilla", "unknown-system")
+        self.assertEqual(len(http.calls), 1)
 
     def test_unrelated_single_search_result_is_not_forced_as_a_candidate(self):
         http = FakeHttp([FakeResponse({"response": {"jeux": [{
             "id": "9", "nom": "Completely Different Racing Game",
         }]}})])
         self.assertEqual(ScreenScraperClient(config(), http).search("SD Snatcher", ""), [])
+
+    def test_search_accepts_documented_json_localized_fields(self):
+        http = FakeHttp([FakeResponse({"response": {"jeux": [{
+            "id": "42", "nom": "Godzilla", "systeme": {"id": "113", "nom": "MSX"},
+            "noms": {"nom_us": "Godzilla: Monster of Monsters", "nom_jp": "ゴジラ"},
+            "synopsis": {"synopsis_en": "English description"},
+            "dates": {"date_us": "1988-01-01"},
+        }]}})])
+        found = ScreenScraperClient(config(), http).search("Godzilla", "msx")
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].fields["desc"], "English description")
+        self.assertEqual(found[0].fields["releasedate"], "1988-01-01")
+        self.assertIn("Godzilla: Monster of Monsters", found[0].alternate_titles)
+
+    def test_404_means_no_match_but_401_and_429_remain_visible(self):
+        self.assertEqual(ScreenScraperClient(config(), FakeHttp([FakeResponse({}, status=404)]))
+                         .search("missing", "msx"), [])
+        for status, kind in ((401, "busy"), (403, "auth"), (429, "rate"),
+                             (430, "quota"), (431, "quota")):
+            with self.subTest(status=status):
+                provider = ScreenScraperClient(config(), FakeHttp([FakeResponse({}, status=status)]))
+                with self.assertRaises(ScreenScraperError) as raised:
+                    provider.search("Godzilla", "msx")
+                self.assertEqual(raised.exception.kind, kind)
 
     def test_only_one_media_per_requested_type_is_returned(self):
         cfg = ScreenScraperConfig("developer", "secret", "RetroMetaStudio",
@@ -163,11 +206,11 @@ class HashAndProviderTests(unittest.TestCase):
         provider = ScreenScraperClient(config(), FakeHttp([FakeResponse({}, status=429)]))
         with self.assertRaises(ScreenScraperError) as raised:
             provider.account_status()
-        self.assertEqual(raised.exception.kind, "quota")
+        self.assertEqual(raised.exception.kind, "rate")
 
 
 class SessionTests(unittest.TestCase):
-    def test_hash_miss_falls_back_to_name_and_quota_is_reused(self):
+    def test_hash_miss_falls_back_to_name_without_waiting_for_quota(self):
         class Provider:
             statuses = 0
             searches = []
@@ -186,11 +229,11 @@ class SessionTests(unittest.TestCase):
         session = service.sessions.create("collection", "c1", [first, second])
         one = service.search_item(session["id"], "1", None, None)
         two = service.search_item(session["id"], "2", "수동 검색", "58")
-        self.assertEqual(Provider.statuses, 1)
+        self.assertEqual(Provider.statuses, 0)
         self.assertEqual(Provider.searches, [("게임", "ps2"), ("수동 검색", "58")])
         self.assertEqual(one["item"]["status"], "review")
         self.assertTrue(two["quota"]["estimated"])
-        self.assertEqual(two["quota"]["requestsToday"], 12)
+        self.assertEqual(two["quota"]["requestsToday"], 2)
 
     def test_selection_rejects_unknown_fields_and_media_indexes(self):
         service = ScrapeService(lambda: None)
@@ -285,14 +328,14 @@ class ApplyBoundaryTests(unittest.TestCase):
         session, item = self.selected_session(api)
         api.save_fields = lambda *args: {"ok": True, "data": {}}
         api._download_scrape_media = lambda *args: __file__
-        api.media_paste = lambda *args: {"ok": False, "error": "disk full"}
+        api._apply_scraped_collection_media = lambda *args: (_ for _ in ()).throw(ValueError("disk full"))
         first = api._apply_scrape_session(session["id"], lambda *args: None)
         self.assertEqual(len(first["partial"]), 1)
         self.assertEqual(item["selectedFields"], [])
         self.assertEqual(item["selectedMedia"], [0])
         self.assertEqual(api.registry.rows[0]["fields"], {"name": "게임"})
 
-        api.media_paste = lambda *args: {"ok": True, "data": {}}
+        api._apply_scraped_collection_media = lambda *args: None
         second = api._apply_scrape_session(session["id"], lambda *args: None)
         self.assertEqual(second, {"applied": ["1"], "partial": [], "failed": []})
         with self.assertRaises(KeyError):
@@ -312,6 +355,101 @@ class ApplyBoundaryTests(unittest.TestCase):
         api = self.make_api()
         with self.assertRaisesRegex(ValueError, "허용되지 않은"):
             api._download_scrape_media("https://evil.example/cover.png", "s", "i", "covers")
+
+    def test_extensionless_provider_media_uses_response_content_type(self):
+        class Download:
+            headers = {"Content-Type": "image/png; charset=binary"}
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                return None
+            def raise_for_status(self):
+                return None
+            def iter_content(self, _size):
+                yield b"png-data"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            api = self.make_api()
+            api._scrape_cache_dir = Path(temporary)
+            with mock.patch("bridge.api.requests.get", return_value=Download()):
+                path = api._download_scrape_media(
+                    "https://www.screenscraper.fr/image.php?gameid=42", "s", "i", "covers")
+            self.assertEqual(Path(path).suffix, ".png")
+            self.assertEqual(Path(path).read_bytes(), b"png-data")
+
+    def test_collection_scrape_applies_media_without_using_the_users_plan(self):
+        class Download:
+            headers = {"Content-Type": "image/png"}
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                return None
+            def raise_for_status(self):
+                return None
+            def iter_content(self, _size):
+                yield b"new scraper cover"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            collection_root = build_esde_tree(root / "collection")
+            api = Api(registry_path=root / "registry.db", cache_dir=root / "cache")
+            try:
+                cid = api.create_collection("Games", "es-de", str(collection_root))["data"]["id"]
+                api.start_scan(cid)
+                wait_idle(api)
+                row = next(r for r in api.list_rows(cid)["data"]["rows"] if r["file"] == "FFX.iso")
+                item = api.scrape.item(str(row["romUid"]), "ps2", "FFX.iso", row.get("fields") or {})
+                item["candidates"] = [candidate((ScrapeMedia(
+                    "covers", "https://www.screenscraper.fr/image.php?gameid=42"),)).to_dict()]
+                session = api.scrape.sessions.create("collection", cid, [item])
+                api.scrape.select(session["id"], item["id"], "screenscraper:42", [], [0])
+                with mock.patch("bridge.api.requests.get", return_value=Download()):
+                    result = api._apply_scrape_session(session["id"], lambda *args: None)
+                self.assertEqual(result["failed"], [])
+                self.assertEqual(result["partial"], [])
+                cover = collection_root / "downloaded_media" / "ps2" / "covers" / "FFX.png"
+                self.assertEqual(cover.read_bytes(), b"new scraper cover")
+                self.assertEqual(api.plan_state(cid)["data"]["total"], 0)
+            finally:
+                api.close()
+
+    def test_multiple_scrapes_keep_later_rows_and_pending_plan_targets_valid(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            collection_root = build_esde_tree(root / "collection")
+            api = Api(registry_path=root / "registry.db", cache_dir=root / "cache")
+            try:
+                cid = api.create_collection("Games", "es-de", str(collection_root))["data"]["id"]
+                api.start_scan(cid)
+                wait_idle(api)
+                rows = [row for row in api.list_rows(cid)["data"]["rows"]
+                        if row["file"] in ("FFX.iso", "MGS2.iso")]
+                self.assertEqual(len(rows), 2)
+                cache = api.workspace.open(cid)
+                pending = builder.plan_metadata_edit(api._plan(cid), cache,
+                                                     rows[1]["romUid"], {"genre": "Updated"})
+                items = []
+                for row in rows:
+                    item = api.scrape.item(str(row["romUid"]), "ps2", row["file"], row.get("fields") or {})
+                    item["candidates"] = [candidate((ScrapeMedia(
+                        "covers", f"https://www.screenscraper.fr/image.php?gameid={row['romUid']}",
+                        format="png"),)).to_dict()]
+                    items.append(item)
+                session = api.scrape.sessions.create("collection", cid, items)
+                for item in items:
+                    api.scrape.select(session["id"], item["id"], "screenscraper:42", [], [0])
+                source = root / "cover.png"
+                source.write_bytes(b"scraped cover")
+                api._download_scrape_media = lambda *args: str(source)
+                result = api._apply_scrape_session(session["id"], lambda *args: None)
+                self.assertEqual(result["applied"], [item["id"] for item in items])
+                self.assertEqual(result["failed"], [])
+                current = next(row for row in api.workspace.open(cid).query_rows(systems=["ps2"])
+                               if row["filename"] == pending.filename)
+                self.assertEqual(pending.rom_uid, current["rom_uid"])
+                self.assertEqual(api.validate_plan(cid)["data"]["blocked"], False)
+            finally:
+                api.close()
 
 
 if __name__ == "__main__":

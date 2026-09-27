@@ -61,7 +61,7 @@ test("뱃지를 누르면 판단에 필요한 정보와 함께 버전이 나온�
 test("버전을 고르면 뱃지가 사라진다", async ({ page }) => {
   await openArchive(page);
   await page.locator(".match-badge").click();
-  await page.locator(".match-option").nth(1).click();
+  await page.locator(".match-option").nth(1).locator(".revision-pick").click();
   await expect(page.locator(".match-badge")).toHaveCount(0);
 });
 
@@ -86,7 +86,7 @@ test("[P0] 버전을 고르면 Gamelist 줄도 같이 바뀐다", async ({ page 
 
   await expect(page.locator(".lrow", { hasText: "Metal Gear Solid 2" })).toBeVisible();
   await page.locator(".match-badge").click();
-  await page.locator(".match-option").nth(1).click();
+  await page.locator(".match-option").nth(1).locator(".revision-pick").click();
 
   await expect(page.locator(".lrow", { hasText: "고른 버전의 제목" })).toBeVisible();
   await expect(page.locator(".lrow", { hasText: "Metal Gear Solid 2" })).toHaveCount(0);
@@ -189,13 +189,14 @@ test.describe("Revision 탭 - 무엇이 다른지 보여준다", () => {
     await openRevisions(page);
     // 별표는 Revision 목록에 없어야 한다 - 즐겨찾기와 다른 개념이다.
     await expect(page.locator(".revision-row .fav-btn")).toHaveCount(0);
-    await expect(page.locator(".revision-row .revision-pick").first()).toHaveText("이 판 쓰기");
+    await expect(page.locator(".revision-row .revision-pick").first()).toHaveText("선택");
     await expect(page.locator(".revision-badge")).toHaveCount(0);
   });
 
   test("값이 갈리는 필드만 강조해서 보여준다", async ({ page }) => {
     await openRevisions(page);
     const first = page.locator(".revision-row").first();
+    await first.locator(".revision-expand").click();
     // Title은 판마다 달라서 강조된다.
     await expect(first.locator(".revision-field.changed", { hasText: "Title" })).toBeVisible();
     // Developer도 한쪽에만 있으니 다르다.
@@ -228,17 +229,37 @@ test("Archive에서도 Ctrl+A로 전체를 고를 수 있다", async ({ page }) 
   await page.locator(".lrow").nth(0).click();
   await page.keyboard.press("Control+a");
   await expect(page.locator("#toast")).toContainText("2개를 선택");
+  await expect(page.locator(".lrow.selected")).toHaveCount(2);
+});
+
+test("Archive에서 클릭·Ctrl+클릭 선택과 탭 복귀 후 선택 표시가 유지된다", async ({ page }) => {
+  await openArchive(page);
+  await page.locator(".lrow").first().click();
+  await expect(page.locator(".lrow.selected")).toHaveCount(1);
+  await page.locator(".lrow").nth(1).click({ modifiers: ["Control"] });
+  await expect(page.locator(".lrow.selected")).toHaveCount(2);
+  await page.locator(".ctab:not(.archive)").first().click();
+  await page.locator(".ctab.archive").click();
+  await expect(page.locator(".lrow.selected")).toHaveCount(2);
+});
+
+test("Archive 카드 보기에서도 Ctrl+클릭으로 고른 항목이 강조된다", async ({ page }) => {
+  await openArchive(page);
+  await page.locator(".view-mode-seg .seg-btn[title='카드 보기']").click();
+  await expect(page.locator(".preview-card")).toHaveCount(2);
+  await page.locator(".preview-card").first().click();
+  await page.locator(".preview-card").nth(1).click({ modifiers: ["Control"] });
+  await expect(page.locator(".preview-card.selected")).toHaveCount(2);
 });
 
 test.describe("Archive System 우클릭", () => {
   // 실사용 버그 리포트 - "System 우클릭 옵션들도 다 안 되던데(prefix 붙이기, 디렉토리
   // 이동 등)". 확인해보니 Archive의 System 목록에는 우클릭 자체가 안 걸려 있었다.
-  // Collection의 실제 파일이 있어야 하는 항목(Storage 옮기기/이름 바꾸기/미디어 정리)은
-  // 뜻이 없어 안 옮기고, 순수 텍스트 계산과 삭제만 옮긴다.
+  // Storage 이동·System 이름 변경은 아직 Archive 전용 경로가 없다.
   const rightClickSystem = (page, name) => page.locator(".nav-system", { hasText: name }).click({ button: "right" });
   const menuItem = (page, label) => page.locator(".ctx-menu .ctx-item", { hasText: label });
 
-  test("Collection에는 있는 항목들이 여기엔 없고, 옮긴 것만 있다", async ({ page }) => {
+  test("Archive System 메뉴의 지원 동작과 남은 제한을 구분한다", async ({ page }) => {
     await openArchive(page);
     await rightClickSystem(page, "PS2");
     await expect(menuItem(page, "언어 태그 적용")).toBeVisible();
@@ -246,7 +267,50 @@ test.describe("Archive System 우클릭", () => {
     await expect(menuItem(page, "시스템 전체 삭제 (!)")).toBeVisible();
     await expect(menuItem(page, "Storage 옮기기")).toHaveCount(0);
     await expect(menuItem(page, "이름 바꾸기")).toHaveCount(0);
-    await expect(menuItem(page, "미디어 선택 후 정리")).toHaveCount(0);
+    await expect(menuItem(page, "미디어 정리")).toBeVisible();
+  });
+
+  test("System 붙여넣기는 중복이 없을 때만 활성화한다", async ({ page }) => {
+    await openArchive(page);
+    await page.evaluate(() => {
+      window.api.archiveClipboardSystemTarget = (system) => Promise.resolve({ ok: true,
+        data: { system, items: [{ title: "New Game", filename: "New.iso" }], duplicates: [] } });
+      window.__pastedSystem = null;
+      window.api.archivePaste = (_mode, _target, system, newOnly) => {
+        window.__pastedSystem = { system, newOnly };
+        return Promise.resolve({ ok: true, data: { pasted: 1, skipped: [], conflicts: [] } });
+      };
+    });
+    await rightClickSystem(page, "PS2");
+    await menuItem(page, "New Game를 여기로 복사").click();
+    await expect.poll(() => page.evaluate(() => window.__pastedSystem))
+      .toEqual({ system: "ps2", newOnly: true });
+    await page.evaluate(() => {
+      window.api.archiveClipboardSystemTarget = (system) => Promise.resolve({ ok: true,
+        data: { system, items: [], duplicates: [{ title: "New Game", filename: "New.iso" }] } });
+    });
+    await rightClickSystem(page, "PS2");
+    await expect(menuItem(page, "복사한 0개를 여기로 복사")).toBeDisabled();
+  });
+
+  test("System 미디어 정리에서 종류를 골라 삭제한다", async ({ page }) => {
+    await openArchive(page);
+    await page.evaluate(() => {
+      window.api.archiveMediaCleanupPreview = () => Promise.resolve({ ok: true, data: {
+        types: [{ type: "covers", label: "Covers", count: 2, bytes: 20 },
+                { type: "videos", label: "Videos", count: 1, bytes: 100 }],
+      } });
+      window.__removedTypes = null;
+      window.api.archiveMediaDeleteSystem = (_system, types) => {
+        window.__removedTypes = types;
+        return Promise.resolve({ ok: true, data: { removed: 2, linkedKept: 0, failures: [] } });
+      };
+    });
+    await rightClickSystem(page, "PS2");
+    await menuItem(page, "미디어 정리").click();
+    await page.locator(".media-clean-row", { hasText: "Covers" }).locator("input").check();
+    await page.locator(".modal-actions .btn.danger").click();
+    await expect.poll(() => page.evaluate(() => window.__removedTypes)).toEqual(["covers"]);
   });
 
   test("언어 태그 적용은 미리보기 후 Plan 없이 바로 적용된다", async ({ page }) => {
@@ -317,8 +381,8 @@ test("행 우클릭의 ROM 폴더 열기는 현재 ROM 위치를 연다", async 
     };
   });
   await page.locator(".lrow", { hasText: "Final Fantasy X" }).click({ button: "right" });
-  await expect(page.locator(".ctx-menu .ctx-item", { hasText: "ROM 폴더" })).toHaveCount(1);
-  await page.locator(".ctx-menu .ctx-item", { hasText: "ROM 폴더 열기" }).click();
+  await page.locator(".ctx-menu .ctx-item", { hasText: "폴더 열기" }).hover();
+  await page.locator(".ctx-submenu .ctx-item", { hasText: "ROM 디렉터리" }).click();
   await expect.poll(() => page.evaluate(() => window.__opened)).toBe("rid2");
 });
 
@@ -357,13 +421,28 @@ test.describe("Archive 행 우클릭 - 삭제", () => {
     has: page.locator(".ctx-label", { hasText: new RegExp(`^${label}$`) }),
   });
 
-  test("Archive 소유 ROM만 별도로 삭제할 수 있고 외부 원본·메타데이터 삭제는 없다", async ({ page }) => {
+  test("Archive 보관 ROM과 메타데이터를 별도로 삭제할 수 있다", async ({ page }) => {
     await openArchive(page);
     await rightClickRow(page, "Final Fantasy X");
     await expect(menuItem(page, "ROM 삭제")).toHaveCount(0);
-    await expect(menuItem(page, "메타데이터 삭제")).toHaveCount(0);
+    await expect(menuItem(page, "메타데이터 삭제")).toBeVisible();
     await expect(menuItem(page, "Archive 보관 ROM 삭제")).toBeVisible();
     await expect(menuItem(page, "Archive에서 지우기")).toBeVisible();
+  });
+
+  test("메타데이터 삭제는 Archive API를 호출한다", async ({ page }) => {
+    await openArchive(page);
+    await page.evaluate(() => {
+      window.__metadataIds = null;
+      window.api.archiveMetadataDelete = (ids) => {
+        window.__metadataIds = ids;
+        return Promise.resolve({ ok: true, data: { cleared: ids.length, failures: [] } });
+      };
+    });
+    await rightClickRow(page, "Final Fantasy X");
+    await menuItem(page, "메타데이터 삭제").click();
+    await modalButton(page, "확인").click();
+    await expect.poll(() => page.evaluate(() => window.__metadataIds)).toEqual(["rid2"]);
   });
 
   test("확인하면 실제로 지워지고, 실제 파일은 그대로라고 알린다", async ({ page }) => {
@@ -381,6 +460,14 @@ test.describe("Archive 행 우클릭 - 삭제", () => {
     expect(await page.evaluate(() => window.__deleted[0])).toEqual(["rid2"]);
     await expect(page.locator("#toast")).toContainText("실제 ROM/Media 파일은 그대로");
   });
+});
+
+test("Archive Status 아이콘 우클릭에도 종류별 메뉴가 열린다", async ({ page }) => {
+  await openArchive(page);
+  await page.locator(".lrow").first().locator(".status-icon[data-status='rom']")
+    .click({ button: "right" });
+  await expect(page.locator(".ctx-menu")).toBeVisible();
+  await expect(page.locator(".ctx-menu .ctx-item", { hasText: "ROM 삭제" })).toBeVisible();
 });
 
 test("미디어를 우클릭하면 복사/붙여넣기 메뉴가 나온다", async ({ page }) => {

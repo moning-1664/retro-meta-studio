@@ -30,6 +30,43 @@ test.describe("System 우클릭 메뉴", () => {
     await expect(menuItem(page, "메타데이터 스크랩…")).toBeEnabled();
   });
 
+  test("복사한 게임을 다른 System에 신규 추가한다", async ({ page }) => {
+    const calls = [];
+    await page.exposeFunction("__systemPaste", (args) => calls.push(args));
+    await page.evaluate(() => {
+      const original = window.api.paste;
+      window.api.paste = (...args) => { window.__systemPaste(args); return original(...args); };
+    });
+    await page.locator(".nav-system", { hasText: "SNES" }).click();
+    await page.locator(".lrow", { hasText: "Super Mario World" }).click();
+    await page.keyboard.press("Control+c");
+    await rightClickSystem(page, "PS2");
+    const item = menuItem(page, "Super Mario World를 여기로 복사");
+    await expect(item).toBeEnabled();
+    await expect(item).toHaveAttribute("title", /snes \/ Super Mario World/);
+    await item.click();
+    await expect.poll(() => calls.length).toBe(1);
+    expect(calls[0][2]).toEqual({ snes: "ps2" });
+    expect(calls[0][5]).toBe(true);
+  });
+
+  test("대상 System에 같은 게임이 있으면 신규 복사를 막는다", async ({ page }) => {
+    await page.locator(".lrow", { hasText: "Final Fantasy X" }).click();
+    await page.keyboard.press("Control+c");
+    await rightClickSystem(page, "PS2");
+    await expect(menuItem(page, "Final Fantasy X를 여기로 복사")).toBeDisabled();
+  });
+
+  test("여러 게임을 복사하면 hover 설명에 대상 목록을 보여준다", async ({ page }) => {
+    await page.locator(".lrow", { hasText: "Final Fantasy X" }).click();
+    await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).click({ modifiers: ["Control"] });
+    await page.keyboard.press("Control+c");
+    await rightClickSystem(page, "SNES");
+    const item = menuItem(page, "복사한 2개를 여기로 복사");
+    await expect(item).toBeEnabled();
+    await expect(item).toHaveAttribute("title", /Final Fantasy X.*\n.*Metal Gear Solid 2/);
+  });
+
 });
 
 test.describe("System 우클릭 - 멀티 디스크 태그 적용", () => {

@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from app.metadata.language_priority import description_priority_sql
 from app.store.sqlite import Migration, connect, transaction, user_version
 
 SCHEMA_VERSION = 1
@@ -397,7 +398,11 @@ class CacheStore:
         보이는 모순이 생긴다.
         """
         column = self.ORDERS.get(order, "LOWER(r.title)")
-        prefix = f"{self.PRIORITY_ORDERS[priority]}, " if priority in self.PRIORITY_ORDERS else ""
+        if priority in ("desc_ko", "desc_en"):
+            prefix = description_priority_sql(
+                "json_extract(m.fields_json,'$.desc')", priority) + ", "
+        else:
+            prefix = f"{self.PRIORITY_ORDERS[priority]}, " if priority in self.PRIORITY_ORDERS else ""
         # 이 항은 늘 ASC로 고정한다 - "값 없음"을 뒤로 보내는 규칙 자체는 정렬 방향과
         # 무관해야 한다. descending을 그대로 적용하면 내림차순에서는 값 없음이 앞으로
         # 온다(§ EMPTY_LAST_ORDERS 주석과 같은 문제가 방향만 바뀌어 재발한다).

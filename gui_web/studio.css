@@ -179,7 +179,8 @@ body { font-size: var(--fs-body); }
    배경에 묻히지 않게 **두꺼운 외곽선**을 두른다(paint-order로 외곽선을 글자 아래에 깐다 -
    안 그러면 획이 외곽선에 먹힌다). */
 .nav-app-title-name {
-  font-family: "Arial Narrow", "Franklin Gothic Medium", Tahoma, Impact, sans-serif;
+  /* Optional Windows fonts differed across PCs; Tahoma ships with Windows. */
+  font-family: Tahoma, sans-serif;
   /* 가운데 네 칸을 기준으로 잡되, 조금 넘치는 만큼은 **비워 둔 오른쪽 한 칸**이 받아 준다
      (사용자 결정 - 그 칸은 여백이다). Navigator 밖으로는 나가지 않는다. */
   font-weight: 800; font-size: calc(15px * var(--font-scale));
@@ -728,6 +729,18 @@ body { font-size: var(--fs-body); }
 .revision-chip.changed { border-color: var(--warning); color: var(--warning); opacity: 1; }
 .revision-pick { align-self: flex-end; }
 .revision-pick.on { border-color: var(--accent); color: var(--accent); }
+.revision-row.scrape-candidate { display: block; padding: 0; margin: 6px 10px; background: var(--card); }
+.revision-cover { overflow: hidden; }
+.revision-cover img { width: 100%; height: 100%; object-fit: contain; }
+.revision-foot { display: flex; gap: 4px; min-width: 0; color: var(--muted); }
+.revision-foot .revision-source { flex: 1; font-weight: 400; color: var(--muted); }
+.revision-foot .revision-when { flex: none; font-size: 9px; }
+.revision-row .scrape-candidate-bottom { gap: 4px; }
+.revision-expand { margin-left: auto; flex: none; width: 18px; height: 18px; padding: 0; }
+.revision-row .revision-pick { flex: none; align-self: center; padding: 2px 5px; }
+.revision-expanded[hidden] { display: none; }
+.revision-expanded .revision-fields { padding: 5px; border-top: 1px solid var(--border); }
+.revision-expanded .revision-media { padding: 5px; border-top: 1px solid var(--border); }
 
 /* System을 끌어다 놓는 동안 그룹 전체가 받는다는 것을 보여준다. */
 .nav-group.drop-target {
@@ -802,7 +815,17 @@ body { font-size: var(--fs-body); }
 .stg-column-name { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; cursor: pointer; }
 .stg-column-note { color: var(--muted); font-size: var(--fs-eyebrow); }
 .stg-column-actions { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-top: 6px; }
+.scrape-media-settings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 12px; }
+.scrape-media-choice { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 9px 11px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); cursor: pointer; }
+.scrape-media-choice:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--card)); }
+.scrape-media-choice input { flex: 0 0 auto; margin: 0; accent-color: var(--accent); }
+.scrape-media-choice span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-caption); }
 .stg-column-reset { flex: none; white-space: nowrap; }
+.archive-config-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end;
+  gap: 6px; margin-top: 12px; }
+.archive-config-actions .archive-apply-status { flex: 1 1 100%; min-width: 0; }
+.archive-config-actions .btn { flex: none; min-width: 0; white-space: nowrap; padding: 5px 9px; }
 
 /* Settings > Metadata & Media > Title Prefix/Postfix - 구역(한/영/일/유럽/글로벌)마다
    켜짐·Prefix/Postfix·텍스트 한 줄. */
@@ -1059,12 +1082,15 @@ body { font-size: var(--fs-body); }
 
 /* 하단 상태 바 */
 #status-bar {
-  display: flex; align-items: center; gap: 14px; padding: 0 14px;
+  display: grid; grid-template-columns: 224px minmax(0, 1fr) 297px;
+  align-items: center; gap: 0; padding: 0;
   background: var(--panel); border-top: 1px solid var(--border);
   font-size: var(--fs-caption); color: var(--muted);
 }
-.sb-left { display: flex; align-items: center; gap: 6px; }
-.sb-middle { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; overflow: hidden; }
+.sb-left { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 8px;
+  border-left: 1px solid var(--border); overflow: hidden; white-space: nowrap; }
+.sb-middle { display: flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden;
+  padding: 0 8px; white-space: nowrap; border-right: 1px solid var(--border); }
 .sb-label { opacity: .7; }
 .sb-storage { white-space: nowrap; }
 .sb-storage.clickable { cursor: pointer; }
@@ -1183,9 +1209,11 @@ body { font-size: var(--fs-body); }
 .media-tile.video-playing, .media-tile.video-loading { cursor: pointer; }
 .media-tile.has-video .media-tile-label { z-index: 2; }
 .media-video-play {
-  position: absolute; right: 8px; bottom: 8px; z-index: 2; display: flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--chrome) 85%, transparent); color: var(--text);
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 3;
+  display: flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, .35);
+  background: color-mix(in srgb, #000 55%, transparent); color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .5);
 }
 .media-video-play:hover { color: var(--accent); border-color: var(--accent); }
 /* 멈춘 영상 - 마지막 화면을 그대로 두고 배지 하나를 얹는다. 예전엔 글자 "||"였는데
@@ -1222,10 +1250,18 @@ body { font-size: var(--fs-body); }
 #toast.error .toast-msg { border-color: var(--danger); }
 #toast.warning .toast-msg { border-color: var(--warning); }
 
-#job-progress { position: fixed; right: 16px; bottom: 48px; z-index: 70; display: none; }
-#job-progress.show { display: block; }
-/* 작업마다 줄 하나 - 여러 작업이 동시에 있으면 위에서 아래로 쌓인다. 기다리는 중인 작업은 흐리게. */
-.job-progress-item + .job-progress-item { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+#status-bar #job-progress { position: static; transform: none; z-index: auto; display: block;
+  width: auto; height: 32px; min-width: 0; margin: 0; padding: 0 7px; overflow-y: auto;
+  background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+#status-bar #job-progress:not(.show) { visibility: hidden; }
+.job-progress-item { display: grid; grid-template-columns: max-content minmax(50px, 110px) 34px minmax(0, 1fr) 44px;
+  gap: 6px; align-items: center; height: 32px; min-width: 0; }
+.job-progress-item + .job-progress-item { margin: 0; padding: 0; border-top: 1px solid var(--border); }
+.job-progress-title, .job-progress-label { min-width: 0; margin: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.job-progress-title { max-width: 118px; font-size: var(--fs-caption); }
+.job-progress-label { text-align: left; font-size: var(--fs-caption); }
+.job-progress-cancel { width: 44px; padding: 2px 4px; }
 .job-progress-item.waiting { opacity: .6; }
 .job-progress-item.waiting .job-progress-bar-fill { background: var(--muted); }
 
@@ -1245,6 +1281,13 @@ body { font-size: var(--fs-body); }
    색 언어다(사용자 결정). */
 .sb-add { color: var(--warning); font-variant-numeric: tabular-nums; font-weight: 600; }
 .sb-del { color: var(--danger); font-variant-numeric: tabular-nums; font-weight: 600; }
+.sb-plan-count { border: 0; background: none; padding: 0; cursor: pointer; font: inherit; }
+.sb-plan-count:hover { text-decoration: underline; }
+.plan-overview { max-height: min(60vh, 480px); overflow: auto; }
+.plan-overview-row { display: grid; grid-template-columns: 90px minmax(0, 1fr) auto; gap: 8px;
+  padding: 8px 4px; border-bottom: 1px solid var(--border); align-items: center; font-size: var(--fs-caption); }
+.plan-overview-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-overview-row small { color: var(--muted); }
 /* .cheader-storage.over는 §4에서 .plan-over로 이름이 바뀌었다 - Dashboard 목표
    초과(.level-over)와 겹칠 수 있는 별개의 경고라서 클래스를 나눴다. */
 .sb-storage.over, .cheader-storage.plan-over { color: var(--danger); font-weight: 600; }
@@ -1347,6 +1390,12 @@ button.sb-badge { cursor: pointer; }
 .ver-tile.ver-tile { width: 46px; }
 .ver-tile .cmp-tile-label { display: none; }
 .ver-tile .cmp-tile-box { width: 46px; height: 46px; }
+.ver-dialog-card { width: 331px; max-width: calc(100vw - 24px); }
+.ver-list { max-height: min(520px, calc(100vh - 180px)); }
+.ver-option.scrape-candidate { display: block; padding: 0; cursor: default; }
+.ver-option .revision-media-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--muted); font-size: 9px; }
+.ver-option .revision-pick { flex: none; margin-left: auto; }
 
 .cheader-extras { display: flex; align-items: center; gap: 8px; padding-top: 4px; }
 
@@ -1657,6 +1706,7 @@ button.sb-badge { cursor: pointer; }
   background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
   box-shadow: 0 12px 32px var(--shadow);
 }
+.ctx-submenu { z-index: 96; }
 .ctx-head { padding: 6px 9px 7px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
 .ctx-title { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ctx-title:has(.sys-ic) { display: flex; align-items: center; gap: 6px; }
@@ -1841,50 +1891,54 @@ button.sb-badge { cursor: pointer; }
    Candidate content uses the same 297px reading width as Detail. The modal
    adds only its own padding and title, so the card density is reusable by the
    Archive revision panel later. */
-.scrape-context-card { width: 331px; max-width: calc(100vw - 24px); height: min(760px, calc(100vh - 28px)); }
-.scrape-context { width: 297px; max-width: 100%; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
-.scrape-context-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start;
+.scrape-context-card { width: 331px; max-width: calc(100vw - 24px); max-height: min(760px, calc(100vh - 28px)); overflow: hidden; }
+.scrape-context-card .modal-actions:empty { display: none; }
+.scrape-context { width: 297px; max-width: 100%; max-height: calc(100vh - 110px); padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.scrape-modal-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.scrape-context-card .modal-title { margin-bottom: 4px; }
+.scrape-context-head { display: flex; gap: 6px; align-items: center;
   padding: 8px 8px 6px; border-bottom: 1px solid var(--border); }
-.scrape-current-file { display: block; max-width: 165px; margin-top: 2px; color: var(--muted);
+.scrape-file-tag { flex: none; padding: 2px 4px; border-radius: 3px; background: var(--card3);
+  font-size: var(--fs-eyebrow); color: var(--muted); }
+.scrape-current-file { display: block; flex: 1; min-width: 0; color: var(--muted);
   font-size: var(--fs-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scrape-file-copy { flex: none; width: 22px; height: 22px; padding: 2px; }
 .scrape-quota { flex: 0 0 auto; padding: 3px 6px; border: 1px solid var(--border); border-radius: var(--radius-pill);
   color: var(--warning); font-size: var(--fs-caption); white-space: nowrap; }
-.scrape-search-row { display: grid; grid-template-columns: minmax(0, 1fr) 72px auto; gap: 4px; padding: 7px 8px; }
+.scrape-search-row { display: grid; grid-template-columns: minmax(0, 1fr) 110px; gap: 4px; padding: 7px 8px; }
+.scrape-search-row label { min-width: 0; display: grid; gap: 3px; color: var(--muted); font-size: var(--fs-caption); }
+.scrape-search-row .btn { grid-column: 1 / -1; justify-self: end; }
 .scrape-query, .scrape-system { min-width: 0; height: 27px; }
-.scrape-candidates { min-height: 120px; flex: 1 1 auto; overflow: auto; padding: 0 7px 7px; }
+.scrape-candidates { min-height: 120px; max-height: min(520px, calc(100vh - 250px)); flex: 1 1 auto; overflow: auto; padding: 0 7px 7px; }
 .scrape-candidate { margin: 5px 0; border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--card); overflow: hidden; position: relative; }
 .scrape-candidate:hover { border-color: var(--accent); }
 .scrape-candidate.selected { border-color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
-.scrape-candidate-head { display: grid; grid-template-columns: 66px minmax(0, 1fr); gap: 7px;
-  align-items: stretch; min-height: 112px; padding: 5px; }
-.scrape-thumb { width: 66px; height: 100%; min-height: 108px; max-height: 142px;
+.scrape-candidate-head { display: grid; grid-template-columns: 87px minmax(0, 1fr); gap: 7px;
+  align-items: stretch; min-height: 128px; padding: 5px; }
+.scrape-thumb { width: 87px; height: 116px; aspect-ratio: 3 / 4;
   object-fit: contain; border-radius: 3px; background: var(--card2); }
 .scrape-thumb.empty { display: flex; align-items: center; justify-content: center; color: var(--muted); }
 .scrape-candidate-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.scrape-candidate-top { display: flex; gap: 4px; align-items: center; min-width: 0; padding-right: 18px; }
+.scrape-candidate-top { display: flex; gap: 4px; align-items: center; min-width: 0; }
 .scrape-system-icon { flex: 0 0 auto; width: 16px; height: 16px; }
 .scrape-candidate-title { color: var(--text); font-weight: 650; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; min-width: 0; flex: 1; }
 .scrape-candidate-year { color: var(--muted); font-size: var(--fs-caption); flex: 0 0 auto; }
 .scrape-candidate-desc { color: var(--text); font-size: var(--fs-caption); line-height: 1.35;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  overflow: hidden; min-height: 2.7em; }
-.scrape-media-marks { display: flex; gap: 3px; overflow: hidden; flex-wrap: wrap; }
-.scrape-media-mark { min-width: 15px; padding: 0 2px; text-align: center; color: var(--muted);
-  opacity: .45; border: 1px solid var(--border); border-radius: 3px; font-size: 10px; line-height: 14px; }
-.scrape-media-mark.present { color: var(--text); opacity: 1; }
-.scrape-candidate-bottom { margin-top: auto; display: flex; gap: 4px; align-items: center; min-width: 0; }
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; }
+.scrape-candidate-bottom { margin-top: auto; display: flex; gap: 5px; align-items: center; min-width: 0; }
 .scrape-candidate-stars { flex: 0 0 auto; font-size: 10px; color: var(--text); }
-.scrape-candidate-facts { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; font-size: 10px; color: var(--muted); }
+.scrape-candidate-facts { min-width: 0; overflow: hidden; font-size: 10px; color: var(--muted);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.25; }
 .scrape-candidate-meta { margin-top: 2px; color: var(--muted); font-size: var(--fs-caption);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scrape-badges { display: flex; gap: 3px; margin-top: 4px; overflow: hidden; }
 .scrape-badge { max-width: 130px; padding: 1px 4px; border-radius: 3px; background: var(--card3);
   color: var(--muted); font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scrape-badge.provider { color: var(--accent); font-weight: 700; }
-.scrape-expand { position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; padding: 0; }
+.scrape-expand { margin-left: auto; flex: none; width: 18px; height: 18px; padding: 0; }
 .scrape-evidence { padding: 5px 7px; border-top: 1px solid var(--border); color: var(--muted);
   font-size: var(--fs-caption); line-height: 1.45; }
 .scrape-fields { border-top: 1px solid var(--border); }
@@ -1904,10 +1958,10 @@ button.sb-badge { cursor: pointer; }
 .scrape-media-option img { grid-column: 2; width: 100%; height: 58px; object-fit: contain; background: var(--card3); }
 .scrape-media-option span, .scrape-media-option small { grid-column: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scrape-media-option small { color: var(--muted); }
-.scrape-choose { flex: 0 0 auto; width: auto; margin: 0; padding: 1px 5px;
-  min-height: 21px; font-size: 10px; white-space: nowrap; }
+.scrape-candidate-pick-hint { margin-left: auto; color: var(--muted); font-size: 10px; }
 .scrape-actions { flex: 0 0 auto; display: flex; gap: 4px; padding: 7px 8px; border-top: 1px solid var(--border); }
 .scrape-action-spacer { flex: 1; }
+.scrape-actions .btn { flex: 0 0 62px; min-width: 0; padding-left: 5px; padding-right: 5px; white-space: nowrap; }
 .scrape-setup-card { width: 420px; max-width: calc(100vw - 24px); }
 .scrape-setup { display: grid; gap: 8px; }
 .scrape-setup-row { display: grid; gap: 4px; }

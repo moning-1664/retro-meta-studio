@@ -142,6 +142,28 @@ class EsMediaApplyTests(unittest.TestCase):
         self.assertTrue(str(resolved).startswith(str(self.target_root.resolve())),
                         f"source를 가리키고 있다: {resolved}")
 
+    def test_new_only_system_paste_copies_metadata_rom_and_media(self):
+        (self.target_root / "gamelists" / "ps2" / "gamelist.xml").write_text(
+            "<gameList/>", encoding="utf-8")
+        scan(self.api, self.dst)
+        row = next(r for r in self.api.list_rows(self.src, limit=50)["data"]["rows"]
+                   if r["file"] == "FFX.iso")
+        self.api.copy_selection(self.src, [row["romUid"]])
+        preview = self.api.clipboard_system_target(self.dst, "ps2")["data"]
+        self.assertEqual(preview["duplicates"], [])
+        pasted = self.api.paste(self.dst, "patch", {"ps2": "ps2"}, None, None, True)
+        self.assertTrue(pasted["ok"], pasted.get("error"))
+        self.assertEqual(pasted["data"]["added"], 1)
+        self._apply()
+        self.assertTrue((self.target_root / "ps2" / "FFX.iso").is_file())
+        game = self._game("FFX.iso")
+        self.assertIsNotNone(game)
+        self.assertTrue(game.findtext("name"))
+        thumbnail = game.findtext("thumbnail")
+        self.assertTrue(thumbnail)
+        self.assertEqual(((self.target_root / "gamelists" / "ps2") / thumbnail).resolve().read_bytes(),
+                         b"c" * 50)
+
     def test_source_media_paths_do_not_leak_into_the_target(self):
         """`frontend_raw`는 계약 2로 보존되지만, **경로는 그 자리에서만 참이다.**
 

@@ -72,6 +72,19 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(row["desc"], "A role-playing game.")
         self.assertEqual(row["genre"], "RPG")
 
+    def test_archive_column_sort_applies_before_paging(self):
+        self.api.archive_ingest(self.src)
+        files = lambda **sort: [row["file"] for row in self.api.archive_rows(
+            systems=["ps2"], limit=10, **sort)["data"]["rows"]]
+        self.assertLess(files(order="filename", descending=True).index("MGS2.iso"),
+                        files(order="filename", descending=True).index("FFX.iso"))
+        self.assertLess(files(order="title", descending=True).index("MGS2.iso"),
+                        files(order="title", descending=True).index("FFX.iso"))
+        self.assertEqual(files(order="desc")[0], "FFX.iso")
+        self.assertEqual(self.api.archive_rows(systems=["ps2"], order="filename",
+                                               descending=True, limit=1)["data"]["rows"][0]["file"],
+                         "MGS2.iso")
+
     def test_archive_page_load_uses_batched_metadata_queries(self):
         """행 수만큼 revision/source 조회가 늘어나면 Archive 전환이 급격히 느려진다."""
         self.api.archive_ingest(self.src)
@@ -101,6 +114,161 @@ class ArchiveTests(unittest.TestCase):
         self.assertTrue(ps2_uids.issubset(all_uids))
         # snes 등 ps2가 아닌 System은 빠진다 - build_esde_tree의 3개는 전부 ps2다.
         self.assertEqual(ps2_uids, all_uids)
+
+    def test_archive_uids_respects_the_visible_search_filter(self):
+        self.api.archive_ingest(self.src)
+        matching = self.api.archive_rows(search="metal")["data"]["rows"]
+        self.assertEqual(self.api.archive_uids({"search": "metal"})["data"],
+                         [row["romIdentityId"] for row in matching])
+
+    def test_archive_initial_search_uses_the_full_filtered_list(self):
+        self.api.archive_ingest(self.src)
+        rows = self.api.archive_rows(order="filename")["data"]["rows"]
+        expected = next(index for index, row in enumerate(rows)
+                        if row["file"].startswith("M"))
+        query = {"order": "filename"}
+        self.assertEqual(self.api.archive_find_row_index(query, "m", -1)["data"], expected)
+        expected_next = next(index for index in list(range(expected + 1, len(rows)))
+                             + list(range(expected + 1))
+                             if rows[index]["file"].lower().startswith("m"))
+        self.assertEqual(self.api.archive_find_row_index(query, "m", expected)["data"],
+                         expected_next)
+        self.assertEqual(self.api.archive_find_row_index(
+            {"search": "final"}, "m", -1)["data"], -1)
+
+    def test_archive_multi_paste_downgrades_replace_to_patch(self):
+        configure(self.api, {"archiveDir": str(self.dir / "archive")})
+        self.api.archive_ingest(self.src)
+        rid = self._rid("FFX.iso")
+        self.assertTrue(self.api.archive_edit(rid, {"genre": "Archive only"})["ok"])
+        uids = [row["romUid"] for row in self.api.list_rows(self.src)["data"]["rows"]
+                if row["file"] in {"FFX.iso", "MGS2.iso"}]
+        self.assertEqual(len(uids), 2)
+        self.assertTrue(self.api.copy_selection(self.src, uids)["ok"])
+        result = self.api.archive_paste("replace")
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(result["data"]["downgradedFrom"], "replace")
+        self.assertEqual(result["data"]["policy"]["pasteMode"], "patch")
+        self.assertEqual(self.api.archive_detail(rid)["data"]["fields"]["genre"],
+                         "Archive only")
+
+    def test_archive_system_target_paste_adds_only_new_games(self):
+        archive_root = self.dir / "archive_target_paste"
+        configure(self.api, {"archiveDir": str(archive_root),
+                             "romDir": str(archive_root / "roms")})
+        source = next(row for row in self.api.list_rows(self.src)["data"]["rows"]
+                      if row["file"] == "FFX.iso")
+        self.assertTrue(self.api.copy_selection(self.src, [source["romUid"]])["ok"])
+        preview = self.api.archive_clipboard_system_target("snes")
+        self.assertTrue(preview["ok"], preview.get("error"))
+        self.assertEqual(len(preview["data"]["items"]), 1)
+        first = self.api.archive_paste("patch", target_system="snes", new_only=True)
+        self.assertTrue(first["ok"], first.get("error"))
+        self.assertEqual(first["data"]["pasted"], 1)
+        self.assertTrue((archive_root / "roms" / "snes" / "FFX.iso").is_file())
+        duplicate = self.api.archive_clipboard_system_target("snes")["data"]
+        self.assertEqual(len(duplicate["duplicates"]), 1)
+        second = self.api.archive_paste("replace", target_system="snes", new_only=True)
+        self.assertTrue(second["ok"], second.get("error"))
+        self.assertEqual(second["data"]["pasted"], 0)
+
+    def test_archive_media_cleanup_filters_types_and_keeps_source_files(self):
+        archive_root = self.dir / "archive_media_cleanup"
+        configure(self.api, {"archiveDir": str(archive_root), "mediaInternal": True})
+        self.api.archive_ingest(self.src)
+        self.assertTrue(self.api.archive_project()["ok"])
+        preview = self.api.archive_media_cleanup_preview("ps2")
+        self.assertTrue(preview["ok"], preview.get("error"))
+        self.assertIn("covers", {item["type"] for item in preview["data"]["types"]})
+        rid = self._rid("FFX.iso")
+        before = self.api.archive_detail(rid)["data"]
+        self.assertIn("covers", {item["media_type"] for item in before["media"]})
+        self.assertIn("videos", {item["media_type"] for item in before["media"]})
+        result = self.api.archive_media_delete_system("ps2", ["covers"])
+        self.assertTrue(result["ok"], result.get("error"))
+        after = self.api.archive_detail(rid)["data"]
+        self.assertNotIn("covers", {item["media_type"] for item in after["media"]})
+        self.assertIn("videos", {item["media_type"] for item in after["media"]})
+        self.assertTrue((self.source_root / "downloaded_media" / "ps2" / "covers"
+                         / "FFX.png").is_file())
+        selected = self.api.archive_media_delete_selected([rid], "video")
+        self.assertTrue(selected["ok"], selected.get("error"))
+        self.assertNotIn("videos", {item["media_type"] for item in
+                          self.api.archive_detail(rid)["data"]["media"]})
+
+    def test_metadata_delete_keeps_rom_media_sources_and_survives_projection(self):
+        archive_root = self.dir / "archive_metadata_delete"
+        configure(self.api, {"archiveDir": str(archive_root), "mediaInternal": True})
+        self.api.archive_ingest(self.src)
+        self.assertTrue(self.api.archive_project()["ok"])
+        rid = self._rid("FFX.iso")
+        result = self.api.archive_metadata_delete([rid])
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(result["data"]["cleared"], 1)
+        row = next(row for row in self.api.archive_rows()["data"]["rows"]
+                   if row["romIdentityId"] == rid)
+        self.assertFalse(row["hasMetadata"])
+        self.assertTrue(row["hasMedia"])
+        self.assertTrue(row["present"])
+        self.assertEqual(self.api.archive_detail(rid)["data"]["fields"], {})
+        self.assertTrue((self.source_root / "ps2" / "FFX.iso").is_file())
+        self.assertTrue(self.api.archive_project()["ok"])
+        index = archive_root / "gamelists" / "ps2" / "gamelist.xml"
+        self.assertNotIn("./FFX.iso", index.read_text(encoding="utf-8"))
+        self.assertTrue(self.api.archive_edit(rid, {"name": "Restored"})["ok"])
+        self.assertTrue(next(row for row in self.api.archive_rows()["data"]["rows"]
+                             if row["romIdentityId"] == rid)["hasMetadata"])
+
+    def test_full_delete_removes_owned_files_but_rejects_linked_sources(self):
+        archive_root = self.dir / "archive_full_delete"
+        configure(self.api, {"archiveDir": str(archive_root),
+                             "romDir": str(archive_root / "roms"), "mediaInternal": True})
+        source = next(row for row in self.api.list_rows(self.src)["data"]["rows"]
+                      if row["file"] == "FFX.iso")
+        self.assertTrue(self.api.copy_selection(self.src, [source["romUid"]])["ok"])
+        self.assertTrue(self.api.archive_paste("patch")["ok"])
+        rid = self._rid("FFX.iso")
+        self.assertEqual(self.api.archive_delete_owned_preview([rid])["data"]["eligible"], [rid])
+        owned_rom = archive_root / "roms" / "ps2" / "FFX.iso"
+        self.assertTrue(owned_rom.is_file())
+        deleted = self.api.archive_delete_owned([rid])
+        self.assertTrue(deleted["ok"], deleted.get("error"))
+        self.assertEqual(deleted["data"]["deleted"], 1)
+        self.assertFalse(owned_rom.exists())
+        self.assertTrue((self.source_root / "ps2" / "FFX.iso").is_file())
+        self.assertFalse(self.api.archive_detail(rid)["ok"])
+
+        self.api.archive_ingest(self.src)
+        linked_rid = self._rid("FFX.iso")
+        preview = self.api.archive_delete_owned_preview([linked_rid])["data"]
+        self.assertEqual(preview["eligible"], [])
+        self.assertEqual(len(preview["blocked"]), 1)
+        refused = self.api.archive_delete_owned([linked_rid])
+        self.assertFalse(refused["ok"])
+        self.assertTrue(self.api.archive_detail(linked_rid)["ok"])
+        self.assertTrue((self.source_root / "ps2" / "FFX.iso").is_file())
+
+    def test_full_delete_rejects_mixed_selection_before_touching_files(self):
+        archive_root = self.dir / "archive_mixed_delete"
+        configure(self.api, {"archiveDir": str(archive_root),
+                             "romDir": str(archive_root / "roms")})
+        source = next(row for row in self.api.list_rows(self.src)["data"]["rows"]
+                      if row["file"] == "FFX.iso")
+        self.assertTrue(self.api.copy_selection(self.src, [source["romUid"]])["ok"])
+        self.assertTrue(self.api.archive_paste("patch")["ok"])
+        owned_rid = self._rid("FFX.iso")
+        owned_rom = archive_root / "roms" / "ps2" / "FFX.iso"
+        game = self.api.archive.ensure_game("Linked", "linked")
+        linked_rid = self.api.archive.ensure_rom_identity(
+            game, "ps2", "linked", filename="Linked.iso")
+        self.api.archive.put_rom_source(
+            linked_rid, self.src, self.source_root / "ps2" / "MGS2.iso", 1)
+
+        result = self.api.archive_delete_owned([owned_rid, linked_rid])
+        self.assertFalse(result["ok"])
+        self.assertTrue(owned_rom.is_file())
+        self.assertTrue(self.api.archive_detail(owned_rid)["ok"])
+        self.assertTrue(self.api.archive_detail(linked_rid)["ok"])
 
     def test_ingest_records_source_collection_id(self):
         result = self.api.archive_ingest(self.src)["data"]
@@ -574,6 +742,26 @@ class ArchiveConflictTests(unittest.TestCase):
         self.api.archive_choose_version(self.rid, versions[0]["recordIds"][0])
         self.assertEqual(self._count(), 0)
 
+    def test_conflict_counts_can_be_limited_to_visible_rows(self):
+        self._put("a", name="Game", desc="One")
+        self._put("b", name="Game", desc="Two")
+        game = self.store.ensure_game("Other", "other")
+        other = self.store.ensure_rom_identity(game, "ps2", "other", filename="other.iso")
+        self.store.put_record(other, "a", {"name": "Other", "desc": "One"}, {})
+        self.store.put_record(other, "b", {"name": "Other", "desc": "Two"}, {})
+        self.assertEqual(self.api.archive_conflicts(rom_identity_ids=[self.rid])["data"],
+                         {self.rid: 2})
+        self.assertEqual(self.api.archive_conflicts(rom_identity_ids=[])["data"], {})
+
+    def test_list_ownership_does_not_resolve_each_network_path(self):
+        root = self.dir / "roms"
+        sources = [{"source_collection_id": "archive", "abs_path": str(root / "ps2" / "game.iso")},
+                   {"source_collection_id": "other", "abs_path": str(self.dir / "elsewhere" / "game.iso")}]
+        with patch("bridge.api._path_within", side_effect=AssertionError("filesystem access")):
+            ownership = Api._rom_ownership_from_sources(
+                sources, {"archiveDir": str(root)}, check_exists=False)
+        self.assertEqual([item["mode"] for item in ownership["items"]], ["internal", "linked"])
+
     def test_different_cover_is_a_conflict(self):
         self._put("a", name="Game", desc="Same")
         self._put("b", name="Game", desc="Same")
@@ -783,6 +971,37 @@ class ArchivePrioritySortTests(unittest.TestCase):
 
     def test_metadata_priority_keeps_all_rows_and_is_deterministic(self):
         self.assertEqual(self._titles("metadata"), ["Alpha", "Beta", "Gamma"])
+
+    def test_description_language_priority_orders_before_paging(self):
+        self.api.archive.put_record(
+            self.rows["Alpha"], "source", {"name": "Alpha", "desc": "한글 설명입니다"}, {})
+        self.api.archive.put_record(
+            self.rows["Beta"], "source", {"name": "Beta", "desc": "An English description"}, {})
+        self.api.archive.put_record(
+            self.rows["Gamma"], "source", {"name": "Gamma", "desc": "日本語の説明です"}, {})
+        game = self.api.archive.ensure_game("Delta", "delta")
+        self.api.archive.ensure_rom_identity(game, "ps2", "delta", filename="Delta.iso")
+        self.assertEqual(self._titles("desc_ko"), ["Alpha", "Beta", "Gamma", "Delta"])
+        self.assertEqual(self._titles("desc_en"), ["Beta", "Alpha", "Gamma", "Delta"])
+        self.assertEqual(self.api.archive_rows(priority="desc_en", limit=1)["data"]["rows"][0]["title"],
+                         "Beta")
+        query = {"priority": "desc_en"}
+        rows = self.api.archive_rows(priority="desc_en")["data"]["rows"]
+        self.assertEqual(self.api.archive_uids(query)["data"],
+                         [row["romIdentityId"] for row in rows])
+        self.assertEqual(self.api.archive_find_row_index(query, "a")["data"], 1)
+
+    def test_description_priority_respects_archive_clear_and_source_precedence(self):
+        alpha = self.rows["Alpha"]
+        beta = self.rows["Beta"]
+        self.api.archive.put_record(alpha, "first", {"desc": "한글 설명"}, {})
+        self.api.archive.put_record(alpha, "second", {"desc": "English text"}, {})
+        self.api.archive.put_record(beta, "first", {"desc": "English text"}, {})
+        self.assertEqual(self._titles("desc_ko")[0], "Alpha")
+        self.api.archive.put_record(alpha, "__archive__", {"desc": ""}, {})
+        self.assertLess(self._titles("desc_ko").index("Beta"),
+                        self._titles("desc_ko").index("Alpha"))
+        self.assertEqual(self.api.archive.resolve_fields(alpha)[0]["desc"], "")
 
 
 class ArchiveRevisionGroupingTests(unittest.TestCase):

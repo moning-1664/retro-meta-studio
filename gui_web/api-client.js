@@ -47,6 +47,17 @@
   // 실제 SQL 정렬 규칙(2차 기준까지)은 Python 쪽 테스트가 본다 - 여기서는 화면이
   // 값을 제대로 실어 보내는지만 확인할 수 있으면 된다.
   const applyMockPriority = (rows, priority) => {
+    if (priority === "desc_ko" || priority === "desc_en") {
+      const bucket = (row) => {
+        const value = String(row.desc || "").trim();
+        if (!value) return 3;
+        const hangul = /[가-힣ㄱ-ㅎㅏ-ㅣ]/u.test(value);
+        const latin = /[A-Za-z]/.test(value) && !hangul && !/[一-龯ぁ-ゟァ-ヿ]/u.test(value);
+        if (priority === "desc_ko") return hangul ? 0 : latin ? 1 : 2;
+        return latin ? 0 : hangul ? 1 : 2;
+      };
+      return [...rows].sort((a, b) => bucket(a) - bucket(b));
+    }
     const key = { rom: "present", metadata: "hasMetadata", media: "hasMedia" }[priority];
     if (!key) return rows;
     return [...rows].sort((a, b) => (a[key] ? 0 : 1) - (b[key] ? 0 : 1));
@@ -329,8 +340,10 @@
     archive_copy_selection: (ids) => ok({ count: (ids || []).length, bytes: 0,
                                           sourceCollectionId: "__archive__", sourceName: "Archive" }),
     archive_paste: () => ok({ pasted: 0, copiedRoms: 0, skipped: [], conflicts: [] }),
+    archive_clipboard_system_target: (system) => ok({ system, items: [], duplicates: [] }),
     archive_ownership_summary: () => ok({ internal: 0, linked: 0, mixed: 0, none: 0, total: 0 }),
     archive_uids: () => ok([]),
+    archive_find_row_index: () => ok(-1),
     archive_conflicts: () => ok({}),
     // 저장하면 "정해졌다"로 바뀐다 - 디렉토리를 정하기 전에는 수집이 거절되므로(사용자 결정)
     // 목업도 그 상태를 들고 있어야 화면 흐름이 실제와 같아진다.
@@ -346,6 +359,8 @@
     archive_media_paste: () => ok({}),
     archive_media_delete: (romIdentityId, mediaKey) => ok({ romIdentityId, mediaType: mediaKey }),
     archive_media_delete_system: () => ok({ removed: 0, linkedKept: 0, failures: [] }),
+    archive_media_cleanup_preview: (system) => ok({ system, types: [] }),
+    archive_media_delete_selected: () => ok({ removed: 0, linkedKept: 0, failures: [] }),
     media_paste: () => ok({ added: 1, skipped: [], conflicts: 0 }),
     archive_versions: () => ok({ romIdentityId: "", versions: [] }),
     archive_choose_version: () => ok({}),
@@ -353,6 +368,9 @@
     archive_detail: () => ok(null),
     archive_edit: () => ok({ revision: 1, changed: true }),
     archive_delete: (ids) => ok({ deleted: (ids || []).length }),
+    archive_metadata_delete: (ids) => ok({ cleared: (ids || []).length, failures: [] }),
+    archive_delete_owned_preview: (ids) => ok({ eligible: ids || [], blocked: [] }),
+    archive_delete_owned: (ids) => ok({ deleted: (ids || []).length, failures: [] }),
     archive_set_favorite: (id, favorite) => ok({ romIdentityId: id, favorite: !!favorite }),
     archive_title_affix_preview: () => ok({ items: [], changed: 0 }),
     archive_apply_title_affix: () => ok({ applied: 0 }),
@@ -410,6 +428,16 @@
         return { system: row.system, filename: row.file, title: row.title };
       });
       return ok({ count: items.length, items });
+    },
+    clipboard_system_target: (id, system) => {
+      const items = mockClipboardUids.map((uid) => {
+        const row = mockRows.find((r) => r.romUid === uid);
+        return { system: row.system, filename: row.file, title: row.title };
+      });
+      const duplicates = items.filter((item) => mockRows.some((row) =>
+        row.system === system && row.file === item.filename)).map((item) =>
+        ({ filename: item.filename, targetFilename: item.filename }));
+      return ok({ count: items.length, items, duplicates });
     },
     validate_plan: () => ok({ ok: true, entries: [], capacity: [], blocked: false }),
     start_apply: () => {
@@ -854,6 +882,10 @@
     },
     scraper_settings: () => ok({ enabled: true, softName: "RetroMetaStudio",
       userId: "", devIdSet: true, devPasswordSet: true, userPasswordSet: false }),
+    scraper_systems: () => ok([
+      { name: "ps2", id: 58 }, { name: "sfc", id: 4 }, { name: "msx", id: 113 },
+      { name: "msx2", id: 116 }, { name: "nes", id: 3 }, { name: "gb", id: 9 },
+    ]),
     save_scraper_settings: (patch) => ok({ enabled: true, softName: patch.softName || "RetroMetaStudio",
       userId: patch.userId || "", devIdSet: true, devPasswordSet: true,
       userPasswordSet: !!patch.userPassword }),
@@ -970,6 +1002,7 @@
     getAppSettings: () => call("get_app_settings"),
     saveAppSettings: (patch) => call("save_app_settings", patch),
     scraperSettings: () => call("scraper_settings"),
+    scraperSystems: () => call("scraper_systems"),
     saveScraperSettings: (patch) => call("save_scraper_settings", patch),
     startScraperAccountStatus: () => call("start_scraper_account_status"),
     createScrapeSession: (target, collectionId, itemIds) =>
@@ -1004,10 +1037,11 @@
     planResolveAllConflicts: (id, resolution) => call("plan_resolve_all_conflicts", id, resolution),
     planClear: (id) => call("plan_clear", id),
     copySelection: (id, romUids) => call("copy_selection", id, romUids),
-    paste: (id, mode, systemMap, targetMap, fallbackTarget) =>
-      call("paste", id, mode || null, systemMap || null, targetMap || null, fallbackTarget || null),
+    paste: (id, mode, systemMap, targetMap, fallbackTarget, newOnly) =>
+      call("paste", id, mode || null, systemMap || null, targetMap || null, fallbackTarget || null, !!newOnly),
     clipboardSystems: (id) => call("clipboard_systems", id),
     clipboardItems: () => call("clipboard_items"),
+    clipboardSystemTarget: (id, system) => call("clipboard_system_target", id, system),
     discTitleFormats: () => call("disc_title_formats"),
     validatePlan: (id) => call("validate_plan", id),
     startApply: (id) => call("start_apply", id),
@@ -1025,17 +1059,27 @@
       call("get_archive_version_media_image", romIdentityId, sourceCollectionId, label, !!thumbnail, recordId),
     archiveRows: (q) => call("archive_rows", q.search || null, q.systems || null,
                              q.limit || 200, q.offset || 0, !!q.conflictsOnly,
-                             !!q.favoritesOnly, q.romIdentityIds || null, q.priority || null),
+                             !!q.favoritesOnly, q.romIdentityIds || null, q.priority || null,
+                             q.order || "title", !!q.descending),
     archiveCopySelection: (romIdentityIds) => call("archive_copy_selection", romIdentityIds || []),
-    archivePaste: (mode, targetRomIdentityId) =>
-      call("archive_paste", mode || null, targetRomIdentityId || null),
+    archiveClipboardSystemTarget: (system) => call("archive_clipboard_system_target", system),
+    archivePaste: (mode, targetRomIdentityId, targetSystem, newOnly) =>
+      call("archive_paste", mode || null, targetRomIdentityId || null,
+           targetSystem || null, !!newOnly),
     archiveUids: (systems) => call("archive_uids", systems || null),
+    archiveFindRowIndex: (query, prefix, after) =>
+      call("archive_find_row_index", query || {}, prefix, after),
     archiveOwnershipSummary: () => call("archive_ownership_summary"),
     archiveSystems: () => call("archive_systems"),
     archiveSystemFolder: (system, kind) => call("archive_system_folder", system, kind),
     archiveDetail: (romIdentityId) => call("archive_detail", romIdentityId),
     archiveEdit: (romIdentityId, fields) => call("archive_edit", romIdentityId, fields),
+    archiveMetadataDelete: (romIdentityIds) =>
+      call("archive_metadata_delete", romIdentityIds || []),
     archiveDelete: (romIdentityIds) => call("archive_delete", romIdentityIds),
+    archiveDeleteOwnedPreview: (romIdentityIds) =>
+      call("archive_delete_owned_preview", romIdentityIds || []),
+    archiveDeleteOwned: (romIdentityIds) => call("archive_delete_owned", romIdentityIds || []),
     archiveSetFavorite: (romIdentityId, favorite) =>
       call("archive_set_favorite", romIdentityId, !!favorite),
     archiveTitleAffixPreview: (system, romIdentityIds) =>
@@ -1057,14 +1101,18 @@
       call("archive_media_paste", romIdentityId, key, source),
     archiveMediaDelete: (romIdentityId, key) =>
       call("archive_media_delete", romIdentityId, key),
-    archiveMediaDeleteSystem: (system) => call("archive_media_delete_system", system),
+    archiveMediaCleanupPreview: (system) => call("archive_media_cleanup_preview", system),
+    archiveMediaDeleteSelected: (romIdentityIds, part) =>
+      call("archive_media_delete_selected", romIdentityIds || [], part),
+    archiveMediaDeleteSystem: (system, mediaTypes) =>
+      call("archive_media_delete_system", system, mediaTypes || null),
     mediaPaste: (id, romUid, key, source) => call("media_paste", id, romUid, key, source),
     archiveConfig: () => call("archive_config"),
     saveArchiveConfig: (patch) => call("save_archive_config", patch),
     startArchiveApply: () => call("start_archive_apply"),
     archiveRefresh: () => call("archive_refresh"),
     startArchiveRefresh: () => call("start_archive_refresh"),
-    archiveConflicts: (systems) => call("archive_conflicts", systems || null),
+    archiveConflicts: (systems, romIdentityIds) => call("archive_conflicts", systems || null, romIdentityIds || null),
     archiveVersions: (romIdentityId) => call("archive_versions", romIdentityId),
     archiveChooseVersion: (romIdentityId, recordId) =>
       call("archive_choose_version", romIdentityId, recordId),

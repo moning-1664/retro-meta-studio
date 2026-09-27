@@ -27,6 +27,14 @@ test.describe("탭을 오갈 때", () => {
     await expect(page.locator("#status-bar")).toContainText("Selected 2");
   });
 
+  test("탭으로 돌아오면 마지막으로 포커스한 게임의 상세도 복원한다", async ({ page }) => {
+    await page.locator(".lrow", { hasText: "Final Fantasy X" }).locator(".lc-file").click();
+    await expect(page.locator("#detail-panel .detail-filename")).toContainText("FFX.iso");
+    await openSecondTab(page);
+    await page.locator(".ctab", { hasText: "Master Library" }).click();
+    await expect(page.locator("#detail-panel .detail-filename")).toContainText("FFX.iso");
+  });
+
   test("Dashboard를 보고 있던 탭은 Dashboard로 돌아온다", async ({ page }) => {
     await page.locator(".nav-bottom, #nav").getByText("Dashboard").first().click();
     await expect(page.locator("#center.dashboard-mode")).toBeVisible();

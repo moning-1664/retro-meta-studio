@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
+import time
 import zlib
 from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
@@ -20,6 +22,7 @@ from app.scrape.providers.base import ScrapeProvider
 
 
 API_BASE = "https://api.screenscraper.fr/api2"
+log = logging.getLogger(__name__)
 
 
 class ScreenScraperError(RuntimeError):
@@ -81,6 +84,14 @@ def _integer(value: Any) -> int:
 
 
 def _localized(items: Any, languages=("ko", "kr", "en"), regions=("kr", "wor", "us", "eu", "jp")) -> str:
+    if isinstance(items, dict) and not any(key in items for key in ("text", "nom", "langue", "region")):
+        # The API also publishes JSON fields as nom_us/synopsis_en/date_jp.
+        for suffix in (*languages, *regions):
+            found = next((str(value) for key, value in items.items()
+                          if str(key).lower().endswith("_" + suffix) and value), "")
+            if found:
+                return found
+        return next((str(value) for value in items.values() if isinstance(value, str) and value), "")
     values = _list(items)
     for language in languages:
         found = next((_text(v) for v in values if isinstance(v, dict)
@@ -102,6 +113,41 @@ MEDIA_TYPES = {
     "mixrbv1": "miximages", "mixrbv2": "miximages",
 }
 
+# Frontend folder names -> ScreenScraper systemesListe IDs. Unknown names must
+# not silently turn a system-scoped search into an all-platform search.
+# IDs follow ScreenScraper's published system list (also used by EmulationStation).
+SYSTEM_IDS = {
+    "3do": 29, "amiga": 64, "arcade": 75, "fbneo": 75,
+    "cps1": 75, "cps2": 75, "cps3": 75, "mame": 75,
+    "dos": 135, "dreamcast": 23, "gamegear": 21, "gb": 9,
+    "gba": 12, "gbc": 10, "gc": 13, "megadrive": 1,
+    "genesis": 1, "msx": 113, "msx1": 113, "msx2": 116,
+    "msx2+": 117, "n64": 14, "naomi": 56, "nes": 3,
+    "famicom": 3, "pcengine": 31, "ps2": 58, "psp": 61,
+    "psx": 57, "ps1": 57, "saturn": 22, "sfc": 4,
+    "snes": 4, "supergrafx": 105,
+}
+
+
+def _system_id(hint: str) -> str | None:
+    value = str(hint or "").strip().casefold()
+    if not value:
+        return None
+    if value.isdigit() and int(value) > 0:
+        return str(int(value))
+    system_id = SYSTEM_IDS.get(value)
+    if system_id is None:
+        raise ScreenScraperError(
+            f"ScreenScraper 시스템 ID를 알 수 없습니다: {hint}. 숫자 System ID를 입력하세요.",
+            kind="system")
+    return str(system_id)
+
+
+def _game_system_id(game: dict) -> str | None:
+    system = game.get("systeme") or {}
+    value = system.get("id") if isinstance(system, dict) else system
+    return str(value) if value is not None and str(value).isdigit() else None
+
 
 class ScreenScraperClient(ScrapeProvider):
     provider_id = "screenscraper"
@@ -122,15 +168,33 @@ class ScreenScraperClient(ScrapeProvider):
     def _get(self, endpoint: str, params: dict | None = None) -> dict:
         query = self._params()
         query.update(params or {})
+        started = time.perf_counter()
         try:
             response = self.http.get(f"{API_BASE}/{endpoint}", params=query,
                                      timeout=self.config.timeout)
         except _REQUEST_ERROR as exc:
-            raise ScreenScraperError(f"ScreenScraper 연결 실패: {exc}", kind="network") from exc
-        if response.status_code in (401, 403):
+            # requests exceptions can include the full URL with credentials.
+            # Never surface that string in the UI or application log.
+            log.warning("ScreenScraper %s network failure: %s after %.2fs",
+                        endpoint, type(exc).__name__, time.perf_counter() - started)
+            raise ScreenScraperError(f"ScreenScraper 연결 실패 ({type(exc).__name__})", kind="network") from exc
+        log.info("ScreenScraper %s HTTP %s in %.2fs", endpoint, response.status_code,
+                 time.perf_counter() - started)
+        if response.status_code == 401:
+            raise ScreenScraperError("ScreenScraper 서버가 혼잡해 요청을 받지 않습니다. 잠시 후 다시 시도하세요.",
+                                     kind="busy")
+        if response.status_code == 403:
             raise ScreenScraperError("ScreenScraper 인증에 실패했습니다.", kind="auth")
+        if response.status_code == 404:
+            raise ScreenScraperError("ScreenScraper 검색 결과가 없습니다.", kind="not_found")
         if response.status_code == 429:
-            raise ScreenScraperError("ScreenScraper 요청 제한에 도달했습니다.", kind="quota")
+            raise ScreenScraperError("ScreenScraper 동시 요청 제한에 걸렸습니다. 잠시 후 다시 시도하세요.",
+                                     kind="rate")
+        if response.status_code in (430, 431):
+            raise ScreenScraperError("ScreenScraper 일일 스크랩 한도에 도달했습니다.", kind="quota")
+        if response.status_code in (423, 426):
+            raise ScreenScraperError(f"ScreenScraper 서비스를 사용할 수 없습니다 ({response.status_code}).",
+                                     kind="unavailable")
         if response.status_code != 200:
             raise ScreenScraperError(f"ScreenScraper 응답 오류 ({response.status_code})")
         try:
@@ -168,15 +232,18 @@ class ScreenScraperClient(ScrapeProvider):
         for source, target in (("crc32", "crc"), ("md5", "md5"), ("sha1", "sha1"), ("size", "romtaille")):
             if alias.get(source):
                 params[target] = alias[source]
-        if alias.get("systemId"):
-            params["systemeid"] = alias["systemId"]
+        system_id = _system_id(str(alias.get("systemId") or identity.system))
+        if system_id:
+            params["systemeid"] = system_id
         try:
             game = (self._get("jeuInfos.php", params).get("response") or {}).get("jeu")
         except ScreenScraperError as exc:
             # A normal unknown-ROM response is often a textual provider error.
             # Authentication/quota/network failures must remain visible.
-            if exc.kind in ("auth", "quota", "network"):
+            if exc.kind != "not_found":
                 raise
+            return []
+        if game and system_id and _game_system_id(game) not in (None, system_id):
             return []
         return [self._candidate(game, evidence=("원본 별칭 해시 일치" if alias else "ROM 해시 일치",),
                                 confidence=100)] if game else []
@@ -186,31 +253,49 @@ class ScreenScraperClient(ScrapeProvider):
         if not query:
             return []
         params = {"recherche": query}
-        if str(system_hint or "").isdigit():
-            params["systemeid"] = str(system_hint)
-        response = self._get("jeuRecherche.php", params).get("response") or {}
+        system_id = _system_id(system_hint)
+        if system_id:
+            params["systemeid"] = system_id
+        try:
+            response = self._get("jeuRecherche.php", params).get("response") or {}
+        except ScreenScraperError as exc:
+            if exc.kind == "not_found":
+                return []
+            raise
         games = response.get("jeux") or response.get("jeu") or []
         if isinstance(games, dict) and "jeu" in games:
             games = games["jeu"]
         candidates = []
+        other_systems = low_similarity = 0
         for game in _list(games):
             if not isinstance(game, dict):
+                continue
+            # The request was already scoped by systemeid. Some search rows
+            # omit systeme; reject only an explicit contradictory ID.
+            if system_id and _game_system_id(game) not in (None, system_id):
+                other_systems += 1
                 continue
             candidate = self._candidate(game, evidence=(f'검색어 "{query}"',), confidence=55)
             score = _title_similarity(query, candidate.title, candidate.alternate_titles)
             # jeuRecherche는 관련 없는 단일 결과를 정상 응답으로 돌려주기도 한다. 제목이
             # 거의 겹치지 않으면 선택을 강요하지 않고 "후보 없음"으로 처리한다.
             if score < 0.45:
+                low_similarity += 1
                 continue
             confidence = max(45, min(95, round(score * 100)))
             candidates.append(replace(
                 candidate, confidence=confidence,
                 confidence_reason=f"제목 유사도 {confidence}%"))
+        log.info("ScreenScraper search system=%s returned=%d kept=%d otherSystem=%d lowSimilarity=%d",
+                 system_id or "all", len(_list(games)), len(candidates), other_systems, low_similarity)
         return candidates
 
     def _candidate(self, game: dict, *, evidence: tuple[str, ...], confidence: int) -> ScrapeCandidate:
         remote_id = str(game.get("id") or game.get("jeu_id") or "")
-        names = [_text(item) for item in _list(game.get("noms")) if _text(item)]
+        raw_names = game.get("noms")
+        names = ([str(value) for value in raw_names.values() if isinstance(value, str) and value]
+                 if isinstance(raw_names, dict) and not any(k in raw_names for k in ("text", "nom"))
+                 else [_text(item) for item in _list(raw_names) if _text(item)])
         title = _localized(game.get("noms")) or _text(game.get("nom")) or (names[0] if names else "")
         system = game.get("systeme") or {}
         system_name = (_text(system.get("nom_eu")) or _text(system.get("nom"))
@@ -252,7 +337,8 @@ class ScreenScraperClient(ScrapeProvider):
             candidate_id=f"screenscraper:{remote_id or abs(hash((title, system_name)))}",
             provider=self.provider_id, remote_game_id=remote_id, title=title,
             system=system_name, fields={k: v for k, v in fields.items() if v not in (None, "")},
-            media=tuple(media), alternate_titles=tuple(dict.fromkeys(names)), evidence=evidence,
+            media=tuple(media), alternate_titles=tuple(dict.fromkeys(
+                [*names, _text(game.get("nom"))])), evidence=evidence,
             confidence=confidence, confidence_reason=evidence[0] if evidence else "",
             source_url=source_url)
 

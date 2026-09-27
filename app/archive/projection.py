@@ -77,7 +77,8 @@ def project(archive, config, rom_identity_ids=None, *, overwrite_media=None, pro
 
     total = sum(len(items) for items in by_system.values())
     entries = copied = missing = 0
-    timings = {"resolveSeconds": 0.0, "mediaSeconds": 0.0, "writeIndexSeconds": 0.0}
+    timings = {"resolveSeconds": 0.0, "mediaSeconds": 0.0,
+               "mediaLookupSeconds": 0.0, "writeIndexSeconds": 0.0}
     for system, items in by_system.items():
         layout = adapter.layout(collection, system)
         Path(layout.metadata_file).parent.mkdir(parents=True, exist_ok=True)
@@ -89,13 +90,15 @@ def project(archive, config, rom_identity_ids=None, *, overwrite_media=None, pro
             stage_started = time.perf_counter()
             fields, raw = archive.resolve_fields(rid)
             timings["resolveSeconds"] += time.perf_counter() - stage_started
-            batch.append(GameEntry(
-                filename=filename, fields=fields,
-                frontend_raw=raw if adapter.raw_is_mine(raw) else {}))
+            if not archive.metadata_is_cleared(rid):
+                batch.append(GameEntry(
+                    filename=filename, fields=fields,
+                    frontend_raw=raw if adapter.raw_is_mine(raw) else {}))
             if cfg["mediaInternal"]:
                 stage_started = time.perf_counter()
                 got, lost = _copy_media(archive, adapter, layout, rid, filename, fields,
-                                        overwrite=(overwrite_media or {}).get(rid, ()))
+                                        overwrite=(overwrite_media or {}).get(rid, ()),
+                                        timings=timings)
                 timings["mediaSeconds"] += time.perf_counter() - stage_started
                 copied += got
                 missing += lost
@@ -204,12 +207,17 @@ def effective_media(archive, rid) -> dict[str, dict]:
     return latest
 
 
-def _copy_media(archive, adapter, layout, rid, filename, fields, *, overwrite=()) -> tuple[int, int]:
+def _copy_media(archive, adapter, layout, rid, filename, fields, *, overwrite=(),
+                timings=None) -> tuple[int, int]:
     """없는 것만 복사한다. `overwrite`에 든 media type은 이미 있어도 덮어쓴다(사용자가
     직접 바꾼 그림을 Frontend 트리에 반영할 때)."""
     title = (fields.get("name") or "").strip() or Path(filename).stem
     copied = missing = 0
-    for media_type, ref in effective_media(archive, rid).items():
+    lookup_started = time.perf_counter()
+    media = effective_media(archive, rid)
+    if timings is not None:
+        timings["mediaLookupSeconds"] += time.perf_counter() - lookup_started
+    for media_type, ref in media.items():
         mf = MediaFile(media_type=media_type, path=ref["abs_path"], size=ref["size"])
         for src, dest in adapter.media_pairs(layout, filename, [mf], title=title):
             dest_path = Path(dest)
@@ -218,15 +226,24 @@ def _copy_media(archive, adapter, layout, rid, filename, fields, *, overwrite=()
             # (and resolve()) for every already-in-place media file.
             if os.path.normcase(os.path.abspath(src)) == os.path.normcase(os.path.abspath(dest)):
                 continue
-            if not Path(src).exists():
+            # A remote path check can cost tens of milliseconds.  stat each
+            # distinct source/destination once instead of exists(), resolve(),
+            # then stat() again for every already-copied file.
+            try:
+                src_stat = Path(src).stat()
+            except OSError:
                 missing += 1
                 continue
-            if dest_path.exists() and Path(src).resolve() == dest_path.resolve():
-                continue
-            if dest_path.exists() and media_type not in overwrite:
+            try:
+                dest_stat = dest_path.stat()
+            except OSError:
+                dest_stat = None
+            if dest_stat is not None:
+                if (media_type not in overwrite and src_stat.st_size == dest_stat.st_size
+                        and src_stat.st_mtime_ns == dest_stat.st_mtime_ns):
+                    continue
                 try:
-                    src_stat, dest_stat = Path(src).stat(), dest_path.stat()
-                    if src_stat.st_size == dest_stat.st_size and src_stat.st_mtime_ns == dest_stat.st_mtime_ns:
+                    if os.path.samefile(src, dest):
                         continue
                 except OSError:
                     pass

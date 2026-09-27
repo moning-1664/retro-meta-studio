@@ -77,3 +77,22 @@ test("충돌만 있어 Apply를 못 누르면 뱃지도 없다", async ({ page }
   await expect(applyButton(page)).toBeDisabled();
   await expect(applyButton(page).locator(".plan-apply-badge")).toHaveCount(0);
 });
+
+test("하단 추가 개수를 누르면 Plan 항목을 확인할 수 있다", async ({ page }) => {
+  await page.evaluate(() => {
+    const original = window.api.planState;
+    window.api.planState = async (id) => {
+      const result = await original(id);
+      if (result.ok) Object.assign(result.data, {
+        total: 1, runnable: 1, added: 1,
+        entries: [{ op: "add", system: "ps2", filename: "New Game.iso", status: "pending" }],
+      });
+      return result;
+    };
+  });
+  await page.locator(".lrow").first().click();
+  await page.keyboard.press("Delete");
+  await page.locator("#status-bar .sb-plan-count").click();
+  await expect(page.locator(".modal-title")).toContainText("Plan · 1개");
+  await expect(page.locator(".plan-overview-row")).toContainText("ps2 / New Game.iso");
+});

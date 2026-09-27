@@ -24,10 +24,11 @@ test.describe("기본 동작", () => {
     expect(order.slice(0, 4)).toEqual(["seg", "icon-btn", "mini-select", "search-box"]);
   });
 
-  test("전체보기가 기본이고, 옵션은 네 가지다", async ({ page }) => {
+  test("전체보기가 기본이고, 설명 문자 우선 옵션도 있다", async ({ page }) => {
     await expect(prioritySelect(page)).toHaveValue("");
     const labels = await prioritySelect(page).locator("option").allTextContents();
-    expect(labels).toEqual(["전체보기", "ROM 우선", "메타데이터 우선", "미디어 우선"]);
+    expect(labels).toEqual(["전체보기", "ROM 우선", "메타데이터 우선", "미디어 우선",
+      "한국어 설명 우선", "영문 설명 우선"]);
   });
 
   test("메타데이터 우선 - 메타데이터 없는 항목(SMW)이 뒤로 간다", async ({ page }) => {
@@ -72,6 +73,30 @@ test.describe("기본 동작", () => {
     await expect(prioritySelect(page)).toBeVisible();
     await prioritySelect(page).selectOption("metadata");
     await expect(prioritySelect(page)).toHaveValue("metadata");
+  });
+
+  test("설명 언어 우선 정렬 값이 Collection과 Archive 요청에 전달된다", async ({ page }) => {
+    const seen = [];
+    await page.exposeFunction("__seenLanguagePriority", (target, value) => seen.push([target, value]));
+    await page.evaluate(() => {
+      const collection = window.api.listRows;
+      const archive = window.api.archiveRows;
+      window.api.listRows = (id, query) => {
+        window.__seenLanguagePriority("collection", query.priority);
+        return collection(id, query);
+      };
+      window.api.archiveRows = (query) => {
+        window.__seenLanguagePriority("archive", query.priority);
+        return archive(query);
+      };
+    });
+    await prioritySelect(page).selectOption("desc_ko");
+    await expect.poll(() => seen.some(([target, value]) =>
+      target === "collection" && value === "desc_ko")).toBe(true);
+    await page.locator(".ctab.archive").click();
+    await prioritySelect(page).selectOption("desc_en");
+    await expect.poll(() => seen.some(([target, value]) =>
+      target === "archive" && value === "desc_en")).toBe(true);
   });
 });
 

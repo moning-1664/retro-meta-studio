@@ -49,9 +49,11 @@ def _has_archive_rows(path: Path) -> bool:
 
 def _is_portable_snapshot(path: Path) -> bool:
     try:
-        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
-            return db.execute("PRAGMA application_id").fetchone()[0] == PORTABLE_APPLICATION_ID
-    except sqlite3.DatabaseError:
+        with path.open("rb") as stream:
+            header = stream.read(72)
+        return (len(header) >= 72 and header[:16] == b"SQLite format 3\0"
+                and int.from_bytes(header[68:72], "big") == PORTABLE_APPLICATION_ID)
+    except OSError:
         return False
 
 
@@ -89,11 +91,13 @@ def seed_if_clean(local_path: Path, archive_dir: str,
     os.close(fd)
     try:
         before = _digest(source)
-        with closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True)) as origin:
-            with closing(sqlite3.connect(temporary)) as target:
-                origin.backup(target)
-                if target.execute("PRAGMA quick_check").fetchone()[0] != "ok":
-                    raise sqlite3.DatabaseError("Archive snapshot failed quick_check")
+        # SQLite rejects file://server/share URIs (invalid URI authority), and
+        # opening a live SQLite connection over SMB is unsafe. Validate a
+        # local copy of the immutable portable snapshot instead.
+        shutil.copy2(source, temporary)
+        with closing(sqlite3.connect(temporary)) as target:
+            if target.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                raise sqlite3.DatabaseError("Archive snapshot failed quick_check")
         if _digest(source) != before:
             raise RuntimeError("Archive snapshot changed while loading")
         os.replace(temporary, local_path)
@@ -133,9 +137,7 @@ def publish(store, archive_dir: str, expected_digest: str | None,
         if upgrading_legacy:
             backup = destination.with_name(f"archive.legacy-{current[:12]}.db")
             if not backup.exists():
-                with closing(sqlite3.connect(destination.as_uri() + "?mode=ro", uri=True)) as old:
-                    with closing(sqlite3.connect(backup_staging)) as saved:
-                        old.backup(saved)
+                shutil.copy2(destination, backup_staging)
                 os.replace(backup_staging, backup)
         os.replace(staging, destination)
         return {"status": "published", "digest": digest}

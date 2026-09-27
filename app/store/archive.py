@@ -19,6 +19,7 @@ import json
 import time
 import uuid
 
+from app.metadata.language_priority import description_priority_sql
 from app.store.sqlite import Migration, connect, transaction
 
 # History Retention 정책. ARCHIVE_REVISION_POLICY.md §23/§26: Revision은 자동
@@ -197,6 +198,13 @@ MIGRATIONS = (
         # 같은 크기의 파일 교체도 구분하고, 내부 snapshot 경로로 옮긴 뒤에도 같은
         # media 상태의 fingerprint를 다시 만들 수 있어야 한다.
         "ALTER TABLE archive_record_media ADD COLUMN mtime_ns INTEGER NOT NULL DEFAULT 0",
+    )),
+    Migration(11, (
+        """CREATE TABLE archive_metadata_state (
+               rom_identity_id TEXT PRIMARY KEY REFERENCES rom_identities(rom_identity_id) ON DELETE CASCADE,
+               cleared INTEGER NOT NULL DEFAULT 0,
+               updated_at REAL NOT NULL
+           )""",
     )),
 )
 
@@ -378,6 +386,25 @@ class ArchiveStore:
             cur = self._conn.execute(
                 "DELETE FROM rom_identities WHERE rom_identity_id=?", (rom_identity_id,))
             return cur.rowcount > 0
+
+    def metadata_is_cleared(self, rom_identity_id) -> bool:
+        row = self._conn.execute(
+            "SELECT cleared FROM archive_metadata_state WHERE rom_identity_id=?",
+            (str(rom_identity_id),)).fetchone()
+        return bool(row and row["cleared"])
+
+    def record_ids_of_identity(self, rom_identity_id) -> list[int]:
+        return [int(row["record_id"]) for row in self._conn.execute(
+            "SELECT record_id FROM archive_records WHERE rom_identity_id=?",
+            (str(rom_identity_id),))]
+
+    def set_metadata_cleared(self, rom_identity_id, cleared=True) -> None:
+        with transaction(self._conn):
+            self._conn.execute(
+                "INSERT INTO archive_metadata_state (rom_identity_id,cleared,updated_at)"
+                " VALUES (?,?,?) ON CONFLICT(rom_identity_id) DO UPDATE SET"
+                " cleared=excluded.cleared,updated_at=excluded.updated_at",
+                (str(rom_identity_id), int(bool(cleared)), time.time()))
 
     def rom_identities_of_game(self, game_id) -> list[dict]:
         return [dict(r) for r in self._conn.execute(
@@ -603,8 +630,10 @@ class ArchiveStore:
             " WHERE p.rom_identity_id IN (" + placeholders + ")",
             ids).fetchall()
         identity_rows = self._conn.execute(
-            "SELECT rom_identity_id,filename FROM rom_identities"
-            " WHERE rom_identity_id IN (" + placeholders + ")",
+            "SELECT r.rom_identity_id,r.filename,COALESCE(m.cleared,0) AS metadata_cleared"
+            " FROM rom_identities r LEFT JOIN archive_metadata_state m"
+            " ON m.rom_identity_id=r.rom_identity_id"
+            " WHERE r.rom_identity_id IN (" + placeholders + ")",
             ids).fetchall()
 
         sources_by_id = {rid: [] for rid in ids}
@@ -616,8 +645,10 @@ class ArchiveStore:
         filename_by_id = {
             str(row["rom_identity_id"]): str(row["filename"] or "") for row in identity_rows
         }
+        cleared_ids = {str(row["rom_identity_id"]) for row in identity_rows
+                       if row["metadata_cleared"]}
         return {
-            rid: self._resolve_loaded_fields(
+            rid: ({}, {}) if rid in cleared_ids else self._resolve_loaded_fields(
                 sources_by_id.get(rid, []), preferred_by_id.get(rid), filename_by_id.get(rid, ""))
             for rid in ids
         }
@@ -734,7 +765,7 @@ class ArchiveStore:
     # 목록 조회 (Archive Gamelist - 스펙 §43)
     # ------------------------------------------------------------------
     def list_rows(self, *, search=None, systems=None, limit=None, offset=0,
-                  only_ids=None, priority=None) -> list[dict]:
+                  only_ids=None, priority=None, order="title", descending=False) -> list[dict]:
         """Archive도 일반 Collection과 같은 Gamelist로 보여준다(§43).
 
         Collection 목록과 같은 모양으로 돌려줘서 UI가 같은 렌더링을 쓰게 한다.
@@ -755,19 +786,82 @@ class ArchiveStore:
         effective_media_types = effective_media_exists.replace(
             "SELECT 1 FROM archive_media pm",
             "SELECT GROUP_CONCAT(DISTINCT pm.media_type) FROM archive_media pm", 1)
+        metadata_cleared = ("EXISTS (SELECT 1 FROM archive_metadata_state ms"
+                            " WHERE ms.rom_identity_id=r.rom_identity_id AND ms.cleared=1)")
         priority_order = {
             "rom": "CASE WHEN EXISTS (SELECT 1 FROM archive_rom_sources s"
                    " WHERE s.rom_identity_id=r.rom_identity_id) THEN 0 ELSE 1 END,",
-            "metadata": "CASE WHEN EXISTS (SELECT 1 FROM archive_records ar"
+            "metadata": f"CASE WHEN NOT {metadata_cleared} AND EXISTS (SELECT 1 FROM archive_records ar"
                         " JOIN json_each(ar.fields_json) jf"
                         " WHERE ar.rom_identity_id=r.rom_identity_id"
                         " AND jf.value IS NOT NULL AND trim(CAST(jf.value AS TEXT))<>'')"
                         " THEN 0 ELSE 1 END,",
             "media": f"CASE WHEN EXISTS ({effective_media_exists}) THEN 0 ELSE 1 END,",
         }.get(priority, "")
+        if priority in ("desc_ko", "desc_en"):
+            def desc_from(alias):
+                return f"NULLIF(json_extract({alias}.fields_json, '$.desc'), '')"
+
+            # Direct Archive edits use key presence: an explicit empty desc is
+            # CLEARED and must not fall through to a source description.
+            edited_desc = ("(SELECT CASE WHEN json_type(e.fields_json, '$.desc') IS NOT NULL"
+                           " THEN COALESCE(json_extract(e.fields_json, '$.desc'), '') END"
+                           " FROM archive_records e"
+                           " WHERE e.rom_identity_id=r.rom_identity_id"
+                           " AND e.source_collection_id='__archive__'"
+                           " ORDER BY e.revision DESC LIMIT 1)")
+            preferred_desc = (f"(SELECT {desc_from('p')} FROM preferred_revisions pr"
+                              " JOIN archive_records p ON p.record_id=pr.record_id"
+                              " WHERE pr.rom_identity_id=r.rom_identity_id)")
+            source_desc = (f"(SELECT {desc_from('s')} FROM archive_records s"
+                           " WHERE s.rom_identity_id=r.rom_identity_id"
+                           " AND s.source_collection_id<>'__archive__'"
+                           f" AND {desc_from('s')} IS NOT NULL"
+                           " ORDER BY s.updated_at,s.record_id LIMIT 1)")
+            resolved_desc = (f"CASE WHEN {metadata_cleared} THEN '' ELSE"
+                             f" COALESCE({edited_desc},{preferred_desc},{source_desc},'') END")
+            priority_order = description_priority_sql(resolved_desc, priority) + ","
+        # Keep the sort in SQL before LIMIT/OFFSET, as Collection does. Sorting
+        # each loaded page in the UI gives a different order while scrolling.
+        field = {"desc": "desc", "region": "region", "genre": "genre",
+                 "rating": "rating", "favorite": "favorite", "title": "name"}.get(order)
+        if order == "filename":
+            sort_value = "LOWER(r.filename)"
+        elif order == "system":
+            sort_value = "LOWER(r.system)"
+        elif field:
+            def extracted(alias):
+                payload = "frontend_raw_json" if field == "favorite" else "fields_json"
+                return f"NULLIF(json_extract({alias}.{payload}, '$.{field}'), '')"
+            edited = (f"(SELECT {extracted('e')} FROM archive_records e"
+                      " WHERE e.rom_identity_id=r.rom_identity_id"
+                      " AND e.source_collection_id='__archive__'"
+                      " ORDER BY e.revision DESC LIMIT 1)")
+            preferred = (f"(SELECT {extracted('p')} FROM preferred_revisions pr"
+                         " JOIN archive_records p ON p.record_id=pr.record_id"
+                         " WHERE pr.rom_identity_id=r.rom_identity_id)")
+            source = (f"(SELECT {extracted('s')} FROM archive_records s"
+                      " WHERE s.rom_identity_id=r.rom_identity_id"
+                      " AND s.source_collection_id<>'__archive__'"
+                      " ORDER BY s.updated_at,s.record_id LIMIT 1)")
+            fallback = "g.title" if order == "title" else "''"
+            # The games title is the ordinary source title; using a correlated
+            # source lookup for every row made the default Archive page slow.
+            sort_value = (f"COALESCE({edited},{preferred},g.title)" if order == "title"
+                          else f"COALESCE({edited},{preferred},{source},{fallback})")
+            if order in ("rating", "favorite"):
+                sort_value = f"CAST({sort_value} AS REAL)"
+            else:
+                sort_value = f"LOWER({sort_value})"
+            sort_value = f"CASE WHEN {metadata_cleared} THEN '' ELSE {sort_value} END"
+        else:
+            sort_value = "LOWER(g.title)"
+        empty_last = f"({sort_value} = ''), " if order in ("desc", "region", "genre") else ""
+        sort_order = f"{priority_order}{empty_last}{sort_value} {'DESC' if descending else 'ASC'}, r.filename"
         sql = (
             "SELECT r.rom_identity_id, r.game_id, r.system, r.filename, r.region,"
             "       g.title, g.title_norm,"
+            f"       {metadata_cleared} AS metadata_cleared,"
             "       (SELECT COUNT(DISTINCT source_collection_id) FROM archive_records"
             "         WHERE rom_identity_id = r.rom_identity_id) AS source_count,"
             "       (SELECT MAX(updated_at) FROM archive_records"
@@ -780,7 +874,7 @@ class ArchiveStore:
             "       (SELECT COUNT(*) FROM archive_rom_sources"
             "         WHERE rom_identity_id = r.rom_identity_id) AS rom_count"
             f" FROM rom_identities r JOIN games g ON g.game_id = r.game_id{where}"
-            f" ORDER BY {priority_order}g.title_norm, r.filename"
+            f" ORDER BY {sort_order}"
         )
         if limit is not None:
             sql += " LIMIT ? OFFSET ?"

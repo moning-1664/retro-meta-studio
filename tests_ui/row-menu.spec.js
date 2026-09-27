@@ -41,14 +41,15 @@ test("메뉴의 삭제를 고르면 삭제를 요청하고 메뉴를 닫는다",
   });
 
   await rightClick(page, "Final Fantasy X");
-  await menuItem(page, "Game 삭제").click();
+  await menuItem(page, "Game 삭제").hover();
+  await menuItem(page, "Game 전체 삭제").click();
 
   await expect(page.locator(".ctx-menu")).toHaveCount(0);
   await expect.poll(() => deleted.length).toBeGreaterThan(0);
   expect(deleted[0]).toHaveLength(1);
 });
 
-// 사용자 결정 - "삭제 / ROM 삭제 / 메타데이터 삭제"를 따로, 무엇이 지워지는지 알 수 있게.
+// 삭제 범위는 Game 삭제 하위 메뉴에서 고른다.
 test.describe("부분 삭제", () => {
   async function spy(page) {
     await page.evaluate(() => {
@@ -58,24 +59,27 @@ test.describe("부분 삭제", () => {
     });
   }
 
-  test("삭제 메뉴가 세 가지로 갈리고 무엇이 지워지는지 툴팁이 말한다", async ({ page }) => {
+  test("Game 삭제 하위 메뉴에 전체·메타데이터·미디어가 있다", async ({ page }) => {
     await rightClick(page, "Final Fantasy X");
-    await expect(menuItem(page, "Game 삭제")).toHaveAttribute("title", /ROM \+ 메타데이터 \+ 미디어/);
-    await expect(menuItem(page, "ROM 삭제")).toHaveAttribute("title", /ROM 파일만/);
-    await expect(menuItem(page, "메타데이터 삭제")).toHaveAttribute("title", /ROM은 남습니다/);
+    await menuItem(page, "Game 삭제").hover();
+    for (const label of ["Game 전체 삭제", "메타데이터 삭제", "미디어 삭제"])
+      await expect(menuItem(page, label)).toBeVisible();
   });
 
   test("각 항목이 서로 다른 범위로 삭제를 요청한다", async ({ page }) => {
     await spy(page);
     await rightClick(page, "Final Fantasy X");
-    await menuItem(page, "Game 삭제").click();
+    await menuItem(page, "Game 삭제").hover();
+    await menuItem(page, "Game 전체 삭제").click();
     await rightClick(page, "Final Fantasy X");
-    await menuItem(page, "ROM 삭제").click();
+    await menuItem(page, "Game 삭제").hover();
+    await menuItem(page, "미디어 삭제").click();
     await rightClick(page, "Final Fantasy X");
+    await menuItem(page, "Game 삭제").hover();
     await menuItem(page, "메타데이터 삭제").click();
     await expect.poll(() => page.evaluate(() => window.__parts.length)).toBe(3);
     expect(await page.evaluate(() => window.__parts)).toEqual([
-      ["rom", "metadata", "media", "video"], ["rom"], ["metadata", "media", "video"]]);
+      ["rom", "metadata", "media", "video"], ["media", "video"], ["metadata"]]);
   });
 
   test("Status 아이콘을 우클릭하면 그 칸만 지우는 메뉴가 뜬다", async ({ page }) => {
@@ -147,7 +151,7 @@ test.describe("게임 한 개 단위 폴더 열기", () => {
     await page.locator(".lrow").nth(0).click();
     await page.locator(".lrow").nth(1).click({ modifiers: ["Control"] });
     await page.locator(".lrow").nth(0).click({ button: "right" });
-    await expect(menuItem(page, "ROM 파일")).toHaveCount(0);
+    await expect(menuItem(page, "폴더 열기")).toHaveCount(0);
   });
 
   test("전부 있는 게임은 셋 다 눌린다", async ({ page }) => {
@@ -158,20 +162,22 @@ test.describe("게임 한 개 단위 폴더 열기", () => {
       window.api.openRowFolder = (id, uid, kind) => { window.__opened(kind); return original(id, uid, kind); };
     });
     await rightClick(page, "Final Fantasy X");
-    for (const label of ["ROM 파일", "Metadata 파일", "Media 파일"]) {
+    await menuItem(page, "폴더 열기").hover();
+    for (const label of ["ROM 디렉터리", "메타데이터 디렉터리", "미디어 디렉터리"]) {
       await expect(menuItem(page, label)).toBeEnabled();
     }
-    await menuItem(page, "ROM 파일").click();
+    await menuItem(page, "ROM 디렉터리").click();
     await expect.poll(() => opened).toEqual(["rom"]);
   });
 
   test("없는 종류는 회색(비활성)이고 이유를 말한다", async ({ page }) => {
     // SMW는 메타데이터도 미디어도 없다.
     await rightClick(page, "Super Mario World");
-    await expect(menuItem(page, "ROM 파일")).toBeEnabled();
-    await expect(menuItem(page, "Metadata 파일")).toBeDisabled();
-    await expect(menuItem(page, "Metadata 파일")).toHaveAttribute("title", "Metadata가 없습니다.");
-    await expect(menuItem(page, "Media 파일")).toBeDisabled();
+    await menuItem(page, "폴더 열기").hover();
+    await expect(menuItem(page, "ROM 디렉터리")).toBeEnabled();
+    await expect(menuItem(page, "메타데이터 디렉터리")).toBeDisabled();
+    await expect(menuItem(page, "메타데이터 디렉터리")).toHaveAttribute("title", "Metadata가 없습니다.");
+    await expect(menuItem(page, "미디어 디렉터리")).toBeDisabled();
   });
 
   test("Archive 탭에는 이 메뉴가 없다(파일 배치 자체가 다르다)", async ({ page }) => {
@@ -185,60 +191,7 @@ test.describe("게임 한 개 단위 폴더 열기", () => {
   });
 });
 
-// 실사용 버그 - "Replace로 다른 이름의 게임에 덮어썼는데 결과가 똑같다". 원인은 평범한
-// Ctrl+V가 복사한 항목 자신의 자리로만 돌아가는 것이었다 - 파일명이 다른 대상에는 아예
-// 닿지 않았다. "이 항목으로 붙여넣기 - 다른 파일명 지정"로 대상을 직접 지목한다.
-test.describe("이 항목으로 붙여넣기 - 다른 파일명 지정", () => {
-  test("복사한 게 없으면 눌러도 되지만 비활성은 아니다 - 결과가 API에서 걸러진다", async ({ page }) => {
-    await rightClick(page, "Final Fantasy X");
-    await expect(menuItem(page, "이 항목으로 붙여넣기 - 다른 파일명 지정")).toBeVisible();
-  });
-
-  test("정확히 하나를 복사했으면 target_map으로 이 행을 지목해서 붙인다", async ({ page }) => {
-    const calls = [];
-    await page.exposeFunction("__note", (args) => calls.push(args));
-    await page.evaluate(() => {
-      const original = window.api.paste;
-      window.api.paste = (...args) => { window.__note(args); return original(...args); };
-    });
-    await rightClick(page, "Metal Gear Solid 2");
-    await page.keyboard.press("Control+c");
-    await rightClick(page, "Final Fantasy X");
-    await menuItem(page, "이 항목으로 붙여넣기 - 다른 파일명 지정").click();
-
-    await expect.poll(() => calls.length).toBe(1);
-    const [, , , targetMap] = calls[0];
-    expect(targetMap).toEqual({ "ps2|MGS2.iso": "ps2|FFX.iso" });
-  });
-
-  test("여러 개를 복사했으면 거절하고 새로 붙이지 않는다", async ({ page }) => {
-    await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).click();
-    await page.locator(".lrow", { hasText: "Final Fantasy X" }).click({ modifiers: ["Control"] });
-    await page.keyboard.press("Control+c");
-    // 복사 뒤 다시 하나만 눌러 선택을 좁힌다 - "이 항목으로 붙여넣기 - 다른 파일명 지정"는 지금 고른
-    // 행이 하나일 때만 켜지고(대상을 하나 지목하는 기능이다), 거절은 그 하나에
-    // 클립보드가 여럿 들어있을 때 일어난다.
-    await page.locator(".lrow", { hasText: "Final Fantasy X" }).click();
-    await rightClick(page, "Final Fantasy X");
-
-    const calls = [];
-    await page.exposeFunction("__pasted", (args) => calls.push(args));
-    await page.evaluate(() => {
-      const original = window.api.paste;
-      window.api.paste = (...args) => { window.__pasted(args); return original(...args); };
-    });
-    await menuItem(page, "이 항목으로 붙여넣기 - 다른 파일명 지정").click();
-    await expect(page.locator("#toast")).toContainText("하나만 복사했을 때만");
-    expect(calls.length).toBe(0);
-  });
-
-  test("여러 행을 골랐으면 비활성이다(하나를 지목하는 기능이다)", async ({ page }) => {
-    await page.locator(".lrow", { hasText: "Final Fantasy X" }).click();
-    await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).click({ modifiers: ["Control"] });
-    // 이미 고른 행 중 하나를 우클릭해야 여러 개 선택이 유지된다(탐색기와 같다) -
-    // 안 고른 행을 우클릭하면 그 한 행으로 선택이 다시 좁혀진다.
-    await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).click({ button: "right" });
-    await expect(page.locator("#status-bar")).toContainText("Selected 2");
-    await expect(menuItem(page, "이 항목으로 붙여넣기 - 다른 파일명 지정")).toBeDisabled();
-  });
+test("Collection 게임 행에는 신규 복사 대상 메뉴가 없다", async ({ page }) => {
+  await rightClick(page, "Final Fantasy X");
+  await expect(menuItem(page, "이 항목으로 붙여넣기 - 다른 파일명 지정")).toHaveCount(0);
 });

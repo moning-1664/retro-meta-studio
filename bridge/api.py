@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import re
 import logging
 import sqlite3
 import shutil
+import threading
 from collections import OrderedDict
 import traceback
 import time
@@ -58,6 +60,7 @@ from app.match import service as match_service
 from app.metadata import service as metadata_service
 from app.scrape import ScrapeService
 from app.scrape.providers import ScreenScraperClient, ScreenScraperConfig
+from app.scrape.providers.screenscraper import SYSTEM_IDS
 from app.scrape import secrets as scrape_secrets
 import storage
 from app.store.archive import ARCHIVE_EDIT_SOURCE, ArchiveStore
@@ -207,6 +210,7 @@ class Api:
                                   else (paths.CACHE_DIR / "scraper_media"))
         archive_path = (Path(cache_dir).parent / "archive.db") if cache_dir else paths.ARCHIVE_DB
         self._archive_path = Path(archive_path)
+        self._archive_lifecycle_lock = threading.RLock()
         configured_archive = archive_projection.normalize_config(
             self.registry.get_setting("archive.config", {}))["archiveDir"]
         if configured_archive:
@@ -598,6 +602,11 @@ class Api:
         return ok(public)
 
     @guarded
+    def scraper_systems(self):
+        return ok([{"name": name, "id": system_id}
+                   for name, system_id in sorted(SYSTEM_IDS.items())])
+
+    @guarded
     def save_scraper_settings(self, patch):
         if not isinstance(patch, dict):
             return err("스크래퍼 설정 형식이 올바르지 않습니다.")
@@ -684,9 +693,12 @@ class Api:
 
     @guarded
     def select_scrape_candidate(self, session_id, item_id, candidate_id, fields=None, media=None):
-        return ok(self.scrape.select(str(session_id), str(item_id), str(candidate_id),
-                                     fields if fields is not None else None,
-                                     media if media is not None else None))
+        selected = self.scrape.select(str(session_id), str(item_id), str(candidate_id),
+                                      fields if fields is not None else None,
+                                      media if media is not None else None)
+        log.info("Scraper candidate selected item=%s candidate=%s fields=%d mediaIndexes=%s",
+                 item_id, candidate_id, len(selected["selectedFields"]), selected["selectedMedia"])
+        return ok(selected)
 
     @guarded
     def skip_scrape_item(self, session_id, item_id):
@@ -698,7 +710,11 @@ class Api:
 
     @guarded
     def start_apply_scrape_session(self, session_id):
-        self.scrape.sessions.get(str(session_id))
+        session = self.scrape.sessions.get(str(session_id))
+        log.info("Scraper apply requested session=%s target=%s selected=%d total=%d",
+                 session_id, session["target"],
+                 sum(bool(self.scrape.proposal(item)) for item in session["items"]),
+                 len(session["items"]))
         # The existing save_fields/media_paste APIs perform their own target
         # checks. A regular mutating job gives the operation the global write
         # lock without marking its own target busy and blocking those APIs.
@@ -706,27 +722,42 @@ class Api:
             lambda cb: self._apply_scrape_session(str(session_id), cb), mutates_state=True)
         return ok({"jobId": job_id})
 
-    def _download_scrape_media(self, url, session_id, item_id, media_type):
+    def _download_scrape_media(self, url, session_id, item_id, media_type, media_format=""):
         parsed = urlparse(str(url or ""))
         hostname = (parsed.hostname or "").lower()
         if parsed.scheme != "https" or not (hostname == "screenscraper.fr" or hostname.endswith(".screenscraper.fr")):
             raise ValueError("허용되지 않은 미디어 주소입니다.")
         if requests is None:
             raise RuntimeError("미디어 다운로드 모듈(requests)이 설치되지 않았습니다.")
+        allowed_suffixes = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".avi", ".pdf")
         suffix = Path(parsed.path).suffix.lower()
-        if suffix not in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".avi", ".pdf"):
-            suffix = ".bin"
-        name = hashlib.sha256(str(url).encode("utf-8")).hexdigest() + suffix
+        if suffix not in allowed_suffixes:
+            suffix = "." + str(media_format or "").lower().lstrip(".")
+        if suffix not in allowed_suffixes:
+            suffix = ""
+        name = hashlib.sha256(str(url).encode("utf-8")).hexdigest()
         folder = self._scrape_cache_dir / str(session_id) / str(item_id) / str(media_type)
         folder.mkdir(parents=True, exist_ok=True)
-        destination = folder / name
-        if destination.is_file():
-            return str(destination)
-        temporary = destination.with_suffix(destination.suffix + ".part")
+        for existing_suffix in allowed_suffixes:
+            destination = folder / (name + existing_suffix)
+            if destination.is_file():
+                log.info("Scraper media cache hit item=%s type=%s bytes=%d format=%s",
+                         item_id, media_type, destination.stat().st_size, existing_suffix)
+                return str(destination)
+        temporary = folder / (name + ".part")
         total = 0
+        started = time.monotonic()
         try:
             with requests.get(url, timeout=30, stream=True) as response:
                 response.raise_for_status()
+                if not suffix:
+                    content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
+                    suffix = {"image/png": ".png", "image/jpeg": ".jpg",
+                              "image/webp": ".webp", "image/gif": ".gif",
+                              "video/mp4": ".mp4", "video/x-msvideo": ".avi",
+                              "application/pdf": ".pdf"}.get(content_type, "")
+                if not suffix:
+                    raise ValueError("스크랩 미디어 파일 형식을 확인할 수 없습니다.")
                 with temporary.open("wb") as stream:
                     for chunk in response.iter_content(1024 * 256):
                         if not chunk:
@@ -735,21 +766,86 @@ class Api:
                         if total > 256 * 1024 * 1024:
                             raise ValueError("미디어 파일이 허용 크기를 넘었습니다.")
                         stream.write(chunk)
+            destination = folder / (name + suffix)
             temporary.replace(destination)
+            log.info("Scraper media download item=%s type=%s bytes=%d format=%s seconds=%.3f",
+                     item_id, media_type, total, suffix, time.monotonic() - started)
             return str(destination)
+        except requests.RequestException as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            raise RuntimeError(f"미디어 다운로드 실패 ({type(exc).__name__}, HTTP {status or '응답 없음'})") from None
         finally:
             if temporary.exists():
                 temporary.unlink(missing_ok=True)
 
+    def _apply_scraped_collection_media(self, collection_id, rom_uid, downloaded):
+        """Apply only this scraper's media, leaving the user's existing Plan alone."""
+        collection, cache, provider = self._plan_context(collection_id)
+        row = cache.get_row(int(rom_uid))
+        if row is None:
+            raise ValueError("스크랩 대상 게임을 찾을 수 없습니다.")
+        blocked = self._ensure_file_ops(collection) or self._ensure_writable(collection, [row["system"]])
+        if blocked:
+            raise ValueError(blocked.get("error") or "미디어를 쓸 수 없습니다.")
+        item = {"system": row["system"], "filename": row["filename"], "rom": None,
+                "media": [{"type": media_type, "path": path, "size": Path(path).stat().st_size}
+                          for media_type, path in downloaded],
+                "fields": row["fields"], "frontend_raw": row["frontend_raw"]}
+        plan = Plan(collection_id)
+        result = builder.plan_add(plan, collection, provider, [item])
+        log.info("Scraper media plan collection=%s romUid=%s added=%s skipped=%d conflicts=%s",
+                 collection_id, rom_uid, result.get("added"), len(result.get("skipped") or []),
+                 result.get("conflicts"))
+        for key in result.pop("conflictKeys", []):
+            builder.resolve_conflict(plan, collection, provider, key, RESOLVE_OVERWRITE)
+        validation = validate(plan, collection, cache, provider)
+        if validation["blocked"]:
+            log.warning("Scraper media plan blocked collection=%s romUid=%s reasons=%s",
+                        collection_id, rom_uid, validation)
+            raise ValueError("스크랩 미디어를 저장할 공간이 부족합니다.")
+        lock_name = f"apply:{collection_id}"
+        if not self.registry.acquire_lock(lock_name, kind="apply"):
+            raise ValueError("다른 창에서 같은 Collection을 적용하는 중입니다.")
+        try:
+            outcome = apply_plan(plan, collection, cache, self.registry, provider,
+                                 disc_titles=self._disc_title_option())
+            log.info("Scraper collection media apply collection=%s romUid=%s types=%s outcome=%s",
+                     collection_id, rom_uid, [kind for kind, _ in downloaded], outcome)
+        finally:
+            self.registry.release_lock(lock_name)
+        if outcome.get("failed") or outcome.get("partial") or outcome.get("skipped"):
+            raise ValueError("스크랩 미디어 적용이 완료되지 않았습니다. 로그를 확인하세요.")
+        return outcome.get("systems") or []
+
+    def _rebind_plan_rows(self, collection_id, systems):
+        """A rescan assigns new cache IDs; keep pending Plan entries on their game."""
+        plan = self._plans.get(collection_id)
+        if not plan or not len(plan):
+            return
+        cache = self.workspace.open(collection_id)
+        rows = {(row["system"], row["filename"]): row["rom_uid"]
+                for row in cache.query_rows(systems=list(systems))}
+        for entry in plan.entries:
+            if entry.rom_uid is not None and entry.system in systems:
+                entry.rom_uid = rows.get((entry.system, entry.filename))
+                if entry.rom_uid is None:
+                    log.warning("Plan target missing after scan collection=%s system=%s filename=%s",
+                                collection_id, entry.system, entry.filename)
+
     def _apply_scrape_session(self, session_id, progress):
         session = self.scrape.sessions.get(str(session_id))
         applied, partial, failed = [], [], []
+        touched_systems = set()
         selected = [item for item in session["items"] if self.scrape.proposal(item)]
         for index, item in enumerate(selected, start=1):
             progress(index - 1, max(1, len(selected)), item["filename"])
             proposal = self.scrape.proposal(item)
             if not proposal:
                 continue
+            item_started = time.monotonic()
+            log.info("Scraper apply start item=%s target=%s fields=%d media=%s",
+                     item["id"], session["target"], len(proposal["fields"]),
+                     [media.get("media_type") for media in proposal["media"]])
             applied_fields, applied_media, errors = {}, [], []
             fields_failed = False
             failed_media_indexes = []
@@ -764,29 +860,55 @@ class Api:
                     if not result.get("ok"):
                         raise ValueError(result.get("error"))
                     applied_fields = proposal["fields"]
+                    log.info("Scraper metadata applied item=%s fields=%d seconds=%.3f",
+                             item["id"], len(applied_fields), time.monotonic() - item_started)
                 except Exception as exc:
                     fields_failed = True
                     errors.append(f"메타데이터: {exc}")
+                    log.warning("Scraper metadata failed item=%s error=%s: %s",
+                                item["id"], type(exc).__name__, exc)
             if proposal["media"]:
                 if session["target"] == "archive" and not self._archive_config().get("mediaInternal"):
+                    log.warning("Scraper media blocked item=%s target=archive mediaInternal=false",
+                                item["id"])
                     failed_media_indexes.extend(item.get("selectedMedia") or [])
                     errors.append("미디어: Archive 내부 미디어 보관이 꺼져 있습니다.")
                 else:
+                    downloaded = []
                     for media_index, media in zip(item.get("selectedMedia") or [], proposal["media"]):
                         try:
                             source_path = self._download_scrape_media(
-                                media["url"], session_id, item["id"], media["media_type"])
-                            source = {"kind": "scraper", "path": source_path}
-                            result = (self.archive_media_paste(item["id"], media["media_type"], source)
-                                      if session["target"] == "archive"
-                                      else self.media_paste(session["collectionId"], int(item["id"]),
-                                                            media["media_type"], source))
-                            if not result.get("ok"):
-                                raise ValueError(result.get("error"))
-                            applied_media.append(media)
+                                media["url"], session_id, item["id"], media["media_type"],
+                                media.get("format"))
+                            if session["target"] == "archive":
+                                result = self.archive_media_paste(
+                                    item["id"], media["media_type"],
+                                    {"kind": "scraper", "path": source_path})
+                                if not result.get("ok"):
+                                    raise ValueError(result.get("error"))
+                                applied_media.append(media)
+                                log.info("Scraper archive media applied item=%s type=%s",
+                                         item["id"], media["media_type"])
+                            else:
+                                downloaded.append((media_index, media, source_path))
                         except Exception as exc:
                             failed_media_indexes.append(media_index)
                             errors.append(f'{media.get("media_type") or "미디어"}: {exc}')
+                            log.warning("Scraper media failed item=%s type=%s error=%s: %s",
+                                        item["id"], media.get("media_type"), type(exc).__name__, exc)
+                    if downloaded:
+                        try:
+                            touched_systems.update(self._apply_scraped_collection_media(
+                                session["collectionId"], item["id"],
+                                [(media["media_type"], path) for _, media, path in downloaded]) or [])
+                            applied_media.extend(media for _, media, _ in downloaded)
+                            log.info("Scraper collection media applied item=%s types=%s",
+                                     item["id"], [media["media_type"] for _, media, _ in downloaded])
+                        except Exception as exc:
+                            failed_media_indexes.extend(media_index for media_index, _, _ in downloaded)
+                            errors.append(f"미디어 적용: {exc}")
+                            log.warning("Scraper collection media failed item=%s error=%s: %s",
+                                        item["id"], type(exc).__name__, exc)
             changed = bool(applied_fields or applied_media)
             if changed:
                 provenance = proposal["provenance"]
@@ -796,6 +918,8 @@ class Api:
                     remote_game_id=provenance["remoteGameId"], source_url=provenance["sourceUrl"],
                     evidence=provenance["evidence"], fields=applied_fields, media=applied_media)
             if errors:
+                log.warning("Scraper apply item=%s target=%s failed: %s",
+                            item["id"], session["target"], "; ".join(errors))
                 item["selectedFields"] = (item.get("selectedFields") or []) if fields_failed else []
                 item["selectedMedia"] = failed_media_indexes
                 item["status"] = "selected"
@@ -807,7 +931,14 @@ class Api:
                 item.update({"selectedCandidateId": None, "selectedFields": [],
                              "selectedMedia": [], "status": "applied"})
                 applied.append(item["id"])
+            log.info("Scraper apply end item=%s fieldsApplied=%d mediaApplied=%s errors=%d seconds=%.3f",
+                     item["id"], len(applied_fields), [m["media_type"] for m in applied_media],
+                     len(errors), time.monotonic() - item_started)
             progress(index, max(1, len(selected)), item["filename"])
+        if touched_systems and session["target"] == "collection":
+            systems = sorted(touched_systems)
+            self.workspace.scan(session["collectionId"], force=True, systems=systems)
+            self._rebind_plan_rows(session["collectionId"], systems)
         if not failed and not partial:
             self.scrape.sessions.close(str(session_id))
         return {"applied": applied, "partial": partial, "failed": failed}
@@ -1600,6 +1731,7 @@ class Api:
             # 이게 안 보이면 "Apply 했으니 끝났다"고 오해한다.
             "conflictEntries": [self._entry_summary(e) for e in plan.conflict_entries()],
             "failedEntries": [self._entry_summary(e) for e in plan.failed_entries()],
+            "entries": [self._entry_summary(e) for e in plan.entries],
             # Navigator가 드래그로 옮긴 System을 Apply 전에도 목표 Storage 밑에
             # 미리 보여주려면 어디로 갈 예정인지 알아야 한다(실사용 피드백 - 예전엔
             # Apply할 때까지 원래 자리에 그대로 있어서 "드래그가 안 먹혔다"처럼 보였다).
@@ -1870,8 +2002,30 @@ class Api:
         })
 
     @guarded
+    def clipboard_system_target(self, collection_id, system):
+        """Preview a new-only paste into one Collection system."""
+        collection, cache, _ = self._plan_context(collection_id)
+        if system not in {entry.system for entry in collection.systems}:
+            return err(f"대상 System을 찾을 수 없습니다: {system}")
+        _descriptor, items = clipboard.read_items(self.registry)
+        if not items:
+            return ok({"count": 0, "items": [], "duplicates": []})
+        index = transfer.TargetIndex(cache, {system})
+        duplicates = []
+        summaries = []
+        for item in items:
+            mapped = {**item, "system": system}
+            match, _ = index.find(mapped)
+            if match is not None:
+                duplicates.append({"filename": item["filename"],
+                                   "targetFilename": match["filename"]})
+            summaries.append({"system": item["system"], "filename": item["filename"],
+                              "title": (item.get("fields") or {}).get("name") or item["filename"]})
+        return ok({"count": len(items), "items": summaries, "duplicates": duplicates})
+
+    @guarded
     def paste(self, collection_id, mode=None, system_map=None, target_map=None,
-              fallback_target=None):
+              fallback_target=None, new_only=False):
         """붙여넣기. **Settings의 복사 정책(transfer)을 따른다.**
 
         `mode`(patch/overwrite/replace)가 이미 있는 항목을 어떻게 다룰지 정한다
@@ -1921,6 +2075,18 @@ class Api:
         # 지목한 대상이 없으면 **조용히 새 항목을 만들지 않고 거절한다** - 사용자는 그 자리에 쓰라고
         # 말한 것이지 새로 만들라고 한 것이 아니다.
         targets, target_cache = {}, self.workspace.open(collection_id)
+        if new_only:
+            destination_systems = {item["system"] for item in items}
+            if (len(destination_systems) != 1 or target_map or fallback_target
+                    or not remap):
+                return err("System 신규 복사는 대상 System 하나만 지정해야 합니다.")
+            system = next(iter(destination_systems))
+            if system not in {entry.system for entry in collection.systems}:
+                return err(f"대상 System을 찾을 수 없습니다: {system}")
+            new_index = transfer.TargetIndex(target_cache, {system})
+            duplicates = [item["filename"] for item in items if new_index.find(item)[0] is not None]
+            if duplicates:
+                return err(f"대상 System에 같은 게임이 이미 있습니다: {', '.join(duplicates[:3])}")
         for source_key, dest_key in (target_map or {}).items():
             dest_system, _, dest_filename = str(dest_key).partition("|")
             row = target_cache.get_row_by_filename(dest_system, dest_filename)
@@ -2114,6 +2280,7 @@ class Api:
                 # 전체 Full Scan은 규모가 커지면 감당이 안 되므로 범위를 좁힌다.
                 if result.get("systems"):
                     self.workspace.scan(collection_id, force=True, systems=result["systems"])
+                    self._rebind_plan_rows(collection_id, result["systems"])
                 self.registry.append_change(CHANGE_APPLIED, collection_id,
                                             {"applied": result["applied"]})
                 return result
@@ -2186,7 +2353,8 @@ class Api:
 
     @guarded
     def archive_rows(self, search=None, systems=None, limit=200, offset=0, conflicts_only=False,
-                     favorites_only=False, rom_identity_ids=None, priority=None):
+                     favorites_only=False, rom_identity_ids=None, priority=None,
+                     order="title", descending=False):
         """Archive Gamelist. Collection 목록과 같은 모양으로 돌려준다(§43).
 
         Description/Genre/Rating은 `rom_identities`가 아니라 Revision의
@@ -2195,6 +2363,7 @@ class Api:
         값과 같아야 하므로 `resolve_fields()`로 같은 우선순위(Preferred →
         Archive 편집 → Latest)를 쓴다.
         """
+        started_at = time.perf_counter()
         query = {"search": search or None, "systems": systems or None}
         # 특정 항목만 다시 읽는다 - Archive에서 뭔가 바꾼 뒤 그 줄만 갱신할 때 쓴다.
         # 행을 만드는 코드가 여기 한 곳뿐이어야 목록과 갱신이 어긋나지 않는다.
@@ -2211,12 +2380,15 @@ class Api:
         # 0.28초라 페이지를 나누기 전에 걸러도 목록이 느려지지 않는다(실측).
         favorites_only = bool(favorites_only)
         page = (None, 0) if favorites_only else (int(limit), int(offset))
-        rows = self.archive.list_rows(**query, limit=page[0], offset=page[1], priority=priority)
+        rows = self.archive.list_rows(**query, limit=page[0], offset=page[1], priority=priority,
+                                      order=order, descending=bool(descending))
+        listing_seconds = time.perf_counter() - started_at
         archive_cfg = self._archive_config()
         adapter = get_adapter(archive_cfg["frontend"])
         row_ids = [str(row["rom_identity_id"]) for row in rows]
         metadata_by_id = self.archive.resolve_fields_many(row_ids)
         rom_sources_by_id = self.archive.rom_sources_many(row_ids)
+        resolve_seconds = time.perf_counter() - started_at - listing_seconds
         out_rows = []
         for r in rows:
             rid = str(r["rom_identity_id"])
@@ -2230,7 +2402,8 @@ class Api:
             out_rows.append({
                 "romUid": r["rom_identity_id"], "romIdentityId": r["rom_identity_id"],
                 "system": r["system"], "file": r["filename"],
-                "title": fields.get("name") or r["title"],
+                "title": (Path(r["filename"] or "").stem if r["metadata_cleared"]
+                          else fields.get("name") or r["title"]),
                 "sources": r["source_count"], "updatedAt": r["updated_at"],
                 # 예전에는 False로 박아뒀다. Archive에 media가 저장돼 있어도
                 # 목록에서는 영영 없는 것으로 보였다.
@@ -2264,6 +2437,9 @@ class Api:
             out_rows = out_rows[int(offset):int(offset) + int(limit)]
         else:
             total = self.archive.count_rows(**query)
+        log.info("Archive rows: offset=%s limit=%s rows=%s total=%s list=%.3fs resolve=%.3fs rest=%.3fs",
+                 offset, limit, len(out_rows), total, listing_seconds, resolve_seconds,
+                 time.perf_counter() - started_at - listing_seconds - resolve_seconds)
         return ok({"rows": out_rows, "total": total, "offset": int(offset)})
 
     @guarded
@@ -2275,8 +2451,53 @@ class Api:
         가져오면 Archive가 그보다 크면 뒷부분이 조용히 빠진다. list_rows(limit=None)은
         LIMIT 절 자체를 안 붙이므로 전부 온다.
         """
+        if isinstance(systems, dict):
+            query = systems
+            result = self.archive_rows(
+                search=query.get("search"), systems=query.get("systems"),
+                favorites_only=query.get("favoritesOnly", False),
+                conflicts_only=query.get("conflictsOnly", False), limit=10_000_000,
+                order=query.get("order") or "title", descending=query.get("descending", False),
+                priority=query.get("priority"))
+            return result if not result.get("ok") else ok(
+                [row["romIdentityId"] for row in result["data"]["rows"]])
         rows = self.archive.list_rows(systems=systems or None, limit=None)
         return ok([r["rom_identity_id"] for r in rows])
+
+    @guarded
+    def archive_find_row_index(self, query, prefix, after=-1):
+        """Find the next filename initial across the full filtered Archive list."""
+        query = query or {}
+        needle = str(prefix or "").lower()
+        if not needle:
+            return ok(-1)
+        if query.get("favoritesOnly"):
+            # Favorite lives in frontend_raw; this filter needs resolved rows.
+            result = self.archive_rows(
+                search=query.get("search"), systems=query.get("systems"),
+                favorites_only=True, conflicts_only=query.get("conflictsOnly", False),
+                limit=10_000_000, order=query.get("order") or "title",
+                descending=query.get("descending", False), priority=query.get("priority"))
+            if not result.get("ok"):
+                return result
+            filenames = [row["file"] for row in result["data"]["rows"]]
+        else:
+            only_ids = (list(conflict_service.conflict_counts(
+                self.archive, systems=query.get("systems") or None))
+                        if query.get("conflictsOnly") else None)
+            rows = self.archive.list_rows(
+                search=query.get("search"), systems=query.get("systems"),
+                only_ids=only_ids, limit=None, order=query.get("order") or "title",
+                descending=bool(query.get("descending")), priority=query.get("priority"))
+            filenames = [row["filename"] for row in rows]
+        if not filenames:
+            return ok(-1)
+        start = int(after)
+        for step in range(1, len(filenames) + 1):
+            index = (start + step) % len(filenames)
+            if str(filenames[index] or "").lower().startswith(needle):
+                return ok(index)
+        return ok(-1)
 
     @guarded
     def archive_copy_selection(self, rom_identity_ids):
@@ -2326,7 +2547,26 @@ class Api:
             source_collection_id="__archive__", source_name="Archive"))
 
     @guarded
-    def archive_paste(self, mode=None, target_rom_identity_id=None):
+    def archive_clipboard_system_target(self, system):
+        """Preview a new-only paste into an Archive System."""
+        cfg = self._archive_config()
+        target = normalize_system(cfg["frontend"], str(system or "").strip())
+        if not target or Path(target).name != target:
+            return err("안전하지 않은 System 이름입니다.")
+        _descriptor, source_items = clipboard.read_items(self.registry)
+        items, duplicates = [], []
+        for item in source_items:
+            filename = str(item.get("filename") or "")
+            if not filename or Path(filename).name != filename:
+                continue
+            entry = {"system": target, "filename": filename,
+                     "title": (item.get("fields") or {}).get("name") or filename}
+            (duplicates if self.archive.find_rom_identity(target, filename) else items).append(entry)
+        return ok({"system": target, "items": items, "duplicates": duplicates})
+
+    @guarded
+    def archive_paste(self, mode=None, target_rom_identity_id=None, target_system=None,
+                      new_only=False):
         """Paste handoff items into Archive using the shared transfer policy.
 
         ROM bytes are internalized under Archive's configured ROM root and are
@@ -2341,6 +2581,15 @@ class Api:
             return err("붙여넣을 항목이 없습니다.")
         if target_rom_identity_id and len(source_items) != 1:
             return err("항목을 하나만 복사했을 때만 이 항목으로 붙여넣을 수 있습니다.")
+        if target_rom_identity_id and target_system:
+            return err("게임과 System을 동시에 붙여넣기 대상으로 지정할 수 없습니다.")
+        mapped_system = (normalize_system(cfg["frontend"], str(target_system).strip())
+                         if target_system else None)
+        if mapped_system and (Path(mapped_system).name != mapped_system
+                              or not _path_within(Path(cfg["romDir"] or cfg["archiveDir"])
+                                                  / mapped_system,
+                                                  Path(cfg["romDir"] or cfg["archiveDir"]))):
+            return err("안전하지 않은 System 이름입니다.")
 
         target_identity = (self.archive.get_identity(str(target_rom_identity_id))
                            if target_rom_identity_id else None)
@@ -2349,6 +2598,9 @@ class Api:
 
         rom_root = Path(cfg["romDir"] or cfg["archiveDir"])
         normalized_mode = transfer.normalize_mode(mode)
+        downgraded_from = None
+        if normalized_mode == transfer.MODE_REPLACE and len(source_items) > 1:
+            downgraded_from, normalized_mode = normalized_mode, transfer.MODE_PATCH
         pasted = copied_roms = 0
         skipped, conflicts, changed_ids, record_ids = [], [], [], []
         overwrite_media = {}
@@ -2365,7 +2617,8 @@ class Api:
                 item["filename"] = target_filename
                 identity = target_identity
             else:
-                item["system"] = normalize_system(cfg["frontend"], item.get("system") or "")
+                item["system"] = mapped_system or normalize_system(
+                    cfg["frontend"], item.get("system") or "")
                 identity = self.archive.find_rom_identity(item["system"], item.get("filename") or "")
 
             filename = str(item.get("filename") or "")
@@ -2375,6 +2628,9 @@ class Api:
                 continue
             if not _path_within(rom_root / system, rom_root):
                 skipped.append({"filename": filename, "reason": "Archive 경로 밖의 System은 사용할 수 없습니다."})
+                continue
+            if new_only and identity is not None:
+                skipped.append({"filename": filename, "reason": "대상 System에 같은 게임이 이미 있습니다."})
                 continue
 
             existing = None
@@ -2444,6 +2700,8 @@ class Api:
 
             self.archive.put_record(rid, ARCHIVE_EDIT_SOURCE, fields, raw,
                                     media=list(media_state.values()))
+            if fields or raw:
+                self.archive.set_metadata_cleared(rid, False)
             latest = self.archive.latest_record(rid, ARCHIVE_EDIT_SOURCE)
             if latest:
                 record_ids.append(latest["record_id"])
@@ -2456,6 +2714,8 @@ class Api:
             {"revisionRecordIds": record_ids}, changed_ids,
             overwrite_media=overwrite_media) if changed_ids else None
         return ok({"pasted": pasted, "copiedRoms": copied_roms,
+                   "policy": {"pasteMode": normalized_mode},
+                   "downgradedFrom": downgraded_from,
                    "skipped": skipped, "conflicts": conflicts, "projection": projection})
 
     @guarded
@@ -2471,10 +2731,21 @@ class Api:
     @staticmethod
     def _rom_ownership_from_sources(sources, cfg, *, check_exists=True) -> dict:
         root = (cfg.get("romDir") or cfg.get("archiveDir")) if cfg else None
+        # Gamelist status is informational. Resolving every ROM and the root
+        # on a network drive made each 200-row scroll page wait for filesystem
+        # round trips. File operations still use _path_within() with resolve().
+        display_root = os.path.normcase(os.path.abspath(root)) if root and not check_exists else None
         items = []
         for source in sources:
             path = source.get("abs_path")
-            internal = _path_within(path, root)
+            if display_root and path:
+                display_path = os.path.normcase(os.path.abspath(path))
+                try:
+                    internal = os.path.commonpath((display_root, display_path)) == display_root
+                except ValueError:
+                    internal = False
+            else:
+                internal = _path_within(path, root) if check_exists else False
             items.append({
                 "sourceCollectionId": source.get("source_collection_id"),
                 "path": path,
@@ -2501,6 +2772,7 @@ class Api:
             types[media_type] = {
                 "mode": "internal" if internal else "linked",
                 "path": display_path,
+                "bytes": int(item.get("size") or 0),
                 "present": bool(display_path and (Path(display_path).is_file()
                                                     if check_exists else True)),
             }
@@ -2723,23 +2995,23 @@ class Api:
                     Path(new[key]).mkdir(parents=True, exist_ok=True)
                 except OSError as e:
                     return err(f"폴더를 만들 수 없습니다: {e}")
-        if (new["archiveDir"] and new["archiveDir"] != old["archiveDir"]
-                and not self.archive.count_rows() and not self.jobs.active_jobs()):
-            # A newly selected Archive can show another PC's snapshot before
-            # any directory reconciliation.  The local DB is empty here, so no
-            # revisions or edits can be discarded by the replacement.
-            self.archive.close()
-            try:
-                digest = archive_shared_cache.seed_if_empty(self._archive_path, new["archiveDir"])
-                if digest:
-                    known = self.registry.get_setting("archive.shared_snapshot_hashes", {}) or {}
-                    self.registry.set_setting("archive.shared_snapshot_hashes",
-                                              {**known, new["archiveDir"]: digest})
-            except (OSError, RuntimeError, sqlite3.DatabaseError) as exc:
-                log.warning("Could not load selected Archive snapshot: %s", exc)
-            finally:
-                self.archive = ArchiveStore(self._archive_path)
-        self.registry.set_setting(self.ARCHIVE_CONFIG_KEY, new)
+        with self._archive_lifecycle_lock:
+            if (new["archiveDir"] and new["archiveDir"] != old["archiveDir"]
+                    and not self.archive.count_rows() and not self.jobs.active_jobs()):
+                # Scheduling an Archive job uses the same lock. Never close a
+                # connection after a refresh has been admitted.
+                self.archive.close()
+                try:
+                    digest = archive_shared_cache.seed_if_empty(self._archive_path, new["archiveDir"])
+                    if digest:
+                        known = self.registry.get_setting("archive.shared_snapshot_hashes", {}) or {}
+                        self.registry.set_setting("archive.shared_snapshot_hashes",
+                                                  {**known, new["archiveDir"]: digest})
+                except (OSError, RuntimeError, sqlite3.DatabaseError) as exc:
+                    log.warning("Could not load selected Archive snapshot: %s", exc)
+                finally:
+                    self.archive = ArchiveStore(self._archive_path)
+            self.registry.set_setting(self.ARCHIVE_CONFIG_KEY, new)
         moved = (new["frontend"], new["archiveDir"]) != (old["frontend"], old["archiveDir"])
         return ok({**new, "configured": archive_projection.is_configured(new),
                    # 화면이 "지금 적용할까요?"를 물을 근거
@@ -2802,8 +3074,21 @@ class Api:
         """설정을 적용한다(job). media 수만 개를 복사할 수 있어 화면이 멈추지 않게 job으로 돈다."""
         if not archive_projection.is_configured(self._archive_config()):
             return err("Archive 디렉토리가 설정되지 않았습니다.")
-        job_id = self.jobs.run_heavy(lambda cb: self._apply_archive_config(cb), mutates_state=True,
-                                     target_ids=(), kind="archive-apply")
+        queued_at = time.perf_counter()
+        def run(cb):
+            log.info("Archive apply started after %.3fs wait", time.perf_counter() - queued_at)
+            try:
+                return self._apply_archive_config(cb)
+            except JobCancelled:
+                log.info("Archive apply cancelled after %.3fs", time.perf_counter() - queued_at)
+                raise
+            except Exception:
+                log.exception("Archive apply failed after %.3fs", time.perf_counter() - queued_at)
+                raise
+        log.info("Archive apply requested")
+        with self._archive_lifecycle_lock:
+            job_id = self.jobs.run_heavy(run, mutates_state=True,
+                                         target_ids=("archive",), kind="archive-apply")
         return ok({"jobId": job_id})
 
     def _project_archive(self, result, rom_identity_ids=None, progress_cb=None,
@@ -2833,9 +3118,17 @@ class Api:
             return {"error": "Archive 디렉토리에 쓰지 못했습니다. 로그를 확인하세요."}
 
     @guarded
-    def archive_conflicts(self, systems=None):
+    def archive_conflicts(self, systems=None, rom_identity_ids=None):
         """`[n]` 뱃지용. **버전이 둘 이상이고 아직 고르지 않은 Identity만** 돌려준다."""
-        return ok(conflict_service.conflict_counts(self.archive, systems=systems or None))
+        started_at = time.perf_counter()
+        counts = conflict_service.conflict_counts(
+            self.archive, systems=systems or None,
+            rom_identity_ids=rom_identity_ids if rom_identity_ids is not None else None)
+        log.info("Archive conflicts: scope=%s requested=%s found=%s elapsed=%.3fs",
+                 "system" if systems else "all",
+                 len(rom_identity_ids) if rom_identity_ids is not None else "all",
+                 len(counts), time.perf_counter() - started_at)
+        return ok(counts)
 
     @guarded
     def archive_versions(self, rom_identity_id):
@@ -3002,7 +3295,8 @@ class Api:
         if not archive_projection.is_configured(cfg):
             return err("Archive 디렉토리가 설정되지 않았습니다.")
         provider = storage.for_path(cfg["archiveDir"])
-        return ok(archive_directory.sync_from_directory(self.archive, cfg, provider))
+        with self._archive_lifecycle_lock:
+            return ok(archive_directory.sync_from_directory(self.archive, cfg, provider))
 
     @guarded
     def start_archive_refresh(self):
@@ -3011,18 +3305,29 @@ class Api:
         if not archive_projection.is_configured(cfg):
             return err("Archive 디렉토리가 설정되지 않았습니다.")
         provider = storage.for_path(cfg["archiveDir"])
+        queued_at = time.perf_counter()
         def refresh(cb):
+            log.info("Archive refresh started after %.3fs wait", time.perf_counter() - queued_at)
             started_at = time.perf_counter()
-            result = archive_directory.sync_from_directory(
-                self.archive, cfg, provider, progress_cb=cb)
-            result["scanSeconds"] = round(time.perf_counter() - started_at, 3)
-            result["sharedSnapshot"] = self._publish_archive_snapshot(cfg)
-            log.info("Archive refresh scan: %.3fs, systems=%s, stages=%s",
-                     result["scanSeconds"], result["systems"], result.get("timings"))
-            return result
-        job_id = self.jobs.run_heavy(
-            refresh,
-            mutates_state=True, target_ids=("archive",), kind="archive-refresh")
+            try:
+                result = archive_directory.sync_from_directory(
+                    self.archive, cfg, provider, progress_cb=cb)
+                result["scanSeconds"] = round(time.perf_counter() - started_at, 3)
+                result["sharedSnapshot"] = self._publish_archive_snapshot(cfg)
+                log.info("Archive refresh scan: %.3fs, systems=%s, stages=%s",
+                         result["scanSeconds"], result["systems"], result.get("timings"))
+                return result
+            except JobCancelled:
+                log.info("Archive refresh cancelled after %.3fs", time.perf_counter() - started_at)
+                raise
+            except Exception:
+                log.exception("Archive refresh failed after %.3fs", time.perf_counter() - started_at)
+                raise
+        log.info("Archive refresh requested")
+        with self._archive_lifecycle_lock:
+            job_id = self.jobs.run_heavy(
+                refresh,
+                mutates_state=True, target_ids=("archive",), kind="archive-refresh")
         return ok({"jobId": job_id})
 
     @guarded
@@ -3041,6 +3346,35 @@ class Api:
         result = archive_service.edit(self.archive, rom_identity_id, fields)
         self._project_archive(result, [rom_identity_id])
         return ok(result)
+
+    @guarded
+    def archive_metadata_delete(self, rom_identity_ids):
+        """Hide effective metadata while retaining ROM, media, and source history."""
+        ids = [str(value) for value in (rom_identity_ids or [])]
+        if not ids:
+            return err("지울 항목을 선택하세요.")
+        cfg = self._archive_config()
+        configured = archive_projection.is_configured(cfg)
+        adapter = get_adapter(cfg["frontend"]) if configured else None
+        collection = archive_projection.collection_for(cfg) if configured else None
+        cleared, failures = 0, []
+        for rid in ids:
+            identity = self.archive.get_identity(rid)
+            if identity is None:
+                failures.append({"romIdentityId": rid, "reason": "Archive 항목을 찾을 수 없습니다."})
+                continue
+            try:
+                if configured:
+                    remove = getattr(adapter, "remove_entries", None)
+                    if remove is None:
+                        raise ValueError("이 Frontend는 메타데이터 항목 삭제를 지원하지 않습니다.")
+                    layout = adapter.layout(collection, identity["system"])
+                    remove(layout, [identity["filename"] or identity["filename_norm"]])
+                self.archive.set_metadata_cleared(rid, True)
+                cleared += 1
+            except Exception as exc:  # continue with other selected identities
+                failures.append({"romIdentityId": rid, "reason": str(exc)})
+        return ok({"cleared": cleared, "failures": failures})
 
     @guarded
     def archive_set_favorite(self, rom_identity_id, favorite=True):
@@ -3123,6 +3457,94 @@ class Api:
             if self.archive.delete_identity(rid):
                 deleted += 1
         return ok({"deleted": deleted})
+
+    @guarded
+    def archive_delete_owned_preview(self, rom_identity_ids):
+        cfg = self._archive_config()
+        eligible, blocked = [], []
+        for rid in [str(value) for value in (rom_identity_ids or [])]:
+            if self.archive.get_identity(rid) is None:
+                blocked.append({"romIdentityId": rid, "reason": "항목 없음"})
+                continue
+            ownership = self._archive_ownership(rid, cfg, check_exists=False)
+            if ownership["rom"]["linkedCount"] or ownership["media"]["linkedCount"]:
+                blocked.append({"romIdentityId": rid, "reason": "외부 원본 연결"})
+            else:
+                eligible.append(rid)
+        return ok({"eligible": eligible, "blocked": blocked})
+
+    @guarded
+    def archive_delete_owned(self, rom_identity_ids):
+        """Delete a fully Archive-owned game including its Archive files.
+
+        Mixed or externally linked identities are rejected. A partial file
+        failure leaves the identity available so the user can retry.
+        """
+        ids = [str(value) for value in (rom_identity_ids or [])]
+        if not ids:
+            return err("지울 항목을 선택하세요.")
+        cfg = self._archive_config()
+        if not archive_projection.is_configured(cfg):
+            return err("Archive 디렉토리를 먼저 설정하세요.")
+        archive_root = Path(cfg["archiveDir"]).resolve()
+        # Validate the complete selection before touching any file. A direct
+        # bridge call must obey the same ownership rule as the disabled UI menu.
+        preview = self.archive_delete_owned_preview(ids)
+        if not preview.get("ok"):
+            return preview
+        if preview["data"]["blocked"]:
+            return err("선택 항목에 외부 원본 연결이나 없는 게임이 있어 전체 삭제할 수 없습니다.")
+        deleted, failures = 0, []
+        for rid in ids:
+            if self.archive.get_identity(rid) is None:
+                failures.append({"romIdentityId": rid, "reason": "Archive 항목을 찾을 수 없습니다."})
+                continue
+            ownership = self._archive_ownership(rid, cfg)
+            if ownership["rom"]["linkedCount"] or ownership["media"]["linkedCount"]:
+                failures.append({"romIdentityId": rid,
+                                 "reason": "외부 원본에 연결되어 있어 전체 삭제할 수 없습니다."})
+                continue
+            media_paths = [Path(item["path"]) for item in ownership["media"]["types"].values()
+                           if item.get("path") and item["mode"] == "internal"]
+            record_ids = self.archive.record_ids_of_identity(rid)
+            rom_result = self.archive_rom_delete([rid])
+            if not rom_result.get("ok") or rom_result["data"].get("failures"):
+                failures.append({"romIdentityId": rid,
+                                 "reason": rom_result.get("error") or "ROM 파일 삭제에 실패했습니다."})
+                continue
+            media_results = [self.archive_media_delete_selected([rid], part)
+                             for part in ("media", "video")]
+            if any(not result.get("ok") or result["data"].get("failures")
+                   for result in media_results):
+                failures.append({"romIdentityId": rid, "reason": "미디어 파일 삭제에 실패했습니다."})
+                continue
+            result = self.archive_delete([rid])
+            if not result.get("ok") or not result["data"].get("deleted"):
+                failures.append({"romIdentityId": rid,
+                                 "reason": result.get("error") or "Archive 기록 삭제에 실패했습니다."})
+                continue
+            deleted += 1
+            # Media projected at its original Archive path may have been kept
+            # by archive_media_delete's source-protection rule. This operation
+            # has already rejected every external path, so clean those copies.
+            for path in media_paths:
+                if _path_within(path, archive_root) and path.is_file():
+                    try:
+                        path.unlink()
+                    except OSError as exc:
+                        failures.append({"romIdentityId": rid, "reason": str(exc)})
+            for record_id in record_ids:
+                folder = archive_root / ".rms" / "revision-media" / str(record_id)
+                if not _path_within(folder, archive_root) or not folder.is_dir():
+                    continue
+                try:
+                    for child in folder.iterdir():
+                        if child.is_file():
+                            child.unlink()
+                    folder.rmdir()
+                except OSError as exc:
+                    failures.append({"romIdentityId": rid, "reason": str(exc)})
+        return ok({"deleted": deleted, "failures": failures})
 
     # ------------------------------------------------------------------
     # System 우클릭 - 언어 태그/멀티 디스크 태그 적용, 시스템 전체 삭제 (Archive판)
@@ -3286,8 +3708,60 @@ class Api:
                    "linkedSourcesKept": linked_sources, "failures": failures})
 
     @guarded
-    def archive_media_delete_system(self, system):
-        """Remove only Archive-owned media copies for every item in a System."""
+    def archive_media_cleanup_preview(self, system):
+        """Count Archive-owned media by type without touching linked originals."""
+        counts = {}
+        cfg = self._archive_config()
+        for row in self.archive.list_rows(systems=[str(system or "")], limit=None):
+            ownership = self._archive_media_ownership(
+                row["rom_identity_id"], cfg, check_exists=False)
+            for media_type, item in ownership["types"].items():
+                if item["mode"] != "internal":
+                    continue
+                entry = counts.setdefault(media_type, {"type": media_type,
+                    "label": MEDIA_LABELS.get(media_type, media_type), "count": 0, "bytes": 0})
+                entry["count"] += 1
+                entry["bytes"] += item.get("bytes", 0)
+        return ok({"system": system, "types": sorted(
+            counts.values(), key=lambda item: (-item["count"], item["type"]))})
+
+    @guarded
+    def archive_media_delete_selected(self, rom_identity_ids, part):
+        """Delete only Archive-owned media/video for selected identities."""
+        if part not in ("media", "video"):
+            return err("미디어 또는 영상을 선택하세요.")
+        ids = [str(value) for value in (rom_identity_ids or [])]
+        if not ids:
+            return err("지울 항목을 선택하세요.")
+        removed = linked_kept = 0
+        failures = []
+        cfg = self._archive_config()
+        for rid in ids:
+            if self.archive.get_identity(rid) is None:
+                failures.append({"romIdentityId": rid, "reason": "Archive 항목을 찾을 수 없습니다."})
+                continue
+            ownership = self._archive_media_ownership(rid, cfg)
+            for media_type, item in ownership["types"].items():
+                if (media_type == "videos") != (part == "video"):
+                    continue
+                if item["mode"] != "internal":
+                    linked_kept += 1
+                    continue
+                result = self.archive_media_delete(rid, media_type)
+                if result.get("ok"):
+                    removed += 1
+                else:
+                    failures.append({"romIdentityId": rid, "mediaType": media_type,
+                                     "reason": result.get("error")})
+        return ok({"removed": removed, "linkedKept": linked_kept, "failures": failures})
+
+    @guarded
+    def archive_media_delete_system(self, system, media_types=None):
+        """Remove selected Archive-owned media types from one System."""
+        selected = (set(str(media_type) for media_type in media_types)
+                    if media_types is not None else None)
+        if selected is not None and (not selected or not selected.issubset(set(MEDIA_LABELS))):
+            return err("지울 미디어 종류를 골라주세요.")
         removed = linked_kept = 0
         failures = []
         cfg = self._archive_config()
@@ -3295,6 +3769,8 @@ class Api:
             rid = row["rom_identity_id"]
             ownership = self._archive_media_ownership(rid, cfg)
             for media_type, item in ownership["types"].items():
+                if selected is not None and media_type not in selected:
+                    continue
                 if item["mode"] != "internal":
                     linked_kept += 1
                     continue

@@ -85,6 +85,25 @@ class DescriptionSortPutsEmptyLastTests(unittest.TestCase):
         self.cache.replace_system("snes", [_row("z.zip", "Z"), _row("a.zip", "A")])
         self.assertEqual(self.files(), ["a.zip", "z.zip"])
 
+    def test_korean_and_latin_description_priorities_keep_empty_last(self):
+        self.cache.replace_system("snes", [
+            _row("empty.zip", "Empty"),
+            _row("japanese.zip", "Japanese", desc="日本語の説明です"),
+            _row("english.zip", "English", desc="An English description"),
+            _row("korean.zip", "Korean", desc="한글 설명입니다"),
+        ])
+        korean = self.files(priority="desc_ko")
+        english = self.files(priority="desc_en")
+        self.assertEqual(korean, ["korean.zip", "english.zip", "japanese.zip", "empty.zip"])
+        self.assertEqual(english, ["english.zip", "korean.zip", "japanese.zip", "empty.zip"])
+        self.assertEqual(self.files(priority="desc_ko", descending=True)[0], "korean.zip")
+        for priority, expected in (("desc_ko", korean), ("desc_en", english)):
+            uids = self.cache.query_uids(priority=priority)
+            rows = self.cache.query_rows(priority=priority)
+            self.assertEqual(uids, [row["rom_uid"] for row in rows])
+            self.assertEqual(self.cache.index_of_prefix("k", priority=priority),
+                             expected.index("korean.zip"))
+
 
 if __name__ == "__main__":
     unittest.main()

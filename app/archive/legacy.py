@@ -16,11 +16,13 @@ ID로 병합한다.
 from __future__ import annotations
 
 import sqlite3
+import shutil
+import tempfile
+import os
 import time
-from contextlib import closing
 from pathlib import Path
 
-from app.archive.shared_cache import PORTABLE_APPLICATION_ID
+from app.archive.shared_cache import _is_portable_snapshot, fingerprint
 from app.store.archive import ARCHIVE_EDIT_SOURCE
 from app.store.sqlite import transaction
 
@@ -34,9 +36,7 @@ def legacy_db_path(archive_dir) -> Path:
 def has_legacy(archive_dir) -> bool:
     if not archive_dir or not legacy_db_path(archive_dir).is_file():
         return False
-    path = legacy_db_path(archive_dir)
-    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
-        return db.execute("PRAGMA application_id").fetchone()[0] != PORTABLE_APPLICATION_ID
+    return not _is_portable_snapshot(legacy_db_path(archive_dir))
 
 
 def _columns(conn, table) -> list[str]:
@@ -52,7 +52,22 @@ def import_legacy(archive, archive_dir) -> dict:
     path = legacy_db_path(archive_dir)
     if not has_legacy(archive_dir):
         return {"found": False}
-    old = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+    # SQLite must not open UNC/SMB databases directly. Stage the legacy file
+    # locally, then import from that stable copy.
+    fd, staged = tempfile.mkstemp(prefix="archive-legacy-", suffix=".db")
+    os.close(fd)
+    try:
+        before = fingerprint(path)
+        shutil.copy2(path, staged)
+        if fingerprint(path) != before:
+            raise RuntimeError("Legacy Archive DB changed while loading")
+        return _import_staged(archive, archive_dir, staged)
+    finally:
+        os.unlink(staged)
+
+
+def _import_staged(archive, archive_dir, staged) -> dict:
+    old = sqlite3.connect(staged)
     old.row_factory = sqlite3.Row
     counts = {"found": True, "games": 0, "identities": 0, "records": 0,
               "media": 0, "roms": 0, "preferred": 0}

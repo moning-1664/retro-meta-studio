@@ -50,3 +50,12 @@ automatically. The snapshot is a cache exchange, not a multi-writer database.
 - Archive로 붙여넣으면 Metadata는 Archive 편집 Revision이 되고, ROM은 설정한 `romDir`
   아래로 복사된다. 같은 ROM 파일이 이미 있으면 덮어쓰지 않는다. Media는
   `mediaInternal=true`일 때 Archive 복사본으로 투영하고, 꺼져 있으면 원본을 연결한다.
+
+## 성능 진단
+- 설치본은 실행 파일 옆 `logs/retrometa.log`, 개발 실행은 프로젝트의
+  `logs/retrometa.log`에 Archive 적용 대기/시작, 읽기·Revision·Frontend·공유 DB 단계 시간,
+  목록 페이지 조회와 버전 충돌 계산 시간을 기록한다. 파일은 2MB씩 최대 3개로 순환한다.
+- `mediaSeconds`는 파일 복사 시간만 뜻하지 않는다. 미디어 참조 조회·경로 비교·
+  파일 상태 확인도 포함한다. `mediaLookupSeconds`로 조회 시간을 분리해 볼 수 있다.
+- 목록의 ROM 소유권 표시는 기록된 경로를 문자열로 비교한다. 파일 삭제·이동 등
+  실제 파일 작업에서는 경로를 해석해 안전 경계를 다시 확인한다.

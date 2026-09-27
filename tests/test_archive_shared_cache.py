@@ -2,6 +2,7 @@
 
 import sqlite3
 import tempfile
+import threading
 import unittest
 from contextlib import closing
 from pathlib import Path
@@ -37,6 +38,53 @@ class SharedArchiveCacheTests(unittest.TestCase):
             self.assertEqual(len(second.list_rows()), 1)
         finally:
             second.close()
+
+    def test_portable_seed_never_opens_the_shared_path_as_sqlite_uri(self):
+        source = ArchiveStore(self.root / "source.db")
+        game = source.ensure_game("Shared", "shared")
+        source.ensure_rom_identity(game, "ps2", "shared.iso", filename="Shared.iso")
+        shared_cache.publish(source, str(self.archive_dir), None)
+        source.close()
+        snapshot = shared_cache.snapshot_path(str(self.archive_dir))
+        original = Path.as_uri
+
+        def local_uri_only(path):
+            if path == snapshot:
+                raise AssertionError("network snapshot was opened as a SQLite URI")
+            return original(path)
+
+        with patch.object(Path, "as_uri", local_uri_only):
+            digest = shared_cache.seed_if_empty(self.root / "second.db", str(self.archive_dir))
+        self.assertTrue(digest)
+
+    def test_changing_archive_directory_during_refresh_keeps_database_open(self):
+        api = Api(registry_path=self.root / "registry.db", cache_dir=self.root / "cache")
+        entered, release = threading.Event(), threading.Event()
+        try:
+            api.save_archive_config({"archiveDir": str(self.archive_dir)})
+            original_store = api.archive
+
+            def refresh(store, config, provider, **kwargs):
+                entered.set()
+                self.assertTrue(release.wait(5))
+                store._conn.execute("SELECT 1 FROM rom_identities")
+                return {"systems": 0, "timings": {}}
+
+            with patch("bridge.api.archive_directory.sync_from_directory", side_effect=refresh), \
+                 patch.object(api, "_publish_archive_snapshot", return_value={"status": "published"}):
+                started = api.start_archive_refresh()
+                self.assertTrue(started["ok"])
+                self.assertTrue(entered.wait(5))
+                second = self.root / "other_archive"
+                changed = api.save_archive_config({"archiveDir": str(second)})
+                self.assertTrue(changed["ok"], changed)
+                self.assertIs(api.archive, original_store)
+                release.set()
+                self.assertTrue(api.jobs.wait_idle(5))
+                self.assertIsNone(api.jobs.get(started["data"]["jobId"])["error"])
+        finally:
+            release.set()
+            api.close()
 
     def test_legacy_database_is_preserved_before_portable_upgrade(self):
         old_path = shared_cache.snapshot_path(str(self.archive_dir))

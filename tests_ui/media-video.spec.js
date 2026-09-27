@@ -90,6 +90,16 @@ test("한 번 멈추면 다른 게임으로 넘어가도 저절로 재생하지 
   // 자동 재생 대신 재생 버튼이 선다 - 사용자가 멈춰 둔 상태이기 때문이다.
   expect(await page.evaluate(() => window.__videoCalls)).toBe(0);
   await expect(page.locator(".media-video-play")).toBeVisible();
+  const centers = await page.locator(".media-tile.wide").evaluate((tile) => {
+    const button = tile.querySelector(".media-video-play").getBoundingClientRect();
+    const bounds = tile.getBoundingClientRect();
+    return { dx: Math.abs((button.left + button.right - bounds.left - bounds.right) / 2),
+      dy: Math.abs((button.top + button.bottom - bounds.top - bounds.bottom) / 2),
+      width: button.width };
+  });
+  expect(centers.dx).toBeLessThan(2);
+  expect(centers.dy).toBeLessThan(2);
+  expect(centers.width).toBe(44);
 });
 
 test("음량은 Settings에서 정한 값으로 시작한다", async ({ page }) => {
