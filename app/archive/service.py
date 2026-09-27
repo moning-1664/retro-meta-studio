@@ -224,21 +224,23 @@ def edit(archive, rom_identity_id, fields, frontend_raw=None) -> dict:
     return {"revision": revision, "changed": created}
 
 
-def _language_matches(index, system, filename):
+def _language_matches(index, system, filename, frontend=None):
     """대상에서 이 파일명과 **같은 게임의 언어 변종**인 행들. 정확히 같은 이름이 있으면 그것만이다.
 
     `FF3.zip` <-> `FF3(KR).zip`처럼 인식된 언어 태그만 다른 경우를 잇는다. 양쪽이 서로 **다른** 태그를 달고
     있으면((KR) 대 (JP)) 다른 판일 수 있어 잇지 않는다. 여러 개면 전부다 - 사용자가 정한 대로 언어가 맞는
     대상 파일명마다 메타데이터를 쓴다.
     """
-    exact = index.get((system, filename))
-    if exact is not None:
-        return [exact]
+    equivalent = lambda candidate: normalize_system(frontend, candidate) == normalize_system(frontend, system)
+    exact = [row for (candidate_system, candidate_filename), row in index.items()
+             if equivalent(candidate_system) and candidate_filename == filename]
+    if exact:
+        return exact
     base = title_affix.language_base(filename)
     mine = set(title_affix.classify_regions(filename))
     found = []
     for (candidate_system, candidate_filename), row in index.items():
-        if candidate_system != system or title_affix.language_base(candidate_filename) != base:
+        if not equivalent(candidate_system) or title_affix.language_base(candidate_filename) != base:
             continue
         theirs = set(title_affix.classify_regions(candidate_filename))
         if mine and theirs and mine != theirs:
@@ -269,14 +271,21 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
         fields, frontend_raw = archive.resolve_fields(rom_identity_id)
 
         # 정확히 같은 이름이 먼저고, 없으면 언어 태그만 다른 대상 파일명들이다(없으면 새 항목).
-        targets = [cache.get_row(r["rom_uid"]) for r in _language_matches(index, system, filename)] or [None]
+        matches = _language_matches(index, system, filename, collection.frontend)
+        targets = [cache.get_row(r["rom_uid"]) for r in matches] or [None]
+        available = [entry.system for entry in collection.systems]
+        target_system = (system if system in available else next(
+            (entry for entry in available
+             if normalize_system(collection.frontend, entry) == normalize_system(collection.frontend, system)),
+            system))
         for row in targets:
             rom_uid = row["rom_uid"] if row is not None else None
             target_name = row["filename"] if row is not None else filename
+            destination_system = row["system"] if row is not None else target_system
 
             if row is not None:
                 # Metadata는 바이트가 움직이지 않으므로 바로 파일에 쓴다(D1).
-                layout = adapter.layout(collection, system)
+                layout = adapter.layout(collection, destination_system)
                 merged = {**(row["fields"] or {}), **fields}
                 # Archive의 frontend_raw는 그것을 올린 Collection의 것이라, 대상이 다른
                 # Frontend면 모양이 맞지 않아 되살릴 수 없다. 대상에 이미 있는 값이
@@ -318,7 +327,7 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
                 continue
 
             items.append({
-                "system": system, "filename": target_name,
+                "system": destination_system, "filename": target_name,
                 "rom": {"path": rom["abs_path"], "size": rom["size"]} if rom else None,
                 "media": media, "fields": fields, "frontend_raw": frontend_raw,
             })

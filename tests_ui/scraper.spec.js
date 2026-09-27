@@ -30,6 +30,7 @@ test("Settings에서 연결 상태와 일일 요청량을 확인한다", async (
   await expect(page.locator(".stg-scraper")).toContainText("오늘 12 / 100회");
   await expect(page.locator(".stg-scraper")).toContainText("동시 요청 1");
   await expect(page.locator(".stg-scraper")).toContainText("ROM 해시로 먼저 찾기");
+  await expect(page.locator(".stg-scraper .stg-switch input").first()).toBeChecked();
   await expect(page.locator(".stg-scraper .stg-subsection-title")).toHaveText("가져올 미디어");
   await expect(page.locator(".scrape-media-choice")).toHaveCount(12);
 });
@@ -44,11 +45,18 @@ test("연결 정보를 저장한 뒤에도 Settings의 Scraper 메뉴에 머문�
   await expect(page.locator(".stg-nav-item[data-section='scraper']")).toHaveClass(/active/);
 });
 
+test("Settings 바깥을 눌러도 창이 유지된다", async ({ page }) => {
+  await page.locator(".settings-btn").click();
+  await page.locator(".stg-overlay").click({ position: { x: 2, y: 2 } });
+  await expect(page.locator(".stg-panel")).toBeVisible();
+});
+
 test("단건 후보는 Detail 폭이며 카드를 눌러 선택한다", async ({ page }) => {
   await openForRows(page);
   await expect(page.locator(".scrape-quota")).toHaveText("오늘 12 / 100회");
-  await expect(page.locator(".scrape-title-count")).toHaveText("스크랩 (1/1)");
-  await expect(page.locator(".scrape-file-tag")).toHaveText("ROM 이름");
+  await expect(page.locator(".scrape-title-count")).toHaveText("스크랩 결과");
+  await expect(page.locator(".scrape-file-tag")).toHaveText("ROM");
+  await expect(page.locator(".scrape-results-head")).toContainText("후보 결과 : 1건 감지됨");
   const width = await page.locator(".scrape-context").evaluate((el) => Math.round(el.getBoundingClientRect().width));
   expect(width).toBe(297);
 });
@@ -65,9 +73,59 @@ test("∨를 누르면 필드 비교와 미디어 선택을 펼친다", async ({
 test("검색 키를 고쳐 다시 스크랩하면 후보 제목이 바뀐다", async ({ page }) => {
   await openForRows(page);
   await page.locator(".scrape-query").fill("수동 원작 제목");
-  await page.getByRole("button", { name: "스크랩 시작" }).click();
+  await page.getByRole("button", { name: "다시 스크랩" }).click();
   await expect(page.locator(".scrape-candidate-title").first()).toHaveText("수동 원작 제목");
   await expect(page.locator(".scrape-quota")).toHaveText("오늘 12 / 100회");
+});
+
+test("후보가 없으면 선택 적용이 비활성화된다", async ({ page }) => {
+  await page.evaluate(() => {
+    const original = window.api.jobProgress;
+    window.api.jobProgress = async (...args) => {
+      const result = await original(...args);
+      if (String(args[0]).startsWith("mock-scrape-item:") && result.data?.result?.item) {
+        result.data.result.item.candidates = [];
+        result.data.result.item.status = "not_found";
+      }
+      return result;
+    };
+  });
+  const row = page.locator(".lrow").first();
+  await row.click();
+  await row.click({ button: "right" });
+  await exactMenuItem(page, "메타데이터 스크랩…").click();
+  await expect(page.locator(".scrape-candidates")).toContainText("후보가 없습니다");
+  const apply = page.getByRole("button", { name: "선택 적용" });
+  await expect(apply).toBeDisabled();
+  await expect(apply).toHaveCSS("opacity", "0.4");
+});
+
+test("스크랩 진행률은 모달 안에 표시하고 다시 스크랩 버튼으로 중지한다", async ({ page }) => {
+  await page.evaluate(() => {
+    window.__scrapeStopCalls = 0;
+    const progress = window.api.jobProgress;
+    const cancel = window.api.cancelJob;
+    window.api.jobProgress = async (id) => String(id).startsWith("mock-scrape-item:")
+      ? { ok: true, data: window.__scrapeStopCalls
+        ? { current: 1, total: 3, label: "취소", done: true, error: "취소", cancelled: true }
+        : { current: 1, total: 3, label: "ROM 식별", done: false } }
+      : progress(id);
+    window.api.cancelJob = (...args) => {
+      window.__scrapeStopCalls += 1;
+      return cancel(...args);
+    };
+  });
+  const row = page.locator(".lrow").first();
+  await row.click();
+  await row.click({ button: "right" });
+  await exactMenuItem(page, "메타데이터 스크랩…").click();
+  await expect(page.locator(".scrape-progress .scrape-progress-line")).toBeVisible();
+  await expect(page.locator(".scrape-progress .job-progress-cancel")).toHaveCount(0);
+  await expect(page.locator(".scrape-progress-line")).toHaveAttribute("title", /ROM 식별/);
+  await expect(page.locator("#status-bar #job-progress .job-progress-item")).toHaveCount(0);
+  await page.getByRole("button", { name: "스크랩 중지" }).click();
+  await expect.poll(() => page.evaluate(() => window.__scrapeStopCalls)).toBeGreaterThan(0);
+  await expect(page.getByRole("button", { name: "다시 스크랩" })).toBeVisible();
 });
 
 test("시스템 전체를 고르고 Enter를 누르면 빈 시스템으로 검색한다", async ({ page }) => {
@@ -86,11 +144,19 @@ test("시스템 전체를 고르고 Enter를 누르면 빈 시스템으로 검�
   await expect.poll(() => page.evaluate(() => window.__scrapeArgs.at(-1)?.[3])).toBe("");
 });
 
+test("스크랩 시스템 목록에는 현재 Collection의 System과 새 플랫폼이 보인다", async ({ page }) => {
+  await openForRows(page);
+  const values = await page.locator(".scrape-system option").evaluateAll((options) =>
+    options.map((option) => option.value));
+  for (const system of ["psvita", "wii", "wiiu", "switch", "fbneo", "ps2"])
+    expect(values).toContain(system);
+});
+
 test("여러 게임은 후보 선택 후 다음 항목으로 진행하고 모두 검토한 뒤 적용한다", async ({ page }) => {
   await openForRows(page, 2);
-  await expect(page.locator(".scrape-title-count")).toHaveText("스크랩 (1/2)");
+  await expect(page.locator(".scrape-title-count")).toHaveText("스크랩 결과");
   await page.locator(".scrape-candidate-title").first().click();
-  await expect(page.locator(".scrape-title-count")).toHaveText("스크랩 (2/2)");
+  await expect(page.locator(".scrape-current-file")).toBeVisible();
   await expect(page.locator(".scrape-candidate").first()).toBeVisible();
   await page.locator(".scrape-candidate-title").first().click();
   const apply = page.getByRole("button", { name: "선택 적용" });
@@ -175,8 +241,10 @@ test("candidate card includes rating, developer, genre and release year", async 
   });
   await openForRows(page);
   const card = page.locator(".scrape-candidate").first();
-  await expect(card.locator(".scrape-candidate-year")).toHaveText("1999");
-  await expect(card.locator(".scrape-candidate-stars")).toHaveText("★★★★☆");
+  await expect(card.locator(".scrape-candidate-facts")).toContainText("1999");
+  await expect(card.locator(".scrape-candidate-facts")).toContainText("★★★★☆");
   await expect(card.locator(".scrape-candidate-facts")).toContainText("Nintendo");
   await expect(card.locator(".scrape-candidate-facts")).toContainText("Simulation");
+  await expect(card.locator(".scrape-fact-row")).toHaveCount(3);
+  await expect(card.locator(".scrape-expand svg")).toHaveCount(1);
 });

@@ -5,6 +5,7 @@ import logging
 import re
 import time
 import zlib
+import zipfile
 from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -23,6 +24,9 @@ from app.scrape.providers.base import ScrapeProvider
 
 API_BASE = "https://api.screenscraper.fr/api2"
 log = logging.getLogger(__name__)
+MAX_AUTO_HASH_BYTES = 64 * 1024 * 1024
+ARCADE_SYSTEMS = frozenset({"arcade", "mame", "mame2003", "mame2003plus",
+                           "mame2010", "fbneo", "fbern", "fba", "cps1", "cps2", "cps3"})
 
 
 class ScreenScraperError(RuntimeError):
@@ -60,6 +64,30 @@ def hashes_of_file(path: str, chunk_size: int = 1024 * 1024) -> dict:
             sha1.update(chunk)
     return {"size": size, "crc32": f"{crc & 0xffffffff:08X}",
             "md5": md5.hexdigest(), "sha1": sha1.hexdigest()}
+
+
+def lookup_hashes(path: str) -> dict:
+    """Hash a small raw ROM, or use a single ZIP member's stored CRC/size.
+
+    A multi-member arcade set has no one game CRC. Never hash its ZIP container
+    and present that as the ROM hash. Large files stay on the name fallback so
+    a network drive is not read in full just to open the candidate dialog.
+    """
+    source = Path(path)
+    if source.suffix.casefold() == ".zip":
+        with zipfile.ZipFile(source) as archive:
+            members = [entry for entry in archive.infolist() if not entry.is_dir()
+                       and not entry.filename.startswith("__MACOSX/")]
+            if len(members) != 1:
+                return {}
+            member = members[0]
+            # ScreenScraper's romtaille is the submitted archive file size;
+            # the member CRC is available from the ZIP directory without
+            # decompressing its payload.
+            return {"size": source.stat().st_size, "crc32": f"{member.CRC:08X}"}
+    if source.stat().st_size > MAX_AUTO_HASH_BYTES:
+        return {}
+    return hashes_of_file(path)
 
 
 def _list(value: Any) -> list:
@@ -117,12 +145,15 @@ MEDIA_TYPES = {
 # not silently turn a system-scoped search into an all-platform search.
 # IDs follow ScreenScraper's published system list (also used by EmulationStation).
 SYSTEM_IDS = {
-    "3do": 29, "amiga": 64, "arcade": 75, "fbneo": 75,
-    "cps1": 75, "cps2": 75, "cps3": 75, "mame": 75,
+    "3do": 29, "amiga": 64, "arcade": 75, "fbneo": 75, "fbern": 75,
+    "cps1": 75, "cps2": 75, "cps3": 75, "mame": 75, "fba": 75,
+    "mame2003": 75, "mame2003plus": 75, "mame2010": 75,
     "dos": 135, "dreamcast": 23, "gamegear": 21, "gb": 9,
     "gba": 12, "gbc": 10, "gc": 13, "megadrive": 1,
     "genesis": 1, "msx": 113, "msx1": 113, "msx2": 116,
     "msx2+": 117, "n64": 14, "naomi": 56, "nes": 3,
+    "nds": 15, "n3ds": 17, "3ds": 17, "wii": 16, "wiiu": 18,
+    "switch": 225, "psvita": 62, "vita": 62, "ps3": 59, "ps4": 60,
     "famicom": 3, "pcengine": 31, "ps2": 58, "psp": 61,
     "psx": 57, "ps1": 57, "saturn": 22, "sfc": 4,
     "snes": 4, "supergrafx": 105,
@@ -221,32 +252,55 @@ class ScreenScraperClient(ScrapeProvider):
         }
 
     def identify(self, identity: ScrapeIdentity) -> list[ScrapeCandidate]:
-        if not self.config.use_hashes:
-            return []
-        if not identity.path or not Path(identity.path).is_file():
-            return []
-        hashes = hashes_of_file(identity.path)
-        params = {"romnom": identity.filename, "romtaille": hashes["size"],
-                  "crc": hashes["crc32"], "md5": hashes["md5"], "sha1": hashes["sha1"]}
         alias = identity.lookup_alias or {}
-        for source, target in (("crc32", "crc"), ("md5", "md5"), ("sha1", "sha1"), ("size", "romtaille")):
-            if alias.get(source):
-                params[target] = alias[source]
+        arcade = str(identity.system).lower() in ARCADE_SYSTEMS
+        hashes = {}
+        if self.config.use_hashes and identity.path and Path(identity.path).is_file():
+            hash_started = time.perf_counter()
+            try:
+                hashes = lookup_hashes(identity.path)
+            except (OSError, zipfile.BadZipFile) as exc:
+                log.info("ScreenScraper ROM hash unavailable type=%s", type(exc).__name__)
+            log.info("ScreenScraper ROM lookup system=%s type=%s hashFields=%s seconds=%.3f",
+                     identity.system, Path(identity.path).suffix.lower(), sorted(hashes),
+                     time.perf_counter() - hash_started)
+        params = {"romnom": identity.filename, "romtype": "rom"}
+        for source, target in (("size", "romtaille"), ("crc32", "crc"),
+                               ("md5", "md5"), ("sha1", "sha1")):
+            value = alias.get(source) or hashes.get(source)
+            if value:
+                params[target] = value
+        if "romtaille" not in params and identity.size:
+            params["romtaille"] = identity.size
+        if (not arcade and not any(key in params for key in ("crc", "md5", "sha1"))
+                and (not identity.path or not Path(identity.path).is_file())):
+            return []
         system_id = _system_id(str(alias.get("systemId") or identity.system))
         if system_id:
             params["systemeid"] = system_id
-        try:
-            game = (self._get("jeuInfos.php", params).get("response") or {}).get("jeu")
-        except ScreenScraperError as exc:
-            # A normal unknown-ROM response is often a textual provider error.
-            # Authentication/quota/network failures must remain visible.
-            if exc.kind != "not_found":
-                raise
-            return []
+        game = None
+        names = [identity.filename]
+        if arcade and Path(identity.filename).stem != identity.filename:
+            names.append(Path(identity.filename).stem)
+        for rom_name in names:
+            try:
+                game = (self._get("jeuInfos.php", {**params, "romnom": rom_name})
+                        .get("response") or {}).get("jeu")
+            except ScreenScraperError as exc:
+                # Only an unknown ROM should try the next spelling. A network,
+                # quota or authentication error must remain visible.
+                if exc.kind != "not_found":
+                    raise
+            if game:
+                break
         if game and system_id and _game_system_id(game) not in (None, system_id):
             return []
-        return [self._candidate(game, evidence=("원본 별칭 해시 일치" if alias else "ROM 해시 일치",),
-                                confidence=100)] if game else []
+        evidence = ("원본 별칭으로 조회" if alias and any(k in params for k in ("crc", "md5", "sha1"))
+                    else "ROM 해시로 조회" if any(k in params for k in ("crc", "md5", "sha1"))
+                    else "Arcade ROM-set 파일명으로 조회")
+        # jeuInfos may also fall back to romnom on its side. Without a returned
+        # checksum we cannot claim that the response is a verified hash match.
+        return [self._candidate(game, evidence=(evidence,), confidence=90)] if game else []
 
     def search(self, query: str, system_hint: str = "") -> list[ScrapeCandidate]:
         query = str(query or "").strip()

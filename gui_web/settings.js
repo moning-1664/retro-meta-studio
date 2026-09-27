@@ -70,8 +70,7 @@
     });
     panel.appendChild(h("div", { class: "stg-foot" }, [confirmBtn]));
     overlay.appendChild(panel);
-    // 바깥(어두운 영역)을 누르면 닫는다 - 패널 안에서 끌다가 바깥에서 놓는 경우는 닫지 않는다.
-    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+    // 설정을 편집하다 바깥을 잘못 눌러도 창과 작업 내용을 유지한다.
     root.appendChild(overlay);
 
     function render() {

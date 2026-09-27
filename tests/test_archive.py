@@ -327,6 +327,29 @@ class ArchiveTests(unittest.TestCase):
         detail = self.api.archive_detail(matches[0]["romIdentityId"])["data"]
         self.assertEqual({s["collectionId"] for s in detail["sources"]}, {msx_id, msx1_id})
 
+    def test_archive_msx_import_updates_collection_msx1_entry(self):
+        from tests.fixtures import build_custom_esde_tree
+
+        entry = [{"filename": "ws90.zip", "title": "Old title"}]
+        source_root = build_custom_esde_tree(self.dir / "archive_msx_source", "msx", entry)
+        target_root = build_custom_esde_tree(self.dir / "archive_msx1_target", "msx1", entry)
+        source_id = self.api.create_collection("MSX", "es-de", str(source_root))["data"]["id"]
+        target_id = self.api.create_collection("MSX1", "es-de", str(target_root))["data"]["id"]
+        for cid in (source_id, target_id):
+            self.api.start_scan(cid)
+            wait_idle(self.api)
+        self.api.archive_ingest(source_id)
+        rid = next(row["romIdentityId"] for row in self.api.archive_rows()["data"]["rows"]
+                   if row["file"] == "ws90.zip")
+        self.api.archive_edit(rid, {"name": "World Soccer 90"})
+        imported = self.api.archive_to_collection(target_id, [rid])
+        self.assertTrue(imported["ok"], imported.get("error"))
+        self.assertEqual(imported["data"]["updated"], 1)
+        self.assertEqual(imported["data"]["planned"], 0)
+        row = next(row for row in self.api.list_rows(target_id)["data"]["rows"]
+                   if row["file"] == "ws90.zip")
+        self.assertEqual(row["title"], "World Soccer 90")
+
     def test_archive_gamelist_supports_search(self):
         self.api.archive_ingest(self.src)
         rows = self.api.archive_rows(search="metal")["data"]

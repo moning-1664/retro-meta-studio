@@ -22,6 +22,7 @@ import logging
 import sqlite3
 import shutil
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 import traceback
 import time
@@ -40,6 +41,7 @@ from app.model.collection import FRONTENDS, STORAGE_INTERNAL
 from app.model.constants import MEDIA_TYPES, VIDEO_MEDIA_TYPE, normalize_system
 from app import dashboard
 from app import media_cleanup
+from app import media_import
 from app import system_ops
 from app import storage_layout
 from app import title_affix
@@ -586,9 +588,9 @@ class Api:
             soft_name=str(public.get("softName") or "RetroMetaStudio"),
             user_id=str(public.get("userId") or ""),
             user_password=scrape_secrets.load(protected.get("userPassword") or ""),
-            # 큰 ROM을 매번 전부 읽는 해시 식별은 기본적으로 끈다. 사용자가 설정에서
-            # 명시적으로 켠 경우에만 CRC/MD5/SHA1을 계산한다.
-            use_hashes=bool(public.get("useHashes", False)),
+            # 작은 ROM과 단일 파일 ZIP은 해시를 우선한다. 대용량 파일과
+            # 다중 파일 ZIP은 provider에서 전체 읽기를 피한다.
+            use_hashes=bool(public.get("useHashes", True)),
             media_types=tuple(public["mediaTypes"]) if "mediaTypes" in public else None,
         ))
 
@@ -791,6 +793,7 @@ class Api:
                 "media": [{"type": media_type, "path": path, "size": Path(path).stat().st_size}
                           for media_type, path in downloaded],
                 "fields": row["fields"], "frontend_raw": row["frontend_raw"]}
+        stage_started = time.monotonic()
         plan = Plan(collection_id)
         result = builder.plan_add(plan, collection, provider, [item])
         log.info("Scraper media plan collection=%s romUid=%s added=%s skipped=%d conflicts=%s",
@@ -815,6 +818,8 @@ class Api:
             self.registry.release_lock(lock_name)
         if outcome.get("failed") or outcome.get("partial") or outcome.get("skipped"):
             raise ValueError("스크랩 미디어 적용이 완료되지 않았습니다. 로그를 확인하세요.")
+        log.info("Scraper collection media pipeline collection=%s romUid=%s seconds=%.3f",
+                 collection_id, rom_uid, time.monotonic() - stage_started)
         return outcome.get("systems") or []
 
     def _rebind_plan_rows(self, collection_id, systems):
@@ -875,27 +880,37 @@ class Api:
                     errors.append("미디어: Archive 내부 미디어 보관이 꺼져 있습니다.")
                 else:
                     downloaded = []
-                    for media_index, media in zip(item.get("selectedMedia") or [], proposal["media"]):
-                        try:
-                            source_path = self._download_scrape_media(
-                                media["url"], session_id, item["id"], media["media_type"],
-                                media.get("format"))
-                            if session["target"] == "archive":
-                                result = self.archive_media_paste(
-                                    item["id"], media["media_type"],
-                                    {"kind": "scraper", "path": source_path})
-                                if not result.get("ok"):
-                                    raise ValueError(result.get("error"))
-                                applied_media.append(media)
-                                log.info("Scraper archive media applied item=%s type=%s",
-                                         item["id"], media["media_type"])
-                            else:
-                                downloaded.append((media_index, media, source_path))
-                        except Exception as exc:
-                            failed_media_indexes.append(media_index)
-                            errors.append(f'{media.get("media_type") or "미디어"}: {exc}')
-                            log.warning("Scraper media failed item=%s type=%s error=%s: %s",
-                                        item["id"], media.get("media_type"), type(exc).__name__, exc)
+                    selected_media = list(zip(item.get("selectedMedia") or [], proposal["media"]))
+                    # Card previews load in WebView; Python has not downloaded
+                    # them yet. Fetch independent media concurrently, then
+                    # apply serially so Archive/Collection writes stay ordered.
+                    with ThreadPoolExecutor(max_workers=min(3, len(selected_media) or 1)) as pool:
+                        futures = [pool.submit(self._download_scrape_media, media["url"],
+                                               session_id, item["id"], media["media_type"],
+                                               media.get("format"))
+                                   for _media_index, media in selected_media]
+                        for number, ((media_index, media), future) in enumerate(
+                                zip(selected_media, futures), start=1):
+                            progress(index - 1, max(1, len(selected)),
+                                     f'{item["filename"]} · 미디어 {number}/{len(selected_media)}')
+                            try:
+                                source_path = future.result()
+                                if session["target"] == "archive":
+                                    result = self.archive_media_paste(
+                                        item["id"], media["media_type"],
+                                        {"kind": "scraper", "path": source_path})
+                                    if not result.get("ok"):
+                                        raise ValueError(result.get("error"))
+                                    applied_media.append(media)
+                                    log.info("Scraper archive media applied item=%s type=%s",
+                                             item["id"], media["media_type"])
+                                else:
+                                    downloaded.append((media_index, media, source_path))
+                            except Exception as exc:
+                                failed_media_indexes.append(media_index)
+                                errors.append(f'{media.get("media_type") or "미디어"}: {exc}')
+                                log.warning("Scraper media failed item=%s type=%s error=%s: %s",
+                                            item["id"], media.get("media_type"), type(exc).__name__, exc)
                     if downloaded:
                         try:
                             touched_systems.update(self._apply_scraped_collection_media(
@@ -2579,6 +2594,8 @@ class Api:
         _descriptor, source_items = clipboard.read_items(self.registry)
         if not source_items:
             return err("붙여넣을 항목이 없습니다.")
+        log.info("Archive paste requested mode=%s items=%d targetSystem=%s targetRow=%s newOnly=%s",
+                 mode, len(source_items), target_system, target_rom_identity_id, new_only)
         if target_rom_identity_id and len(source_items) != 1:
             return err("항목을 하나만 복사했을 때만 이 항목으로 붙여넣을 수 있습니다.")
         if target_rom_identity_id and target_system:
@@ -2713,6 +2730,8 @@ class Api:
         projection = self._project_archive(
             {"revisionRecordIds": record_ids}, changed_ids,
             overwrite_media=overwrite_media) if changed_ids else None
+        log.info("Archive paste completed pasted=%d romsCopied=%d skipped=%d conflicts=%d",
+                 pasted, copied_roms, len(skipped), len(conflicts))
         return ok({"pasted": pasted, "copiedRoms": copied_roms,
                    "policy": {"pasteMode": normalized_mode},
                    "downgradedFrom": downgraded_from,
@@ -3226,6 +3245,19 @@ class Api:
             {"revisionRecordIds": [edited["record_id"]]}, [rom_identity_id],
             overwrite_media={rom_identity_id: {media_type}})
         return ok({"romIdentityId": rom_identity_id, "mediaType": media_type, "projection": projection})
+
+    @guarded
+    def import_media_image(self, target, collection_id, item_id, media_key, encoded):
+        """Stage a validated local image, then reuse the normal media paste path."""
+        if str(target) not in ("archive", "collection"):
+            return err("미디어 대상이 올바르지 않습니다.")
+        if MEDIA_KEYS.get(media_key, str(media_key or "").lower()) == VIDEO_MEDIA_TYPE:
+            return err("영상 슬롯에는 이미지를 붙여넣을 수 없습니다.")
+        path = media_import.stage_image(str(encoded or ""), self._scrape_cache_dir / "manual")
+        source = {"kind": "scraper", "path": str(path)}
+        if str(target) == "archive":
+            return self.archive_media_paste(str(item_id), media_key, source)
+        return self.media_paste(str(collection_id), item_id, media_key, source)
 
     def _archive_edit_media_state(self, rom_identity_id):
         """Latest Archive edit media as a complete, per-type mutable snapshot."""

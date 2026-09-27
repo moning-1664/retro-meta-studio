@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import sys
 import tempfile
+import threading
 import unittest
 import zlib
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -17,6 +19,7 @@ from app.scrape.providers.screenscraper import (
     ScreenScraperConfig,
     ScreenScraperError,
     hashes_of_file,
+    lookup_hashes,
 )
 from app.store.registry import RegistryStore
 from app.plan import builder
@@ -93,6 +96,37 @@ class HashAndProviderTests(unittest.TestCase):
                          (expected["crc32"], expected["md5"], expected["sha1"]))
         self.assertEqual(result[0].media[0].media_type, "covers")
 
+    def test_arcade_romset_short_name_uses_filename_lookup_without_hashing_zip(self):
+        http = FakeHttp([FakeResponse({"response": {"jeu": {
+            "id": "90", "nom": "World Soccer '90", "systeme": {"id": "75"},
+        }}})])
+        config_without_hash = ScreenScraperConfig(
+            "developer", "secret", "RetroMetaStudio", "user", "password", use_hashes=False)
+        found = ScreenScraperClient(config_without_hash, http).identify(
+            ScrapeIdentity("fbneo", "ws90.zip", None))
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].evidence, ("Arcade ROM-set 파일명으로 조회",))
+        params = http.calls[0][1]["params"]
+        self.assertEqual((params["romnom"], params["systemeid"]), ("ws90.zip", "75"))
+        self.assertNotIn("sha1", params)
+
+    def test_arcade_romset_retries_stem_after_filename_not_found(self):
+        http = FakeHttp([FakeResponse(status=404), FakeResponse({"response": {"jeu": {
+            "id": "90", "nom": "World Soccer '90", "systeme": {"id": "75"},
+        }}})])
+        found = ScreenScraperClient(config(), http).identify(
+            ScrapeIdentity("fbern", "ws90.zip", None))
+        self.assertEqual(len(found), 1)
+        self.assertEqual([call[1]["params"]["romnom"] for call in http.calls],
+                         ["ws90.zip", "ws90"])
+        self.assertTrue(all(call[1]["params"]["systemeid"] == "75" for call in http.calls))
+
+    def test_missing_platform_ids_have_documented_mapping(self):
+        from app.scrape.providers.screenscraper import _system_id
+        self.assertEqual([_system_id(name) for name in
+                          ("psvita", "wii", "wiiu", "switch", "fbern")],
+                         ["62", "16", "18", "225", "75"])
+
     def test_identify_accepts_lookup_alias_but_keeps_observed_identity_separate(self):
         path = self.dir / "patched.rom"
         path.write_bytes(b"patched")
@@ -105,8 +139,50 @@ class HashAndProviderTests(unittest.TestCase):
         sent = http.calls[0][1]["params"]
         self.assertEqual((sent["crc"], sent["md5"], sent["sha1"], sent["romtaille"], sent["systemeid"]),
                          ("DEADBEEF", "alias-md5", "alias-sha1", 999, "58"))
-        self.assertEqual(found[0].evidence, ("원본 별칭 해시 일치",))
+        self.assertEqual(found[0].evidence, ("원본 별칭으로 조회",))
         self.assertEqual(hashes_of_file(path)["crc32"], f"{zlib.crc32(b'patched') & 0xffffffff:08X}")
+
+    def test_single_member_zip_uses_inner_crc_without_reading_payload(self):
+        path = self.dir / "Game (USA).zip"
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("Game.rom", b"rom-data")
+        with mock.patch("app.scrape.providers.screenscraper.hashes_of_file",
+                        side_effect=AssertionError("ZIP bytes must not be hashed")):
+            found = lookup_hashes(str(path))
+        self.assertEqual(found, {"size": path.stat().st_size,
+                                 "crc32": f"{zlib.crc32(b'rom-data') & 0xffffffff:08X}"})
+        http = FakeHttp([FakeResponse({"response": {"jeu": {"id": 1, "nom": "Game"}}})])
+        ScreenScraperClient(config(), http).identify(ScrapeIdentity("msx", path.name, str(path)))
+        params = http.calls[0][1]["params"]
+        self.assertEqual((params["crc"], params["romtaille"]),
+                         (found["crc32"], path.stat().st_size))
+        self.assertNotIn("md5", params)
+
+    def test_multi_member_arcade_zip_uses_romset_name_only(self):
+        path = self.dir / "ws90.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("one.bin", b"one")
+            archive.writestr("two.bin", b"two")
+        http = FakeHttp([FakeResponse({"response": {"jeu": {"id": 90, "nom": "World Soccer"}}})])
+        ScreenScraperClient(config(), http).identify(ScrapeIdentity("fbneo", path.name, str(path)))
+        params = http.calls[0][1]["params"]
+        self.assertEqual(params["romnom"], "ws90.zip")
+        self.assertNotIn("crc", params)
+        self.assertNotIn("md5", params)
+
+    def test_large_uncompressed_rom_is_not_read_for_hash_lookup(self):
+        path = self.dir / "large.iso"
+        with path.open("wb") as stream:
+            stream.truncate(65 * 1024 * 1024)
+        with mock.patch("app.scrape.providers.screenscraper.hashes_of_file",
+                        side_effect=AssertionError("large ROM must not be hashed")):
+            self.assertEqual(lookup_hashes(str(path)), {})
+
+    def test_query_removes_dump_tags_but_keeps_meaningful_parentheses(self):
+        self.assertEqual(ScrapeIdentity("sfc", "Legend_of_Zelda,_The (USA) (Rev 1) [!].zip")
+                         .default_query, "The Legend of Zelda")
+        self.assertEqual(ScrapeIdentity("sfc", "Game (Special Edition) (En,Fr,De).zip")
+                         .default_query, "Game (Special Edition)")
 
     def test_account_counters_tolerate_formatted_and_invalid_values(self):
         http = FakeHttp([FakeResponse({"response": {"ssuser": {
@@ -210,6 +286,23 @@ class HashAndProviderTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    def test_arcade_short_name_retries_existing_human_title(self):
+        class Provider:
+            searches = []
+            def identify(self, identity):
+                return []
+            def search(self, query, system_hint=""):
+                self.__class__.searches.append((query, system_hint))
+                return [candidate()] if query == "World Soccer 90" else []
+
+        service = ScrapeService(Provider)
+        item = service.item("1", "fbneo", "ws90.zip", {"name": "World Soccer 90"})
+        session = service.sessions.create("collection", "c1", [item])
+        result = service.search_item(session["id"], "1", None, None)
+        self.assertEqual(Provider.searches, [("ws90", "fbneo"), ("World Soccer 90", "fbneo")])
+        self.assertEqual(result["item"]["query"], "World Soccer 90")
+        self.assertEqual(result["item"]["status"], "review")
+
     def test_hash_miss_falls_back_to_name_without_waiting_for_quota(self):
         class Provider:
             statuses = 0
@@ -340,6 +433,24 @@ class ApplyBoundaryTests(unittest.TestCase):
         self.assertEqual(second, {"applied": ["1"], "partial": [], "failed": []})
         with self.assertRaises(KeyError):
             api.scrape.sessions.get(session["id"])
+
+    def test_selected_media_downloads_can_progress_concurrently(self):
+        api = self.make_api()
+        media = tuple(ScrapeMedia(kind, f"https://media.screenscraper.fr/{kind}.png")
+                      for kind in ("covers", "screenshots", "wheel"))
+        item = api.scrape.item("1", "ps2", "game.rom", {})
+        item["candidates"] = [candidate(media).to_dict()]
+        session = api.scrape.sessions.create("collection", "c1", [item])
+        api.scrape.select(session["id"], "1", "screenscraper:42", [], [0, 1, 2])
+        barrier = threading.Barrier(3)
+        def download(*_args):
+            barrier.wait(timeout=2)
+            return __file__
+        api._download_scrape_media = download
+        api._apply_scraped_collection_media = lambda *_args: []
+        result = api._apply_scrape_session(session["id"], lambda *_args: None)
+        self.assertEqual(result["applied"], ["1"])
+        self.assertEqual(result["failed"], [])
 
     def test_archive_without_internal_media_does_not_treat_remote_as_owned(self):
         api = self.make_api()

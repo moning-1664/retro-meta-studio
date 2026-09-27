@@ -293,6 +293,21 @@ test.describe("Archive System 우클릭", () => {
     await expect(menuItem(page, "복사한 0개를 여기로 복사")).toBeDisabled();
   });
 
+  test("Archive System을 보고 Ctrl+V하면 그 System을 대상으로 붙인다", async ({ page }) => {
+    await openArchive(page);
+    await page.evaluate(() => {
+      window.__archivePasteTarget = null;
+      window.api.archivePaste = (_mode, _row, system, newOnly) => {
+        window.__archivePasteTarget = { system, newOnly };
+        return Promise.resolve({ ok: true, data: { pasted: 1, skipped: [], conflicts: [] } });
+      };
+    });
+    await page.locator(".nav-system", { hasText: "PS2" }).click();
+    await page.keyboard.press("Control+v");
+    await expect.poll(() => page.evaluate(() => window.__archivePasteTarget))
+      .toEqual({ system: "ps2", newOnly: false });
+  });
+
   test("System 미디어 정리에서 종류를 골라 삭제한다", async ({ page }) => {
     await openArchive(page);
     await page.evaluate(() => {

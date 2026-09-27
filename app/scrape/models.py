@@ -18,12 +18,17 @@ class ScrapeIdentity:
     @property
     def default_query(self) -> str:
         name = Path(self.filename).stem
-        # Common dump/region/revision decorations are poor search terms. Keep
-        # this deliberately conservative: the editable search key is the real
-        # escape hatch for unusual names and translations.
+        # Strip recognized dump tags, but retain meaningful parenthesized
+        # subtitles (e.g. "Game (Special Edition)").
         import re
-        cleaned = re.sub(r"\s*[\[(](?:K|KR|KOR|J|JP|JPN|U|US|USA|E|EU|EUR|W|World|Rev[^\])]*|v\d[^\])]*)[\])]\s*",
-                         " ", name, flags=re.IGNORECASE)
+        tag = (r"(?:K|KR|KOR|J|JP|JPN|U|US|USA|E|EU|EUR|W|World|Japan|Korea|Europe|"
+               r"Rev(?:ision)?\s*[\w.-]+|v\d[\w.-]*|!|"
+               r"(?:En|Fr|De|Es|It|Ja|Ko)(?:\s*,\s*(?:En|Fr|De|Es|It|Ja|Ko))+)" )
+        cleaned = re.sub(rf"\s*[\[(]{tag}[\])]\s*", " ", name, flags=re.IGNORECASE)
+        cleaned = re.sub(r"[_]+", " ", cleaned)
+        trailing_article = re.fullmatch(r"(.+),\s*(The|A|An)", cleaned.strip(), re.IGNORECASE)
+        if trailing_article:
+            cleaned = f"{trailing_article.group(2)} {trailing_article.group(1)}"
         return re.sub(r"\s+", " ", cleaned).strip() or name
 
     def to_dict(self) -> dict:

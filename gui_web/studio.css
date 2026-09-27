@@ -1894,8 +1894,9 @@ button.sb-badge { cursor: pointer; }
 .scrape-context-card { width: 331px; max-width: calc(100vw - 24px); max-height: min(760px, calc(100vh - 28px)); overflow: hidden; }
 .scrape-context-card .modal-actions:empty { display: none; }
 .scrape-context { width: 297px; max-width: 100%; max-height: calc(100vh - 110px); padding: 0; overflow: hidden; display: flex; flex-direction: column; }
-.scrape-modal-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.scrape-context-card .modal-title { margin-bottom: 4px; }
+.scrape-modal-heading { display: flex; width: 100%; align-items: center; gap: 8px; }
+.scrape-modal-heading .scrape-quota { margin-left: auto; }
+.scrape-context-card .modal-title { display: block; width: 100%; margin-bottom: 4px; }
 .scrape-context-head { display: flex; gap: 6px; align-items: center;
   padding: 8px 8px 6px; border-bottom: 1px solid var(--border); }
 .scrape-file-tag { flex: none; padding: 2px 4px; border-radius: 3px; background: var(--card3);
@@ -1907,7 +1908,25 @@ button.sb-badge { cursor: pointer; }
   color: var(--warning); font-size: var(--fs-caption); white-space: nowrap; }
 .scrape-search-row { display: grid; grid-template-columns: minmax(0, 1fr) 110px; gap: 4px; padding: 7px 8px; }
 .scrape-search-row label { min-width: 0; display: grid; gap: 3px; color: var(--muted); font-size: var(--fs-caption); }
-.scrape-search-row .btn { grid-column: 1 / -1; justify-self: end; }
+.scrape-progress { flex: 0 0 auto; padding: 2px 8px 5px; }
+.scrape-progress:not(.show) { display: none; }
+.scrape-progress-line { display: flex; align-items: center; gap: 9px; height: 23px; cursor: help; }
+.scrape-progress-line .job-progress-bar { flex: 1; height: 6px; border-radius: var(--radius-pill); }
+.scrape-progress-line .job-progress-pct { width: 32px; flex: none; text-align: right;
+  color: var(--muted); font-size: var(--fs-caption); font-variant-numeric: tabular-nums; }
+.stg-progress:not(.show) { display: none; }
+.stg-progress .job-progress-item { display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "title pct" "bar bar" "label cancel"; gap: 4px 8px; height: auto;
+  padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card2); }
+.stg-progress .job-progress-title { grid-area: title; max-width: none; color: var(--text); }
+.stg-progress .job-progress-bar { grid-area: bar; width: 100%; }
+.stg-progress .job-progress-pct { grid-area: pct; text-align: right; }
+.stg-progress .job-progress-label { grid-area: label; }
+.stg-progress .job-progress-cancel { grid-area: cancel; }
+.scrape-results-head { display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 3px 8px; color: var(--muted); font-size: var(--fs-caption); }
+.scrape-results-head .btn { flex: none; }
 .scrape-query, .scrape-system { min-width: 0; height: 27px; }
 .scrape-candidates { min-height: 120px; max-height: min(520px, calc(100vh - 250px)); flex: 1 1 auto; overflow: auto; padding: 0 7px 7px; }
 .scrape-candidate { margin: 5px 0; border: 1px solid var(--border); border-radius: var(--radius-sm);
@@ -1926,12 +1945,20 @@ button.sb-badge { cursor: pointer; }
   white-space: nowrap; min-width: 0; flex: 1; }
 .scrape-candidate-year { color: var(--muted); font-size: var(--fs-caption); flex: 0 0 auto; }
 .scrape-candidate-desc { color: var(--text); font-size: var(--fs-caption); line-height: 1.35;
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden; }
 .scrape-candidate-bottom { margin-top: auto; display: flex; gap: 5px; align-items: center; min-width: 0; }
 .scrape-candidate-stars { flex: 0 0 auto; font-size: 10px; color: var(--text); }
-.scrape-candidate-facts { min-width: 0; overflow: hidden; font-size: 10px; color: var(--muted);
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.25; }
+.scrape-candidate-facts { min-width: 0; margin-top: auto; color: var(--muted);
+  font-size: var(--fs-caption); line-height: 1.25; overflow-wrap: anywhere; }
+.scrape-context .scrape-candidate-facts { min-width: 0; margin-top: auto; display: grid;
+  gap: 2px; font-size: 10px; line-height: 1.25; color: var(--muted); }
+.scrape-context .scrape-fact-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 5px; min-height: 13px; align-items: end; }
+.scrape-context .scrape-fact-row:last-child { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 18px; }
+.scrape-context .scrape-fact { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.scrape-context .scrape-expand { justify-self: end; margin: 0; }
 .scrape-candidate-meta { margin-top: 2px; color: var(--muted); font-size: var(--fs-caption);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scrape-badges { display: flex; gap: 3px; margin-top: 4px; overflow: hidden; }
@@ -1961,7 +1988,12 @@ button.sb-badge { cursor: pointer; }
 .scrape-candidate-pick-hint { margin-left: auto; color: var(--muted); font-size: 10px; }
 .scrape-actions { flex: 0 0 auto; display: flex; gap: 4px; padding: 7px 8px; border-top: 1px solid var(--border); }
 .scrape-action-spacer { flex: 1; }
-.scrape-actions .btn { flex: 0 0 62px; min-width: 0; padding-left: 5px; padding-right: 5px; white-space: nowrap; }
+.scrape-actions .btn { flex: 0 0 auto; min-width: 55px; padding: 5px 8px;
+  white-space: nowrap; justify-content: center; text-align: center; font-size: var(--fs-caption); }
+.scrape-context .btn { justify-content: center; }
+.scrape-context .btn:disabled { opacity: .4; cursor: not-allowed; }
+.scrape-context .btn.primary:disabled { background: var(--card3); color: var(--muted); border-color: var(--border); }
+.scrape-context .btn.primary:disabled:hover { background: var(--card3); }
 .scrape-setup-card { width: 420px; max-width: calc(100vw - 24px); }
 .scrape-setup { display: grid; gap: 8px; }
 .scrape-setup-row { display: grid; gap: 4px; }

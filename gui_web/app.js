@@ -749,6 +749,7 @@
 
       const status = h("div", { class: "stg-help archive-apply-status" }, [
         cfg.configured ? "" : "Archive 디렉토리를 정하면 사용할 수 있습니다."]);
+      const progressHost = h("div", { class: "stg-progress" });
       const apply = h("button", { class: "btn primary archive-apply" }, ["저장하고 적용"]);
       apply.addEventListener("click", async () => {
         if (!dirInput.value.trim()) { showToast("Archive 디렉토리를 정하세요.", "warning"); return; }
@@ -758,7 +759,7 @@
         if (!saved.ok) { showToast(saved.error, "error"); return; }
         const started = await api.startArchiveApply();
         if (!started.ok) { showToast(started.error, "error"); return; }
-        const done = await pollJob(started.data.jobId, "Archive 정리 중");
+        const done = await pollJob(started.data.jobId, "Archive 정리 중", progressHost);
         if (!done.ok) { if (!done.cancelled) showToast(done.error, "error"); return; }
         const d = done.data || {};
         const p = d.projection || {};
@@ -780,7 +781,7 @@
       rescan.addEventListener("click", async () => {
         const started = await api.startArchiveRefresh();
         if (!started.ok) { showToast(started.error, "error"); return; }
-        const done = await pollJob(started.data.jobId, "Archive 디렉터리 읽기");
+        const done = await pollJob(started.data.jobId, "Archive 디렉터리 읽기", progressHost);
         if (!done.ok) { if (!done.cancelled) showToast(done.error, "error"); return; }
         const scan = done.data?.timings || {};
         lastDiagnostics = `읽기 ${done.data?.scanSeconds ?? "?"}초 (메타 ${scan.metadataSeconds ?? "?"}, 미디어 ${scan.mediaSeconds ?? "?"}, ROM ${scan.romSeconds ?? "?"}, DB ${scan.databaseSeconds ?? "?"})`;
@@ -793,6 +794,7 @@
       wrap.appendChild(h("div", { class: "stg-help" },
         ["저장된 DB를 먼저 표시합니다. 파일 변경분은 필요할 때 다시 읽으세요."]));
       if (lastDiagnostics) status.textContent = lastDiagnostics;
+      wrap.appendChild(progressHost);
       wrap.appendChild(h("div", { class: "archive-config-actions" }, [status, rescan, apply]));
     };
     draw();
@@ -968,10 +970,20 @@
   const jobRows = new Set();
 
   /** 진행률 줄을 하나 만든다. 반환한 객체로 갱신하고 지운다. */
-  function showJobProgress(title, jobId) {
-    const bar = $("job-progress");
+  function showJobProgress(title, jobId, host = null) {
+    const bar = host || $("job-progress");
     bar.classList.add("show");
-    const row = { jobId, el: null, fill: null, pct: null, label: null };
+    const row = { jobId, host: bar, el: null, fill: null, pct: null, label: null };
+    if (bar.classList.contains("scrape-progress")) {
+      row.fill = h("div", { class: "job-progress-bar-fill", style: { width: "0%" } });
+      row.pct = h("span", { class: "job-progress-pct" }, ["0%"]);
+      row.el = h("div", { class: "scrape-progress-line", title }, [
+        h("div", { class: "job-progress-bar" }, [row.fill]), row.pct,
+      ]);
+      bar.appendChild(row.el);
+      jobRows.add(row);
+      return row;
+    }
     const titleNode = h("div", { class: "job-progress-title", title }, [title]);
     let cancel = null;
     if (jobId) {
@@ -998,7 +1010,9 @@
     // 문구가 이미 "n/m"으로 끝나면(복사 진행률이 그렇다) 개수를 또 붙이지 않는다 - 같은 숫자가 두 번,
     // 그것도 서로 다른 기준으로 나오면 (1/3)이 무엇의 개수인지 알 수 없다.
     const counted = /\d+\/\d+$/.test(String(label || ""));
-    row.label.textContent = !label ? `${current}/${total}` : counted ? label : `${label} (${current}/${total})`;
+    const detail = !label ? `${current}/${total}` : counted ? label : `${label} (${current}/${total})`;
+    if (row.label) row.label.textContent = detail;
+    row.el.title = detail;
     // 앞에서 막힌 job은 진행률이 아니라 기다리는 중이라는 것이 보이게 한다.
     row.el.classList.toggle("waiting", /^대기 중/.test(String(label || "")));
   }
@@ -1006,12 +1020,13 @@
   function hideJobProgress(row) {
     if (row && row.el) row.el.remove();
     jobRows.delete(row);
-    if (!jobRows.size) $("job-progress").classList.remove("show");
+    if (row?.host && ![...jobRows].some((entry) => entry.host === row.host))
+      row.host.classList.remove("show");
   }
 
-  function pollJob(jobId, title) {
+  function pollJob(jobId, title, host = null) {
     return new Promise((resolve) => {          // jobId는 단계가 넘어가며 바뀐다
-      const row = showJobProgress(title, jobId);
+      const row = showJobProgress(title, jobId, host);
       const tick = async () => {
         const r = await api.jobProgress(jobId);
         if (!r.ok) { hideJobProgress(row); resolve({ ok: false, error: r.error }); return; }
@@ -4141,6 +4156,10 @@
     if (token !== S.queryToken) return;   // 더 최신 요청이 있으면 버린다
     if (!r.ok) { showToast(r.error, "error"); return; }
     S.total = r.data.total;
+    // A rescan may assign new romUid values. Never retain old virtual pages
+    // alongside the new first page: they can open a different game's detail.
+    S.rowCache.clear();
+    S.loadedPages.clear();
     S.loadedPages.add(0);
     r.data.rows.forEach((row, i) => S.rowCache.set(i, row));
     const totalEl = $("filter-total");
@@ -5986,7 +6005,9 @@
     renderListWindow();
   }
 
+  let detailRequestToken = 0;
   async function openDetail(row) {
+    const requestToken = ++detailRequestToken;
     stopMediaVideo();
     S.focused = row.romUid;
     updateSelectionVisual();
@@ -6000,7 +6021,8 @@
     // 목록은 B를 강조하는데 패널은 A를 보여줬다. 더 나쁜 것은 S.detailState.romUid가
     // A로 남아, 사용자가 B를 고친다고 믿고 누른 저장이 A에 들어간 것이다.
     const collectionId = S.activeId;
-    const stale = () => S.focused !== row.romUid || S.activeId !== collectionId;
+    const stale = () => requestToken !== detailRequestToken
+      || S.focused !== row.romUid || S.activeId !== collectionId;
 
     if (isArchive()) {
       const r = await api.archiveDetail(row.romIdentityId);
@@ -6056,6 +6078,7 @@
           : "ScreenScraper 개발자 정보가 필요합니다.",
       ]));
       const status = h("div", { class: "stg-info" }, ["연결 상태를 확인하지 않았습니다."]);
+      const progressHost = h("div", { class: "stg-progress" });
       const configure = h("button", { class: "btn", onClick: () => openScraperSetup(
         () => openSettings("scraper")) }, ["연결 설정…"]);
       const test = h("button", { class: "btn primary", disabled: !(cfg.devIdSet && cfg.devPasswordSet),
@@ -6063,20 +6086,21 @@
           test.disabled = true;
           const started = await api.startScraperAccountStatus();
           if (!started.ok) { status.textContent = started.error; test.disabled = false; return; }
-          const checked = await pollJob(started.data.jobId, "ScreenScraper 연결 확인");
+          const checked = await pollJob(started.data.jobId, "ScreenScraper 연결 확인", progressHost);
           test.disabled = false;
           if (!checked.ok) { status.textContent = checked.error; return; }
           status.textContent = `${scrapeQuotaText(checked.data)} · 동시 요청 ${checked.data.maxThreads || "확인 불가"}`;
         } }, ["연결 테스트"]);
       wrap.appendChild(h("div", { class: "stg-inline-actions" }, [configure, test]));
+      wrap.appendChild(progressHost);
       wrap.appendChild(status);
       const hash = h("input", { type: "checkbox" });
-      hash.checked = !!cfg.useHashes;
+      hash.checked = cfg.useHashes !== false;
       hash.addEventListener("change", () => api.saveScraperSettings({ useHashes: hash.checked }));
       wrap.appendChild(h("div", { class: "stg-row" }, [
         h("div", { class: "stg-label" }, [
           h("div", { class: "stg-name" }, ["ROM 해시로 먼저 찾기"]),
-          h("div", { class: "stg-help" }, ["큰 ROM은 해시 계산에 시간이 걸릴 수 있습니다."]),
+          h("div", { class: "stg-help" }, ["작은 ROM과 단일 파일 ZIP에 우선 적용합니다. 대용량 ROM은 파일명으로 검색합니다."]),
         ]),
         h("label", { class: "stg-switch" }, [hash, h("span", { class: "stg-slider" })]),
       ]));
@@ -6146,8 +6170,7 @@
     if (!quota) return "사용량 확인 중";
     const used = Number(quota.requestsToday || 0);
     const limit = Number(quota.requestsLimit || 0);
-    const prefix = quota.estimated ? "오늘 약 " : "오늘 ";
-    return limit ? `${prefix}${formatCount(used)} / ${formatCount(limit)}회` : `${prefix}${formatCount(used)}회`;
+    return limit ? `오늘 ${formatCount(used)} / ${formatCount(limit)}회` : `오늘 ${formatCount(used)}회`;
   }
 
   async function openScrapeContext(itemIds) {
@@ -6161,6 +6184,14 @@
     }
     const systemsResult = await api.scraperSystems();
     const scraperSystems = systemsResult.ok ? systemsResult.data : [];
+    const currentSystems = isArchive()
+      ? (activeDetail()?.archiveSystems || []).map((entry) => entry.system)
+      : (activeDetail()?.systems || []).map((entry) => entry.system);
+    const systemChoices = [...new Map([
+      ...scraperSystems.map((entry) => [entry.name, entry]),
+      ...currentSystems.map((name) => [name, scraperSystems.find((entry) => entry.name === name)
+        || { name, id: null }]),
+    ]).values()].sort((a, b) => a.name.localeCompare(b.name));
     const target = isArchive() ? "archive" : "collection";
     const created = await api.createScrapeSession(target, isArchive() ? null : S.activeId, ids);
     if (!created.ok) { showToast(created.error, "error"); return; }
@@ -6168,6 +6199,7 @@
     let index = 0;
     let searching = false;
     let currentJobId = null;
+    let stopRequested = false;
     let quota = session.quota;
     let closed = false;
 
@@ -6189,13 +6221,16 @@
     async function searchCurrent(query, systemHint) {
       if (searching || closed) return;
       searching = true;
+      stopRequested = false;
       draw();
       const item = session.items[index];
       const started = await api.startScrapeItem(session.id, item.id, query || item.query,
                                                 systemHint);
       if (!started.ok) { searching = false; showToast(started.error, "error"); draw(); return; }
       currentJobId = started.data.jobId;
-      const result = await pollJob(started.data.jobId, `${index + 1}/${session.items.length} ${item.filename}`);
+      if (stopRequested) await api.cancelJob(currentJobId);
+      const result = await pollJob(started.data.jobId,
+        `${index + 1}/${session.items.length} ${item.filename}`, body.querySelector(".scrape-progress"));
       currentJobId = null;
       searching = false;
       if (closed) return;
@@ -6205,7 +6240,7 @@
       } else {
         Object.assign(item, result.data.item || {});
         delete item.error;
-        if (!quota?.requestsLimit) quota = result.data.quota || quota;
+        quota = result.data.quota || quota;
       }
       draw();
     }
@@ -6246,7 +6281,7 @@
           ? h("img", { class: "scrape-thumb", src: cover.url, alt: candidate.title, referrerpolicy: "no-referrer" })
           : h("div", { class: "scrape-thumb empty" }, [icon("image", IC.md)]);
         const toggle = h("button", { class: "icon-btn scrape-expand", title: expanded ? "접기" : "자세히" },
-          [expanded ? "∧" : "∨"]);
+          [icon(expanded ? "chevronUp" : "chevronDown", IC.sm)]);
         toggle.addEventListener("click", () => { expanded = !expanded; redraw(); });
         const year = String(candidate.fields?.releasedate || "").match(/\d{4}/)?.[0] || "";
         const rating = Number(candidate.fields?.rating);
@@ -6254,8 +6289,9 @@
           ? "★★★★★".slice(0, Math.max(0, Math.min(5, Math.round(rating / 4))))
             + "☆☆☆☆☆".slice(0, 5 - Math.max(0, Math.min(5, Math.round(rating / 4)))) : "";
         const description = String(candidate.fields?.desc || "").replace(/\s+/g, " ").trim();
-        const developer = String(candidate.fields?.developer || "").trim();
-        const genre = String(candidate.fields?.genre || "").trim();
+        const fact = (label, value) => h("span", { class: "scrape-fact", title: `${label}: ${value || "없음"}` },
+          [String(value || "")]);
+        const region = candidate.fields?.region || candidate.media?.find((m) => m.region)?.region;
         wrap.appendChild(h("div", { class: "scrape-candidate-head" }, [thumb,
           h("div", { class: "scrape-candidate-main" }, [
             h("div", { class: "scrape-candidate-top" }, [
@@ -6265,13 +6301,13 @@
                 [candidate.title || "제목 없음"]),
             ]),
             h("div", { class: "scrape-candidate-desc", title: description }, [description || "설명 없음"]),
-            h("div", { class: "scrape-candidate-facts", title: [developer, genre].filter(Boolean).join(" · ") },
-              [[developer, genre].filter(Boolean).join(" · ") || "제작사 · 장르 정보 없음"]),
-            h("div", { class: "scrape-candidate-bottom" }, [
-              h("span", { class: "scrape-candidate-year", title: candidate.fields?.releasedate || "" }, [year]),
-              h("span", { class: "scrape-candidate-stars", title: rating > 0 ? `평점 ${rating}/20` : "평점 없음" },
-                [stars]),
-              toggle,
+            h("div", { class: "scrape-candidate-facts" }, [
+              h("div", { class: "scrape-fact-row" }, [fact("개발", candidate.fields?.developer),
+                fact("배급", candidate.fields?.publisher)]),
+              h("div", { class: "scrape-fact-row" }, [fact("장르", candidate.fields?.genre),
+                fact("지역", region)]),
+              h("div", { class: "scrape-fact-row" }, [fact("연도", year),
+                fact("평점", stars), toggle]),
             ]),
           ])]));
         if (!expanded) return;
@@ -6322,13 +6358,15 @@
     }
 
     function allReviewed() {
-      return session.items.every((item) => ["selected", "skipped", "applied"].includes(item.status));
+      return session.items.some((item) => item.status === "selected")
+        && session.items.every((item) => ["selected", "skipped", "applied"].includes(item.status));
     }
 
     async function finish() {
       const started = await api.startApplyScrapeSession(session.id);
       if (!started.ok) { showToast(started.error, "error"); return; }
-      const applied = await pollJob(started.data.jobId, "스크랩 결과 적용");
+      const applied = await pollJob(started.data.jobId, "스크랩 결과 적용",
+        body.querySelector(".scrape-progress"));
       if (!applied.ok) { if (!applied.cancelled) showToast(applied.error, "error"); return; }
       const failedCount = (applied.data.failed || []).length;
       const partialCount = (applied.data.partial || []).length;
@@ -6356,31 +6394,50 @@
       closeModal();
       showToast(`${formatCount(applied.data.applied.length)}개 게임에 스크랩 결과를 적용했습니다.`);
       await reloadList();
-      if (S.detailState) {
-        const row = rowByUid(S.detailState.romUid);
-        if (row) await openDetail(row);
+      // Collection media Apply may rescan and assign new romUid values. Find
+      // the reviewed game by System and filename, never by its old numeric ID.
+      const reviewed = session.items[index];
+      let row = [...S.rowCache.values()].find((entry) => entry
+        && entry.system === reviewed.system && entry.file === reviewed.filename);
+      if (!row) {
+        const found = await fetchRows({ ...currentQuery(), search: reviewed.filename,
+          systems: [reviewed.system], limit: PAGE_SIZE, offset: 0 });
+        if (found.ok) row = (found.data.rows || []).find((entry) =>
+          entry.system === reviewed.system && entry.file === reviewed.filename);
+      }
+      S.detailState = null;
+      if (row) {
+        S.selected = new Set([row.romUid]);
+        S.selectAnchor = row.romUid;
+        await openDetail(row);
+      } else {
+        S.focused = null;
+        renderDetailPanel();
+        updateSelectionVisual();
       }
     }
 
     function draw() {
       clear(body);
       const item = session.items[index];
-      titleCount.textContent = `스크랩 (${index + 1}/${session.items.length})`;
+      titleCount.textContent = "스크랩 결과";
       const head = h("div", { class: "scrape-context-head" }, [
-        h("span", { class: "scrape-file-tag" }, ["ROM 이름"]),
+        h("span", { class: "scrape-file-tag" }, ["ROM"]),
         h("span", { class: "scrape-current-file", title: item.filename }, [item.filename]),
         h("button", { class: "icon-btn scrape-file-copy", title: "ROM 이름 복사",
           onClick: () => copyTextToClipboard(item.filename, "ROM 이름을 복사했습니다.") },
         [icon("copy", IC.sm)]),
       ]);
       quotaBadge.textContent = scrapeQuotaText(quota);
+      quotaBadge.title = quota?.estimated ? "ScreenScraper 사용량 추정치 · 확인 후 갱신됩니다" : "ScreenScraper 일일 요청 사용량";
       const query = h("input", { class: "field-input scrape-query", value: item.query || "",
                                   placeholder: "검색할 게임명" });
       const system = h("select", { class: "field-input scrape-system" }, [
         h("option", { value: "" }, ["전체 시스템"]),
-        ...scraperSystems.map((entry) => h("option", { value: entry.name }, [entry.name.toUpperCase()])),
+        ...systemChoices.map((entry) => h("option", { value: entry.name,
+          disabled: !entry.id }, [entry.name.toUpperCase() + (entry.id ? "" : " · ID 미확인")])),
       ]);
-      const defaultSystem = scraperSystems.some((entry) => entry.name === item.system)
+      const defaultSystem = systemChoices.some((entry) => entry.name === item.system && entry.id)
         ? item.system : "";
       const chosenSystem = item.systemHint === undefined ? defaultSystem : item.systemHint;
       system.value = chosenSystem || "";
@@ -6389,12 +6446,22 @@
       const retrySearch = () => searchCurrent(query.value.trim(), system.value);
       query.addEventListener("keydown", (event) => { if (event.key === "Enter") retrySearch(); });
       system.addEventListener("keydown", (event) => { if (event.key === "Enter") retrySearch(); });
-      const retry = h("button", { class: "btn compact", disabled: searching,
-        onClick: retrySearch }, ["스크랩 시작"]);
+      const retry = h("button", { class: "btn compact", onClick: () => {
+        if (searching) {
+          stopRequested = true;
+          retry.disabled = true;
+          retry.textContent = "중지 중…";
+          if (currentJobId) api.cancelJob(currentJobId);
+        } else retrySearch();
+      } }, [searching ? "스크랩 중지" : "다시 스크랩"]);
       body.appendChild(head);
       body.appendChild(h("div", { class: "scrape-search-row" }, [
         h("label", {}, [h("span", {}, ["검색명"]), query]),
-        h("label", {}, [h("span", {}, ["시스템"]), system]), retry]));
+        h("label", {}, [h("span", {}, ["시스템"]), system])]));
+      body.appendChild(h("div", { class: "scrape-progress" }));
+      body.appendChild(h("div", { class: "scrape-results-head" }, [
+        h("span", {}, [`후보 결과 : ${(item.candidates || []).length}건 감지됨`]), retry,
+      ]));
       if (item.applyError) body.appendChild(h("div", { class: "modal-text error", role: "alert" },
         [`적용 실패: ${item.applyError}`]));
       const candidates = h("div", { class: "scrape-candidates" });
@@ -6424,7 +6491,7 @@
     function maybeSearch() {
       const item = session.items[index];
       if (item.status === "pending") searchCurrent(item.query,
-        scraperSystems.some((entry) => entry.name === item.system) ? item.system : "");
+        systemChoices.some((entry) => entry.name === item.system && entry.id) ? item.system : "");
     }
     draw();
     maybeSearch();
@@ -6438,8 +6505,7 @@
         if (!result.data.done) { setTimeout(poll, 250); return; }
         if (!result.data.error) {
           quota = result.data.result;
-          const badge = body.querySelector(".scrape-quota");
-          if (badge) badge.textContent = scrapeQuotaText(quota);
+          quotaBadge.textContent = scrapeQuotaText(quota);
         }
       };
       poll();
@@ -6886,6 +6952,48 @@
   //: 화면에 보여줄 media 전부. 다른 코드가 "어떤 슬롯이 있는지" 물을 때 쓴다.
   const MEDIA_SLOTS = [MEDIA_HERO, ...MEDIA_HERO_SIDE, MEDIA_WIDE,
                        ...MEDIA_REST, ...MEDIA_FLAGS];
+  let externalMediaSlot = MEDIA_HERO;
+
+  async function importExternalMedia(slot, file) {
+    const state = S.detailState;
+    if (!state || state.compare || state.tab !== "media") return;
+    if (!file || (!file.type?.startsWith("image/")
+                  && !/\.(png|jpe?g|webp|gif)$/i.test(file.name || ""))) {
+      showToast("이미지 파일만 미디어 슬롯에 놓을 수 있습니다.", "warning"); return;
+    }
+    if (file.size > 24 * 1024 * 1024) {
+      showToast("이미지는 24MB 이하만 가져올 수 있습니다.", "error"); return;
+    }
+    if (slot.key === "Videos") {
+      showToast("영상 슬롯에는 이미지를 놓을 수 없습니다.", "warning"); return;
+    }
+    try {
+      const encoded = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || "").split(",", 2)[1] || "");
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const itemId = state.archive ? state.romIdentityId : state.romUid;
+      const result = await api.importMediaImage(state.archive ? "archive" : "collection",
+        state.archive ? null : S.activeId, itemId, slot.key, encoded);
+      if (!result.ok) { showToast(result.error, "error"); return; }
+      if (state.archive) {
+        const detail = await api.archiveDetail(itemId);
+        if (detail.ok && S.detailState === state) {
+          S.detailState = archiveDetailState(detail.data, "media");
+          renderDetailPanel();
+        }
+        await refreshArchiveRows([itemId]);
+        showToast(`${slot.label} 이미지를 적용했습니다.`);
+      } else {
+        await refreshPlan();
+        showToast(`${slot.label} 이미지를 Plan에 올렸습니다. Apply를 누르면 반영됩니다.`);
+      }
+    } catch (error) {
+      showToast(`이미지를 읽지 못했습니다: ${error}`, "error");
+    }
+  }
 
   function mediaTile(slot, media, extraClass) {
     const has = !!media[slot.key];
@@ -6893,6 +7001,20 @@
     const zone = h("div", {
       class: ["media-tile", extraClass, has ? "" : "empty"].filter(Boolean).join(" "),
       title: slot.label + (has ? "" : " 없음"),
+      tabindex: "0",
+    });
+    zone.addEventListener("pointerenter", () => { externalMediaSlot = slot; });
+    zone.addEventListener("focus", () => { externalMediaSlot = slot; });
+    zone.addEventListener("dragover", (event) => {
+      if (![...(event.dataTransfer?.types || [])].includes("Files")) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    });
+    zone.addEventListener("drop", (event) => {
+      event.preventDefault();
+      const file = [...(event.dataTransfer?.files || [])].find((entry) =>
+        entry.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(entry.name));
+      if (file) importExternalMedia(slot, file);
     });
     // 라벨은 그림 위에 겹쳐 놓는다 - 레이아웃 공간을 먹지 않아야 그림이 커진다.
     zone.appendChild(h("div", { class: "media-tile-label" }, [slot.label]));
@@ -7555,8 +7677,11 @@
   async function pasteClipboard(targetRow, targetSystem = null, targetPreview = null) {
     if (blockedInCompare("붙여넣기")) return;
     if (isArchive()) {
+      const scope = activeScope();
+      const destinationSystem = targetSystem || (!targetRow && scope.kind === "system" ? scope.id : null);
       const r = await api.archivePaste(currentPasteMode(),
-        targetRow?.romIdentityId || targetRow?.romUid || null, targetSystem, !!targetSystem);
+        targetRow?.romIdentityId || targetRow?.romUid || null,
+        destinationSystem, !!targetSystem);
       if (!r.ok) { showToast(r.error, "error"); return; }
       const d = r.data || {};
       await reloadList();
@@ -7572,7 +7697,7 @@
       showToast(`Archive에 ${formatCount(d.pasted || 0)}개를 붙여넣었습니다.`
         + ((d.copiedRoms || 0) ? ` ROM ${formatCount(d.copiedRoms)}개를 보관 폴더로 복사했습니다.` : "")
         + ((d.conflicts || []).length ? ` 기존 ROM ${formatCount(d.conflicts.length)}개는 덮어쓰지 않았습니다.` : "")
-        + ((d.skipped || []).length ? ` 건너뜀 ${formatCount(d.skipped.length)}개.` : "")
+        + ((d.skipped || []).length ? ` 건너뜀 ${formatCount(d.skipped.length)}개: ${d.skipped[0].reason || "사유 없음"}.` : "")
         + downgrade,
       (d.conflicts || []).length || (d.skipped || []).length || downgrade ? "warning" : "success");
       return;
@@ -8463,6 +8588,18 @@
 
   function bindEvents() {
     bindResizeGrip();
+    document.addEventListener("paste", (event) => {
+      if (!S.detailState || S.detailState.compare || S.detailState.tab !== "media"
+          || $("modal-root").firstChild) return;
+      const tag = (event.target && event.target.tagName) || "";
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(tag)) return;
+      const image = [...(event.clipboardData?.items || [])]
+        .find((item) => item.kind === "file" && item.type.startsWith("image/"));
+      if (!image) return;
+      event.preventDefault();
+      document.__rmsImagePasteHandled = true;
+      importExternalMedia(externalMediaSlot, image.getAsFile());
+    });
     const scroll = $("list-scroll");
     let ticking = false;
     scroll.addEventListener("scroll", () => {
@@ -8524,7 +8661,17 @@
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && !hasTextSelection()) {
         e.preventDefault(); copySelectedRows();
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") { e.preventDefault(); pasteClipboard(); }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
+        if (S.detailState?.tab === "media" && !$("modal-root").firstChild) {
+          // Let the paste event inspect native image clipboard data first.
+          // Text and game items keep the ordinary clipboard path.
+          document.__rmsImagePasteHandled = false;
+          setTimeout(() => { if (!document.__rmsImagePasteHandled) pasteClipboard();
+            document.__rmsImagePasteHandled = false; }, 0);
+          return;
+        }
+        e.preventDefault(); pasteClipboard();
+      }
     });
   }
 

@@ -362,6 +362,7 @@
     archive_media_cleanup_preview: (system) => ok({ system, types: [] }),
     archive_media_delete_selected: () => ok({ removed: 0, linkedKept: 0, failures: [] }),
     media_paste: () => ok({ added: 1, skipped: [], conflicts: 0 }),
+    import_media_image: () => ok({ added: 1, skipped: [], conflicts: 0 }),
     archive_versions: () => ok({ romIdentityId: "", versions: [] }),
     archive_choose_version: () => ok({}),
     archive_systems: () => ok([]),
@@ -885,6 +886,9 @@
     scraper_systems: () => ok([
       { name: "ps2", id: 58 }, { name: "sfc", id: 4 }, { name: "msx", id: 113 },
       { name: "msx2", id: 116 }, { name: "nes", id: 3 }, { name: "gb", id: 9 },
+      { name: "psvita", id: 62 }, { name: "wii", id: 16 },
+      { name: "wiiu", id: 18 }, { name: "switch", id: 225 },
+      { name: "fbneo", id: 75 },
     ]),
     save_scraper_settings: (patch) => ok({ enabled: true, softName: patch.softName || "RetroMetaStudio",
       userId: patch.userId || "", devIdSet: true, devPasswordSet: true,
@@ -1107,6 +1111,8 @@
     archiveMediaDeleteSystem: (system, mediaTypes) =>
       call("archive_media_delete_system", system, mediaTypes || null),
     mediaPaste: (id, romUid, key, source) => call("media_paste", id, romUid, key, source),
+    importMediaImage: (target, collectionId, itemId, key, encoded) =>
+      call("import_media_image", target, collectionId, itemId, key, encoded),
     archiveConfig: () => call("archive_config"),
     saveArchiveConfig: (patch) => call("save_archive_config", patch),
     startArchiveApply: () => call("start_archive_apply"),

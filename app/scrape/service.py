@@ -3,7 +3,13 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+import re
+import logging
 from pathlib import Path
+
+from app.scrape.providers.screenscraper import ARCADE_SYSTEMS
+
+log = logging.getLogger(__name__)
 
 from app.scrape.models import ScrapeIdentity
 
@@ -73,8 +79,9 @@ class ScrapeService:
         identity = ScrapeIdentity(selected_system, item["filename"],
                                   item.get("path"), item.get("size"))
         candidates = provider.identify(identity)
-        if (identity.path and Path(identity.path).is_file()
-                and getattr(getattr(provider, "config", None), "use_hashes", True)):
+        if (selected_system.lower() in ARCADE_SYSTEMS
+                or (identity.path and Path(identity.path).is_file()
+                    and getattr(getattr(provider, "config", None), "use_hashes", True))):
             request_count += 1
         actual_query = str(query or item["query"]).strip()
         if not candidates:
@@ -82,7 +89,23 @@ class ScrapeService:
                 progress(2, 3, f'"{actual_query}" 검색')
             candidates = provider.search(actual_query, selected_system)
             request_count += 1
+        if (not candidates and selected_system.lower() in ARCADE_SYSTEMS
+                and actual_query == item["query"]):
+            known_title = str((item.get("fields") or {}).get("name") or "").strip()
+            # A pre-existing human title can rescue an unknown short ROM-set
+            # code; localized Hangul titles are poor ScreenScraper search keys.
+            if (len(known_title) > 3 and re.search(r"[A-Za-z]", known_title)
+                    and known_title.casefold() != actual_query.casefold()):
+                if progress:
+                    progress(2, 3, f'기존 제목 "{known_title}" 검색')
+                candidates = provider.search(known_title, selected_system)
+                request_count += 1
+                if candidates:
+                    actual_query = known_title
         candidates = sorted(candidates, key=lambda c: (-c.confidence, c.title.lower()))
+        if not candidates:
+            log.info("Scraper unmatched system=%s filename=%s query=%s",
+                     selected_system or "all", item["filename"], actual_query)
         item.update({"query": actual_query, "status": "review" if candidates else "not_found",
                      "candidates": [candidate.to_dict() for candidate in candidates],
                      "selectedCandidateId": None, "selectedFields": [], "selectedMedia": []})
