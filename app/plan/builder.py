@@ -21,7 +21,7 @@ from adapters import get_adapter
 from app.model.collection import STORAGE_INTERNAL
 from app.model.plan import (
     DELETE_PARTS, OP_ADD, OP_DELETE, OP_METADATA_EDIT, OP_STORAGE_CHANGE, OP_TITLE_EDIT,
-    RESOLVE_OVERWRITE, RESOLVE_SKIP, STATUS_CONFLICT, STATUS_PENDING, PlanEntry,
+    RESOLVE_CUSTOM, RESOLVE_OVERWRITE, RESOLVE_SKIP, STATUS_CONFLICT, STATUS_PENDING, PlanEntry,
 )
 
 
@@ -180,7 +180,10 @@ def plan_add(plan, collection, provider, items):
             if taken is None:
                 continue  # 원본이 없는 media만 조용히 빠진다(D3)
             media_items.append({**media, "snapshot": taken})
-            size = int(media.get("size") or 0)
+            # The path may be an Archive projection copy. Use the bytes we
+            # actually snapshotted, not an older source-revision size.
+            size = int(taken["size"])
+            media_items[-1]["size"] = size
             estimated += size
             pairs = adapter.media_pairs(layout, filename, [_MediaRef(media)],
                                         title=(item.get("fields") or {}).get("name"))
@@ -219,7 +222,17 @@ def resolve_conflict(plan, collection, provider, key, resolution):
     entry = plan.get(key)
     if entry is None:
         raise PlanBuildError("Plan 항목을 찾을 수 없습니다.")
-    if resolution not in (RESOLVE_SKIP, RESOLVE_OVERWRITE):
+    choices = {}
+    if isinstance(resolution, dict):
+        if len(resolution) != len(entry.conflicts):
+            raise PlanBuildError("충돌 파일마다 사용할 쪽을 선택하세요.")
+        for index, conflict in enumerate(entry.conflicts):
+            choice = resolution.get(str(index))
+            if choice not in (RESOLVE_SKIP, RESOLVE_OVERWRITE):
+                raise PlanBuildError("충돌 파일마다 사용할 쪽을 선택하세요.")
+            choices[str(conflict["dest"])] = choice
+        resolution = RESOLVE_CUSTOM
+    elif resolution not in (RESOLVE_SKIP, RESOLVE_OVERWRITE):
         raise PlanBuildError(f"알 수 없는 처리 방식입니다: {resolution}")
 
     adapter = get_adapter(collection.frontend)
@@ -229,23 +242,31 @@ def resolve_conflict(plan, collection, provider, key, resolution):
                      if layout.media_dir else rom_storage)
 
     delta = dict(entry.physical_delta)
-    if resolution == RESOLVE_OVERWRITE:
-        for conflict in entry.conflicts:
-            storage = rom_storage if conflict["kind"] == "rom" else media_storage
-            _bump(delta, storage, int(conflict["sourceSize"]) - int(conflict["destSize"]))
+    old_approved = approved_targets(entry)
+    for conflict in entry.conflicts:
+        dest = str(conflict["dest"])
+        storage = rom_storage if conflict["kind"] == "rom" else media_storage
+        difference = int(conflict["sourceSize"]) - int(conflict["destSize"])
+        if dest in old_approved:
+            _bump(delta, storage, -difference)
+        approved = (choices.get(dest) == RESOLVE_OVERWRITE if resolution == RESOLVE_CUSTOM
+                    else resolution == RESOLVE_OVERWRITE
+                    or (resolution == RESOLVE_SKIP and conflict["kind"] != "rom"))
+        if approved:
+            _bump(delta, storage, difference)
 
     plan.add(PlanEntry(
         op=entry.op, system=entry.system, filename=entry.filename, rom_uid=entry.rom_uid,
         source=entry.source, storage_from=entry.storage_from, storage_to=entry.storage_to,
         estimated_bytes=entry.estimated_bytes, physical_delta=delta,
-        conflicts=entry.conflicts, resolution=resolution,
+        conflicts=entry.conflicts, resolution=resolution, conflict_choices=choices,
         payload=entry.payload, status=STATUS_PENDING,
     ))
-    return {"key": key, "resolution": resolution, "delta": delta}
+    return {"key": key, "resolution": resolution, "conflictChoices": choices, "delta": delta}
 
 
 def add_destinations(entry, layout, adapter) -> list:
-    """이 ADD 항목이 건드리게 될 (원본, 목적지, 크기) 목록.
+    """이 ADD 항목이 건드리게 될 (원본, 목적지, 크기, 종류) 목록.
 
     Validate와 Apply가 **같은 목록**을 봐야 한다. 각자 계산하면 언젠가 갈라지고,
     갈라지는 순간 "검증은 통과했는데 Apply가 다른 파일을 건드리는" 상태가 된다.
@@ -255,14 +276,14 @@ def add_destinations(entry, layout, adapter) -> list:
     rom = source.get("rom") or {}
     if rom.get("path"):
         out.append((Path(rom["path"]), Path(layout.rom_dir) / entry.filename,
-                    int(rom.get("size") or 0)))
+                    int(rom.get("size") or 0), "rom"))
     refs = [_MediaRef(m) for m in (source.get("media") or [])]
     sizes = {str(m.path): m.size for m in refs}
     # 제목은 LaunchBox의 media 파일명이 된다. Apply 직전에 사용자가 고친 제목
     # (`entry.payload`)이 있으면 그쪽이 실제로 적힐 값이므로 그걸 먼저 본다.
     title = (entry.payload or source.get("fields") or {}).get("name")
     for src_path, dest in adapter.media_pairs(layout, entry.filename, refs, title=title):
-        out.append((Path(src_path), Path(dest), sizes.get(str(src_path), 0)))
+        out.append((Path(src_path), Path(dest), sizes.get(str(src_path), 0), "media"))
     return out
 
 
@@ -280,6 +301,9 @@ def approved_targets(entry) -> dict:
 
     아무 것도 정해지지 않았으면 빈 dict다 - 그러면 어떤 파일도 덮어쓸 수 없다.
     """
+    if entry.resolution == RESOLVE_CUSTOM:
+        return {str(c["dest"]): c.get("destSnapshot") for c in (entry.conflicts or [])
+                if c.get("dest") and entry.conflict_choices.get(str(c["dest"])) == RESOLVE_OVERWRITE}
     if entry.resolution == RESOLVE_OVERWRITE:
         return {str(c["dest"]): c.get("destSnapshot")
                 for c in (entry.conflicts or []) if c.get("dest")}
@@ -287,6 +311,13 @@ def approved_targets(entry) -> dict:
         return {str(c["dest"]): c.get("destSnapshot")
                 for c in (entry.conflicts or []) if c.get("dest") and c.get("kind") != "rom"}
     return {}
+
+
+def retained_conflict(entry, dest, kind=None) -> bool:
+    """True when the user chose to leave this particular destination intact."""
+    if entry.resolution == RESOLVE_CUSTOM:
+        return entry.conflict_choices.get(str(dest)) == RESOLVE_SKIP
+    return entry.resolution == RESOLVE_SKIP and kind == "rom"
 
 
 def unapproved_overwrites(entry, layout, adapter, provider) -> list:
@@ -312,11 +343,16 @@ def unapproved_overwrites(entry, layout, adapter, provider) -> list:
     kind_by_dest = {str(c["dest"]): c.get("kind") for c in (entry.conflicts or []) if c.get("dest")}
 
     blocked = []
-    for src_path, dest, size in add_destinations(entry, layout, adapter):
-        action, _ = classify_destination(provider, src_path, size, dest)
-        if action != ACTION_CONFLICT:
+    for src_path, dest, size, kind in add_destinations(entry, layout, adapter):
+        if retained_conflict(entry, dest, kind_by_dest.get(str(dest))):
+            saved = next((c.get("destSnapshot") for c in (entry.conflicts or [])
+                          if str(c.get("dest")) == str(dest)), None)
+            if not snapshot_matches(provider, dest, saved):
+                blocked.append(dest)
             continue
-        if entry.resolution == RESOLVE_SKIP and kind_by_dest.get(str(dest)) == "rom":
+        action, _ = classify_destination(provider, src_path, size, dest,
+                                         size_only=kind == "media")
+        if action != ACTION_CONFLICT:
             continue
         if str(dest) in approved and snapshot_matches(provider, dest, approved[str(dest)]):
             continue

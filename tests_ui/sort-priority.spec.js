@@ -11,7 +11,7 @@ const { test, expect } = require("@playwright/test");
 const { openApp } = require("./_helpers");
 
 const rowFiles = (page) => page.locator(".lrow .lc-file").allTextContents();
-const prioritySelect = (page) => page.locator("#filter-bar .mini-select[title='우선 정렬']");
+const prioritySelect = (page) => page.locator("#filter-bar .mini-select");
 
 test.describe("기본 동작", () => {
   test.beforeEach(async ({ page }) => { await openApp(page); });
@@ -28,7 +28,7 @@ test.describe("기본 동작", () => {
     await expect(prioritySelect(page)).toHaveValue("");
     const labels = await prioritySelect(page).locator("option").allTextContents();
     expect(labels).toEqual(["전체보기", "ROM 우선", "메타데이터 우선", "미디어 우선",
-      "한국어 설명 우선", "영문 설명 우선"]);
+      "언어 우선"]);
   });
 
   test("메타데이터 우선 - 메타데이터 없는 항목(SMW)이 뒤로 간다", async ({ page }) => {
@@ -90,13 +90,14 @@ test.describe("기본 동작", () => {
         return archive(query);
       };
     });
-    await prioritySelect(page).selectOption("desc_ko");
+    await prioritySelect(page).selectOption("desc_language");
     await expect.poll(() => seen.some(([target, value]) =>
       target === "collection" && value === "desc_ko")).toBe(true);
+    await page.evaluate(() => window.__rmsSettingsChanged({ general: { language: "ja" } }));
     await page.locator(".ctab.archive").click();
-    await prioritySelect(page).selectOption("desc_en");
+    await expect(prioritySelect(page)).toHaveValue("desc_language");
     await expect.poll(() => seen.some(([target, value]) =>
-      target === "archive" && value === "desc_en")).toBe(true);
+      target === "archive" && value === "desc_ja")).toBe(true);
   });
 });
 

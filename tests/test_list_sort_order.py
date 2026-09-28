@@ -96,8 +96,11 @@ class DescriptionSortPutsEmptyLastTests(unittest.TestCase):
         english = self.files(priority="desc_en")
         self.assertEqual(korean, ["korean.zip", "english.zip", "japanese.zip", "empty.zip"])
         self.assertEqual(english, ["english.zip", "korean.zip", "japanese.zip", "empty.zip"])
+        self.assertEqual(self.files(priority="desc_ja"),
+                         ["japanese.zip", "english.zip", "korean.zip", "empty.zip"])
         self.assertEqual(self.files(priority="desc_ko", descending=True)[0], "korean.zip")
-        for priority, expected in (("desc_ko", korean), ("desc_en", english)):
+        for priority, expected in (("desc_ko", korean), ("desc_en", english),
+                                   ("desc_ja", self.files(priority="desc_ja"))):
             uids = self.cache.query_uids(priority=priority)
             rows = self.cache.query_rows(priority=priority)
             self.assertEqual(uids, [row["rom_uid"] for row in rows])

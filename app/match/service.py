@@ -60,6 +60,14 @@ def candidates_for(archive, collection_id, row, *, deep=True, limit=engine.DEFAU
         kwargs["fields_of"] = fields_of
     candidates = finder(archive, source, **kwargs)
 
+    # Candidate cards need the same decision context as scraper cards. Fetch
+    # this only for the opened dialog, never for the list's match badges.
+    from app.archive.projection import effective_media
+    for candidate in candidates:
+        rid = candidate["romIdentityId"]
+        candidate["fields"] = archive.resolve_fields(rid)[0]
+        candidate["mediaTypes"] = list(effective_media(archive, rid))
+
     linked = linked_identity(archive, collection_id, row)
     for candidate in candidates:
         candidate["linked"] = candidate["romIdentityId"] == linked

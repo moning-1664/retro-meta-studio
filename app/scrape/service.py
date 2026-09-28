@@ -14,6 +14,27 @@ log = logging.getLogger(__name__)
 from app.scrape.models import ScrapeIdentity
 
 
+def _query_fallbacks(query: str) -> list[str]:
+    """At most two specific spelling variants after the original search misses."""
+    value = re.sub(r"\s+", " ", str(query or "")).strip()
+    variants = []
+    if ":" in value:
+        main, subtitle = value.split(":", 1)
+        if main.strip() and subtitle.strip():
+            variants.extend((f"{main.strip()}:{subtitle.strip()}" if subtitle.startswith(" ")
+                             else f"{main.strip()}: {subtitle.strip()}", main.strip()))
+    else:
+        parts = re.split(r"\s+[-–—]\s+", value, maxsplit=1)
+        if len(parts) == 2 and all(part.strip() for part in parts):
+            variants.extend((f"{parts[0].strip()}: {parts[1].strip()}", parts[0].strip()))
+        else:
+            parenthesized = re.fullmatch(r"(.+?)\s+\([^()]+\)", value)
+            if parenthesized:
+                variants.append(parenthesized.group(1).strip())
+    return list(dict.fromkeys(candidate for candidate in variants
+                              if candidate and candidate.casefold() != value.casefold()))[:2]
+
+
 class ScrapeSessionStore:
     """Short-lived review state. Nothing is applied until the explicit final step."""
 
@@ -79,9 +100,10 @@ class ScrapeService:
         identity = ScrapeIdentity(selected_system, item["filename"],
                                   item.get("path"), item.get("size"))
         candidates = provider.identify(identity)
-        if (selected_system.lower() in ARCADE_SYSTEMS
+        if (selected_system and not identity.is_modified_rom and
+                (selected_system.lower() in ARCADE_SYSTEMS
                 or (identity.path and Path(identity.path).is_file()
-                    and getattr(getattr(provider, "config", None), "use_hashes", True))):
+                    and getattr(getattr(provider, "config", None), "use_hashes", True)))):
             request_count += 1
         actual_query = str(query or item["query"]).strip()
         if not candidates:
@@ -89,6 +111,17 @@ class ScrapeService:
                 progress(2, 3, f'"{actual_query}" 검색')
             candidates = provider.search(actual_query, selected_system)
             request_count += 1
+        if not candidates:
+            for alternative in _query_fallbacks(actual_query):
+                if progress:
+                    progress(2, 3, f'"{alternative}" 검색')
+                log.info("Scraper query fallback system=%s original=%s alternative=%s",
+                         selected_system or "all", actual_query, alternative)
+                candidates = provider.search(alternative, selected_system)
+                request_count += 1
+                if candidates:
+                    actual_query = alternative
+                    break
         if (not candidates and selected_system.lower() in ARCADE_SYSTEMS
                 and actual_query == item["query"]):
             known_title = str((item.get("fields") or {}).get("name") or "").strip()
@@ -102,7 +135,9 @@ class ScrapeService:
                 request_count += 1
                 if candidates:
                     actual_query = known_title
-        candidates = sorted(candidates, key=lambda c: (-c.confidence, c.title.lower()))
+        # Python's stable sort preserves provider rank among equally scored
+        # short-name results, where title alphabetization loses search order.
+        candidates = sorted(candidates, key=lambda c: -c.confidence)
         if not candidates:
             log.info("Scraper unmatched system=%s filename=%s query=%s",
                      selected_system or "all", item["filename"], actual_query)

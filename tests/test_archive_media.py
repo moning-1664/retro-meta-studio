@@ -19,6 +19,7 @@
 """
 
 import unittest
+from pathlib import Path
 
 from bridge.api import Api
 from tests.fixtures import build_esde_tree, temp_root, wait_idle, write_file
@@ -230,6 +231,34 @@ class ArchiveMediaPipelineTests(unittest.TestCase):
             images.append(b64decode(image["data"].split(",", 1)[1]))
         self.assertNotEqual(images[0], images[1],
                             "Revision별 이미지가 현재 Archive frontend 복사본 하나로 합쳐졌다")
+
+    def test_revision_snapshot_does_not_reuse_another_pcs_numbered_file(self):
+        from app.archive.projection import project, snapshot_revision_media
+
+        self.api.archive_ingest(self.cid, scope={"kind": "all"})
+        rid = self._rid()
+        record = self.api.archive.latest_record(rid, self.cid)
+        record_id = record["record_id"]
+        archive_dir = self.dir / "SharedArchive"
+        stale = archive_dir / ".rms" / "revision-media" / str(record_id) / "covers.png"
+        write_file(stale, b"other-PC-cover")
+        config = {"archiveDir": str(archive_dir), "frontend": "es-de", "mediaInternal": True}
+
+        snapshot_revision_media(self.api.archive, config, [record_id])
+        cover = next(m for m in self.api.archive.media_of_revision(record_id)
+                     if m["media_type"] == "covers")
+        self.assertNotEqual(cover["abs_path"], str(stale))
+        self.assertEqual(Path(cover["abs_path"]).read_bytes(), b"x" * 10)
+        self.assertEqual(stale.read_bytes(), b"other-PC-cover")
+        project(self.api.archive, config, [rid], overwrite_media={rid: {"covers"}})
+        self.assertEqual((archive_dir / "downloaded_media" / "ps2" / "covers" /
+                          "FFX.png").read_bytes(), b"x" * 10)
+
+        before = sorted(str(path) for path in stale.parent.iterdir())
+        snapshot_revision_media(self.api.archive, config, [record_id])
+        self.assertEqual(sorted(str(path) for path in stale.parent.iterdir()), before)
+        self.assertEqual(next(m["abs_path"] for m in self.api.archive.media_of_revision(record_id)
+                              if m["media_type"] == "covers"), cover["abs_path"])
 
 
 if __name__ == "__main__":

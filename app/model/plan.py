@@ -54,6 +54,7 @@ MARK_PARTIAL_DELETE = "◐"
 #: 충돌 해결 방식. 미해결(None) 상태에서는 Apply가 그 항목을 건드리지 않는다.
 RESOLVE_SKIP = "skip"
 RESOLVE_OVERWRITE = "overwrite"
+RESOLVE_CUSTOM = "custom"
 
 STATUS_PENDING = "pending"
 STATUS_CONFLICT = "conflict"
@@ -85,6 +86,9 @@ class PlanEntry:
     #: Apply가 이 엔트리를 건너뛴다.
     conflicts: list = field(default_factory=list)
     resolution: str | None = None
+    #: Per-destination choice used by the image comparison dialog. Legacy
+    #: skip/overwrite resolutions remain valid for existing callers.
+    conflict_choices: dict = field(default_factory=dict)
     #: 아직 디스크에 없는(add) 항목을 미리 편집했을 때의 메타데이터(위험요소 R7)
     payload: dict | None = None
     status: str = STATUS_PENDING

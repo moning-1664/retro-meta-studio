@@ -798,7 +798,7 @@ class ArchiveStore:
                         " THEN 0 ELSE 1 END,",
             "media": f"CASE WHEN EXISTS ({effective_media_exists}) THEN 0 ELSE 1 END,",
         }.get(priority, "")
-        if priority in ("desc_ko", "desc_en"):
+        if priority in ("desc_ko", "desc_en", "desc_ja"):
             def desc_from(alias):
                 return f"NULLIF(json_extract({alias}.fields_json, '$.desc'), '')"
 

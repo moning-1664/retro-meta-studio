@@ -62,6 +62,7 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None,
     # 해결되지 않은 충돌과 이미 invalid로 판정된 항목은 실행 대상이 아니다.
     runnable = [e for e in plan.entries if e.status != "invalid" and not e.blocked]
     blocked = [e for e in plan.entries if e.blocked]
+    invalid = [e for e in plan.entries if e.status == "invalid"]
 
     adds = [e for e in runnable if e.op == OP_ADD]
     deletes = [e for e in runnable if e.op == OP_DELETE]
@@ -140,7 +141,8 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None,
     step("정리 중")
     return {
         "applied": len(applied), "failed": len(failed), "partial": len(partial),
-        "skipped": len(blocked), "errors": errors, "systems": sorted(touched_systems),
+        "skipped": len(blocked), "invalid": len(invalid),
+        "errors": errors, "systems": sorted(touched_systems),
     }
 
 
@@ -198,7 +200,7 @@ def _plan_copies(entry, layout, adapter, provider):
     - blocked: 덮어쓰게 되는데 **승인받지 않은** 목적지. 조용히 건너뛰면 안 된다 -
       건너뛰고 메타데이터만 쓰면 gamelist가 남의 ROM을 가리키게 된다.
     """
-    from app.plan.builder import add_destinations, approved_targets, snapshot_matches
+    from app.plan.builder import add_destinations, approved_targets, retained_conflict, snapshot_matches
 
     # 사용자가 덮어쓰기를 승인한 **파일별** 목록. 승인이 없으면 빈 dict다.
     # `RESOLVE_SKIP`("메타데이터만")도 media(kind != "rom")는 승인된 것으로 온다 -
@@ -208,15 +210,20 @@ def _plan_copies(entry, layout, adapter, provider):
     kind_by_dest = {str(c["dest"]): c.get("kind") for c in (entry.conflicts or []) if c.get("dest")}
 
     pairs, created, replaced, blocked = [], [], [], []
-    for src, dest, size in add_destinations(entry, layout, adapter):
-        action, _ = classify_destination(provider, src, size, dest)
+    for src, dest, size, kind in add_destinations(entry, layout, adapter):
+        if retained_conflict(entry, dest, kind_by_dest.get(str(dest))):
+            saved = next((c.get("destSnapshot") for c in (entry.conflicts or [])
+                          if str(c.get("dest")) == str(dest)), None)
+            if not snapshot_matches(provider, dest, saved):
+                blocked.append(dest)
+            continue
+        action, _ = classify_destination(provider, src, size, dest,
+                                         size_only=kind == "media")
         if action == ACTION_IDENTICAL:
             continue  # 이미 같은 파일이 있다. 건드릴 이유가 없다.
         if action == ACTION_CONFLICT:
             # ROM 충돌만 "그대로 두라"는 뜻이다 - `RESOLVE_SKIP`이라도 media는
             # 아래에서 승인된 대상으로 취급되어 계속 진행된다.
-            if entry.resolution == RESOLVE_SKIP and kind_by_dest.get(str(dest)) == "rom":
-                continue
             # 여기가 마지막 방어선이다. 승인받은 그 파일일 때만 덮어쓴다.
             if str(dest) not in approved or not snapshot_matches(provider, dest,
                                                                  approved[str(dest)]):

@@ -106,6 +106,8 @@ class HashAndProviderTests(unittest.TestCase):
             ScrapeIdentity("fbneo", "ws90.zip", None))
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].evidence, ("Arcade ROM-set 파일명으로 조회",))
+        self.assertEqual(found[0].confidence, 45)
+        self.assertIn("직접 확인", found[0].confidence_reason)
         params = http.calls[0][1]["params"]
         self.assertEqual((params["romnom"], params["systemeid"]), ("ws90.zip", "75"))
         self.assertNotIn("sha1", params)
@@ -124,8 +126,23 @@ class HashAndProviderTests(unittest.TestCase):
     def test_missing_platform_ids_have_documented_mapping(self):
         from app.scrape.providers.screenscraper import _system_id
         self.assertEqual([_system_id(name) for name in
-                          ("psvita", "wii", "wiiu", "switch", "fbern")],
-                         ["62", "16", "18", "225", "75"])
+                         ("psvita", "vita", "wii", "wiiu", "switch", "fbern",
+                          "ngpc", "pc98", "mastersystem", "windows")],
+                         ["62", "62", "16", "18", "225", "75", "82", "208", "2", "138"])
+
+    def test_vita_alias_is_searchable_but_not_duplicated_in_system_choices(self):
+        directory = Path(tempfile.mkdtemp(prefix="rms_scraper_systems_"))
+        api = Api(registry_path=directory / "registry.db", cache_dir=directory / "cache")
+        try:
+            result = api.scraper_systems()
+            self.assertTrue(result["ok"], result.get("error"))
+            names = [row["name"] for row in result["data"]]
+            self.assertIn("psvita", names)
+            self.assertNotIn("vita", names)
+            self.assertEqual([row for row in result["data"] if row["id"] == 75],
+                             [{"name": "arcade", "id": 75}])
+        finally:
+            api.close()
 
     def test_identify_accepts_lookup_alias_but_keeps_observed_identity_separate(self):
         path = self.dir / "patched.rom"
@@ -140,6 +157,8 @@ class HashAndProviderTests(unittest.TestCase):
         self.assertEqual((sent["crc"], sent["md5"], sent["sha1"], sent["romtaille"], sent["systemeid"]),
                          ("DEADBEEF", "alias-md5", "alias-sha1", 999, "58"))
         self.assertEqual(found[0].evidence, ("원본 별칭으로 조회",))
+        self.assertEqual(found[0].confidence, 65)
+        self.assertIn("일치 확인 필요", found[0].confidence_reason)
         self.assertEqual(hashes_of_file(path)["crc32"], f"{zlib.crc32(b'patched') & 0xffffffff:08X}")
 
     def test_single_member_zip_uses_inner_crc_without_reading_payload(self):
@@ -184,6 +203,20 @@ class HashAndProviderTests(unittest.TestCase):
         self.assertEqual(ScrapeIdentity("sfc", "Game (Special Edition) (En,Fr,De).zip")
                          .default_query, "Game (Special Edition)")
 
+    def test_patch_markers_skip_hash_lookup_and_leave_clean_search_title(self):
+        for filename in ("Game [T-Kor].zip", "Game (한글패치).zip",
+                         "Game (Hack).zip", "Game 번역판.zip"):
+            with self.subTest(filename=filename):
+                identity = ScrapeIdentity("sfc", filename, str(self.dir / filename))
+                self.assertTrue(identity.is_modified_rom)
+                self.assertEqual(identity.default_query, "Game")
+                provider = ScreenScraperClient(config(), FakeHttp([]))
+                self.assertEqual(provider.identify(identity), [])
+                self.assertEqual(provider.http.calls, [])
+        original = ScrapeIdentity("sfc", "Game (Special Edition).zip")
+        self.assertFalse(original.is_modified_rom)
+        self.assertEqual(original.default_query, "Game (Special Edition)")
+
     def test_account_counters_tolerate_formatted_and_invalid_values(self):
         http = FakeHttp([FakeResponse({"response": {"ssuser": {
             "id": "u", "requeststoday": "1 234", "maxrequestsperday": "bad",
@@ -194,6 +227,15 @@ class HashAndProviderTests(unittest.TestCase):
         self.assertEqual(status["requestsLimit"], 0)
         self.assertEqual(status["maxThreads"], 2)
 
+    def test_account_limit_parses_thousands_separators(self):
+        for value in ("20 000", "20.000", "20,000", "20\u202f000"):
+            with self.subTest(value=value):
+                http = FakeHttp([FakeResponse({"response": {"ssuser": {
+                    "requeststoday": "6", "maxrequestsperday": value,
+                }}})])
+                status = ScreenScraperClient(config(), http).account_status()
+                self.assertEqual(status["requestsLimit"], 20000)
+
     def test_search_maps_system_name_to_numeric_id(self):
         payload = {"response": {"jeux": []}}
         http = FakeHttp([FakeResponse(payload), FakeResponse(payload)])
@@ -202,6 +244,39 @@ class HashAndProviderTests(unittest.TestCase):
         provider.search("Game", "58")
         self.assertEqual(http.calls[0][1]["params"]["systemeid"], "113")
         self.assertEqual(http.calls[1][1]["params"]["systemeid"], "58")
+
+    def test_sega_cd_folder_has_a_known_system_id(self):
+        http = FakeHttp([FakeResponse({"response": {"jeux": []}})])
+        ScreenScraperClient(config(), http).search("Sonic CD", "segacd")
+        self.assertEqual(http.calls[0][1]["params"]["systemeid"], "20")
+
+    def test_all_systems_skips_jeu_infos_and_searches_without_system_id(self):
+        http = FakeHttp([FakeResponse({"response": {"jeux": [
+            {"id": "1", "nom": "Sonic", "systeme": {"id": "1"}},
+        ]}})])
+        provider = ScreenScraperClient(config(), http)
+        self.assertEqual(provider.identify(ScrapeIdentity("", "Sonic.zip")), [])
+        self.assertEqual(http.calls, [])
+        self.assertEqual(len(provider.search("Sonic", "")), 1)
+        self.assertTrue(http.calls[0][0].endswith("jeuRecherche.php"))
+        self.assertNotIn("systemeid", http.calls[0][1]["params"])
+
+    def test_arcade_board_child_of_75_is_accepted_but_other_parent_is_not(self):
+        http = FakeHttp([FakeResponse({"response": {"jeu": {
+            "id": "39874", "nom": "1942", "systeme": {"id": "151", "parentid": "75"},
+        }}}), FakeResponse({"response": {"jeux": [
+            {"id": "39874", "nom": "1942", "systeme": {"id": "151", "parentid": "75"}},
+            {"id": "123448", "nom": "1942 PlayChoice", "systeme": {"id": "184", "parentid": "3"}},
+        ]}})])
+        provider = ScreenScraperClient(config(), http)
+        self.assertEqual([row.remote_game_id for row in provider.identify(
+            ScrapeIdentity("mame2003", "1942.zip"))], ["39874"])
+        self.assertEqual([row.remote_game_id for row in provider.search("1942", "fbneo")],
+                         ["39874"])
+
+    def test_search_ignores_wrapper_without_game_id(self):
+        http = FakeHttp([FakeResponse({"response": {"jeux": [{"error": "no match"}]}})])
+        self.assertEqual(ScreenScraperClient(config(), http).search("abcop", "fbneo"), [])
 
     def test_search_rejects_other_system_results_and_unknown_names(self):
         http = FakeHttp([FakeResponse({"response": {"jeux": [
@@ -221,6 +296,55 @@ class HashAndProviderTests(unittest.TestCase):
             "id": "9", "nom": "Completely Different Racing Game",
         }]}})])
         self.assertEqual(ScreenScraperClient(config(), http).search("SD Snatcher", ""), [])
+
+    def test_arcade_short_name_keeps_explicit_same_system_as_review_candidate(self):
+        http = FakeHttp([FakeResponse({"response": {"jeux": [
+            {"id": "1", "nom": "Street Fighter II - The World Warrior",
+             "systeme": {"id": "75", "nom": "MAME"}},
+            {"id": "2", "nom": "Street Fighter II - Console Edition",
+             "systeme": {"id": "58", "nom": "PS2"}},
+            {"id": "3", "nom": "Unverified Arcade Title"},
+        ]}})])
+        with self.assertLogs("app.scrape.providers.screenscraper", level="INFO") as logs:
+            found = ScreenScraperClient(config(), http).search("sf2", "fbneo")
+        self.assertEqual([item.remote_game_id for item in found], ["1"])
+        self.assertLess(found[0].confidence, 45)
+        self.assertIn("직접 확인 필요", found[0].confidence_reason)
+        self.assertIn("systemeid", http.calls[0][1]["params"])
+        self.assertEqual(http.calls[0][1]["params"]["systemeid"], "75")
+        self.assertTrue(any("decision=arcadeReview" in line and "similarity=" in line
+                            and "title=Street Fighter II" in line for line in logs.output))
+        self.assertTrue(any("decision=otherSystem" in line for line in logs.output))
+        self.assertTrue(any("decision=lowSimilarity" in line for line in logs.output))
+
+    def test_common_arcade_set_names_are_reviewable_without_claiming_title_match(self):
+        samples = (("sf2", "Street Fighter II - The World Warrior"),
+                   ("mslug", "Metal Slug - Super Vehicle-001"),
+                   ("kof98", "The King of Fighters '98"))
+        for query, title in samples:
+            with self.subTest(query=query):
+                http = FakeHttp([FakeResponse({"response": {"jeux": [{
+                    "id": "1", "nom": title, "systeme": {"id": "75", "nom": "MAME"},
+                }]}})])
+                found = ScreenScraperClient(config(), http).search(query, "mame")
+                self.assertEqual([item.title for item in found], [title])
+                self.assertLess(found[0].confidence, 45)
+
+    def test_arcade_short_name_does_not_rescue_all_systems_or_unknown_platform(self):
+        game = {"id": "1", "nom": "Street Fighter II - The World Warrior",
+                "systeme": {"id": "75", "nom": "MAME"}}
+        missing_system = {"id": "2", "nom": "Street Fighter II - The World Warrior"}
+        for hint, rows in (("", [game]), ("fbneo", [missing_system])):
+            with self.subTest(hint=hint):
+                http = FakeHttp([FakeResponse({"response": {"jeux": rows}})])
+                self.assertEqual(ScreenScraperClient(config(), http).search("sf2", hint), [])
+
+    def test_arcade_full_title_still_rejects_unrelated_result(self):
+        http = FakeHttp([FakeResponse({"response": {"jeux": [{
+            "id": "9", "nom": "Completely Different Racing Game",
+            "systeme": {"id": "75", "nom": "MAME"},
+        }]}})])
+        self.assertEqual(ScreenScraperClient(config(), http).search("Street Fighter II", "mame"), [])
 
     def test_search_accepts_documented_json_localized_fields(self):
         http = FakeHttp([FakeResponse({"response": {"jeux": [{
@@ -286,6 +410,40 @@ class HashAndProviderTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    def test_subtitle_variants_run_only_after_miss_and_stop_at_first_match(self):
+        class Provider:
+            searches = []
+            def identify(self, identity):
+                return []
+            def search(self, query, system_hint=""):
+                self.__class__.searches.append(query)
+                return [candidate()] if query == "Game:Subtitle" else []
+
+        service = ScrapeService(Provider)
+        item = service.item("1", "ps2", "Game Subtitle.iso", {})
+        session = service.sessions.create("collection", "c1", [item])
+        result = service.search_item(session["id"], "1", "Game: Subtitle", None)
+        self.assertEqual(Provider.searches, ["Game: Subtitle", "Game:Subtitle"])
+        self.assertEqual(result["item"]["query"], "Game:Subtitle")
+        self.assertEqual(result["quota"]["requestsToday"], 2)
+
+    def test_subtitle_fallback_is_bounded_and_does_not_search_subtitle_alone(self):
+        class Provider:
+            searches = []
+            def identify(self, identity):
+                return []
+            def search(self, query, system_hint=""):
+                self.__class__.searches.append(query)
+                return []
+
+        service = ScrapeService(Provider)
+        item = service.item("1", "ps2", "Game - Subtitle.iso", {})
+        session = service.sessions.create("collection", "c1", [item])
+        result = service.search_item(session["id"], "1", None, None)
+        self.assertEqual(Provider.searches, ["Game - Subtitle", "Game: Subtitle", "Game"])
+        self.assertEqual(result["item"]["status"], "not_found")
+        self.assertEqual(result["quota"]["requestsToday"], 3)
+
     def test_arcade_short_name_retries_existing_human_title(self):
         class Provider:
             searches = []
@@ -434,6 +592,19 @@ class ApplyBoundaryTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             api.scrape.sessions.get(session["id"])
 
+    def test_apply_selected_item_keeps_unsearched_items_in_session(self):
+        api = self.make_api()
+        session, selected = self.selected_session(api)
+        pending = api.scrape.item("2", "ps2", "next.rom", {})
+        session["items"].append(pending)
+        api.save_fields = lambda *args: {"ok": True, "data": {}}
+        api._download_scrape_media = lambda *args: __file__
+        api._apply_scraped_collection_media = lambda *args: []
+        result = api._apply_scrape_session(session["id"], lambda *_args: None)
+        self.assertEqual(result["applied"], ["1"])
+        self.assertEqual(selected["status"], "applied")
+        self.assertEqual(api.scrape.sessions.get(session["id"])["items"][1]["status"], "pending")
+
     def test_selected_media_downloads_can_progress_concurrently(self):
         api = self.make_api()
         media = tuple(ScrapeMedia(kind, f"https://media.screenscraper.fr/{kind}.png")
@@ -521,6 +692,29 @@ class ApplyBoundaryTests(unittest.TestCase):
                 cover = collection_root / "downloaded_media" / "ps2" / "covers" / "FFX.png"
                 self.assertEqual(cover.read_bytes(), b"new scraper cover")
                 self.assertEqual(api.plan_state(cid)["data"]["total"], 0)
+            finally:
+                api.close()
+
+    def test_invalid_scraper_media_plan_is_reported_instead_of_success(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            collection_root = build_esde_tree(root / "collection")
+            api = Api(registry_path=root / "registry.db", cache_dir=root / "cache")
+            try:
+                cid = api.create_collection("Games", "es-de", str(collection_root))["data"]["id"]
+                api.start_scan(cid)
+                wait_idle(api)
+                row = next(r for r in api.list_rows(cid)["data"]["rows"] if r["file"] == "FFX.iso")
+                downloaded = root / "new-cover.png"
+                downloaded.write_bytes(b"new scraper cover")
+                old_cover = collection_root / "downloaded_media" / "ps2" / "covers" / "FFX.png"
+                original = old_cover.read_bytes()
+                with mock.patch("bridge.api.validate", return_value={"ok": False, "blocked": False,
+                         "entries": [{"error": "대상 파일이 바뀌었습니다"}]}):
+                    with self.assertRaisesRegex(ValueError, "대상 파일이 바뀌었습니다"):
+                        api._apply_scraped_collection_media(cid, row["romUid"],
+                                                            [("covers", str(downloaded))])
+                self.assertEqual(old_cover.read_bytes(), original)
             finally:
                 api.close()
 

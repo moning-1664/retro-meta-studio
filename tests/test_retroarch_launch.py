@@ -49,10 +49,10 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(command[-1], str(self.rom))          # 공백·괄호가 있어도 한 인자
         self.assertEqual(kwargs["cwd"], str(self.exe.parent))  # 포터블 설치 대응
 
-    def test_unverified_system_never_spawns(self):
+    def test_unverified_system_can_launch_with_an_explicit_core(self):
         result = self.go(system="ps2")
-        self.assertEqual(result.error_kind, "system_unverified")
-        self.assertEqual(self.calls, [])
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(len(self.calls), 1)
 
     def test_missing_retroarch_or_folder_instead_of_file(self):
         self.assertEqual(self.go(exe_path="").error_kind, "retroarch_missing")

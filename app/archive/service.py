@@ -260,6 +260,11 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
     """
     adapter = get_adapter(collection.frontend)
     index = {(r["system"], r["filename"]): r for r in cache.query_rows()}
+    linked_targets = {}
+    for key, linked_id in archive.match_links_of(collection.id).items():
+        row = index.get(key)
+        if row is not None:
+            linked_targets.setdefault(linked_id, []).append(row)
 
     updated, items, skipped = 0, [], []
     for rom_identity_id in rom_identity_ids:
@@ -270,8 +275,11 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
         filename = identity["filename"] or identity["filename_norm"]
         fields, frontend_raw = archive.resolve_fields(rom_identity_id)
 
-        # 정확히 같은 이름이 먼저고, 없으면 언어 태그만 다른 대상 파일명들이다(없으면 새 항목).
-        matches = _language_matches(index, system, filename, collection.frontend)
+        # A user-confirmed Match is stronger than filename heuristics. In
+        # particular, a patched ROM can carry translation tags which
+        # language_base deliberately keeps, yet still be the selected target.
+        linked_matches = linked_targets.get(rom_identity_id, [])
+        matches = linked_matches or _language_matches(index, system, filename, collection.frontend)
         targets = [cache.get_row(r["rom_uid"]) for r in matches] or [None]
         available = [entry.system for entry in collection.systems]
         target_system = (system if system in available else next(
@@ -304,7 +312,8 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
             # 가져와야 한다. "이미 있는 항목"으로 뭉뚱그리면 그 경우를 영영 못 채운다.
             # 언어 변종에는 ROM을 채우지 않는다 - 다른 언어판 ROM을 그 파일명으로 복사하면 안 된다.
             need_rom = row is None or (target_name == filename and not row["present"])
-            have_media = {m["media_type"] for m in (row["media"] if row else [])}
+            have_media = ({m["media_type"] for m in (row["media"] if row else [])}
+                          if not linked_matches else set())
 
             rom = None
             if need_rom:
@@ -328,6 +337,7 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
 
             items.append({
                 "system": destination_system, "filename": target_name,
+                "origin": "archive",
                 "rom": {"path": rom["abs_path"], "size": rom["size"]} if rom else None,
                 "media": media, "fields": fields, "frontend_raw": frontend_raw,
             })

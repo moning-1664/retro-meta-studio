@@ -398,7 +398,7 @@ class CacheStore:
         보이는 모순이 생긴다.
         """
         column = self.ORDERS.get(order, "LOWER(r.title)")
-        if priority in ("desc_ko", "desc_en"):
+        if priority in ("desc_ko", "desc_en", "desc_ja"):
             prefix = description_priority_sql(
                 "json_extract(m.fields_json,'$.desc')", priority) + ", "
         else:

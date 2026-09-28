@@ -496,11 +496,17 @@
   const activeDetail = () => S.detail[S.activeId] || null;
   const activeScope = () => S.scope[S.activeId] || { kind: "all" };
 
+  function effectiveSortPriority() {
+    if (S.sortPriority !== "desc_language") return S.sortPriority || null;
+    const language = (S.settings.general?.language || "ko").toLowerCase();
+    return language === "ko" ? "desc_ko" : language === "ja" ? "desc_ja" : "desc_en";
+  }
+
   function currentQuery() {
     const scope = activeScope();
     const query = {
       search: S.search, order: S.order, descending: S.descending,
-      favoritesOnly: !!S.favoritesOnly, priority: S.sortPriority || null,
+      favoritesOnly: !!S.favoritesOnly, priority: effectiveSortPriority(),
     };
     if (scope.kind === "system") query.systems = [scope.id];
     else if (scope.kind === "storage") query.storageIds = [scope.id];
@@ -527,7 +533,9 @@
     // 우선 정렬은 Collection별로 기억해 두지 않는다 - Toolbar에서 그때그때
     // 바꾸는 값이고, 새로 열 때는 항상 Settings의 기본값에서 다시 시작한다.
     const defaultPriority = S.settings.navigation.defaultSortPriority || "none";
-    S.sortPriority = defaultPriority === "none" ? null : defaultPriority;
+    S.sortPriority = defaultPriority === "none" ? null
+      : (defaultPriority === "desc_ko" || defaultPriority === "desc_en"
+          ? "desc_language" : defaultPriority);
     // 한 번도 끄고 켠 적 없는 Collection은 Settings의 "Preview by default"를 따른다.
     S.previewOn = typeof r.data.previewOn === "boolean"
       ? r.data.previewOn : S.settings.appearance.previewDefault !== false;
@@ -625,6 +633,10 @@
     applyAppearance(S.settings.appearance);
     renderAll();
     if (S.activeId) refreshListGeometry();
+    if (S.activeId && S.sortPriority === "desc_language") {
+      resetList();
+      void reloadList();
+    }
   };
   window.__rmsCollectionsChanged = async () => {
     await loadCollections();
@@ -655,7 +667,14 @@
   function updateSettings(section, patch) {
     S.settings[section] = { ...(S.settings[section] || {}), ...patch };
     pendingSettings[section] = { ...(pendingSettings[section] || {}), ...patch };
-    if (section === "general" && patch && patch.language && window.RMSI18n) window.RMSI18n.setLanguage(patch.language);
+    if (section === "general" && patch && patch.language) {
+      if (window.RMSI18n) window.RMSI18n.setLanguage(patch.language);
+      if (S.sortPriority === "desc_language") {
+        renderFilterBar();
+        resetList();
+        void reloadList();
+      }
+    }
     if (section === "appearance" && applyAppearance(S.settings.appearance)) refreshListGeometry();
     if (section === "navigation") renderNav();
     if (section === "gamelist") refreshListGeometry();
@@ -2835,8 +2854,7 @@
   // ------------------------------------------------------------------
   // RetroArch 실행 (bridge: launch_game / retroarch_game_info / set_system_core / set_game_core)
   // ------------------------------------------------------------------
-  //: 실행이 검증되지 않은 System(백엔드 app/launch/retroarch.py의 목록). 버튼을 미리 비활성으로
-  //: 보여주는 용도일 뿐이다 - 실행 시점에 백엔드가 다시 막는다.
+  //: 검증 여부는 경고로 보여주되, 사용자가 지정한 Core의 실행을 막지 않는다.
   let retroarchUnverified = new Set();
   async function loadRetroarchState() {
     const r = await api.retroarchSettings();
@@ -2851,7 +2869,6 @@
   function launchBlockReason(target) {
     if (isCompare()) return "Compare 중에는 실행할 수 없습니다.";
     if (!target || !target.present) return "ROM 파일이 없습니다.";
-    if (!retroarchVerified(target.system)) return `'${target.system}' 시스템은 RetroArch 실행이 아직 검증되지 않았습니다.`;
     return null;
   }
 
@@ -3009,7 +3026,7 @@
         const unverified = retroarchUnverified.has(system);
         table.appendChild(h("div", { class: "stg-core-row" + (unverified ? " unverified" : ""), "data-system": system }, [
           h("span", { class: "stg-core-system" }, [systemIcon(system, 14), system.toUpperCase()]),
-          unverified ? h("span", { class: "stg-soon", title: "BIOS/Core 궁합 때문에 실행 버튼을 막아 둔 System입니다." }, ["실행 검증 안 됨"]) : h("span"),
+          unverified ? h("span", { class: "stg-soon", title: "이 System의 Core/BIOS 조합은 아직 검증되지 않았습니다. 선택한 Core로 실행할 수 있습니다." }, ["실행 검증 안 됨"]) : h("span"),
           select,
         ]));
       });
@@ -3793,9 +3810,8 @@
       h("option", { value: "rom" }, ["ROM 우선"]),
       h("option", { value: "metadata" }, ["메타데이터 우선"]),
       h("option", { value: "media" }, ["미디어 우선"]),
-      h("option", { value: "desc_ko", title: "한글이 포함된 설명을 먼저 표시" }, ["한국어 설명 우선"]),
-      h("option", { value: "desc_en", title: "한글·일본어·한자 없이 영문자가 있는 설명을 먼저 표시" },
-        ["영문 설명 우선"]),
+      h("option", { value: "desc_language",
+        title: "Settings의 Language에 맞는 문자 종류를 우선합니다. 언어 태그가 없어 영어·프랑스어·스페인어는 구별하지 못합니다." }, ["언어 우선"]),
     ]);
     prioritySel.value = S.sortPriority || "";
     prioritySel.addEventListener("change", async (e) => {
@@ -3888,7 +3904,11 @@
 
   function renderPlanActions(bar) {
     if (isCompare()) return;
-    if (isArchive()) { bar.appendChild(pasteModeToggle()); return; }
+    if (isArchive()) {
+      bar.appendChild(h("span", { class: "toolbar-group-label" }, ["Paste"]));
+      bar.appendChild(pasteModeToggle());
+      return;
+    }
     const plan = S.plan;
 
     // Archive에 수집은 여기 없다 - Detail 패널 상단(.detail-topspace)으로
@@ -3902,6 +3922,7 @@
     // 구분선으로 보여준다. Auto Plan 토글은 뺐다(실사용 시나리오가 확인될 때까지
     // 화면에서 감춘다, PENDING_DECISIONS.md) - 내부 값은 기본 ON을 유지한다.
     // 붙여넣기 모드(사용자 결정) - Ctrl+V가 이미 있는 항목을 어떻게 다룰지. Plan 버튼 왼쪽에 둔다.
+    bar.appendChild(h("span", { class: "toolbar-group-label" }, ["Paste"]));
     bar.appendChild(pasteModeToggle());
 
     const planGroup = h("div", { class: "seg plan-actions" });
@@ -3934,6 +3955,7 @@
         async () => { await api.planClear(S.activeId); await refreshPlan(); }));
     }
     planGroup.appendChild(cancel);
+    bar.appendChild(h("span", { class: "toolbar-group-label" }, ["Plan"]));
     bar.appendChild(planGroup);
   }
 
@@ -5881,34 +5903,49 @@
     }
     data.candidates.forEach((candidate) => {
       const option = h("button", {
-        class: "match-option" + (candidate.romIdentityId === chosen ? " chosen" : ""),
+        class: "match-option scrape-candidate" + (candidate.romIdentityId === chosen ? " chosen" : ""),
       });
-      option.appendChild(h("span", { class: "match-radio" }, [
-        candidate.romIdentityId === chosen ? "◉" : "○"]));
-      const main = h("div", { class: "match-option-main" }, [
-        h("div", { class: "match-option-title truncate" }, [candidate.title || candidate.filename]),
-        h("div", { class: "match-option-sub truncate" }, [
-          candidate.filename,
-          candidate.region ? ` · ${candidate.region}` : "",
-          candidate.size ? ` · ${formatBytes(candidate.size)}` : "",
-        ]),
-      ]);
-      // 점수만 보여주면 "왜 이게 후보인지"에 답하지 못한다 - 무엇이 일치해서 올라온
-      // 것인지 함께 적는다.
-      if (candidate.evidence && candidate.evidence.length) {
-        main.appendChild(h("div", { class: "match-option-why truncate" },
-          [candidate.evidence.join(" · ")]));
+      const fields = candidate.fields || {};
+      const cover = h("div", { class: "scrape-thumb empty" }, [icon("imageOff", IC.md)]);
+      if ((candidate.mediaTypes || []).includes("covers")) {
+        api.getArchiveMediaImage(candidate.romIdentityId, "Covers", true).then((result) => {
+          if (result.ok && result.data && cover.isConnected) {
+            clear(cover);
+            cover.classList.remove("empty");
+            cover.appendChild(h("img", { src: result.data, alt: fields.name || candidate.title }));
+          }
+        });
       }
-      option.appendChild(main);
-      option.appendChild(h("span", { class: "match-tier tier-" + candidate.tier },
-        [TIER_LABEL[candidate.tier] || candidate.tier]));
-      option.appendChild(h("span", { class: "match-score" }, [`${Math.round(candidate.score)}%`]));
+      const fact = (label, value) => h("span", { class: "scrape-fact",
+        title: `${label}: ${value || "없음"}` }, [String(value || "")]);
+      const year = String(fields.releasedate || "").match(/\d{4}/)?.[0] || "";
+      const why = (candidate.evidence || []).join(" · ");
+      option.appendChild(h("div", { class: "scrape-candidate-head" }, [cover,
+        h("div", { class: "scrape-candidate-main" }, [
+          h("div", { class: "scrape-candidate-top" }, [
+            h("span", { class: "scrape-system-icon" }, [systemIcon(candidate.system || row.system, 16)]),
+            h("span", { class: "scrape-candidate-title", title: fields.name || candidate.title || "" },
+              [fields.name || candidate.title || candidate.filename]),
+          ]),
+          h("div", { class: "scrape-candidate-desc", title: fields.desc || "" },
+            [String(fields.desc || "설명 없음").replace(/\s+/g, " ")]),
+          h("div", { class: "scrape-candidate-facts" }, [
+            h("div", { class: "scrape-fact-row" }, [fact("개발", fields.developer),
+              fact("배급", fields.publisher)]),
+            h("div", { class: "scrape-fact-row" }, [fact("장르", fields.genre),
+              fact("점수", `${Math.round(candidate.score)}%`)]),
+            h("div", { class: "scrape-fact-row" }, [fact("연도", year),
+              fact("매칭 근거", why || TIER_LABEL[candidate.tier] || candidate.tier)]),
+          ]),
+        ]),
+      ]));
+      option.appendChild(h("div", { class: "match-option-sub truncate",
+        title: `${candidate.filename}${why ? ` · ${why}` : ""}` }, [candidate.filename]));
       option.addEventListener("click", () => {
         chosen = candidate.romIdentityId;
         list.querySelectorAll(".match-option").forEach((el, i) => {
           const isChosen = data.candidates[i].romIdentityId === chosen;
           el.classList.toggle("chosen", isChosen);
-          el.querySelector(".match-radio").textContent = isChosen ? "◉" : "○";
         });
         applyBtn.disabled = false;
       });
@@ -5935,7 +5972,14 @@
         const imported = await api.archiveToCollection(S.activeId, [chosen]);
         if (!imported.ok) { showToast(imported.error, "error"); return; }
         await refreshPlan();
-        showToast(`Archive에서 ${formatCount(imported.data.planned || 0)}개를 Plan에 추가했습니다.`);
+        await reloadList();
+        if (S.focused === row.romUid) await openDetail(row);
+        const { updated = 0, planned = 0, conflicts = 0 } = imported.data;
+        showToast(`Archive 메타데이터 ${formatCount(updated)}개 반영 · ` +
+                  `파일 Plan ${formatCount(planned)}개` +
+                  (conflicts ? ` · 충돌 ${formatCount(conflicts)}개를 Plan에서 결정하세요.` : ""),
+                  conflicts ? "warning" : "info");
+        if (conflicts) openConflictDialog();
         return;
       }
       delete S.matchCounts[row.romUid];
@@ -6170,7 +6214,8 @@
     if (!quota) return "사용량 확인 중";
     const used = Number(quota.requestsToday || 0);
     const limit = Number(quota.requestsLimit || 0);
-    return limit ? `오늘 ${formatCount(used)} / ${formatCount(limit)}회` : `오늘 ${formatCount(used)}회`;
+    return limit ? `오늘 ${formatCount(used)} / ${formatCount(limit)}회`
+      : `오늘 ${formatCount(used)} / 한도 미확인`;
   }
 
   async function openScrapeContext(itemIds) {
@@ -6184,14 +6229,24 @@
     }
     const systemsResult = await api.scraperSystems();
     const scraperSystems = systemsResult.ok ? systemsResult.data : [];
+    const arcadeNames = new Set(["arcade", "mame", "mame2003", "mame2003plus",
+      "mame2010", "fbneo", "fbern", "fba", "cps1", "cps2", "cps3"]);
+    const scraperSystemName = (name) => {
+      const normalized = String(name || "").toLowerCase();
+      if (normalized === "vita") return "psvita";
+      // The dropdown exposes one Arcade choice; item.system retains the
+      // original Collection/Archive folder for applying results.
+      return arcadeNames.has(normalized) ? "arcade" : normalized;
+    };
     const currentSystems = isArchive()
-      ? (activeDetail()?.archiveSystems || []).map((entry) => entry.system)
-      : (activeDetail()?.systems || []).map((entry) => entry.system);
+      ? (activeDetail()?.archiveSystems || []).map((entry) => scraperSystemName(entry.system))
+      : (activeDetail()?.systems || []).map((entry) => scraperSystemName(entry.system));
     const systemChoices = [...new Map([
-      ...scraperSystems.map((entry) => [entry.name, entry]),
+      ...scraperSystems.map((entry) => [scraperSystemName(entry.name),
+        { ...entry, name: scraperSystemName(entry.name) }]),
       ...currentSystems.map((name) => [name, scraperSystems.find((entry) => entry.name === name)
         || { name, id: null }]),
-    ]).values()].sort((a, b) => a.name.localeCompare(b.name));
+    ]).values()].filter((entry) => entry.id).sort((a, b) => a.name.localeCompare(b.name));
     const target = isArchive() ? "archive" : "collection";
     const created = await api.createScrapeSession(target, isArchive() ? null : S.activeId, ids);
     if (!created.ok) { showToast(created.error, "error"); return; }
@@ -6201,6 +6256,9 @@
     let currentJobId = null;
     let stopRequested = false;
     let quota = session.quota;
+    let accountQuotaBase = quota && !quota.estimated ? Number(quota.requestsToday || 0) : 0;
+    let sessionEstimate = quota?.estimated ? Number(quota.requestsToday || 0) : 0;
+    const expandedCandidates = new Set();
     let closed = false;
 
     const body = h("div", { class: "modal-body scrape-context" });
@@ -6240,13 +6298,19 @@
       } else {
         Object.assign(item, result.data.item || {});
         delete item.error;
-        quota = result.data.quota || quota;
+        const incomingQuota = result.data.quota || {};
+        if (incomingQuota.estimated) sessionEstimate = Number(incomingQuota.requestsToday || 0);
+        quota = { ...quota, ...incomingQuota,
+          requestsToday: incomingQuota.estimated
+            ? Math.max(Number(quota?.requestsToday || 0), accountQuotaBase + sessionEstimate)
+            : Number(incomingQuota.requestsToday || 0),
+          requestsLimit: incomingQuota.requestsLimit || quota?.requestsLimit || 0 };
       }
       draw();
     }
 
     function candidateCard(item, candidate) {
-      let expanded = false;
+      let expanded = expandedCandidates.has(candidate.candidate_id);
       const previouslySelected = item.selectedCandidateId === candidate.candidate_id;
       const selectedFields = new Set(previouslySelected
         ? (item.selectedFields || []) : Object.keys(candidate.fields || {}));
@@ -6266,11 +6330,10 @@
           item.selectedMedia = [...selectedMedia];
           item.status = "selected";
           delete item.applyError;
-          if (index + 1 < session.items.length) { index += 1; draw(); maybeSearch(); }
-          else draw();
+          draw();
       };
       wrap.addEventListener("click", (event) => {
-        if (!event.target.closest("button,input,label")) selectCandidate();
+        if (!event.target.closest("button,input")) selectCandidate();
       });
       const redraw = () => {
         clear(wrap);
@@ -6282,7 +6345,12 @@
           : h("div", { class: "scrape-thumb empty" }, [icon("image", IC.md)]);
         const toggle = h("button", { class: "icon-btn scrape-expand", title: expanded ? "접기" : "자세히" },
           [icon(expanded ? "chevronUp" : "chevronDown", IC.sm)]);
-        toggle.addEventListener("click", () => { expanded = !expanded; redraw(); });
+        toggle.addEventListener("click", () => {
+          expanded = !expanded;
+          if (expanded) expandedCandidates.add(candidate.candidate_id);
+          else expandedCandidates.delete(candidate.candidate_id);
+          redraw();
+        });
         const year = String(candidate.fields?.releasedate || "").match(/\d{4}/)?.[0] || "";
         const rating = Number(candidate.fields?.rating);
         const stars = Number.isFinite(rating) && rating > 0
@@ -6320,6 +6388,7 @@
           box.checked = selectedFields.has(key);
           box.addEventListener("change", () => {
             if (box.checked) selectedFields.add(key); else selectedFields.delete(key);
+            if (item.selectedCandidateId === candidate.candidate_id) selectCandidate();
           });
           fields.appendChild(h("label", { class: "scrape-field" }, [box,
             h("span", { class: "scrape-field-name" }, [key]),
@@ -6342,6 +6411,7 @@
                 selectedMedia.add(mediaIndex);
                 redraw();
               } else selectedMedia.delete(mediaIndex);
+              if (item.selectedCandidateId === candidate.candidate_id) selectCandidate();
             });
             mediaList.appendChild(h("label", { class: "scrape-media-option" }, [
               radio,
@@ -6357,9 +6427,8 @@
       return wrap;
     }
 
-    function allReviewed() {
-      return session.items.some((item) => item.status === "selected")
-        && session.items.every((item) => ["selected", "skipped", "applied"].includes(item.status));
+    function hasSelection() {
+      return session.items.some((item) => item.status === "selected" && item.selectedCandidateId);
     }
 
     async function finish() {
@@ -6386,6 +6455,23 @@
           + (partialCount ? ` · 일부 반영 ${formatCount(partialCount)}개` : "")
           + (failedCount ? ` · 실패 ${formatCount(failedCount)}개` : ""),
         failedCount ? "error" : "warning");
+        draw();
+        return;
+      }
+      const appliedIds = new Set((applied.data.applied || []).map(String));
+      session.items.forEach((item) => {
+        if (appliedIds.has(String(item.id))) {
+          item.status = "applied";
+          item.selectedCandidateId = null;
+        }
+      });
+      const nextIndex = Array.from({ length: session.items.length }, (_, step) =>
+        (index + step + 1) % session.items.length).find((candidateIndex) =>
+        !["applied", "skipped"].includes(session.items[candidateIndex].status));
+      if (nextIndex >= 0) {
+        index = nextIndex;
+        showToast(`${formatCount(appliedIds.size)}개 게임에 스크랩 결과를 적용했습니다.`);
+        await reloadList();
         draw();
         return;
       }
@@ -6420,12 +6506,13 @@
     function draw() {
       clear(body);
       const item = session.items[index];
-      titleCount.textContent = "스크랩 결과";
+      titleCount.textContent = `스크랩 결과 (${index + 1}/${session.items.length})`;
       const head = h("div", { class: "scrape-context-head" }, [
         h("span", { class: "scrape-file-tag" }, ["ROM"]),
         h("span", { class: "scrape-current-file", title: item.filename }, [item.filename]),
         h("button", { class: "icon-btn scrape-file-copy", title: "ROM 이름 복사",
-          onClick: () => copyTextToClipboard(item.filename, "ROM 이름을 복사했습니다.") },
+          onClick: () => copyTextToClipboard(
+            String(item.filename || "").replace(/\.[^.]+$/, ""), "ROM 이름을 복사했습니다.") },
         [icon("copy", IC.sm)]),
       ]);
       quotaBadge.textContent = scrapeQuotaText(quota);
@@ -6434,26 +6521,27 @@
                                   placeholder: "검색할 게임명" });
       const system = h("select", { class: "field-input scrape-system" }, [
         h("option", { value: "" }, ["전체 시스템"]),
-        ...systemChoices.map((entry) => h("option", { value: entry.name,
-          disabled: !entry.id }, [entry.name.toUpperCase() + (entry.id ? "" : " · ID 미확인")])),
+        ...systemChoices.map((entry) => h("option", { value: entry.name },
+          [entry.name.toUpperCase()])),
       ]);
-      const defaultSystem = systemChoices.some((entry) => entry.name === item.system && entry.id)
-        ? item.system : "";
-      const chosenSystem = item.systemHint === undefined ? defaultSystem : item.systemHint;
+      const defaultSystem = systemChoices.some((entry) => entry.name === scraperSystemName(item.system) && entry.id)
+        ? scraperSystemName(item.system) : "";
+      const chosenSystem = item.systemHint === undefined ? defaultSystem
+        : scraperSystemName(item.systemHint);
       system.value = chosenSystem || "";
       query.addEventListener("input", () => { item.query = query.value; });
       system.addEventListener("change", () => { item.systemHint = system.value; });
       const retrySearch = () => searchCurrent(query.value.trim(), system.value);
       query.addEventListener("keydown", (event) => { if (event.key === "Enter") retrySearch(); });
       system.addEventListener("keydown", (event) => { if (event.key === "Enter") retrySearch(); });
-      const retry = h("button", { class: "btn compact", onClick: () => {
+      const retry = h("button", { class: "btn primary compact", onClick: () => {
         if (searching) {
           stopRequested = true;
           retry.disabled = true;
           retry.textContent = "중지 중…";
           if (currentJobId) api.cancelJob(currentJobId);
         } else retrySearch();
-      } }, [searching ? "스크랩 중지" : "다시 스크랩"]);
+      } }, [searching ? "스크랩 중지" : "스크랩 시작"]);
       body.appendChild(head);
       body.appendChild(h("div", { class: "scrape-search-row" }, [
         h("label", {}, [h("span", {}, ["검색명"]), query]),
@@ -6470,31 +6558,32 @@
       else if (!(item.candidates || []).length && item.status !== "pending")
         candidates.appendChild(h("div", { class: "panel-empty-state" },
           ["후보가 없습니다. 검색 키나 시스템을 바꾸고 다시 스크랩하세요."]));
+      else if (!(item.candidates || []).length)
+        candidates.appendChild(h("div", { class: "panel-empty-state" },
+          ["검색명과 시스템을 확인한 뒤 스크랩 시작을 누르세요."]));
       else (item.candidates || []).forEach((candidate) => candidates.appendChild(candidateCard(item, candidate)));
       body.appendChild(candidates);
 
       const previous = h("button", { class: "btn", disabled: index === 0 || searching,
-        onClick: () => { index -= 1; draw(); } }, ["이전"]);
+        onClick: () => { index -= 1; draw(); } }, ["이전 스크랩"]);
       const skip = h("button", { class: "btn", disabled: searching, onClick: async () => {
-        await api.skipScrapeItem(session.id, item.id); item.status = "skipped";
-        if (index + 1 < session.items.length) { index += 1; draw(); maybeSearch(); } else draw();
-      } }, ["건너뛰기"]);
+        if (item.status !== "selected" && item.status !== "applied") {
+          const skipped = await api.skipScrapeItem(session.id, item.id);
+          if (!skipped.ok) { showToast(skipped.error, "error"); return; }
+          item.status = "skipped";
+        }
+        if (index + 1 < session.items.length) { index += 1; draw(); } else draw();
+      } }, ["다음 스크랩"]);
       const actions = h("div", { class: "scrape-actions" }, [previous, skip,
         h("span", { class: "scrape-action-spacer" }),
         h("button", { class: "btn", onClick: cancel }, ["취소"]),
-        h("button", { class: "btn primary", disabled: !allReviewed() || searching, onClick: finish },
+        h("button", { class: "btn primary", disabled: !hasSelection() || searching, onClick: finish },
           ["선택 적용"]),
       ]);
       body.appendChild(actions);
     }
 
-    function maybeSearch() {
-      const item = session.items[index];
-      if (item.status === "pending") searchCurrent(item.query,
-        systemChoices.some((entry) => entry.name === item.system && entry.id) ? item.system : "");
-    }
     draw();
-    maybeSearch();
     // Quota is useful context, but its separate network request must not
     // hold up the candidate search.
     api.startScraperAccountStatus().then(async (started) => {
@@ -6504,7 +6593,11 @@
         if (closed || !result.ok) return;
         if (!result.data.done) { setTimeout(poll, 250); return; }
         if (!result.data.error) {
-          quota = result.data.result;
+          const actual = Number(result.data.result?.requestsToday || 0);
+          accountQuotaBase = Math.max(0, actual - sessionEstimate);
+          quota = { ...quota, ...result.data.result,
+            requestsToday: Math.max(actual, Number(quota?.requestsToday || 0)),
+            estimated: Number(quota?.requestsToday || 0) > actual };
           quotaBadge.textContent = scrapeQuotaText(quota);
         }
       };
@@ -7384,23 +7477,39 @@
       body.appendChild(h("div", { class: "empty-msg" }, ["아직 수집된 Revision이 없습니다."]));
       return;
     }
-    if (versions.length === 1) {
+    if (versions.length > 1) {
       body.appendChild(h("div", { class: "modal-hint revision-single" },
-        ["수집한 출처가 모두 같은 내용입니다 - 고를 것이 없습니다."]));
-    } else {
-      body.appendChild(h("div", { class: "modal-hint revision-single" },
-        [`서로 다른 판 ${formatCount(versions.length)}개입니다. 아래에 **다른 값만** 보여줍니다 - `
-         + "하나를 고르면 그 판의 값이 우선 쓰이고, 그 판에 없는 값은 다른 출처에서 채웁니다."]));
+        [`서로 다른 판 ${formatCount(versions.length)}개 · 사용할 판을 고르세요.`]));
     }
 
     const preferredId = state.preferredRecordId || null;
     const sourceName = (id) => (id === "__archive__" ? "Archive에서 직접 편집"
       : (S.collections.find((c) => c.id === id) || {}).name || id);
     const { differing, mediaTypes, mediaDiffering } = revisionDifferences(versions);
+    let previewId = state.revisionPreviewId ?? preferredId;
+    const choose = h("button", { class: "btn primary compact",
+      disabled: previewId == null || previewId === preferredId },
+      ["선택"]);
+    const selectPreview = (recordId) => {
+      previewId = recordId;
+      state.revisionPreviewId = recordId;
+      body.querySelectorAll(".revision-row").forEach((node) =>
+        node.classList.toggle("chosen", String(node.dataset.recordId) === String(recordId)));
+      choose.disabled = recordId === preferredId;
+    };
+    choose.addEventListener("click", () => {
+      if (previewId == null) return;
+      togglePreferredRevision({ recordId: previewId }, false);
+    });
 
     versions.forEach((version, index) => {
-      const chosen = (version.recordIds || []).includes(preferredId);
-      const box = h("div", { class: "revision-row scrape-candidate" + (chosen ? " chosen" : "") });
+      const recordId = (version.recordIds || [])[0];
+      const chosen = (version.recordIds || []).includes(previewId);
+      const box = h("div", { class: "revision-row scrape-candidate" + (chosen ? " chosen" : ""),
+        "data-record-id": recordId });
+      box.addEventListener("click", (event) => {
+        if (!event.target.closest("button")) selectPreview(recordId);
+      });
       const fields = version.fields || {};
       const source = (version.sources || []).map(sourceName).join(", ") || `버전 ${index + 1}`;
       const cover = h("div", { class: "scrape-thumb empty revision-cover" }, [icon("imageOff", IC.md)]);
@@ -7416,17 +7525,19 @@
         });
       }
       const year = String(fields.releasedate || "").match(/\d{4}/)?.[0] || "";
-      const facts = [fields.developer, fields.genre, fields.publisher].filter(Boolean).join(" · ");
-      const pick = h("button", { class: "btn compact revision-pick" + (chosen ? " on" : ""),
-        title: chosen ? "선택을 풀면 가장 최근 판을 씁니다." : "이 판의 값을 우선 씁니다." },
-        [chosen ? "선택 해제" : "선택"]);
-      pick.addEventListener("click", () =>
-        togglePreferredRevision({ recordId: (version.recordIds || [])[0] }, chosen));
+      const fact = (label, value) => h("span", { class: "scrape-fact",
+        title: `${label}: ${value || "없음"}` }, [String(value || "")]);
+      const rating = Number(fields.rating);
+      const stars = Number.isFinite(rating) && rating > 0
+        ? "★★★★★".slice(0, Math.max(0, Math.min(5, Math.round(rating / 4))))
+          + "☆☆☆☆☆".slice(0, 5 - Math.max(0, Math.min(5, Math.round(rating / 4)))) : "";
       const expanded = h("div", { class: "revision-expanded", hidden: true });
-      const toggle = h("button", { class: "icon-btn revision-expand", title: "자세히" }, ["∨"]);
+      const toggle = h("button", { class: "icon-btn scrape-expand revision-expand", title: "자세히" },
+        [icon("chevronDown", IC.sm)]);
       toggle.addEventListener("click", () => {
         expanded.hidden = !expanded.hidden;
-        toggle.textContent = expanded.hidden ? "∨" : "∧";
+        clear(toggle);
+        toggle.appendChild(icon(expanded.hidden ? "chevronDown" : "chevronUp", IC.sm));
         toggle.title = expanded.hidden ? "자세히" : "접기";
       });
       box.appendChild(h("div", { class: "scrape-candidate-head" }, [cover,
@@ -7435,21 +7546,24 @@
             h("span", { class: "scrape-system-icon" }, [systemIcon(state.system, 16)]),
             h("span", { class: "scrape-candidate-title", title: fields.name || "" },
               [fields.name || state.filename || "제목 없음"]),
-            chosen ? h("span", { class: "revision-badge" }, ["PREFERRED"]) : null,
+            (version.recordIds || []).includes(preferredId)
+              ? h("span", { class: "revision-badge" }, ["PREFERRED"]) : null,
           ]),
           h("div", { class: "scrape-candidate-desc", title: fields.desc || "" },
             [String(fields.desc || "설명 없음").replace(/\s+/g, " ")]),
-          h("div", { class: "scrape-candidate-facts", title: facts }, [facts || "추가 정보 없음"]),
-          h("div", { class: "revision-foot" }, [
-            h("span", { class: "revision-source truncate", title: source }, [source]),
-            h("span", { class: "revision-when" }, [revisionWhen(version.updatedAt)]),
-          ]),
-          h("div", { class: "scrape-candidate-bottom" }, [
-            h("span", { class: "scrape-candidate-year" }, [year]),
-            h("span", { class: "revision-rating" }, [fields.rating ? `★ ${fields.rating}` : ""]),
-            toggle, pick,
+          h("div", { class: "scrape-candidate-facts" }, [
+            h("div", { class: "scrape-fact-row" }, [fact("개발", fields.developer),
+              fact("배급", fields.publisher)]),
+            h("div", { class: "scrape-fact-row" }, [fact("장르", fields.genre),
+              fact("지역", fields.region)]),
+            h("div", { class: "scrape-fact-row" }, [fact("연도", year),
+              fact("평점", stars), toggle]),
           ]),
         ]),
+      ]));
+      box.appendChild(h("div", { class: "revision-foot" }, [
+        h("span", { class: "revision-source truncate", title: source }, [source]),
+        h("span", { class: "revision-when" }, [revisionWhen(version.updatedAt)]),
       ]));
 
       // 제목은 늘 보여준다(무엇에 대한 판인지 알아야 한다). 나머지는 갈리는 것만.
@@ -7480,6 +7594,11 @@
 
       body.appendChild(box);
     });
+    body.appendChild(h("div", { class: "revision-actions" }, [
+      preferredId != null ? h("button", { class: "btn compact", onClick: () =>
+        togglePreferredRevision({ recordId: preferredId }, true) }, ["선택 해제"]) : null,
+      choose,
+    ]));
   }
 
   async function togglePreferredRevision(source, chosen) {
@@ -7529,6 +7648,8 @@
   function romCoreSection(state) {
     const section = h("div", { class: "rom-core" }, [h("div", { class: "rom-core-title" }, ["RetroArch Core"])]);
     const target = { romUid: state.romUid, system: state.system, file: state.file, present: state.present };
+    if (!retroarchVerified(state.system)) section.appendChild(h("div", { class: "rom-core-note" },
+      ["이 System의 실행은 아직 검증되지 않았습니다. 선택한 Core로 실행할 수 있습니다."]));
     const blocked = launchBlockReason(target);
     if (blocked) {
       section.appendChild(h("div", { class: "rom-core-note" }, [blocked]));
@@ -7913,83 +8034,62 @@
     return MEDIA_LABEL[conflict.mediaType] || "Media";
   }
 
-  /** 충돌 하나를 눈에 보이게 그린다 - 기존 파일과 새 파일의 크기를 나란히 대며,
-   * 크기까지 같으면(그래서 더 헷갈리는 경우) 그렇다고 짚어 준다(실사용 피드백 -
-   * "뭐가 겹치는 건지 text나 그림으로 표현할 방법 없나?"). 이 데이터
-   * (sourceSize/destSize)는 builder.classify_destination()이 이미 계산해 두고
-   * 있었는데 예전엔 `reason` 문장 하나로만(그나마 첫 번째 충돌만) 줄여 보여줬다.
-   */
-  function conflictDetailRow(conflict, entryKey, index) {
-    const sameSize = conflict.sourceSize === conflict.destSize;
-    // Media 충돌이면 두 그림을 나란히 보여 준다 - 크기 숫자만으로는 어느 쪽이 나은지 알 수 없다.
-    const preview = conflict.kind === "media" ? h("div", { class: "conflict-preview" }) : null;
-    if (preview) {
-      api.planConflictPreview(S.activeId, entryKey, index).then((r) => {
-        if (!r.ok || !r.data) return;
-        [["existing", "지금 대상에 있는 파일"], ["incoming", "새로 들어올 파일"]].forEach(([which, label]) => {
-          if (!r.data[which]) return;
-          const img = h("img", { class: "conflict-thumb " + which, alt: label, title: label, src: r.data[which] });
-          img.addEventListener("click", () => openMediaLightbox(img, label));
-          preview.appendChild(img);
+  /** 기존 파일과 가져올 파일을 나란히 보여주고, 선택한 쪽만 강조한다. */
+  function conflictDetailRow(conflict, entryKey, index, choices) {
+    const current = h("button", { class: "conflict-choice existing", type: "button",
+      title: `현재 Collection · ${conflictKindLabel(conflict)}` });
+    const incoming = h("button", { class: "conflict-choice incoming", type: "button",
+      title: `가져올 파일 · ${conflictKindLabel(conflict)}` });
+    const update = () => {
+      current.classList.toggle("selected", choices[index] === "skip");
+      incoming.classList.toggle("selected", choices[index] === "overwrite");
+    };
+    current.addEventListener("click", () => { choices[index] = "skip"; update(); });
+    incoming.addEventListener("click", () => { choices[index] = "overwrite"; update(); });
+    update();
+    if (conflict.kind === "media") {
+      for (const button of [current, incoming]) button.appendChild(icon("image", IC.md));
+      api.planConflictPreview(S.activeId, entryKey, index).then((result) => {
+        if (!result.ok || !result.data) return;
+        [[current, result.data.existing], [incoming, result.data.incoming]].forEach(([button, src]) => {
+          if (!src || !button.isConnected) return;
+          clear(button);
+          button.appendChild(h("img", { class: "conflict-thumb", src,
+            alt: conflictKindLabel(conflict) }));
         });
       });
+    } else {
+      current.appendChild(h("span", {}, ["현재 ROM"]));
+      incoming.appendChild(h("span", {}, ["가져올 ROM"]));
     }
-    return h("div", { class: "conflict-detail" }, [
-      preview,
-      icon(conflict.kind === "rom" ? "gamepad" : "image", IC.sm),
-      h("span", { class: "conflict-detail-kind" }, [conflictKindLabel(conflict)]),
-      h("span", { class: "conflict-detail-sizes" }, [
-        h("span", { class: "conflict-size existing", title: "지금 대상에 있는 파일" },
-          [formatBytes(conflict.destSize)]),
-        icon("arrowLeftRight", IC.xs),
-        h("span", { class: "conflict-size incoming", title: "새로 들어올 파일" },
-          [formatBytes(conflict.sourceSize)]),
-      ]),
-      h("span", { class: "conflict-detail-reason" + (sameSize ? " same-size" : "") },
-        [sameSize ? "크기는 같지만 내용이 다를 수 있습니다" : conflict.reason]),
-    ]);
+    return h("div", { class: "conflict-preview", title: conflictKindLabel(conflict) },
+      [current, incoming]);
   }
 
   async function openConflictDialog() {
-    const entries = (S.plan && S.plan.conflictEntries) || [];
+    const entries = ((S.plan && S.plan.entries) || S.plan?.conflictEntries || [])
+      .filter((entry) => (entry.conflicts || []).length);
     if (!entries.length) return;
 
     const list = h("div", { class: "conflict-list" });
+    const pending = [];
     entries.slice(0, 50).forEach((entry) => {
       const conflicts = entry.conflicts || [];
+      const choices = Object.fromEntries(conflicts.map((conflict, index) => [index,
+        entry.resolution === "overwrite" ? "overwrite"
+          : entry.resolution === "custom"
+            ? entry.conflictChoices?.[conflict.dest] || "skip" : "skip"]));
+      pending.push({ key: entry.key, choices });
+      const incomingLabel = entry.origin === "archive" ? "Archive" : "가져올 파일";
       const row = h("div", { class: "copy-conflict-row" }, [
         h("div", { class: "copy-conflict-main" }, [
           h("div", { class: "conflict-header" }, [
             h("span", { class: "conflict-filename truncate" }, [entry.filename]),
-            // 한 게임에 ROM과 media가 동시에 충돌할 수 있다 - 예전엔 첫 번째
-            // 것만 보이고 나머지는 조용히 가려졌다.
-            conflicts.length > 1
-              ? h("span", { class: "conflict-count-badge" }, [`충돌 ${conflicts.length}개`]) : null,
           ]),
-          ...conflicts.map((c, i) => conflictDetailRow(c, entry.key, i)),
-        ]),
-        h("div", { class: "conflict-actions" }, [
-          // "건너뛰기"는 그 항목을 통째로 건너뛴다고 읽힌다. 실제로 하는 일은
-          // **ROM은 그대로 두고 메타데이터/media(커버 등)는 반영**이고, 대개는 그것이
-          // 사용자가 원한 것이다(Phase 7.22 QA, tests/test_paste_media_overwrite_combo.py).
-          h("button", {
-            class: "btn compact", title: "ROM은 그대로 두고, 메타데이터와 media(커버 등)는 새 것으로 채웁니다",
-            onClick: async () => {
-              await api.planResolveConflict(S.activeId, entry.key, "skip");
-              await refreshPlan();
-              closeModal();
-              openConflictDialog();
-            },
-          }, [icon("fileText", IC.sm), "메타데이터만"]),
-          h("button", {
-            class: "btn compact danger-outline", title: "대상 파일을 새 파일로 교체합니다",
-            onClick: async () => {
-              await api.planResolveConflict(S.activeId, entry.key, "overwrite");
-              await refreshPlan();
-              closeModal();
-              openConflictDialog();
-            },
-          }, [icon("upload", IC.sm), "파일 덮어쓰기"]),
+          h("div", { class: "conflict-column-heads" }, [
+            h("span", {}, ["현재 Collection"]), h("span", {}, [incomingLabel]),
+          ]),
+          ...conflicts.map((c, i) => conflictDetailRow(c, entry.key, i, choices)),
         ]),
       ]);
       list.appendChild(row);
@@ -7999,30 +8099,22 @@
     }
 
     const body = h("div", { class: "modal-body conflict-dialog-body" }, [
-      h("div", { class: "modal-text" }, [
-        `대상에 같은 이름의 파일이 이미 있는 항목 ${formatCount(entries.length)}개입니다. ` +
-        "크기가 같아도 내용이 다를 수 있어 자동으로 덮어쓰지 않습니다."]),
-      h("div", { class: "modal-hint" }, [
-        "이미 가지고 있는 ROM에 메타데이터와 media(커버 등)만 채우려는 것이라면 " +
-        "«메타데이터만»을 고르세요. ROM 파일은 건드리지 않습니다."]),
+      h("div", { class: "modal-hint conflict-intro" },
+        ["각 파일에서 사용할 쪽을 고르세요. 최종 적용은 Plan 적용 시 합니다."]),
       list,
     ]);
-    showModal("충돌 확인", body, [
+    const card = showModal("충돌 확인", body, [
       h("button", { class: "btn", onClick: closeModal }, ["나중에"]),
-      h("button", { class: "btn", onClick: async () => {
+      h("button", { class: "btn primary", onClick: async () => {
+        for (const entry of pending) {
+          const result = await api.planResolveConflict(S.activeId, entry.key, entry.choices);
+          if (!result.ok) { showToast(result.error, "error"); return; }
+        }
         closeModal();
-        await api.planResolveAllConflicts(S.activeId, "skip");
         await refreshPlan();
-      } }, ["모두 메타데이터만"]),
-      h("button", { class: "btn danger", onClick: () => {
-        showConfirm("모두 덮어쓰기",
-          `${formatCount(entries.length)}개 항목의 기존 파일을 새 파일로 교체합니다. 되돌릴 수 없습니다.`,
-          true, async () => {
-            await api.planResolveAllConflicts(S.activeId, "overwrite");
-            await refreshPlan();
-          });
-      } }, ["모두 덮어쓰기"]),
+      } }, ["선택 완료"]),
     ]);
+    card.classList.add("conflict-modal-card");
   }
 
   /** 지난 Apply에서 실패해 Plan에 남은 항목을 보여준다.
@@ -8106,7 +8198,7 @@
     }
 
     const actions = [h("button", { class: "btn", onClick: closeModal }, ["취소"])];
-    if (!report.blocked) {
+    if (!report.blocked && S.plan.total > (report.entries || []).length) {
       actions.push(h("button", { class: "btn primary", onClick: async () => {
         const appliedCollectionId = S.activeId;
         const focusedBefore = S.focused == null ? null : rowByUid(S.focused);
@@ -8120,11 +8212,13 @@
           if (!result.cancelled) showToast(result.error, "error");
         } else {
           const data = result.data || {};
-          const remaining = (data.failed || 0) + (data.partial || 0) + (data.skipped || 0);
+          const remaining = (data.failed || 0) + (data.partial || 0)
+            + (data.skipped || 0) + (data.invalid || 0);
           let message = `적용 ${formatCount(data.applied || 0)}개`;
           if (data.failed) message += ` · 실패 ${formatCount(data.failed)}개`;
           if (data.partial) message += ` · 일부만 반영 ${formatCount(data.partial)}개`;
           if (data.skipped) message += ` · 충돌로 건너뜀 ${formatCount(data.skipped)}개`;
+          if (data.invalid) message += ` · 검증 실패 ${formatCount(data.invalid)}개`;
           // "Apply 했으니 끝났다"고 오해하지 않도록 남은 항목을 반드시 말한다.
           if (remaining) message += ` — ${formatCount(remaining)}개가 Plan에 남아 있습니다`;
           showToast(message, remaining ? "warning" : "info");
@@ -8340,6 +8434,15 @@
           [`충돌 ${formatCount(plan.conflicts)}`]);
         btn.addEventListener("click", openConflictDialog);
         right.appendChild(btn);
+      } else {
+        const resolved = (plan.entries || []).filter((entry) =>
+          (entry.conflicts || []).length && entry.resolution).length;
+        if (resolved) {
+          const btn = h("button", { class: "sb-badge success", title: "선택한 파일을 다시 확인하거나 바꿉니다" },
+            [`충돌 ${formatCount(resolved)} · 선택 완료`]);
+          btn.addEventListener("click", openConflictDialog);
+          right.appendChild(btn);
+        }
       }
       if (plan.failed) {
         const btn = h("button", { class: "sb-badge danger",

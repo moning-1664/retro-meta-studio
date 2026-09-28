@@ -39,6 +39,44 @@ test("Collection 목록에는 [n] 뱃지가 없다", async ({ page }) => {
   await expect(page.locator(".match-badge")).toHaveCount(0);
 });
 
+test("Archive에서 가져오기는 선택한 Match를 확정하고 반영 결과를 보여준다", async ({ page }) => {
+  await openApp(page);
+  await page.evaluate(() => {
+    window.__archiveImportCalls = [];
+    window.api.matchCandidates = () => Promise.resolve({ ok: true, data: {
+      source: { system: "ps2", filename: "Translated.iso", title: "Translated" },
+      candidates: [{ romIdentityId: "chosen-archive-id", filename: "Original.iso",
+        title: "Original", score: 88, tier: "normalized", evidence: ["제목 유사"],
+        fields: { name: "Original", desc: "Archive description", developer: "Test Studio",
+          publisher: "Test Publisher", genre: "RPG", releasedate: "2001" },
+        mediaTypes: ["covers"] }],
+      linkedRomIdentityId: null,
+    } });
+    window.api.applyMatch = (...args) => {
+      window.__archiveImportCalls.push(["match", ...args]);
+      return Promise.resolve({ ok: true, data: {} });
+    };
+    window.api.archiveToCollection = (...args) => {
+      window.__archiveImportCalls.push(["import", ...args]);
+      return Promise.resolve({ ok: true, data: {
+        updated: 1, planned: 1, conflicts: 1, skipped: [],
+      } });
+    };
+  });
+  await page.locator(".lrow").first().click({ button: "right" });
+  await page.locator(".ctx-menu .ctx-item", { hasText: "Archive에서 가져오기" }).click();
+  await expect(page.locator(".match-option")).toHaveCount(1);
+  await expect(page.locator(".match-option .scrape-candidate-desc")).toHaveText("Archive description");
+  await expect(page.locator(".match-option .scrape-candidate-facts")).toContainText("88%");
+  await page.locator(".match-option").click();
+  await modalButton(page, "Apply Match").click();
+  await expect.poll(() => page.evaluate(() => window.__archiveImportCalls.map((call) => call[0])))
+    .toEqual(["match", "import"]);
+  await expect.poll(() => page.evaluate(() => window.__archiveImportCalls[1][2]))
+    .toEqual(["chosen-archive-id"]);
+  await expect(page.locator("#toast")).toContainText("충돌 1개를 Plan에서 결정하세요");
+});
+
 test("Archive에서는 서로 다른 버전이 있는 행에만 뱃지가 붙는다", async ({ page }) => {
   await openArchive(page);
   await expect(page.locator(".match-badge")).toHaveCount(1);
@@ -189,8 +227,18 @@ test.describe("Revision 탭 - 무엇이 다른지 보여준다", () => {
     await openRevisions(page);
     // 별표는 Revision 목록에 없어야 한다 - 즐겨찾기와 다른 개념이다.
     await expect(page.locator(".revision-row .fav-btn")).toHaveCount(0);
-    await expect(page.locator(".revision-row .revision-pick").first()).toHaveText("선택");
+    await expect(page.locator(".revision-actions .btn.primary")).toHaveText("선택");
     await expect(page.locator(".revision-badge")).toHaveCount(0);
+  });
+
+  test("Revision 카드를 고르면 강조하고 하단 선택 버튼을 활성화한다", async ({ page }) => {
+    await openRevisions(page);
+    const rows = page.locator(".revision-row");
+    await rows.nth(1).locator(".scrape-candidate-title").click();
+    await expect(rows.nth(1)).toHaveClass(/chosen/);
+    await expect(rows.nth(0)).not.toHaveClass(/chosen/);
+    await expect(page.locator(".revision-actions .btn.primary")).toBeEnabled();
+    await expect(page.locator(".revision-row .scrape-fact-row").first()).toBeVisible();
   });
 
   test("값이 갈리는 필드만 강조해서 보여준다", async ({ page }) => {

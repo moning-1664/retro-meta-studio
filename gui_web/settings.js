@@ -23,7 +23,7 @@
     ["archive", "Archive", "저장 형식과 위치"],
     ["emulator", "Emulator", "RetroArch 연동"],
     ["appearance", "Appearance", "테마와 화면 밀도"],
-    ["advanced", "Advanced", "캐시와 진단"],
+    ["advanced", "Advanced", "진단과 초기화"],
   ];
 
   const THEMES = [
@@ -353,7 +353,7 @@
           toggle(a.previewDefault, (v) => ctx.update("appearance", { previewDefault: v })),
           "처음 여는 Collection에서 미리보기를 켤지 정합니다. 이미 연 Collection은 마지막 상태를 따릅니다."));
       } else {
-        add(...section("Advanced", "일반 사용자가 자주 만질 필요가 없는 진단 옵션입니다."));
+        add(...section("Advanced", "진단과 화면 설정을 관리합니다."));
         add(row("advanced.logLevel", "Log level", soonSelect([["normal", "Normal"], ["verbose", "Verbose"], ["debug", "Debug"]]), null, true));
         const reset = h("button", { class: "stg-danger" }, ["화면 설정 초기화"]);
         reset.addEventListener("click", () => { ctx.reset(); render(); });

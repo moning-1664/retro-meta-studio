@@ -104,7 +104,9 @@ def _text(value: Any) -> str:
 
 def _integer(value: Any) -> int:
     """ScreenScraper occasionally returns counters as formatted strings."""
-    text = _text(value).strip().replace(" ", "")
+    text = _text(value).strip()
+    if re.fullmatch(r"\d{1,3}(?:[\s\u00a0\u202f.,]\d{3})+", text):
+        text = re.sub(r"[\s\u00a0\u202f.,]", "", text)
     try:
         return int(text or 0)
     except (TypeError, ValueError):
@@ -148,9 +150,11 @@ SYSTEM_IDS = {
     "3do": 29, "amiga": 64, "arcade": 75, "fbneo": 75, "fbern": 75,
     "cps1": 75, "cps2": 75, "cps3": 75, "mame": 75, "fba": 75,
     "mame2003": 75, "mame2003plus": 75, "mame2010": 75,
-    "dos": 135, "dreamcast": 23, "gamegear": 21, "gb": 9,
+    "dos": 135, "windows": 138, "dreamcast": 23, "gamegear": 21, "gb": 9,
     "gba": 12, "gbc": 10, "gc": 13, "megadrive": 1,
-    "genesis": 1, "msx": 113, "msx1": 113, "msx2": 116,
+    "genesis": 1, "segacd": 20, "megacd": 20, "mastersystem": 2, "sms": 2,
+    "ngp": 25, "ngpc": 82, "pc98": 208,
+    "msx": 113, "msx1": 113, "msx2": 116,
     "msx2+": 117, "n64": 14, "naomi": 56, "nes": 3,
     "nds": 15, "n3ds": 17, "3ds": 17, "wii": 16, "wiiu": 18,
     "switch": 225, "psvita": 62, "vita": 62, "ps3": 59, "ps4": 60,
@@ -178,6 +182,27 @@ def _game_system_id(game: dict) -> str | None:
     system = game.get("systeme") or {}
     value = system.get("id") if isinstance(system, dict) else system
     return str(value) if value is not None and str(value).isdigit() else None
+
+
+def _game_system_parent_id(game: dict) -> str | None:
+    system = game.get("systeme") or {}
+    value = system.get("parentid") if isinstance(system, dict) else None
+    return str(value) if value is not None and str(value).isdigit() else None
+
+
+def _game_system_matches(game: dict, requested_id: str | None) -> bool:
+    """ScreenScraper returns arcade board IDs under the requested arcade parent."""
+    if not requested_id:
+        return True
+    actual = _game_system_id(game)
+    if actual is None or actual == requested_id:
+        return True
+    return requested_id == "75" and _game_system_parent_id(game) == requested_id
+
+
+def _log_label(value: Any) -> str:
+    """Keep provider text on one bounded log line without logging credentials."""
+    return re.sub(r"[\x00-\x1f\x7f]+", " ", str(value or ""))[:160]
 
 
 class ScreenScraperClient(ScrapeProvider):
@@ -240,7 +265,7 @@ class ScreenScraperClient(ScrapeProvider):
     def account_status(self) -> dict:
         payload = self._get("ssuserInfos.php")
         user = (payload.get("response") or {}).get("ssuser") or {}
-        return {
+        result = {
             "provider": self.provider_id,
             "user": _text(user.get("id") or self.config.user_id),
             "level": _text(user.get("niveau")),
@@ -250,9 +275,22 @@ class ScreenScraperClient(ScrapeProvider):
             "requestsMinute": _integer(user.get("requestspermin")),
             "requestsMinuteLimit": _integer(user.get("maxrequestspermin")),
         }
+        log.info("ScreenScraper account quota today=%s limit=%s fieldsPresent=%s",
+                 result["requestsToday"], result["requestsLimit"],
+                 sorted(key for key in ("requeststoday", "maxrequestsperday") if key in user))
+        return result
 
     def identify(self, identity: ScrapeIdentity) -> list[ScrapeCandidate]:
         alias = identity.lookup_alias or {}
+        system_id = _system_id(str(alias.get("systemId") or identity.system))
+        if not system_id:
+            log.info("ScreenScraper identify skipped all-system search filename=%s",
+                     _log_label(identity.filename))
+            return []
+        if identity.is_modified_rom and not alias:
+            log.info("ScreenScraper identify skipped modified ROM system=%s filename=%s",
+                     identity.system, _log_label(identity.filename))
+            return []
         arcade = str(identity.system).lower() in ARCADE_SYSTEMS
         hashes = {}
         if self.config.use_hashes and identity.path and Path(identity.path).is_file():
@@ -275,10 +313,9 @@ class ScreenScraperClient(ScrapeProvider):
         if (not arcade and not any(key in params for key in ("crc", "md5", "sha1"))
                 and (not identity.path or not Path(identity.path).is_file())):
             return []
-        system_id = _system_id(str(alias.get("systemId") or identity.system))
-        if system_id:
-            params["systemeid"] = system_id
+        params["systemeid"] = system_id
         game = None
+        matched_name = ""
         names = [identity.filename]
         if arcade and Path(identity.filename).stem != identity.filename:
             names.append(Path(identity.filename).stem)
@@ -292,15 +329,33 @@ class ScreenScraperClient(ScrapeProvider):
                 if exc.kind != "not_found":
                     raise
             if game:
+                matched_name = rom_name
                 break
-        if game and system_id and _game_system_id(game) not in (None, system_id):
-            return []
+        if game:
+            returned_system = _game_system_id(game)
+            rejected = not _game_system_matches(game, system_id)
+            log.info("ScreenScraper identify system=%s rom=%s returnedId=%s returnedSystem=%s "
+                     "returnedParent=%s hashFields=%s decision=%s",
+                     system_id or "all", _log_label(matched_name), _log_label(game.get("id")),
+                     returned_system or "unknown",
+                     _game_system_parent_id(game) or "unknown",
+                     sorted(key for key in ("crc", "md5", "sha1")
+                                                         if key in params),
+                     "otherSystem" if rejected else "candidate")
+            if rejected:
+                return []
         evidence = ("원본 별칭으로 조회" if alias and any(k in params for k in ("crc", "md5", "sha1"))
                     else "ROM 해시로 조회" if any(k in params for k in ("crc", "md5", "sha1"))
                     else "Arcade ROM-set 파일명으로 조회")
-        # jeuInfos may also fall back to romnom on its side. Without a returned
-        # checksum we cannot claim that the response is a verified hash match.
-        return [self._candidate(game, evidence=(evidence,), confidence=90)] if game else []
+        # jeuInfos may also fall back to romnom on its side. The response does
+        # not prove a checksum match, even when hashes were submitted.
+        has_hash = any(key in params for key in ("crc", "md5", "sha1"))
+        confidence = 65 if has_hash else 45
+        if not game:
+            return []
+        candidate = self._candidate(game, evidence=(evidence,), confidence=confidence)
+        return [replace(candidate, confidence_reason=(
+            "해시로 조회 · 일치 확인 필요" if has_hash else "ROM 이름으로 조회 · 직접 확인 필요"))]
 
     def search(self, query: str, system_hint: str = "") -> list[ScrapeCandidate]:
         query = str(query or "").strip()
@@ -320,26 +375,56 @@ class ScreenScraperClient(ScrapeProvider):
         if isinstance(games, dict) and "jeu" in games:
             games = games["jeu"]
         candidates = []
+        arcade_short_name = (system_id == "75"
+                             and bool(re.fullmatch(r"[A-Za-z0-9_]{2,16}", query)))
         other_systems = low_similarity = 0
         for game in _list(games):
             if not isinstance(game, dict):
                 continue
+            if not (game.get("id") or game.get("jeu_id")):
+                log.info("ScreenScraper search ignored row without game ID query=%s keys=%s",
+                         _log_label(query), sorted(str(key) for key in game.keys())[:20])
+                continue
             # The request was already scoped by systemeid. Some search rows
             # omit systeme; reject only an explicit contradictory ID.
-            if system_id and _game_system_id(game) not in (None, system_id):
+            if not _game_system_matches(game, system_id):
                 other_systems += 1
+                log.info("ScreenScraper search candidate query=%s requestedSystem=%s id=%s "
+                         "title=%s returnedSystem=%s returnedParent=%s decision=otherSystem",
+                         _log_label(query), system_id, _log_label(game.get("id")),
+                         _log_label(_localized(game.get("noms")) or game.get("nom")),
+                         _game_system_id(game) or "unknown",
+                         _game_system_parent_id(game) or "unknown")
                 continue
             candidate = self._candidate(game, evidence=(f'검색어 "{query}"',), confidence=55)
             score = _title_similarity(query, candidate.title, candidate.alternate_titles)
+            # Short arcade set names rarely resemble display titles. Rescue only
+            # a result that explicitly confirms the requested arcade system.
+            review_only = (score < 0.45 and arcade_short_name
+                           and _game_system_id(game) is not None
+                           and _game_system_matches(game, system_id))
             # jeuRecherche는 관련 없는 단일 결과를 정상 응답으로 돌려주기도 한다. 제목이
             # 거의 겹치지 않으면 선택을 강요하지 않고 "후보 없음"으로 처리한다.
-            if score < 0.45:
+            if score < 0.45 and not review_only:
                 low_similarity += 1
+                decision = "lowSimilarity"
+                log.info("ScreenScraper search candidate query=%s requestedSystem=%s id=%s "
+                         "title=%s returnedSystem=%s similarity=%.3f decision=%s",
+                         _log_label(query), system_id or "all", _log_label(candidate.remote_game_id),
+                         _log_label(candidate.title), _game_system_id(game) or "unknown",
+                         score, decision)
                 continue
-            confidence = max(45, min(95, round(score * 100)))
+            confidence = (max(20, min(40, round(score * 100))) if review_only
+                          else max(45, min(95, round(score * 100))))
             candidates.append(replace(
                 candidate, confidence=confidence,
-                confidence_reason=f"제목 유사도 {confidence}%"))
+                confidence_reason=(f"아케이드 단축명 후보 · 직접 확인 필요 (제목 유사도 {score:.0%})"
+                                   if review_only else f"제목 유사도 {score:.0%}")))
+            log.info("ScreenScraper search candidate query=%s requestedSystem=%s id=%s "
+                     "title=%s returnedSystem=%s similarity=%.3f decision=%s",
+                     _log_label(query), system_id or "all", _log_label(candidate.remote_game_id),
+                     _log_label(candidate.title), _game_system_id(game) or "unknown", score,
+                     "arcadeReview" if review_only else "candidate")
         log.info("ScreenScraper search system=%s returned=%d kept=%d otherSystem=%d lowSimilarity=%d",
                  system_id or "all", len(_list(games)), len(candidates), other_systems, low_similarity)
         return candidates

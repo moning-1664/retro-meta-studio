@@ -2,6 +2,16 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+import re
+
+
+# Only explicit translation/hack markers suppress a useful original-ROM hash.
+_PATCH_TAG = re.compile(
+    r"\s*[\[(][^\])]*(?:T[-_ ]?(?:Kor|Korean|Eng|English)|"
+    r"Translat(?:ed|ion)|Hack|Patch|한글(?:화)?|번역|패치)[^\])]*[\])]",
+    re.IGNORECASE,
+)
+_PATCH_SUFFIX = re.compile(r"\s+(?:한글(?:화)?\s*패치|번역판|번역\s*패치)\s*$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -16,15 +26,20 @@ class ScrapeIdentity:
     lookup_alias: dict | None = None
 
     @property
+    def is_modified_rom(self) -> bool:
+        name = Path(self.filename).stem
+        return bool(_PATCH_TAG.search(name) or _PATCH_SUFFIX.search(name))
+
+    @property
     def default_query(self) -> str:
         name = Path(self.filename).stem
         # Strip recognized dump tags, but retain meaningful parenthesized
         # subtitles (e.g. "Game (Special Edition)").
-        import re
         tag = (r"(?:K|KR|KOR|J|JP|JPN|U|US|USA|E|EU|EUR|W|World|Japan|Korea|Europe|"
                r"Rev(?:ision)?\s*[\w.-]+|v\d[\w.-]*|!|"
                r"(?:En|Fr|De|Es|It|Ja|Ko)(?:\s*,\s*(?:En|Fr|De|Es|It|Ja|Ko))+)" )
-        cleaned = re.sub(rf"\s*[\[(]{tag}[\])]\s*", " ", name, flags=re.IGNORECASE)
+        cleaned = _PATCH_SUFFIX.sub("", _PATCH_TAG.sub(" ", name))
+        cleaned = re.sub(rf"\s*[\[(]{tag}[\])]\s*", " ", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"[_]+", " ", cleaned)
         trailing_article = re.fullmatch(r"(.+),\s*(The|A|An)", cleaned.strip(), re.IGNORECASE)
         if trailing_article:

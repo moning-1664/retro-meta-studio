@@ -4,6 +4,7 @@ Phase 3의 핵심은 "실제 파일은 확정 전까지 절대 바뀌지 않는�
 디스크 증감과 일치한다"이다. 두 가지를 파일 시스템으로 직접 확인한다.
 """
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -86,6 +87,63 @@ class PlanIntegrationTests(unittest.TestCase):
         state = self.api.plan_state(self.dst)["data"]
         self.assertEqual(state["added"], 1)
         self.assertEqual(state["marks"]["rows"]["ps2|FFX.iso"], "+")
+
+    def test_each_conflicting_media_file_can_be_kept_or_replaced_independently(self):
+        from app.plan import builder
+
+        source_cover = self.source_root / "downloaded_media" / "ps2" / "covers" / "MGS2.png"
+        target_cover = self.target_root / "downloaded_media" / "ps2" / "covers" / "MGS2.png"
+        source_video = self.source_root / "downloaded_media" / "ps2" / "videos" / "MGS2.mp4"
+        target_video = self.target_root / "downloaded_media" / "ps2" / "videos" / "MGS2.mp4"
+        source_cover.write_bytes(b"archive cover")
+        target_cover.write_bytes(b"current cover remains")
+        source_video.write_bytes(b"archive video replaces old video")
+        target_video.write_bytes(b"old video")
+        collection, cache, provider = self.api._plan_context(self.dst)
+        row = cache.get_row(self._uid(self.dst, "MGS2.iso"))
+        item = {"system": "ps2", "filename": "MGS2.iso", "rom": None,
+                "fields": row["fields"], "frontend_raw": row["frontend_raw"],
+                "media": [{"type": "covers", "path": str(source_cover), "size": source_cover.stat().st_size},
+                          {"type": "videos", "path": str(source_video), "size": source_video.stat().st_size}]}
+        added = builder.plan_add(self.api._plan(self.dst), collection, provider, [item])
+        self.assertEqual(added["conflicts"], 1)
+        entry = self.api._plan(self.dst).conflict_entries()[0]
+        self.assertEqual([c["mediaType"] for c in entry.conflicts], ["covers", "videos"])
+
+        resolved = self.api.plan_resolve_conflict(self.dst, entry.key,
+                                                  {"0": "skip", "1": "overwrite"})
+        self.assertTrue(resolved["ok"], resolved.get("error"))
+        self.assertEqual(self.api.plan_state(self.dst)["data"]["conflicts"], 0)
+        self.api.start_apply(self.dst)
+        wait_idle(self.api)
+        self.assertEqual(target_cover.read_bytes(), b"current cover remains")
+        self.assertEqual(target_video.read_bytes(), b"archive video replaces old video")
+
+    def test_same_size_media_does_not_invalidate_another_resolved_conflict(self):
+        from app.plan import builder
+
+        source_cover = self.source_root / "downloaded_media" / "ps2" / "covers" / "MGS2.png"
+        target_cover = self.target_root / "downloaded_media" / "ps2" / "covers" / "MGS2.png"
+        source_video = self.source_root / "downloaded_media" / "ps2" / "videos" / "MGS2.mp4"
+        target_video = self.target_root / "downloaded_media" / "ps2" / "videos" / "MGS2.mp4"
+        source_cover.write_bytes(b"archive cover")
+        target_cover.write_bytes(b"old cover with another size")
+        source_video.write_bytes(b"same video")
+        target_video.write_bytes(b"same video")
+        os.utime(target_video, (1_000_000_000, 1_000_000_000))
+        collection, _cache, provider = self.api._plan_context(self.dst)
+        item = {"system": "ps2", "filename": "MGS2.iso", "rom": None,
+                "fields": {"name": "MGS2"}, "frontend_raw": {},
+                "media": [{"type": "covers", "path": str(source_cover), "size": source_cover.stat().st_size},
+                          {"type": "videos", "path": str(source_video), "size": source_video.stat().st_size}]}
+        builder.plan_add(self.api._plan(self.dst), collection, provider, [item])
+        entry = self.api._plan(self.dst).conflict_entries()[0]
+        self.assertEqual([c["mediaType"] for c in entry.conflicts], ["covers"])
+        self.assertTrue(self.api.plan_resolve_conflict(self.dst, entry.key, {"0": "overwrite"})["ok"])
+        self.api.start_apply(self.dst)
+        wait_idle(self.api)
+        self.assertEqual(self.api.plan_state(self.dst)["data"]["entries"], [])
+        self.assertEqual(target_cover.read_bytes(), b"archive cover")
 
     def test_plan_delta_matches_real_bytes_after_apply(self):
         self.api.copy_selection(self.src, [self._uid(self.src, "FFX.iso")])

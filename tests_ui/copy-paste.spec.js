@@ -72,6 +72,15 @@ test.describe("복사/붙여넣기", () => {
 
 // 붙여넣기 모드(Patch / Overwrite / Replace) - 사용자 결정.
 test.describe("붙여넣기 모드", () => {
+  test("넓은 목록에는 Paste와 Plan 그룹명을 표시하고 좁으면 숨긴다", async ({ page }) => {
+    await page.setViewportSize({ width: 2400, height: 900 });
+    await expect(page.locator("#filter-bar .toolbar-group-label")).toHaveText(["Paste", "Plan"]);
+    await expect(page.locator("#filter-bar .toolbar-group-label").first()).toBeVisible();
+    await page.setViewportSize({ width: 1000, height: 800 });
+    await expect(page.locator("#filter-bar .toolbar-group-label").first()).toBeHidden();
+    await expect(page.locator("#filter-bar .paste-mode .seg-btn")).toHaveCount(3);
+  });
+
   test("Plan 버튼 옆에 세 모드 토글이 있고 Patch가 기본이다", async ({ page }) => {
     const modes = page.locator(".paste-mode .seg-btn");
     await expect(modes).toHaveCount(3);

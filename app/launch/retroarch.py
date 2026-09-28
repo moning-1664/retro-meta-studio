@@ -103,7 +103,7 @@ class LaunchResult:
     ok: bool
     error: str | None = None
     #: UI가 실패 사유에 따라 다르게 반응하기 위한 안정적인 코드(문구는 바뀌어도 이 값은 유지).
-    #: system_unverified / retroarch_missing / rom_missing / core_unset / core_missing / launch_failed
+    #: retroarch_missing / rom_missing / core_unset / core_missing / launch_failed
     error_kind: str | None = None
     command: list = field(default_factory=list)
 
@@ -149,9 +149,8 @@ def _windowed_override_path() -> str:
 def launch(exe_path, cores_dir, core_filename, rom_path, system, *, popen=None,
            startup_check_sec=STARTUP_CHECK_SEC) -> LaunchResult:
     """RetroArch를 띄운다. `popen`은 테스트에서 subprocess.Popen 대신 넣는다."""
-    if not is_verified(system):
-        return LaunchResult(False, f"'{system}' 시스템은 RetroArch 실행이 아직 검증되지 않았습니다.",
-                            "system_unverified")
+    # Verification is advisory. An explicitly chosen installed Core may work
+    # for a system we have not tested; let RetroArch decide whether it launches.
     if not exe_path or not Path(exe_path).is_file():
         return LaunchResult(False, f"RetroArch 실행 파일을 찾을 수 없습니다: {exe_path or '(미설정)'}",
                             "retroarch_missing")

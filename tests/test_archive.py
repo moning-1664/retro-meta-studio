@@ -5,6 +5,7 @@
 - 출처는 Collection 이름이 아니라 ID로 추적한다. 이름이 바뀌어도 관계가 유지된다(§38).
 """
 
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -12,7 +13,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from bridge.api import Api
-from tests.fixtures import build_custom_esde_tree, build_esde_tree, wait_idle
+from tests.fixtures import build_custom_esde_tree, build_esde_tree, wait_idle, write_file
 
 
 def configure(api, patch):
@@ -522,6 +523,59 @@ class ArchiveTests(unittest.TestCase):
                     if (g.findtext("path") or "").strip() == "./MGS2.iso")
         self.assertEqual(game.findtext("name"), "새 제목")
 
+    def test_confirmed_match_imports_metadata_and_media_to_patched_rom(self):
+        archive_name = "Space Channel 5 Part 2 [J].chd"
+        target_name = "Space Channel 5 Part 2 (Japan) [T-En by BrAzE v20110418].chd"
+        source_root = build_custom_esde_tree(
+            self.dir / "space_archive", "dreamcast",
+            [{"filename": archive_name, "title": "Space Channel 5 Part 2"}], with_media=True)
+        target_root = build_custom_esde_tree(
+            self.dir / "space_target", "dreamcast",
+            [{"filename": target_name, "title": "Old title"}], with_media=True)
+        source_cover = write_file(source_root / "downloaded_media" / "dreamcast" / "covers" /
+                                  "Space Channel 5 Part 2 [J].png", b"archive-cover")
+        target_cover = write_file(target_root / "downloaded_media" / "dreamcast" / "covers" /
+                                  "Space Channel 5 Part 2 (Japan) [T-En by BrAzE v20110418].png",
+                                  b"old-target-cover")
+        source_screen = write_file(source_root / "downloaded_media" / "dreamcast" / "screenshots" /
+                                   "Space Channel 5 Part 2 [J].png", b"same screenshot")
+        target_screen = write_file(target_root / "downloaded_media" / "dreamcast" / "screenshots" /
+                                   "Space Channel 5 Part 2 (Japan) [T-En by BrAzE v20110418].png",
+                                   b"same screenshot")
+        os.utime(target_screen, (1_000_000_000, 1_000_000_000))
+        source_id = self.api.create_collection("Space Archive", "es-de", str(source_root))["data"]["id"]
+        target_id = self.api.create_collection("Space Target", "es-de", str(target_root))["data"]["id"]
+        for cid in (source_id, target_id):
+            self.api.start_scan(cid)
+            wait_idle(self.api)
+        self.api.archive_ingest(source_id)
+        rid = next(r["romIdentityId"] for r in self.api.archive_rows()["data"]["rows"]
+                   if r["file"] == archive_name)
+        self.api.archive.put_match_link(target_id, "dreamcast", target_name, rid,
+                                        tier="normalized", score=88)
+
+        imported = self.api.archive_to_collection(target_id, [rid])
+        self.assertTrue(imported["ok"], imported.get("error"))
+        self.assertEqual(imported["data"]["updated"], 1)
+        self.assertEqual(imported["data"]["planned"], 1)
+        self.assertEqual(imported["data"]["conflicts"], 1)
+        self.assertEqual(target_cover.read_bytes(), b"old-target-cover")
+        plan = self.api.plan_state(target_id)["data"]
+        self.assertEqual(plan["entries"][0]["filename"], target_name)
+        self.assertTrue(any(c["kind"] == "media" for c in plan["entries"][0]["conflicts"]))
+        self.assertTrue(self.api.plan_resolve_conflict(
+            target_id, plan["entries"][0]["key"], {"0": "overwrite"})["ok"])
+        self.api.start_apply(target_id)
+        wait_idle(self.api)
+        self.assertEqual(target_cover.read_bytes(), source_cover.read_bytes())
+        self.assertEqual(target_screen.read_bytes(), source_screen.read_bytes())
+        self.assertEqual(self.api.plan_state(target_id)["data"]["entries"], [])
+        self.assertTrue((target_root / "dreamcast" / target_name).exists())
+        updated = next(r for r in self.api.workspace.open(target_id).query_rows()
+                       if r["filename"] == target_name)
+        self.assertEqual(self.api.workspace.open(target_id).get_row(updated["rom_uid"])
+                         ["fields"]["name"], "Space Channel 5 Part 2")
+
     def test_completely_absent_game_goes_through_the_plan(self):
         """대상에 흔적이 아예 없는 항목은 파일을 옮겨야 하므로 Plan으로 간다."""
         self.api.archive_ingest(self.src)
@@ -842,6 +896,57 @@ class ArchiveMediaPasteTests(unittest.TestCase):
         # 다른 media와 메타데이터는 그대로다.
         self.assertTrue((self.archive_dir / "downloaded_media" / "ps2" / "videos" / "FFX.mp4").exists())
         self.assertEqual(self.api.archive_detail(self.ffx)["data"]["fields"].get("desc"), "A role-playing game.")
+
+    def test_media_paste_repairs_a_stale_frontend_copy(self):
+        source = self.api._scrape_cache_dir / "new-cover.png"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"new-cover-from-scraper")
+        dest = self.archive_dir / "downloaded_media" / "ps2" / "covers" / "FFX.png"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"old-unrelated-cover")
+        with patch.object(self.api, "_project_archive", return_value={"mediaCopied": 0,
+                                                                    "mediaMissing": 1}):
+            result = self.api.archive_media_paste(
+                self.ffx, "Covers", {"kind": "scraper", "path": str(source)})
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(dest.read_bytes(), source.read_bytes())
+
+    def test_pasting_another_type_does_not_restore_a_stale_cover_snapshot(self):
+        from app.archive.projection import effective_media
+
+        cover = self.api._scrape_cache_dir / "new-cover.png"
+        screenshot = self.api._scrape_cache_dir / "new-screenshot.png"
+        cover.parent.mkdir(parents=True, exist_ok=True)
+        cover.write_bytes(b"correct-cover")
+        screenshot.write_bytes(b"correct-screenshot")
+        first = self.api.archive_media_paste(
+            self.ffx, "Covers", {"kind": "scraper", "path": str(cover)})
+        self.assertTrue(first["ok"], first.get("error"))
+        frontend_cover = self.archive_dir / "downloaded_media" / "ps2" / "covers" / "FFX.png"
+        self.assertEqual(frontend_cover.read_bytes(), b"correct-cover")
+
+        # Reproduce an older, contaminated revision snapshot. A subsequent
+        # screenshot paste must not write this unrelated cover into the frontend.
+        stale_snapshot = Path(effective_media(self.api.archive, self.ffx)["covers"]["abs_path"])
+        self.assertNotEqual(stale_snapshot, frontend_cover)
+        stale_snapshot.write_bytes(b"unrelated-game-cover")
+        second = self.api.archive_media_paste(
+            self.ffx, "Screenshots", {"kind": "scraper", "path": str(screenshot)})
+        self.assertTrue(second["ok"], second.get("error"))
+        self.assertEqual(frontend_cover.read_bytes(), b"correct-cover")
+        self.assertEqual(
+            (self.archive_dir / "downloaded_media" / "ps2" / "screenshots" / "FFX.png").read_bytes(),
+            b"correct-screenshot")
+
+    def test_media_paste_reports_projection_failure(self):
+        source = self.api._scrape_cache_dir / "new-cover.png"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"new-cover-from-scraper")
+        with patch.object(self.api, "_project_archive", return_value={"error": "write failed"}):
+            result = self.api.archive_media_paste(
+                self.ffx, "Covers", {"kind": "scraper", "path": str(source)})
+        self.assertFalse(result["ok"])
+        self.assertIn("write failed", result["error"])
 
     def test_pasting_between_archive_items_works(self):
         (self.archive_dir / "downloaded_media" / "ps2" / "covers" / "MGS2.png").write_bytes(b"ARCH-MGS2")

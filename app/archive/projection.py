@@ -15,8 +15,10 @@ gamelist/media는 Frontend Adapter가 쓴다 - Collection에 쓰는 코드와 �
 from __future__ import annotations
 
 import os
+import logging
 import shutil
 import time
+import uuid
 from pathlib import Path
 
 from adapters import get_adapter
@@ -27,6 +29,7 @@ from app.model.collection import (Collection, StorageLocation, STORAGE_INTERNAL)
 PROJECTION_ID = "__archive_projection__"
 
 DEFAULT_CONFIG = {"frontend": "es-de", "archiveDir": "", "romDir": "", "mediaInternal": True}
+log = logging.getLogger(__name__)
 
 
 def normalize_config(raw) -> dict:
@@ -98,6 +101,8 @@ def project(archive, config, rom_identity_ids=None, *, overwrite_media=None, pro
                 stage_started = time.perf_counter()
                 got, lost = _copy_media(archive, adapter, layout, rid, filename, fields,
                                         overwrite=(overwrite_media or {}).get(rid, ()),
+                                        only=((overwrite_media or {}).get(rid, ())
+                                              if overwrite_media is not None else None),
                                         timings=timings)
                 timings["mediaSeconds"] += time.perf_counter() - stage_started
                 copied += got
@@ -128,6 +133,7 @@ def snapshot_revision_media(archive, config, record_ids, *, progress_cb=None) ->
     root = Path(cfg["archiveDir"]) / ".rms" / "revision-media"
     copied = 0
     ids = list(record_ids or [])
+    trace_single = len(ids) == 1
     if progress_cb:
         progress_cb(0, max(1, len(ids)), "Revision 미디어 확인")
     for index, record_id in enumerate(ids):
@@ -142,13 +148,41 @@ def snapshot_revision_media(archive, config, record_ids, *, progress_cb=None) ->
                 continue
             source = Path(media["abs_path"])
             if not source.is_file():
+                log.warning("Archive revision media source missing record=%s type=%s source=%s",
+                            record_id, media["media_type"], source)
                 continue
-            suffix = source.suffix
-            destination = root / str(record_id) / f"{media['media_type']}{suffix}"
-            if not destination.exists():
+            # A numeric record_id is local to one SQLite database. Two PCs can
+            # assign the same number to different revisions in a shared Archive.
+            # Never treat an existing <record_id>/<type> file as proof that it
+            # contains this revision's bytes, and never overwrite another PC's
+            # immutable snapshot. Unchanged media can point to the earlier
+            # snapshot directly instead of making another NAS copy.
+            try:
+                source.relative_to(root)
+                already_snapshotted = True
+            except ValueError:
+                already_snapshotted = False
+            if already_snapshotted:
+                destination = source
+                if trace_single:
+                    log.info("Archive revision media retained record=%s type=%s path=%s",
+                             record_id, media["media_type"], source)
+            else:
+                destination = (root / str(record_id) /
+                               f"{media['media_type']}-{uuid.uuid4().hex}{source.suffix}")
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source, destination)
+                try:
+                    shutil.copy2(source, destination)
+                except OSError:
+                    log.exception("Archive revision media copy failed record=%s type=%s "
+                                  "source=%s destination=%s", record_id,
+                                  media["media_type"], source, destination)
+                    raise
                 copied += 1
+                if trace_single:
+                    log.info("Archive revision media copied record=%s type=%s source=%s "
+                             "destination=%s bytes=%d", record_id, media["media_type"],
+                             source, destination, int(media.get("size") or 0))
             archive.update_revision_media_path(record_id, media["media_type"], destination)
         if progress_cb:
             progress_cb(index + 1, max(1, len(ids)), f"Revision {record_id}")
@@ -207,10 +241,9 @@ def effective_media(archive, rid) -> dict[str, dict]:
     return latest
 
 
-def _copy_media(archive, adapter, layout, rid, filename, fields, *, overwrite=(),
+def _copy_media(archive, adapter, layout, rid, filename, fields, *, overwrite=(), only=None,
                 timings=None) -> tuple[int, int]:
-    """없는 것만 복사한다. `overwrite`에 든 media type은 이미 있어도 덮어쓴다(사용자가
-    직접 바꾼 그림을 Frontend 트리에 반영할 때)."""
+    """Media를 Frontend에 복사한다. `only`가 있으면 해당 종류만 처리한다."""
     title = (fields.get("name") or "").strip() or Path(filename).stem
     copied = missing = 0
     lookup_started = time.perf_counter()
@@ -218,36 +251,64 @@ def _copy_media(archive, adapter, layout, rid, filename, fields, *, overwrite=()
     if timings is not None:
         timings["mediaLookupSeconds"] += time.perf_counter() - lookup_started
     for media_type, ref in media.items():
+        if only is not None and media_type not in only:
+            continue
         mf = MediaFile(media_type=media_type, path=ref["abs_path"], size=ref["size"])
         for src, dest in adapter.media_pairs(layout, filename, [mf], title=title):
             dest_path = Path(dest)
+            trace = media_type in overwrite
             # An Archive read commonly records the frontend file itself as the
             # source.  Comparing paths lexically avoids two remote stat calls
             # (and resolve()) for every already-in-place media file.
             if os.path.normcase(os.path.abspath(src)) == os.path.normcase(os.path.abspath(dest)):
+                if trace:
+                    log.info("Archive frontend media already in place item=%s type=%s path=%s",
+                             rid, media_type, src)
                 continue
             # A remote path check can cost tens of milliseconds.  stat each
             # distinct source/destination once instead of exists(), resolve(),
             # then stat() again for every already-copied file.
             try:
                 src_stat = Path(src).stat()
-            except OSError:
+            except OSError as exc:
+                log.warning("Archive frontend media source missing item=%s type=%s "
+                            "source=%s destination=%s error=%s", rid, media_type,
+                            src, dest, exc)
                 missing += 1
                 continue
             try:
                 dest_stat = dest_path.stat()
-            except OSError:
+            except OSError as exc:
+                if trace:
+                    log.info("Archive frontend media destination unavailable item=%s type=%s "
+                             "destination=%s error=%s", rid, media_type, dest, exc)
                 dest_stat = None
+            if trace:
+                log.info("Archive frontend media decision item=%s type=%s source=%s "
+                         "sourceBytes=%d destination=%s destinationBytes=%s overwrite=%s",
+                         rid, media_type, src, src_stat.st_size, dest,
+                         dest_stat.st_size if dest_stat else None, True)
             if dest_stat is not None:
                 if (media_type not in overwrite and src_stat.st_size == dest_stat.st_size
                         and src_stat.st_mtime_ns == dest_stat.st_mtime_ns):
                     continue
                 try:
                     if os.path.samefile(src, dest):
+                        if trace:
+                            log.info("Archive frontend media same file item=%s type=%s "
+                                     "source=%s destination=%s", rid, media_type, src, dest)
                         continue
                 except OSError:
                     pass
             dest_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest_path)
+            try:
+                shutil.copy2(src, dest_path)
+            except OSError:
+                log.exception("Archive frontend media copy failed item=%s type=%s "
+                              "source=%s destination=%s", rid, media_type, src, dest)
+                raise
+            if trace:
+                log.info("Archive frontend media copied item=%s type=%s destination=%s "
+                         "sourceBytes=%d", rid, media_type, dest, src_stat.st_size)
             copied += 1
     return copied, missing

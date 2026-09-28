@@ -47,12 +47,15 @@
   // 실제 SQL 정렬 규칙(2차 기준까지)은 Python 쪽 테스트가 본다 - 여기서는 화면이
   // 값을 제대로 실어 보내는지만 확인할 수 있으면 된다.
   const applyMockPriority = (rows, priority) => {
-    if (priority === "desc_ko" || priority === "desc_en") {
+    if (priority === "desc_ko" || priority === "desc_en" || priority === "desc_ja") {
       const bucket = (row) => {
         const value = String(row.desc || "").trim();
         if (!value) return 3;
         const hangul = /[가-힣ㄱ-ㅎㅏ-ㅣ]/u.test(value);
-        const latin = /[A-Za-z]/.test(value) && !hangul && !/[一-龯ぁ-ゟァ-ヿ]/u.test(value);
+        const cjk = /[一-龯ぁ-ゟァ-ヿ]/u.test(value);
+        const japanese = /[ぁ-ゟァ-ヿ]/u.test(value);
+        const latin = /[A-Za-z]/.test(value) && !hangul && !cjk;
+        if (priority === "desc_ja") return japanese ? 0 : cjk && !hangul ? 1 : latin ? 2 : 3;
         if (priority === "desc_ko") return hangul ? 0 : latin ? 1 : 2;
         return latin ? 0 : hangul ? 1 : 2;
       };
@@ -269,8 +272,9 @@
           planBytes: s.actualBytes, deltaBytes: 0,
           capacityBytes: s.capacityBytes, freeBytes: s.freeBytes,
           over: false, overBytes: 0 })),
-        conflictEntries: mockConflictEntries, failedEntries: mockFailedEntries,
-        conflicts: mockConflictEntries.length,
+        conflictEntries: mockConflictEntries.filter((entry) => !entry.resolution),
+        entries: mockConflictEntries, failedEntries: mockFailedEntries,
+        conflicts: mockConflictEntries.filter((entry) => !entry.resolution).length,
         failed: mockFailedEntries.length, clipboard: null,
         pendingMoves: { ...mockPendingMoves } });
     },
@@ -392,13 +396,19 @@
     open_storage_folder: () => ok({ path: "D:\ES-DE" }),
     create_system: (id, name) => ok({ system: name, romDir: "D:\ES-DE\\" + name, knownToEsde: !/-/.test(name) }),
     plan_conflict_preview: () => ok(null),
-    plan_resolve_conflict: (id, key) => {
-      mockConflictEntries = mockConflictEntries.filter((e) => e.key !== key);
-      return ok({ resolution: "skip" });
+    plan_resolve_conflict: (id, key, resolution) => {
+      const entry = mockConflictEntries.find((e) => e.key === key);
+      if (entry) {
+        entry.resolution = typeof resolution === "object" ? "custom" : resolution;
+        entry.conflictChoices = typeof resolution === "object"
+          ? Object.fromEntries((entry.conflicts || []).map((conflict, index) =>
+            [conflict.dest || String(index), resolution[String(index)]])) : {};
+      }
+      return ok({ resolution: entry?.resolution || resolution });
     },
-    plan_resolve_all_conflicts: () => {
-      const resolved = mockConflictEntries.length;
-      mockConflictEntries = [];
+    plan_resolve_all_conflicts: (id, resolution) => {
+      const resolved = mockConflictEntries.filter((entry) => !entry.resolution).length;
+      mockConflictEntries.forEach((entry) => { entry.resolution = resolution; });
       return ok({ resolved });
     },
     plan_storage_change: (id, system, storageTo) => {
@@ -520,7 +530,6 @@
       const row = mockRows.find((r) => r.romUid === uid) || mockRows[0];
       const fail = (error, errorKind) => Promise.resolve({ ok: false, error, errorKind, system: row.system });
       if (!row.present) return fail("ROM 파일이 없는 항목입니다.", "rom_missing");
-      if (MOCK_UNVERIFIED.includes(row.system)) return fail(`'${row.system}' 시스템은 RetroArch 실행이 아직 검증되지 않았습니다.`, "system_unverified");
       if (!mockRetroarch.retroarchPath) return fail("RetroArch 실행 파일을 찾을 수 없습니다: (미설정)", "retroarch_missing");
       const core = mockRetroarch.gameCores[`${row.system}/${row.file}`] || mockRetroarch.systemCores[row.system];
       if (!core) return fail(`'${row.system}' 시스템에 RetroArch Core가 정해지지 않았습니다.`, "core_unset");
@@ -888,7 +897,9 @@
       { name: "msx2", id: 116 }, { name: "nes", id: 3 }, { name: "gb", id: 9 },
       { name: "psvita", id: 62 }, { name: "wii", id: 16 },
       { name: "wiiu", id: 18 }, { name: "switch", id: 225 },
-      { name: "fbneo", id: 75 },
+      { name: "ngpc", id: 82 }, { name: "pc98", id: 208 },
+      { name: "mastersystem", id: 2 }, { name: "windows", id: 138 },
+      { name: "arcade", id: 75 },
     ]),
     save_scraper_settings: (patch) => ok({ enabled: true, softName: patch.softName || "RetroMetaStudio",
       userId: patch.userId || "", devIdSet: true, devPasswordSet: true,

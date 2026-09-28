@@ -606,7 +606,8 @@ class Api:
     @guarded
     def scraper_systems(self):
         return ok([{"name": name, "id": system_id}
-                   for name, system_id in sorted(SYSTEM_IDS.items())])
+                   for name, system_id in sorted(SYSTEM_IDS.items())
+                   if name != "vita" and (system_id != 75 or name == "arcade")])
 
     @guarded
     def save_scraper_settings(self, patch):
@@ -799,9 +800,17 @@ class Api:
         log.info("Scraper media plan collection=%s romUid=%s added=%s skipped=%d conflicts=%s",
                  collection_id, rom_uid, result.get("added"), len(result.get("skipped") or []),
                  result.get("conflicts"))
+        if result.get("added") != 1:
+            raise ValueError("스크랩 미디어를 Plan에 올리지 못했습니다.")
         for key in result.pop("conflictKeys", []):
             builder.resolve_conflict(plan, collection, provider, key, RESOLVE_OVERWRITE)
         validation = validate(plan, collection, cache, provider)
+        if not validation["ok"] and not validation["blocked"]:
+            log.warning("Scraper media plan invalid collection=%s romUid=%s reasons=%s",
+                        collection_id, rom_uid, validation.get("entries"))
+            reason = next((problem.get("error") for problem in validation.get("entries") or []
+                           if problem.get("error")), "미디어 Plan 검증에 실패했습니다.")
+            raise ValueError(f"스크랩 미디어를 적용하지 못했습니다: {reason}")
         if validation["blocked"]:
             log.warning("Scraper media plan blocked collection=%s romUid=%s reasons=%s",
                         collection_id, rom_uid, validation)
@@ -816,7 +825,8 @@ class Api:
                      collection_id, rom_uid, [kind for kind, _ in downloaded], outcome)
         finally:
             self.registry.release_lock(lock_name)
-        if outcome.get("failed") or outcome.get("partial") or outcome.get("skipped"):
+        if (outcome.get("applied") != 1 or outcome.get("failed")
+                or outcome.get("partial") or outcome.get("skipped")):
             raise ValueError("스크랩 미디어 적용이 완료되지 않았습니다. 로그를 확인하세요.")
         log.info("Scraper collection media pipeline collection=%s romUid=%s seconds=%.3f",
                  collection_id, rom_uid, time.monotonic() - stage_started)
@@ -954,7 +964,8 @@ class Api:
             systems = sorted(touched_systems)
             self.workspace.scan(session["collectionId"], force=True, systems=systems)
             self._rebind_plan_rows(session["collectionId"], systems)
-        if not failed and not partial:
+        if not failed and not partial and all(
+                item["status"] in ("applied", "skipped") for item in session["items"]):
             self.scrape.sessions.close(str(session_id))
         return {"applied": applied, "partial": partial, "failed": failed}
 
@@ -1760,7 +1771,9 @@ class Api:
             "filename": entry.filename or entry.system,
             "status": entry.status, "error": entry.error,
             "resolution": entry.resolution,
+            "conflictChoices": entry.conflict_choices,
             "conflicts": entry.conflicts,
+            "origin": (entry.source or {}).get("origin"),
         }
         if entry.op == OP_TITLE_EDIT:
             summary["oldTitle"], summary["newTitle"] = entry.old_title, entry.new_title
@@ -1794,8 +1807,15 @@ class Api:
         차이로 다시 계산된다.
         """
         collection, _, provider = self._plan_context(collection_id)
-        result = builder.resolve_conflict(self._plan(collection_id), collection, provider,
-                                          key, resolution)
+        plan = self._plan(collection_id)
+        result = builder.resolve_conflict(plan, collection, provider, key, resolution)
+        entry = plan.get(key)
+        log.info("Plan conflict choices collection=%s item=%s files=%s", collection_id, key,
+                 [{"type": c.get("mediaType") or c.get("kind"), "source": c.get("source"),
+                   "dest": c.get("dest"),
+                   "choice": entry.conflict_choices.get(str(c.get("dest")))
+                   if entry.resolution == "custom" else entry.resolution}
+                  for c in (entry.conflicts or [])])
         return ok(result)
 
     @guarded
@@ -2278,8 +2298,15 @@ class Api:
         if blocked:
             return blocked
         report = validate(plan, collection, cache, provider)
+        if report["entries"]:
+            log.warning("Plan validation invalid collection=%s entries=%s", collection_id,
+                        report["entries"])
         if report["blocked"]:
             return err("용량이 부족합니다. Plan을 줄이거나 저장 공간을 확보해주세요.")
+        if not any(not entry.blocked and entry.status != "invalid" for entry in plan.entries):
+            reason = (report["entries"][0]["error"] if report["entries"] else
+                      "적용할 수 있는 Plan 항목이 없습니다.")
+            return err(f"Plan을 적용할 수 없습니다: {reason}")
 
         lock_name = f"apply:{collection_id}"
         if not self.registry.acquire_lock(lock_name, kind="apply"):
@@ -2290,6 +2317,9 @@ class Api:
             try:
                 result = apply_plan(plan, collection, cache, self.registry, provider,
                                     progress_cb=cb, disc_titles=self._disc_title_option())
+                log.info("Plan apply collection=%s applied=%s invalid=%s failed=%s partial=%s skipped=%s",
+                         collection_id, result.get("applied"), result.get("invalid"),
+                         result.get("failed"), result.get("partial"), result.get("skipped"))
                 # Apply가 건드린 System만 다시 읽어 Cache를 실제 상태에 맞춘다.
                 # 이걸 안 하면 방금 지운 게임이 목록에 남고 용량도 예전 값이 보인다.
                 # 전체 Full Scan은 규모가 커지면 감당이 안 되므로 범위를 좁힌다.
@@ -3237,13 +3267,58 @@ class Api:
         media[media_type] = {"media_type": media_type, "abs_path": src,
                              "size": source_stat.st_size,
                              "mtime_ns": source_stat.st_mtime_ns, "state": "present"}
-        _revision, _created = self.archive.put_record(
+        revision, created = self.archive.put_record(
             rom_identity_id, ARCHIVE_EDIT_SOURCE, fields, raw,
             media=list(media.values()))
         edited = self.archive.latest_record(rom_identity_id, ARCHIVE_EDIT_SOURCE)
+        log.info("Archive media paste staged item=%s type=%s source=%s bytes=%d "
+                 "revision=%s record=%s created=%s",
+                 rom_identity_id, media_type, src, source_stat.st_size,
+                 revision, edited["record_id"], created)
         projection = self._project_archive(
             {"revisionRecordIds": [edited["record_id"]]}, [rom_identity_id],
             overwrite_media={rom_identity_id: {media_type}})
+        resolved = archive_projection.effective_media(self.archive, rom_identity_id).get(media_type)
+        log.info("Archive media paste projected item=%s type=%s effectiveSource=%s "
+                 "effectivePath=%s effectiveBytes=%s projection=%s",
+                 rom_identity_id, media_type,
+                 resolved.get("source_collection_id") if resolved else None,
+                 resolved.get("abs_path") if resolved else None,
+                 resolved.get("size") if resolved else None, projection)
+        if isinstance(projection, dict) and projection.get("error"):
+            log.error("Archive media projection failed item=%s type=%s source=%s: %s",
+                      rom_identity_id, media_type, src, projection["error"])
+            return err(f"미디어를 Archive 디렉토리에 반영하지 못했습니다: {projection['error']}")
+        cfg = self._archive_config()
+        if archive_projection.is_configured(cfg) and cfg["mediaInternal"]:
+            display_path = self._archive_media_display_path(
+                rom_identity_id, media_type, {"abs_path": src, "size": source_stat.st_size},
+                require_exists=False, cfg=cfg)
+            if not display_path:
+                return err("Archive 미디어 저장 경로를 확인할 수 없습니다.")
+            destination = Path(display_path)
+            try:
+                projected_size = destination.stat().st_size
+            except OSError:
+                projected_size = None
+            if projected_size != source_stat.st_size:
+                log.warning("Archive media projection mismatch item=%s type=%s source=%s "
+                            "sourceBytes=%d destination=%s destinationBytes=%s projection=%s",
+                            rom_identity_id, media_type, src, source_stat.st_size,
+                            display_path, projected_size, projection)
+                try:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    if os.path.normcase(os.path.abspath(src)) != os.path.normcase(os.path.abspath(display_path)):
+                        shutil.copy2(src, destination)
+                    projected_size = destination.stat().st_size
+                except OSError as exc:
+                    log.exception("Archive media direct copy failed item=%s type=%s",
+                                  rom_identity_id, media_type)
+                    return err(f"미디어를 Archive 디렉토리에 복사하지 못했습니다: {exc}")
+                if projected_size != source_stat.st_size:
+                    return err("Archive 미디어 복사본의 크기가 원본과 다릅니다.")
+            log.info("Archive media verified item=%s type=%s bytes=%d destination=%s",
+                     rom_identity_id, media_type, projected_size, display_path)
         return ok({"romIdentityId": rom_identity_id, "mediaType": media_type, "projection": projection})
 
     @guarded
