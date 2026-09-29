@@ -79,10 +79,10 @@ class PasteModeTests(unittest.TestCase):
         self.assertTrue((self.dst_root / "downloaded_media" / "ps2" / "videos" / "FFX.mp4").exists(),
                         "없던 영상이 채워지지 않았다")
 
-    def test_patch_is_the_default(self):
+    def test_overwrite_is_the_default(self):
         self._copy_all()
         result = self.api.paste(self.dst)["data"]
-        self.assertEqual(result["policy"]["pasteMode"], "patch")
+        self.assertEqual(result["policy"]["pasteMode"], "overwrite")
 
     def test_patch_reports_why_an_item_was_left_out(self):
         """채울 것이 없는 항목은 Plan에 올리지 않고 이유를 알린다(사용자 결정)."""
@@ -158,10 +158,10 @@ class PasteModeTests(unittest.TestCase):
         self._apply()
         self.assertTrue((self.dst_root / "ps2" / "MGS2.iso").exists())
 
-    def test_unknown_mode_falls_back_to_patch(self):
+    def test_unknown_mode_falls_back_to_overwrite(self):
         self._copy_all()
         result = self.api.paste(self.dst, "nonsense")["data"]
-        self.assertEqual(result["policy"]["pasteMode"], "patch")
+        self.assertEqual(result["policy"]["pasteMode"], "overwrite")
 
     def test_the_mode_can_be_saved_in_settings(self):
         self.api.save_app_settings({"transfer": {"pasteMode": "overwrite"}})
@@ -268,6 +268,46 @@ class PasteIntoAnotherSystemTests(unittest.TestCase):
 
     def test_clipboard_systems_needs_something_copied(self):
         self.assertFalse(self.api.clipboard_systems(self.dst)["ok"])
+
+
+class SameCollectionFixedSystemPasteTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = temp_root("rms_same_collection_system_paste_")
+        self.root = build_esde_tree(self.dir / "root")
+        (self.root / "fbneo").mkdir()
+        write_file(self.root / "fbneo" / "existing.zip", b"existing")
+        self.api = Api(registry_path=self.dir / "registry.db", cache_dir=self.dir / "cache")
+        self.addCleanup(self.api.close)
+        self.collection = self.api.create_collection("C", "es-de", str(self.root))["data"]["id"]
+        scan(self.api, self.collection)
+        rows = self.api.list_rows(self.collection, limit=99)["data"]["rows"]
+        source = next(row for row in rows if row["file"] == "FFX.iso")
+        self.api.copy_selection(self.collection, [source["romUid"]])
+
+    def test_system_target_preview_and_paste_reject_other_system(self):
+        preview = self.api.clipboard_system_target(self.collection, "fbneo")
+        self.assertFalse(preview["ok"])
+        result = self.api.paste(self.collection, "patch", {"ps2": "fbneo"},
+                                new_only=True)
+        self.assertFalse(result["ok"])
+        self.assertIn("다른 System", result["error"])
+        self.assertEqual(self.api.plan_state(self.collection)["data"]["total"], 0)
+
+    def test_explicit_row_target_in_other_system_is_rejected(self):
+        result = self.api.paste(self.collection, "overwrite", target_map={
+            "ps2|FFX.iso": "fbneo|existing.zip"})
+        self.assertFalse(result["ok"])
+        self.assertEqual(self.api.plan_state(self.collection)["data"]["total"], 0)
+
+    def test_fallback_row_in_other_system_is_rejected(self):
+        result = self.api.paste(self.collection, "overwrite",
+                                fallback_target="fbneo|existing.zip")
+        self.assertFalse(result["ok"])
+        self.assertEqual(self.api.plan_state(self.collection)["data"]["total"], 0)
+
+    def test_same_system_target_is_still_available(self):
+        preview = self.api.clipboard_system_target(self.collection, "ps2")
+        self.assertTrue(preview["ok"], preview.get("error"))
 
 
 class MultiPasteDowngradesReplaceTests(unittest.TestCase):

@@ -869,6 +869,24 @@ class Api:
             proposal = self.scrape.proposal(item)
             if not proposal:
                 continue
+            # A media Apply rescans the Collection and may assign fresh rom_uid
+            # values to every row. The session ID stays stable for review, but
+            # writes must target the current row identified by system/file.
+            target_rom_uid = None
+            if session["target"] == "collection":
+                current = self.workspace.open(session["collectionId"]).get_row_by_filename(
+                    item["system"], item["filename"])
+                if current is None:
+                    message = "원본 Collection에서 스크랩 대상 게임을 찾을 수 없습니다."
+                    item["status"] = "selected"
+                    failed.append({"itemId": item["id"], "error": message,
+                                   "fieldsApplied": [], "mediaApplied": []})
+                    log.warning("Scraper target missing collection=%s sessionItem=%s system=%s filename=%s",
+                                session["collectionId"], item["id"], item["system"], item["filename"])
+                    continue
+                target_rom_uid = current["rom_uid"]
+                log.info("Scraper target resolved sessionItem=%s currentRomUid=%s system=%s filename=%s",
+                         item["id"], target_rom_uid, item["system"], item["filename"])
             item_started = time.monotonic()
             log.info("Scraper apply start item=%s target=%s fields=%d media=%s",
                      item["id"], session["target"], len(proposal["fields"]),
@@ -882,7 +900,7 @@ class Api:
                         result = self.archive_edit(item["id"], {**(item.get("fields") or {}),
                                                                 **proposal["fields"]})
                     else:
-                        result = self.save_fields(session["collectionId"], int(item["id"]),
+                        result = self.save_fields(session["collectionId"], target_rom_uid,
                                                   proposal["fields"])
                     if not result.get("ok"):
                         raise ValueError(result.get("error"))
@@ -936,7 +954,7 @@ class Api:
                     if downloaded:
                         try:
                             touched_systems.update(self._apply_scraped_collection_media(
-                                session["collectionId"], item["id"],
+                                session["collectionId"], target_rom_uid,
                                 [(media["media_type"], path) for _, media, path in downloaded]) or [])
                             applied_media.extend(media for _, media, _ in downloaded)
                             log.info("Scraper collection media applied item=%s types=%s",
@@ -951,7 +969,8 @@ class Api:
                 provenance = proposal["provenance"]
                 self.registry.add_scrape_provenance(
                     target_kind=session["target"], collection_id=session.get("collectionId"),
-                    item_id=item["id"], provider=provenance["provider"],
+                    item_id=(target_rom_uid if target_rom_uid is not None else item["id"]),
+                    provider=provenance["provider"],
                     remote_game_id=provenance["remoteGameId"], source_url=provenance["sourceUrl"],
                     evidence=provenance["evidence"], fields=applied_fields, media=applied_media)
                 if not errors and provenance.get("remoteGameId"):
@@ -2066,9 +2085,13 @@ class Api:
         collection, cache, _ = self._plan_context(collection_id)
         if system not in {entry.system for entry in collection.systems}:
             return err(f"대상 System을 찾을 수 없습니다: {system}")
-        _descriptor, items = clipboard.read_items(self.registry)
+        descriptor, items = clipboard.read_items(self.registry)
         if not items:
             return ok({"count": 0, "items": [], "duplicates": []})
+        if (descriptor.get("sourceCollectionId") == collection_id
+                and collection.frontend in self._FIXED_SYSTEM_FRONTENDS
+                and any(item["system"] != system for item in items)):
+            return err("이 Collection에서는 다른 System으로 붙여넣을 수 없습니다.")
         index = transfer.TargetIndex(cache, {system})
         duplicates = []
         summaries = []
@@ -2112,6 +2135,21 @@ class Api:
         # System 이름 바꾸기는 **정책을 따지기 전에** 한다 - 이 뒤의 검사(쓰기 가능한 System인가)는
         # 실제로 파일이 놓일 System을 봐야 한다.
         remap = {str(k): str(v).strip() for k, v in (system_map or {}).items() if str(v or "").strip()}
+        if (descriptor.get("sourceCollectionId") == collection_id
+                and collection.frontend in self._FIXED_SYSTEM_FRONTENDS):
+            for item in items:
+                source_system = item["system"]
+                mapped_system = remap.get(source_system, source_system)
+                source_key = transfer.item_key(item)
+                explicit_target = (target_map or {}).get(source_key)
+                target_system = str(explicit_target).partition("|")[0] if explicit_target else ""
+                fallback_system = (str(fallback_target).partition("|")[0]
+                                   if fallback_target and len(items) == 1 else "")
+                if (mapped_system != source_system
+                        or target_system and target_system != source_system
+                        or fallback_system and fallback_system != source_system):
+                    return err("이 Collection에서는 다른 System으로 붙여넣을 수 없습니다. "
+                               "다른 System으로 이동도 지원하지 않습니다.")
         if remap:
             items = [{**item, "system": remap.get(item["system"], item["system"])} for item in items]
         blocked = self._ensure_file_ops(collection) or self._ensure_writable(

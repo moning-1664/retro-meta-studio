@@ -13,8 +13,8 @@ app/plan/transfer.py
 
 | 모드 | Metadata | Media |
 |---|---|---|
-| `patch` (기본, 보완) | 대상의 빈 값만 채운다 | 대상에 없는 종류만 가져온다 |
-| `overwrite` (덮어쓰기) | 원본의 비어 있지 않은 값이 이긴다(빈 값은 대상을 지우지 않는다) | 원본이 이긴다(같은 파일은 건너뜀) |
+| `patch` (보완) | 대상의 빈 값만 채운다 | 대상에 없는 종류만 가져온다 |
+| `overwrite` (기본, 덮어쓰기) | 원본의 비어 있지 않은 값이 이긴다(빈 값은 대상을 지우지 않는다) | 원본이 이긴다(같은 파일은 건너뜀) |
 | `replace` (완전 교체) | 원본의 값으로 게임의 Metadata를 다시 만든다(대상에만 있던 값도 원본에 없으면 사라진다) | 원본이 이긴다. 대상에만 있는 미디어는 **지우지 않는다**(파일 삭제는 Delete의 일) |
 
 **ROM은 모드와 무관하고, 절대 덮어쓰지 않는다**(사용자 결정 - "롬은 항상 부차적인 asset").
@@ -41,7 +41,7 @@ MODE_PATCH = "patch"
 MODE_OVERWRITE = "overwrite"
 MODE_REPLACE = "replace"
 MODES = (MODE_PATCH, MODE_OVERWRITE, MODE_REPLACE)
-DEFAULT_MODE = MODE_PATCH
+DEFAULT_MODE = MODE_OVERWRITE
 
 
 def normalize_mode(mode) -> str:

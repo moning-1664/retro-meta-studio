@@ -686,6 +686,8 @@ class ApplyBoundaryTests(unittest.TestCase):
         api = Api.__new__(Api)
         api.scrape = ScrapeService(lambda: None)
         api.registry = self.Registry()
+        api.workspace = mock.Mock()
+        api.workspace.open.return_value.get_row_by_filename.return_value = {"rom_uid": 1}
         return api
 
     def selected_session(self, api, *, target="collection"):
@@ -877,6 +879,51 @@ class ApplyBoundaryTests(unittest.TestCase):
                                if row["filename"] == pending.filename)
                 self.assertEqual(pending.rom_uid, current["rom_uid"])
                 self.assertEqual(api.validate_plan(cid)["data"]["blocked"], False)
+            finally:
+                api.close()
+
+    def test_sequential_scrape_apply_rebinds_later_game_after_rescan(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            collection_root = build_esde_tree(root / "collection")
+            api = Api(registry_path=root / "registry.db", cache_dir=root / "cache")
+            try:
+                cid = api.create_collection("Games", "es-de", str(collection_root))["data"]["id"]
+                api.start_scan(cid)
+                wait_idle(api)
+                rows = [row for row in api.list_rows(cid)["data"]["rows"]
+                        if row["file"] in ("FFX.iso", "MGS2.iso")]
+                self.assertEqual(len(rows), 2)
+                items = []
+                for row in rows:
+                    item = api.scrape.item(str(row["romUid"]), "ps2", row["file"],
+                                           row.get("fields") or {})
+                    item["candidates"] = [candidate((ScrapeMedia(
+                        "covers", "https://www.screenscraper.fr/image.php?gameid=42",
+                        format="png"),)).to_dict()]
+                    items.append(item)
+                session = api.scrape.sessions.create("collection", cid, items)
+                source = root / "cover.png"
+                source.write_bytes(b"scraped cover")
+                api._download_scrape_media = lambda *args: str(source)
+                first, second = items
+                api.scrape.select(session["id"], first["id"], "screenscraper:42", ["name"], [0])
+                first_result = api._apply_scrape_session(session["id"], lambda *_args: None)
+                self.assertEqual(first_result["applied"], [first["id"]])
+                current_second = api.workspace.open(cid).get_row_by_filename(
+                    second["system"], second["filename"])
+                self.assertNotEqual(int(second["id"]), current_second["rom_uid"])
+
+                api.scrape.select(session["id"], second["id"], "screenscraper:42", ["name"], [0])
+                second_result = api._apply_scrape_session(session["id"], lambda *_args: None)
+                self.assertEqual(second_result["applied"], [second["id"]])
+                self.assertEqual(second_result["failed"], [])
+                current_second = api.workspace.open(cid).get_row_by_filename(
+                    second["system"], second["filename"])
+                self.assertEqual(current_second["fields"]["name"], "게임")
+                self.assertEqual((collection_root / "downloaded_media" / "ps2" / "covers"
+                                  / f"{Path(second['filename']).stem}.png").read_bytes(),
+                                 b"scraped cover")
             finally:
                 api.close()
 

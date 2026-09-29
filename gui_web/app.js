@@ -343,7 +343,7 @@
     collections: { order: [], restoreTabs: true, rememberSystem: true },
     //: 마지막으로 열어 둔 탭(앱을 다시 켜면 그대로 되살린다). 떼어 낸 창에서는 쓰지 않는다.
     session: { tabs: [], active: null },
-    transfer: { pasteMode: "patch", includeRom: true, includeMedia: true, conflict: "ask",
+    transfer: { pasteMode: "overwrite", includeRom: true, includeMedia: true, conflict: "ask",
                 unmatchedRomMode: "skip", unmatchedRomMetadata: true, unmatchedRomMedia: true, unmatchedRomVideo: true },
     //: Media 탭의 영상(사용자 결정: 소리 켬, 반복 켬, 5초 뒤 자동 재생 - 전부 Settings에서 바꾼다).
     media: { videoMode: "auto", videoDelay: 3, videoSound: true, videoLoop: true, videoVolume: 70 },
@@ -2567,7 +2567,7 @@
       ? `여기에 붙여넣기 (${formatCount(copied.length)}개)` : "여기에 붙여넣기";
     items.push({ label: copiedLabel, icon: "upload",
       disabled: deviceOnly || !copied.length || !!duplicate.length,
-      title: deviceOnly ? deviceTip : duplicate.length
+      title: deviceOnly ? deviceTip : !clipboardTarget.ok ? clipboardTarget.error : duplicate.length
         ? `같은 게임이 이미 있습니다: ${duplicate.map((d) => d.filename).join(", ")}`
         : copied.length ? copied.map((item) => `${item.system} / ${item.title} (${item.filename})`).join("\n")
           : "복사한 게임이 없습니다.",
@@ -3973,7 +3973,7 @@
      "게임의 메타데이터와 미디어를 원본 것으로 다시 만듭니다(원본에 없는 메타데이터 값은 사라집니다). "
      + "대상에만 있는 미디어 파일은 지우지 않습니다. ROM은 어느 모드에서도 덮어쓰지 않습니다."],
   ];
-  const currentPasteMode = () => (S.settings.transfer && S.settings.transfer.pasteMode) || "patch";
+  const currentPasteMode = () => (S.settings.transfer && S.settings.transfer.pasteMode) || "overwrite";
 
   /** 실제로 쓰인 모드를 토글에서 잠깐 밝혀 준다. 설정 값 자체는 바꾸지 않는다 -
    * 이번 붙여넣기에만 적용된 일이므로 다음 번에는 고른 모드가 그대로 쓰인다. */
@@ -6641,6 +6641,10 @@
         showToast(`${formatCount(appliedIds.size)}개 게임에 스크랩 결과를 적용했습니다.`);
         await reloadList();
         draw();
+        const nextItem = session.items[index];
+        if (nextItem.status === "pending" && !(nextItem.candidates || []).length) {
+          await searchCurrent(nextItem.query, nextItem.systemHint);
+        }
         return;
       }
       $("modal-root").__beforeClose = null;

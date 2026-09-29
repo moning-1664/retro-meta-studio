@@ -291,12 +291,12 @@
           : h("div", { class: "stg-info" }, ["Scraper 설정을 불러올 수 없습니다."]));
       } else if (key === "transfer") {
         add(...section("Import / Export", "파일과 Metadata/Media를 옮길 때의 기본값입니다."));
-        // 붙여넣기(bridge paste)가 이 값을 읽는다. 기본값은 예전 동작 그대로다.
+        // 붙여넣기(bridge paste)가 이 값을 읽는다. 저장된 사용자 선택은 기본값보다 우선한다.
         // unmatchedRom*은 registry에 평평하게 저장한다(bridge/api.py TRANSFER_DEFAULTS 참고) -
         // "transfer" 섹션 patch는 한 단계 깊이까지만 병합되므로, 중첩 객체로 두면 필드 하나만
         // 바꿔도 나머지가 지워진다.
         const t = {
-          pasteMode: "patch", includeRom: true, includeMedia: true, conflict: "ask",
+          pasteMode: "overwrite", includeRom: true, includeMedia: true, conflict: "ask",
           unmatchedRomMode: "skip", unmatchedRomMetadata: true, unmatchedRomMedia: true, unmatchedRomVideo: true,
           ...(s.transfer || {}),
         };

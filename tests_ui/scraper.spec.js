@@ -285,7 +285,7 @@ test("스크랩 이동 버튼은 이전과 다음을 명확히 표시한다", as
   await expect(page.getByRole("button", { name: "이전 스크랩" })).toBeEnabled();
 });
 
-test("여러 게임은 선택을 유지하고 적용할 수 있으며 다음 스크랩은 별도로 시작한다", async ({ page }) => {
+test("여러 게임은 적용 뒤 다음 항목을 자동으로 스크랩한다", async ({ page }) => {
   await openForRows(page, 2);
   await expect(page.locator(".scrape-title-count")).toHaveText("스크랩 결과 (1/2)");
   await page.locator(".scrape-candidate-title").first().click();
@@ -302,6 +302,7 @@ test("여러 게임은 선택을 유지하고 적용할 수 있으며 다음 스
   await apply.click();
   await expect(page.locator(".scrape-context-card")).toBeVisible();
   await expect(page.locator(".scrape-title-count")).toHaveText("스크랩 결과 (2/2)");
+  await expect(page.locator(".scrape-candidate").first()).toBeVisible();
   await expect(page.locator("#toast")).toContainText("1개 게임에 스크랩 결과를 적용했습니다");
 });
 
