@@ -39,7 +39,7 @@ test("Collection 목록에는 [n] 뱃지가 없다", async ({ page }) => {
   await expect(page.locator(".match-badge")).toHaveCount(0);
 });
 
-test("Archive에서 가져오기는 선택한 Match를 확정하고 반영 결과를 보여준다", async ({ page }) => {
+test("Archive에서 가져오기는 선택한 후보를 Plan에 담는다", async ({ page }) => {
   await openApp(page);
   await page.evaluate(() => {
     window.__archiveImportCalls = [];
@@ -58,23 +58,82 @@ test("Archive에서 가져오기는 선택한 Match를 확정하고 반영 결�
     };
     window.api.archiveToCollection = (...args) => {
       window.__archiveImportCalls.push(["import", ...args]);
+      window.api.__setMockConflictEntries([{
+        key: "add|ps2|Translated.iso", op: "add", system: "ps2",
+        filename: "Translated.iso", status: "conflict", origin: "archive",
+        sourceName: "Archive", parts: { metadata: true, rom: false, media: 1 },
+        conflicts: [{ kind: "media", mediaType: "covers", source: "incoming",
+          dest: "existing", sourceSize: 20, destSize: 10 }],
+      }]);
       return Promise.resolve({ ok: true, data: {
-        updated: 1, planned: 1, conflicts: 1, skipped: [],
+        planned: 1, keys: ["add|ps2|Translated.iso"], conflicts: 1, skipped: [],
       } });
     };
   });
   await page.locator(".lrow").first().click({ button: "right" });
-  await page.locator(".ctx-menu .ctx-item", { hasText: "Archive에서 가져오기" }).click();
+  await page.locator(".ctx-menu .ctx-item", { hasText: "다른 Collection·Archive에서 가져오기" }).click();
+  await page.getByRole("button", { name: "Archive" }).last().click();
   await expect(page.locator(".match-option")).toHaveCount(1);
   await expect(page.locator(".match-option .scrape-candidate-desc")).toHaveText("Archive description");
   await expect(page.locator(".match-option .scrape-candidate-facts")).toContainText("88%");
   await page.locator(".match-option").click();
-  await modalButton(page, "Apply Match").click();
+  await modalButton(page, "Plan에 추가").click();
   await expect.poll(() => page.evaluate(() => window.__archiveImportCalls.map((call) => call[0])))
-    .toEqual(["match", "import"]);
-  await expect.poll(() => page.evaluate(() => window.__archiveImportCalls[1][2]))
+    .toEqual(["import"]);
+  await expect.poll(() => page.evaluate(() => window.__archiveImportCalls[0][2]))
     .toEqual(["chosen-archive-id"]);
-  await expect(page.locator("#toast")).toContainText("충돌 1개를 Plan에서 결정하세요");
+  await expect(page.locator(".modal-title")).toHaveText("가져오기 결과");
+  await expect(page.locator(".import-result-counts")).toContainText("충돌 1");
+  await expect(page.locator(".import-result-list")).toContainText("Translated.iso");
+  await modalButton(page, "충돌 확인").click();
+  await expect(page.locator(".modal-title")).toHaveText("충돌 확인");
+});
+
+test("일괄 가져오기에서 제외된 항목과 이유를 보여준다", async ({ page }) => {
+  await openApp(page);
+  await page.evaluate(() => {
+    window.api.archiveUids = () => Promise.resolve({ ok: true, data: [11, 12] });
+    window.api.archiveToCollection = () => Promise.resolve({ ok: true, data: {
+      planned: 0, keys: [], conflicts: 0,
+      skipped: [{ filename: "A.iso", reason: "원본 파일을 찾을 수 없습니다." },
+        { filename: "B.iso", reason: "가져올 변경 사항이 없습니다." }],
+    } });
+  });
+  await page.locator("#collection-header .cheader-right .icon-btn[title='가져오기']").click();
+  await page.getByRole("button", { name: "Archive" }).last().click();
+  await expect(page.locator(".modal-title")).toHaveText("가져오기 결과");
+  await expect(page.locator(".import-result-counts")).toContainText("제외 2");
+  await expect(page.locator(".import-result-skipped")).toHaveCount(2);
+  await expect(page.locator(".import-result-skipped").first()).toContainText("원본 파일을 찾을 수 없습니다.");
+});
+
+test("대량 Plan 목록은 페이지를 넘겨 끝까지 확인할 수 있다", async ({ page }) => {
+  await openApp(page);
+  await page.evaluate(() => {
+    const keys = Array.from({ length: 101 }, (_, i) => `add|ps2|Bulk${i}.iso`);
+    const originalPlanState = window.api.planState;
+    window.api.planState = async (...args) => {
+      const response = await originalPlanState(...args);
+      response.data.total = 101;
+      response.data.added = 101;
+      response.data.entries = keys.map((key, i) => ({
+        key, op: "add", system: "ps2", filename: `Bulk${i}.iso`, status: "pending",
+        parts: { metadata: true, media: 0, rom: false },
+      }));
+      return response;
+    };
+    window.api.archiveUids = () => Promise.resolve({ ok: true, data: [1] });
+    window.api.archiveToCollection = () => Promise.resolve({ ok: true, data: {
+      planned: 101, keys, conflicts: 0, skipped: [],
+    } });
+  });
+  await page.locator("#collection-header .cheader-right .icon-btn[title='가져오기']").click();
+  await page.getByRole("button", { name: "Archive" }).last().click();
+  await page.locator(".modal-actions .btn", { hasText: "Plan 보기" }).click();
+  await expect(page.locator(".plan-overview-row")).toHaveCount(100);
+  await page.locator(".modal-actions .btn", { hasText: "다음" }).click();
+  await expect(page.locator(".plan-overview-row")).toHaveCount(1);
+  await expect(page.locator(".plan-overview-row")).toContainText("Bulk100.iso");
 });
 
 test("Archive에서는 서로 다른 버전이 있는 행에만 뱃지가 붙는다", async ({ page }) => {
@@ -312,7 +371,7 @@ test.describe("Archive System 우클릭", () => {
     await rightClickSystem(page, "PS2");
     await expect(menuItem(page, "언어 태그 적용")).toBeVisible();
     await expect(menuItem(page, "멀티 디스크 태그 적용")).toBeVisible();
-    await expect(menuItem(page, "시스템 전체 삭제 (!)")).toBeVisible();
+    await expect(menuItem(page, "시스템 기록 제거…")).toBeVisible();
     await expect(menuItem(page, "Storage 옮기기")).toHaveCount(0);
     await expect(menuItem(page, "이름 바꾸기")).toHaveCount(0);
     await expect(menuItem(page, "미디어 정리")).toBeVisible();
@@ -330,7 +389,7 @@ test.describe("Archive System 우클릭", () => {
       };
     });
     await rightClickSystem(page, "PS2");
-    await menuItem(page, "New Game를 여기로 복사").click();
+    await menuItem(page, "여기에 붙여넣기 (1개)").click();
     await expect.poll(() => page.evaluate(() => window.__pastedSystem))
       .toEqual({ system: "ps2", newOnly: true });
     await page.evaluate(() => {
@@ -338,7 +397,7 @@ test.describe("Archive System 우클릭", () => {
         data: { system, items: [], duplicates: [{ title: "New Game", filename: "New.iso" }] } });
     });
     await rightClickSystem(page, "PS2");
-    await expect(menuItem(page, "복사한 0개를 여기로 복사")).toBeDisabled();
+    await expect(menuItem(page, "여기에 붙여넣기")).toBeDisabled();
   });
 
   test("Archive System을 보고 Ctrl+V하면 그 System을 대상으로 붙인다", async ({ page }) => {
@@ -427,7 +486,7 @@ test.describe("Archive System 우클릭", () => {
       };
     });
     await rightClickSystem(page, "PS2");
-    await menuItem(page, "시스템 전체 삭제 (!)").click();
+    await menuItem(page, "시스템 기록 제거…").click();
     await expect(page.locator(".modal-text")).toContainText("실제 ROM/Media 파일은 지워지지 않습니다");
     await modalButton(page, "확인").click();
     await expect.poll(() => page.evaluate(() => window.__deletedSystem)).toBe("ps2");
@@ -489,8 +548,8 @@ test.describe("Archive 행 우클릭 - 삭제", () => {
     await rightClickRow(page, "Final Fantasy X");
     await expect(menuItem(page, "ROM 삭제")).toHaveCount(0);
     await expect(menuItem(page, "메타데이터 삭제")).toBeVisible();
-    await expect(menuItem(page, "Archive 보관 ROM 삭제")).toBeVisible();
-    await expect(menuItem(page, "Archive에서 지우기")).toBeVisible();
+    await expect(menuItem(page, "보관 ROM 파일 삭제")).toBeVisible();
+    await expect(menuItem(page, "Archive 기록 제거")).toBeVisible();
   });
 
   test("메타데이터 삭제는 Archive API를 호출한다", async ({ page }) => {
@@ -516,7 +575,7 @@ test.describe("Archive 행 우클릭 - 삭제", () => {
       window.api.archiveDelete = (ids) => { window.__deleted.push(ids); return original(ids); };
     });
     await rightClickRow(page, "Final Fantasy X");
-    await menuItem(page, "Archive에서 지우기").click();
+    await menuItem(page, "Archive 기록 제거").click();
     await expect(page.locator(".modal-text")).toContainText("실제 ROM/Media 파일은 지워지지 않습니다");
     await modalButton(page, "확인").click();
     await expect.poll(() => page.evaluate(() => window.__deleted.length)).toBeGreaterThan(0);
@@ -548,12 +607,12 @@ test("미디어를 우클릭하면 복사/붙여넣기 메뉴가 나온다", asy
   await expect(page.locator(".ctx-item", { hasText: "미디어 붙여넣기" })).toBeVisible();
 });
 
-test("Archive 설정이 없으면 빈 화면에 [Archive 설정] 버튼이 나온다", async ({ page }) => {
-  await openApp(page);
-  await page.locator(".ctab.archive").click();
-  await expect(page.locator(".archive-empty")).toContainText("어디에 어떤 형식");
-  await page.locator(".archive-setup").click();
-  await expect(page.locator(".modal-title")).toHaveText("Archive 설정");
+test("Archive 설정 전에는 탭을 숨기고 Settings에서 생성할 수 있다", async ({ page }) => {
+  await openApp(page, { archiveUnconfigured: true });
+  await expect(page.locator(".ctab.archive")).toHaveCount(0);
+  await page.locator("#btn-settings, [title='Settings'], .settings-btn").first().click();
+  await page.locator(".stg-nav-item, .stg-tab", { hasText: "Archive" }).first().click();
+  await expect(page.locator(".archive-mode")).toHaveValue("new");
   await expect(page.locator(".archive-frontend")).toBeVisible();
   await expect(page.locator(".archive-dir")).toBeVisible();
   await expect(page.locator(".archive-rom-dir")).toBeVisible();
@@ -561,20 +620,23 @@ test("Archive 설정이 없으면 빈 화면에 [Archive 설정] 버튼이 나�
 });
 
 test("저장하고 적용하면 설정을 보내고 적용 job을 시작한다", async ({ page }) => {
-  await openApp(page);
+  await openApp(page, { archiveUnconfigured: true });
   await page.evaluate(() => {
     window.__calls = [];
     const save = window.api.saveArchiveConfig, apply = window.api.startArchiveApply;
     window.api.saveArchiveConfig = (p) => { window.__calls.push(["save", p]); return save(p); };
     window.api.startArchiveApply = () => { window.__calls.push(["apply"]); return apply(); };
   });
-  await page.locator(".ctab.archive").click();
-  await page.locator(".archive-setup").click();
-  await page.locator(".archive-dir").fill("D:\Archives");
+  await page.locator("#btn-settings, [title='Settings'], .settings-btn").first().click();
+  await page.locator(".stg-nav-item, .stg-tab", { hasText: "Archive" }).first().click();
+  await page.locator(".archive-dir").fill("D:\\Archives");
+  await page.locator(".archive-frontend").selectOption("es-de");
+  await page.locator(".archive-dir").blur();
+  await expect(page.locator(".folder-detection").first()).toContainText("새 Archive");
   await page.locator(".archive-apply").click();
   await expect.poll(() => page.evaluate(() => window.__calls.length)).toBe(2);
   const calls = await page.evaluate(() => window.__calls);
-  expect(calls[0][1]).toMatchObject({ frontend: "es-de", archiveDir: "D:\Archives", mediaInternal: true });
+  expect(calls[0][1]).toMatchObject({ frontend: "es-de", archiveDir: "D:\\Archives", mediaInternal: true });
   expect(calls[1]).toEqual(["apply"]);
 });
 
@@ -588,29 +650,27 @@ test("Settings에도 같은 Archive 설정이 있다", async ({ page }) => {
 // 사용자 피드백 - "디렉토리 선택도 안했는데 export가 되고 있다. 디렉토리 선택 후 export 가능하도록".
 test.describe("디렉토리를 정하기 전에는 보내지 않는다", () => {
   test("Archive로 보내기를 누르면 수집 대신 설정 창이 뜬다", async ({ page }) => {
-    await openApp(page);
+    await openApp(page, { archiveUnconfigured: true });
     await page.evaluate(() => {
       window.__ingests = 0;
-      const original = window.api.startArchiveIngest;
-      window.api.startArchiveIngest = (...args) => { window.__ingests += 1; return original(...args); };
+      const original = window.api.planArchiveIngest;
+      window.api.planArchiveIngest = (...args) => { window.__ingests += 1; return original(...args); };
     });
-    await page.locator("#collection-header .cheader-right .icon-btn[title*='메타데이터 보내기']").click();
-    await page.locator(".ctx-menu .ctx-item", { hasText: "Archive" }).click();
+    await page.locator("#collection-header .cheader-right .icon-btn[title*='Archive로 보내기']").click();
     await expect(page.locator(".modal-title")).toHaveText("Archive 설정");
     await expect(page.locator("#toast")).toContainText("디렉토리를 먼저 정하세요");
     expect(await page.evaluate(() => window.__ingests)).toBe(0);
   });
 
-  test("디렉토리를 정한 뒤에는 수집이 실행된다", async ({ page }) => {
+  test("디렉토리를 정한 뒤에는 수집 계획이 만들어진다", async ({ page }) => {
     await openApp(page);
     await page.evaluate(() => window.api.saveArchiveConfig({ archiveDir: "D:\Archives" }));
     await page.evaluate(() => {
       window.__ingests = 0;
-      const original = window.api.startArchiveIngest;
-      window.api.startArchiveIngest = (...args) => { window.__ingests += 1; return original(...args); };
+      const original = window.api.planArchiveIngest;
+      window.api.planArchiveIngest = (...args) => { window.__ingests += 1; return original(...args); };
     });
-    await page.locator("#collection-header .cheader-right .icon-btn[title*='메타데이터 보내기']").click();
-    await page.locator(".ctx-menu .ctx-item", { hasText: "Archive" }).click();
+    await page.locator("#collection-header .cheader-right .icon-btn[title*='Archive로 보내기']").click();
     await expect.poll(() => page.evaluate(() => window.__ingests)).toBe(1);
   });
 });

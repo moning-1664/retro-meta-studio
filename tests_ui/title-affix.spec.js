@@ -90,7 +90,7 @@ test.describe("Settings > Metadata & Media > Title Prefix/Postfix", () => {
 test.describe("Gamelist 우클릭 - 선택한 게임에 적용", () => {
   test("바뀔 게 없으면 메뉴 항목 자체가 흐리게 나온다 - 눌러도 아무 일도 없다", async ({ page }) => {
     await rightClickRow(page, "Final Fantasy X");   // FFX (K).iso, 아무 구역도 안 켜짐
-    const item = menuItem(page, "Title Prefix/Postfix 적용…");
+    const item = menuItem(page, "제목 앞·뒤 태그 적용…");
     await expect(item).toBeDisabled();
     await expect(item).toHaveAttribute("title", /바뀔 제목이 없습니다/);
   });
@@ -98,7 +98,7 @@ test.describe("Gamelist 우클릭 - 선택한 게임에 적용", () => {
   test("미리보기에 예전/새 제목을 보여주고, 확인해야 Plan에 올라간다", async ({ page }) => {
     await configureRegion(page, "kr", { mode: "prefix", text: "KR" });
     await rightClickRow(page, "Final Fantasy X");
-    await menuItem(page, "Title Prefix/Postfix 적용…").click();
+    await menuItem(page, "제목 앞·뒤 태그 적용…").click();
 
     await expect(page.locator(".modal-title")).toHaveText("Title Prefix/Postfix");
     await expect(page.locator(".title-affix-old")).toHaveText("Final Fantasy X");
@@ -110,7 +110,7 @@ test.describe("Gamelist 우클릭 - 선택한 게임에 적용", () => {
     await expect(page.locator(".lrow", { hasText: "Final Fantasy X" }).locator(".status-mark.edit")).toHaveCount(0);
 
     await rightClickRow(page, "Final Fantasy X");
-    await menuItem(page, "Title Prefix/Postfix 적용…").click();
+    await menuItem(page, "제목 앞·뒤 태그 적용…").click();
     await modalButton(page, "Plan에 추가").click();
     await expect(page.locator(".toast-msg")).toContainText("Plan에 올렸습니다");
     await expect(page.locator(".lrow", { hasText: "Final Fantasy X" }).locator(".status-mark.edit")).toBeVisible();
@@ -121,8 +121,8 @@ test.describe("Gamelist 우클릭 - 선택한 게임에 적용", () => {
     await page.locator(".lrow").nth(0).click();
     await page.locator(".lrow").nth(1).click({ modifiers: ["Control"] });
     await page.locator(".lrow").nth(0).click({ button: "right" });
-    await expect(menuItem(page, "Title Prefix/Postfix 적용… (2개)")).toBeVisible();
-    await menuItem(page, "Title Prefix/Postfix 적용… (2개)").click();
+    await expect(menuItem(page, "제목 앞·뒤 태그 적용… (2개)")).toBeVisible();
+    await menuItem(page, "제목 앞·뒤 태그 적용… (2개)").click();
     // MGS2 (U).iso만 en 규칙에 걸리고 FFX (K).iso는 안 걸린다.
     await expect(page.locator(".title-affix-row")).toHaveCount(1);
     await expect(page.locator(".title-affix-new")).toHaveText("EN_Metal Gear Solid 2");
@@ -168,7 +168,7 @@ test.describe("태그가 없는 파일 - 미분류(사용자 결정)", () => {
   test("파일명에 지역 태그가 없으면 모든 구역을 켜도 대상이 아니다", async ({ page }) => {
     await configureRegion(page, "global", { mode: "postfix", text: "WORLD" });
     await rightClickRow(page, "Super Mario World");   // SMW.sfc - 태그 없음
-    await expect(menuItem(page, "Title Prefix/Postfix 적용…")).toBeDisabled();
+    await expect(menuItem(page, "제목 앞·뒤 태그 적용…")).toBeDisabled();
   });
 });
 
@@ -199,7 +199,7 @@ test.describe("Apply로 실제 반영", () => {
   test("Plan에 올린 뒤 Apply하면 목록의 제목이 바뀌고 표시가 사라진다", async ({ page }) => {
     await configureRegion(page, "kr", { mode: "prefix", text: "KR" });
     await rightClickRow(page, "Final Fantasy X");
-    await menuItem(page, "Title Prefix/Postfix 적용…").click();
+    await menuItem(page, "제목 앞·뒤 태그 적용…").click();
     await modalButton(page, "Plan에 추가").click();
 
     const row = page.locator(".lrow", { hasText: "Final Fantasy X" });

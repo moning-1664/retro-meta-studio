@@ -40,13 +40,15 @@ from app import paths
 from app.model.collection import FRONTENDS, STORAGE_INTERNAL
 from app.model.constants import MEDIA_TYPES, VIDEO_MEDIA_TYPE, normalize_system
 from app import dashboard
+from app.folder_detection import inspect_folder
+from app import collection_import
 from app import media_cleanup
 from app import media_import
 from app import system_ops
 from app import storage_layout
 from app import title_affix
 from app.launch import retroarch
-from app.model.plan import OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan
+from app.model.plan import OP_ADD, OP_ARCHIVE_INGEST, OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan, PlanEntry
 from app.plan import builder, clipboard, transfer
 from app.plan.applier import apply_plan
 from app.plan.validator import check_capacity, validate
@@ -262,6 +264,11 @@ class Api:
     @guarded
     def list_collections(self):
         return ok([self._collection_summary(c) for c in self.registry.list_collections()])
+
+    @guarded
+    def inspect_collection_folder(self, path):
+        """Read-only frontend evidence for a folder selected in the UI."""
+        return ok(inspect_folder(path))
 
     @guarded
     def create_collection(self, name, frontend, root_path=None, target=None, arch=None,
@@ -676,6 +683,11 @@ class Api:
                                               path=path, size=row["size"]))
         if not items:
             return err("스크랩할 항목을 찾을 수 없습니다.")
+        for item in items:
+            match = self.registry.scrape_confirmed_match(
+                target, collection_id, item["system"], item["filename"], item.get("size"))
+            if match and match["provider"] == "screenscraper":
+                item["confirmedGameId"] = match["remote_game_id"]
         session = self.scrape.sessions.create(target, collection_id, items)
         return ok({"id": session["id"], "target": target, "collectionId": collection_id,
                    "items": items, "quota": None})
@@ -942,6 +954,12 @@ class Api:
                     item_id=item["id"], provider=provenance["provider"],
                     remote_game_id=provenance["remoteGameId"], source_url=provenance["sourceUrl"],
                     evidence=provenance["evidence"], fields=applied_fields, media=applied_media)
+                if not errors and provenance.get("remoteGameId"):
+                    self.registry.set_scrape_confirmed_match(
+                        target_kind=session["target"], collection_id=session.get("collectionId"),
+                        system=item["system"], filename=item["filename"], size=item.get("size"),
+                        provider=provenance["provider"],
+                        remote_game_id=provenance["remoteGameId"])
             if errors:
                 log.warning("Scraper apply item=%s target=%s failed: %s",
                             item["id"], session["target"], "; ".join(errors))
@@ -1774,6 +1792,12 @@ class Api:
             "conflictChoices": entry.conflict_choices,
             "conflicts": entry.conflicts,
             "origin": (entry.source or {}).get("origin"),
+            "sourceName": (entry.source or {}).get("sourceName"),
+            "parts": {
+                "rom": bool((entry.source or {}).get("rom")),
+                "metadata": bool((entry.source or {}).get("fields")),
+                "media": len((entry.source or {}).get("media") or []),
+            } if entry.op in (OP_ADD, OP_ARCHIVE_INGEST) else None,
         }
         if entry.op == OP_TITLE_EDIT:
             summary["oldTitle"], summary["newTitle"] = entry.old_title, entry.new_title
@@ -2294,9 +2318,18 @@ class Api:
             return err("적용할 Plan이 없습니다.")
 
         collection, cache, provider = self._plan_context(collection_id)
-        blocked = self._ensure_writable(collection, [entry.system for entry in plan.entries])
+        archive_entries = [entry for entry in plan.entries if entry.op == OP_ARCHIVE_INGEST]
+        file_entries = [entry for entry in plan.entries if entry.op != OP_ARCHIVE_INGEST]
+        blocked = self._ensure_writable(collection, [entry.system for entry in file_entries])
         if blocked:
             return blocked
+        if archive_entries:
+            cfg = self._archive_config()
+            if not archive_projection.is_configured(cfg):
+                return err("Archive 디렉토리가 설정되지 않았습니다. 수집 계획을 다시 확인하세요.")
+            if any((entry.source or {}).get("archiveDir") != str(cfg["archiveDir"])
+                   for entry in archive_entries):
+                return err("Archive 디렉토리가 바뀌었습니다. 기존 수집 계획을 지우고 다시 추가하세요.")
         report = validate(plan, collection, cache, provider)
         if report["entries"]:
             log.warning("Plan validation invalid collection=%s entries=%s", collection_id,
@@ -2307,32 +2340,79 @@ class Api:
             reason = (report["entries"][0]["error"] if report["entries"] else
                       "적용할 수 있는 Plan 항목이 없습니다.")
             return err(f"Plan을 적용할 수 없습니다: {reason}")
+        archive_ready = [entry for entry in archive_entries if entry.status != "invalid"]
+        archive_invalid = len(archive_entries) - len(archive_ready)
 
         lock_name = f"apply:{collection_id}"
         if not self.registry.acquire_lock(lock_name, kind="apply"):
             owner = self.registry.lock_owner(lock_name) or {}
             return err(f"다른 창에서 같은 Collection을 적용하는 중입니다({owner.get('instance_id', '?')[:8]}).")
 
-        def run(cb):
+        def run_archive(cb):
+            try:
+                current = []
+                for entry in archive_ready:
+                    row = cache.get_row_by_filename(entry.system, entry.filename)
+                    if row is None or archive_service.ingest_fingerprint(row) != entry.source["fingerprint"]:
+                        entry.status, entry.error = "invalid", "원본 항목이 바뀌었습니다. 수집 계획을 다시 만드세요."
+                        raise ValueError(f"{entry.filename}: 원본 항목이 변경되어 Archive 수집을 멈췄습니다.")
+                    current.append(row["rom_uid"])
+                ingested = archive_service.ingest_collection(
+                    self.archive, collection, cache, current,
+                    progress_cb=lambda done, total, label: cb(
+                        int(done * 650 / max(1, total)), 1000, label))
+                self._project_archive(ingested, ingested["romIdentityIds"],
+                    progress_cb=lambda done, total, label: cb(
+                        650 + int(done * 350 / max(1, total)), 1000, label))
+                for entry in archive_ready:
+                    plan.remove(entry.key)
+                cb(1000, 1000, "Archive 수집 완료")
+                return {"applied": len(archive_ready), "archiveIngested": ingested["ingested"],
+                        "archiveRevised": ingested["revised"], "failed": 0, "partial": 0,
+                        "skipped": 0, "invalid": archive_invalid, "errors": [], "systems": []}
+            except Exception:
+                if file_entries:
+                    self.registry.release_lock(lock_name)
+                raise
+            finally:
+                if not file_entries:
+                    self.registry.release_lock(lock_name)
+
+        def run_files(cb):
             try:
                 result = apply_plan(plan, collection, cache, self.registry, provider,
                                     progress_cb=cb, disc_titles=self._disc_title_option())
                 log.info("Plan apply collection=%s applied=%s invalid=%s failed=%s partial=%s skipped=%s",
                          collection_id, result.get("applied"), result.get("invalid"),
                          result.get("failed"), result.get("partial"), result.get("skipped"))
-                # Apply가 건드린 System만 다시 읽어 Cache를 실제 상태에 맞춘다.
-                # 이걸 안 하면 방금 지운 게임이 목록에 남고 용량도 예전 값이 보인다.
-                # 전체 Full Scan은 규모가 커지면 감당이 안 되므로 범위를 좁힌다.
                 if result.get("systems"):
                     self.workspace.scan(collection_id, force=True, systems=result["systems"])
                     self._rebind_plan_rows(collection_id, result["systems"])
                 self.registry.append_change(CHANGE_APPLIED, collection_id,
                                             {"applied": result["applied"]})
+                if not archive_ready and archive_invalid:
+                    result["invalid"] = result.get("invalid", 0) + archive_invalid
                 return result
             finally:
                 self.registry.release_lock(lock_name)
 
-        job_id = self.jobs.run_phased((collection_id,), [("적용", run)], kind="apply")
+        phases = []
+        if archive_ready:
+            phases.append(("Archive 수집", run_archive))
+        if file_entries:
+            phases.append(("Collection 적용", run_files))
+        def combine(previous, current):
+            if previous is None:
+                return current
+            return {**current,
+                    **{key: int(previous.get(key) or 0) + int(current.get(key) or 0)
+                       for key in ("applied", "failed", "partial", "skipped", "invalid")},
+                    "archiveIngested": previous.get("archiveIngested", 0),
+                    "archiveRevised": previous.get("archiveRevised", 0),
+                    "errors": previous.get("errors", []) + current.get("errors", []),
+                    "systems": sorted(set(previous.get("systems", [])) | set(current.get("systems", [])))}
+        job_id = self.jobs.run_phased((collection_id,), phases, kind="apply",
+                                     combine_results=combine, attach_followup_job_id=True)
         return ok({"jobId": job_id})
 
     # ------------------------------------------------------------------
@@ -2342,8 +2422,8 @@ class Api:
     def archive_ingest(self, collection_id, rom_uids=None, scope=None):
         """동기 수집. 프로그램 호출과 테스트용이다.
 
-        **화면은 이 경로를 쓰지 않는다** - GUI는 `start_archive_ingest()`로 scope를
-        명시해서 부른다. 여기서 `rom_uids=None`을 전체로 보는 것은 호출부가 대상을
+        **화면은 이 경로를 쓰지 않는다** - GUI는 `plan_archive_ingest()`로 scope를
+        명시해서 Plan에 담는다. 여기서 `rom_uids=None`을 전체로 보는 것은 호출부가 대상을
         직접 나열하는 프로그램 경로에서만 통하는 편의다.
         """
         collection, cache, _ = self._plan_context(collection_id)
@@ -2358,6 +2438,36 @@ class Api:
         kind, uids = archive_service.resolve_scope(cache, scope)
         return ok({"kind": kind, "count": len(uids),
                    "system": (scope or {}).get("system")})
+
+    @guarded
+    def plan_archive_ingest(self, collection_id, scope):
+        """Archive 수집 대상을 Collection Plan에 올린다. 실제 Revision은 Apply에서 기록한다."""
+        cfg = self._archive_config()
+        if not archive_projection.is_configured(cfg):
+            return err("Archive 디렉토리를 먼저 정하세요. Settings > Archive에서 저장할 폴더와 형식을 고릅니다.")
+        if not isinstance(scope, dict) or scope.get("kind") not in ("all", "system", "selected"):
+            return err("Archive 수집 범위를 선택하세요.")
+        collection, cache, _ = self._plan_context(collection_id)
+        kind, uids = archive_service.resolve_scope(cache, scope)
+        plan = self._plan(collection_id)
+        keys, skipped = [], []
+        for uid in dict.fromkeys(uids):
+            row = cache.get_row(uid)
+            if row is None:
+                skipped.append({"filename": str(uid), "reason": "원본 항목을 찾을 수 없습니다."})
+                continue
+            entry = PlanEntry(
+                op=OP_ARCHIVE_INGEST, system=row["system"], filename=row["filename"],
+                rom_uid=row["rom_uid"],
+                source={"fingerprint": archive_service.ingest_fingerprint(row),
+                        "archiveDir": str(cfg["archiveDir"]), "origin": "archive-ingest",
+                        "sourceName": collection.name, "fields": row["fields"],
+                        "media": row["media"],
+                        "rom": {"present": True} if row["present"] else None},
+            )
+            plan.add(entry)
+            keys.append(entry.key)
+        return ok({"planned": len(keys), "keys": keys, "skipped": skipped, "scope": kind})
 
     @guarded
     def start_archive_ingest(self, collection_id, scope=None):
@@ -3018,6 +3128,20 @@ class Api:
             log.warning("Portable Archive snapshot changed on another computer; local DB kept")
         return {"status": result["status"]}
 
+    def _pull_archive_snapshot(self, cfg):
+        """Accept a newer shared Archive DB without discarding local edits."""
+        directory = cfg["archiveDir"]
+        known = self.registry.get_setting("archive.shared_snapshot_hashes", {}) or {}
+        result = archive_shared_cache.pull_if_clean(
+            self.archive, directory, known.get(directory))
+        if result["status"] == "loaded":
+            self.registry.set_setting("archive.shared_snapshot_hashes",
+                                      {**known, directory: result["digest"]})
+            log.info("Loaded newer portable Archive snapshot from %s", directory)
+        elif result["status"] == "conflict":
+            log.warning("Portable Archive snapshot changed while local Archive has edits")
+        return {"status": result["status"]}
+
     def _archive_config(self) -> dict:
         return archive_projection.normalize_config(
             self.registry.get_setting(self.ARCHIVE_CONFIG_KEY, {}))
@@ -3403,7 +3527,11 @@ class Api:
             return err("Archive 디렉토리가 설정되지 않았습니다.")
         provider = storage.for_path(cfg["archiveDir"])
         with self._archive_lifecycle_lock:
-            return ok(archive_directory.sync_from_directory(self.archive, cfg, provider))
+            pulled = self._pull_archive_snapshot(cfg)
+            if pulled["status"] == "conflict":
+                return err("다른 PC의 Archive DB와 이 PC의 수정 내용이 달라 자동으로 합칠 수 없습니다.")
+            result = archive_directory.sync_from_directory(self.archive, cfg, provider)
+            return ok({**result, "sharedPull": pulled})
 
     @guarded
     def start_archive_refresh(self):
@@ -3417,8 +3545,13 @@ class Api:
             log.info("Archive refresh started after %.3fs wait", time.perf_counter() - queued_at)
             started_at = time.perf_counter()
             try:
+                cb(0, 1000, "다른 PC의 Archive 변경 확인")
+                pulled = self._pull_archive_snapshot(cfg)
+                if pulled["status"] == "conflict":
+                    raise ValueError("다른 PC의 Archive DB와 이 PC의 수정 내용이 달라 자동으로 합칠 수 없습니다.")
                 result = archive_directory.sync_from_directory(
                     self.archive, cfg, provider, progress_cb=cb)
+                result["sharedPull"] = pulled
                 result["scanSeconds"] = round(time.perf_counter() - started_at, 3)
                 result["sharedSnapshot"] = self._publish_archive_snapshot(cfg)
                 log.info("Archive refresh scan: %.3fs, systems=%s, stages=%s",
@@ -3913,29 +4046,94 @@ class Api:
         return ok(archive_service.clear_preferred(self.archive, rom_identity_id))
 
     @guarded
-    def archive_to_collection(self, collection_id, rom_identity_ids):
-        """Archive 항목을 Collection으로 보낸다(§41).
-
-        이미 있는 항목은 메타데이터만 즉시 반영하고(D1), 없는 항목은 파일을 옮겨야
-        하므로 Plan에 올린다.
-        """
+    def archive_to_collection(self, collection_id, rom_identity_ids, mode=None,
+                              target_rom_uid=None):
+        """Archive 항목의 메타데이터와 파일을 함께 Plan에 담는다."""
         collection, cache, provider = self._plan_context(collection_id)
+        blocked = self._ensure_file_ops(collection)
+        if blocked:
+            return blocked
+        blocked = self._ensure_writable(collection, [s.system for s in collection.systems])
+        if blocked:
+            return blocked
+        target_row = cache.get_row(int(target_rom_uid)) if target_rom_uid is not None else None
+        if target_rom_uid is not None and target_row is None:
+            return err("대상 게임을 찾을 수 없습니다.")
+        if target_row is not None and len(rom_identity_ids) != 1:
+            return err("대상 게임에 가져올 Archive 후보를 한 개 선택하세요.")
         cfg = self._archive_config()
         result = archive_service.to_collection(self.archive, collection, cache, provider,
                                                rom_identity_ids,
                                                media_resolver=(
                                                    lambda rid, media_type, item:
                                                    self._archive_media_display_path(rid, media_type, item)
-                                               ) if cfg["mediaInternal"] else None)
+                                               ) if cfg["mediaInternal"] else None,
+                                               explicit_target=target_row)
+        policy = self._transfer_policy()
+        target_adapter = get_adapter(collection.frontend)
+        items = [{**item,
+                  "rom": item.get("rom") if policy["includeRom"] else None,
+                  "media": item.get("media") if policy["includeMedia"] else [],
+                  "frontend_raw": item.get("frontend_raw") or {}
+                  if target_adapter.raw_is_mine(item.get("frontend_raw") or {}) else {}}
+                 for item in result["items"]]
+        prepared, skipped = transfer.prepare(items, cache, mode or policy["pasteMode"])
         added = {"added": 0, "skipped": [], "conflicts": 0}
-        if result["items"]:
-            added = builder.plan_add(self._plan(collection_id), collection, provider,
-                                     result["items"])
+        plan = self._plan(collection_id)
+        if prepared:
+            added = builder.plan_add(plan, collection, provider, prepared)
+        keys = list(dict.fromkeys(added.get("keys", [])))
         return ok({
-            "updated": result["updated"],
-            "planned": added["added"], "conflicts": added.get("conflicts", 0),
-            "skipped": result["skipped"] + added.get("skipped", []),
+            "planned": len(keys), "keys": keys,
+            "conflicts": sum(bool(plan.get(key).conflicts) for key in keys),
+            "skipped": result["skipped"] + skipped + added.get("skipped", []),
         })
+
+    @guarded
+    def collection_import_candidates(self, target_id, target_rom_uid, source_id):
+        if source_id == target_id:
+            return err("다른 Collection을 출처로 선택하세요.")
+        target, target_cache, _ = self._plan_context(target_id)
+        source, source_cache, _ = self._plan_context(source_id)
+        row = target_cache.get_row(int(target_rom_uid))
+        if row is None:
+            return err("대상 게임을 찾을 수 없습니다.")
+        return ok({"source": {"system": row["system"], "filename": row["filename"],
+                               "title": row["title"], "size": row["size"]},
+                   "candidates": collection_import.candidates(
+                       target, row, source, source_cache)})
+
+    @guarded
+    def collection_import_plan(self, target_id, source_id, rom_uids=None,
+                               target_rom_uid=None, target_system=None, mode=None):
+        if source_id == target_id:
+            return err("다른 Collection을 출처로 선택하세요.")
+        target, target_cache, provider = self._plan_context(target_id)
+        source, source_cache, _ = self._plan_context(source_id)
+        blocked = self._ensure_file_ops(target)
+        if blocked:
+            return blocked
+        target_row = target_cache.get_row(int(target_rom_uid)) if target_rom_uid is not None else None
+        if target_rom_uid is not None and target_row is None:
+            return err("대상 게임을 찾을 수 없습니다.")
+        if target_system is not None and target_system not in {s.system for s in target.systems}:
+            return err("대상 System을 찾을 수 없습니다.")
+        blocked = self._ensure_writable(target,
+            [target_row["system"]] if target_row else
+            [target_system] if target_system else [s.system for s in target.systems])
+        if blocked:
+            return blocked
+        ids = list(rom_uids or [])
+        if not ids:
+            wanted = normalize_system(target.frontend, target_system) if target_system else None
+            ids = [row["rom_uid"] for row in source_cache.all_entries()
+                   if wanted is None or normalize_system(source.frontend, row["system"]) == wanted]
+        result = collection_import.plan_import(
+            self._plan(target_id), source, source_cache, target, target_cache, provider,
+            ids, mode=mode or self._transfer_policy()["pasteMode"],
+            policy=self._transfer_policy(), target_row=target_row,
+            target_system=target_system)
+        return ok(result)
 
     # ------------------------------------------------------------------
     # Match (스펙 §45-49)

@@ -82,6 +82,28 @@ test("ROM 충돌도 한 줄의 좌우 선택으로 처리한다", async ({ page 
   await expect(page.locator(".conflict-choice.incoming")).toContainText("가져올 ROM");
 });
 
+test("50건이 넘어도 선택 완료 후 남은 충돌을 계속 보여준다", async ({ page }) => {
+  const entries = Array.from({ length: 53 }, (_, index) => ({
+    ...MEDIA_CONFLICT,
+    key: `add|ps2|Bulk${index}.iso`, filename: `Bulk${index}.iso`,
+    conflicts: [{ ...MEDIA_CONFLICT.conflicts[0],
+      source: `source-${index}`, dest: `dest-${index}` }],
+  }));
+  await serveConflicts(page, entries);
+  await page.locator(".sb-badge.warn").click();
+  await expect(page.locator(".copy-conflict-row")).toHaveCount(50);
+  await expect(page.locator(".conflict-page-count")).toContainText("1–50 / 53건");
+  await page.locator(".modal-actions .btn.primary").click();
+  await expect(page.locator(".copy-conflict-row")).toHaveCount(3);
+  await expect(page.locator(".conflict-filename").first()).toHaveText("Bulk50.iso");
+  await page.locator(".modal-actions .btn.primary").click();
+  await expect(page.locator(".sb-badge.success")).toContainText("선택 완료");
+  await page.locator(".sb-badge.success").click();
+  await expect(page.locator(".copy-conflict-row")).toHaveCount(50);
+  await page.locator(".modal-actions .btn", { hasText: "다음", exact: true }).click();
+  await expect(page.locator(".conflict-filename").first()).toHaveText("Bulk50.iso");
+});
+
 test("실패 다이얼로그는 충돌 화면 변경의 영향을 받지 않는다", async ({ page }) => {
   await page.evaluate(() => window.api.__setMockFailedEntries([
     { key: "add|ps2|X.iso", op: "add", system: "ps2", filename: "X.iso",

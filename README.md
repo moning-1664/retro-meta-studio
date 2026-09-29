@@ -2,6 +2,8 @@
 
 Retro game ROM, metadata, media, and frontend collection management workspace for Windows.
 
+**Platform scope:** RetroMeta Studio is a Windows desktop application. Linux and macOS builds are not planned. Frontend files or ROM storage used by other operating systems can be managed from Windows when the storage is accessible; that does not mean the application runs on those systems.
+
 RetroMeta Studio is designed around a practical problem: the same ROM collection may need to be maintained in several frontend formats, while metadata, media, ROM locations, and storage devices change independently.
 
 Instead of treating one frontend format as the application's database, RetroMeta Studio provides a workspace for:
@@ -31,7 +33,7 @@ The important concepts are:
 | Concept | Role |
 |---|---|
 | **Collection** | A logical ROM/frontend library registered in the application |
-| **Archive** | A separate area for collecting metadata/identity information from collections |
+| **Archive** | An optional library with revision history; appears after its folder is configured in Settings |
 | **Compare** | Side-by-side analysis of two collections, including matches and differences |
 | **Match** | Identification of equivalent games across collections |
 | **Plan** | A calculated set of file changes that can be reviewed before Apply |
@@ -50,10 +52,10 @@ A typical workflow is:
 4. Review games and metadata in the web UI.
 5. Use Match when the same game appears under different names.
 6. Use Compare to inspect two collections side by side.
-7. Use Archive when metadata/identity information needs to be collected or revised independently of a Collection.
-8. Build a Plan for copy, paste, move, delete, or other file changes.
+7. Optionally configure an Archive folder in Settings to keep selected games and their revision history.
+8. Build a Plan for copy, paste, move, delete, Collection import, or Archive transfer.
 9. Review the Plan.
-10. Apply the Plan through the file-operation layer.
+10. Apply the Plan; file operations and Archive revision writes run in their respective handlers.
 11. Export/write the result through the target Frontend Adapter.
 
 ## Supported Frontends
@@ -180,7 +182,7 @@ The Compare UI includes selection and navigation behaviors such as:
 
 ## Archive
 
-Archive is a separate application area for collecting and managing metadata/identity information from Collections.
+Archive is optional. Choose its folder in Settings; the app checks the folder structure and suggests a frontend format when it can identify one confidently. A Collection remains usable without an Archive. Archive keeps collected metadata, media, provenance, and revisions independently of the source Collection.
 
 Archive currently supports concepts including:
 
@@ -193,7 +195,7 @@ Archive currently supports concepts including:
 - legacy Archive recovery/import
 - Archive-side ROM/media discovery
 
-Archive is intentionally kept separate from the Collection model.
+Sending Collection entries to Archive and importing Archive entries into a Collection both enter Plan first. Apply performs the changes. Import can also use another open Collection as its source.
 
 ### Archive status
 
@@ -440,14 +442,14 @@ The project does not assume that a successful internal round trip automatically 
 
 ## Requirements
 
-Current development target:
+Supported application platform and development tools:
 
 - Windows 10/11
 - Python 3.11+
 - Node.js/npm for UI testing
 - Chromium/Playwright for UI tests
 
-The application is primarily designed as a Windows desktop application because several important operations depend on Windows facilities such as Robocopy, pywebview/WebView2, and Windows filesystem/device behavior.
+The application runs on Windows only. File operations and device access use Windows facilities such as Robocopy, WebView2, and Windows filesystem/device APIs. Linux and macOS application support is outside the project scope.
 
 ## Development status
 
@@ -455,6 +457,9 @@ RetroMeta Studio is an active development project.
 
 The core Collection/Scan/UI/Plan/Adapter/Match/Compare architecture is in place, while several areas continue to evolve:
 
+- UI consistency across buttons, panels, dialogs, typography, and window controls
+- Scraper match quality and result review
+- Collection and Archive workflow clarity and reliability
 - Archive synchronization and recovery behavior
 - Archive revision/conflict UX
 - Compare → Plan workflows

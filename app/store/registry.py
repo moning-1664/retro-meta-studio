@@ -135,6 +135,19 @@ MIGRATIONS = (
         # 별도 버전으로 추가한다.
         "ALTER TABLE scrape_provenance ADD COLUMN media_json TEXT NOT NULL DEFAULT '[]'",
     )),
+    Migration(6, (
+        """CREATE TABLE scrape_confirmed_matches (
+               target_kind TEXT NOT NULL,
+               collection_id TEXT NOT NULL,
+               system TEXT NOT NULL,
+               filename TEXT NOT NULL,
+               rom_size INTEGER NOT NULL,
+               provider TEXT NOT NULL,
+               remote_game_id TEXT NOT NULL,
+               confirmed_at REAL NOT NULL,
+               PRIMARY KEY (target_kind, collection_id, system, filename, rom_size)
+           )""",
+    )),
 )
 
 
@@ -445,6 +458,30 @@ class RegistryStore:
                 " ORDER BY applied_at DESC",
                 (str(target_kind), collection_id, str(item_id)))
         ]
+
+    @staticmethod
+    def _scrape_match_key(target_kind, collection_id, system, filename, size):
+        return (str(target_kind), str(collection_id or ""), str(system or "").casefold(),
+                str(filename or "").casefold(), int(size) if size is not None else -1)
+
+    def scrape_confirmed_match(self, target_kind, collection_id, system, filename, size):
+        row = self._conn.execute(
+            "SELECT provider,remote_game_id FROM scrape_confirmed_matches WHERE "
+            "target_kind=? AND collection_id=? AND system=? AND filename=? AND rom_size=?",
+            self._scrape_match_key(target_kind, collection_id, system, filename, size)).fetchone()
+        return dict(row) if row else None
+
+    def set_scrape_confirmed_match(self, *, target_kind, collection_id, system, filename,
+                                   size, provider, remote_game_id):
+        key = self._scrape_match_key(target_kind, collection_id, system, filename, size)
+        with transaction(self._conn):
+            self._conn.execute(
+                "INSERT INTO scrape_confirmed_matches "
+                "(target_kind,collection_id,system,filename,rom_size,provider,remote_game_id,confirmed_at) "
+                "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(target_kind,collection_id,system,filename,rom_size) "
+                "DO UPDATE SET provider=excluded.provider,remote_game_id=excluded.remote_game_id,"
+                "confirmed_at=excluded.confirmed_at",
+                (*key, str(provider), str(remote_game_id), time.time()))
 
     # ------------------------------------------------------------------
     def _build_collection(self, row) -> Collection:

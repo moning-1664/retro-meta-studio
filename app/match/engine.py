@@ -266,6 +266,16 @@ def _heuristic_match(a: dict, b: dict) -> tuple[str | None, float, list[str]]:
     return TIER_HEURISTIC, round(score, 1), evidence
 
 
+def classify_pair(a: dict, b: dict) -> tuple[str | None, float, list[str]]:
+    """Rank two subjects for an explicitly opened candidate picker."""
+    tier, score, evidence = classify(a, b)
+    if not tier:
+        tier, score, evidence = _metadata_match(a, b)
+    if not tier:
+        tier, score, evidence = _heuristic_match(a, b)
+    return tier, score, evidence
+
+
 def quick_candidates(archive, source: dict, *, exclude_collection=None,
                      limit=DEFAULT_LIMIT) -> list[dict]:
     """Exact/Normalized만 본다. 화면에 보이는 행마다 불러도 될 만큼 가벼워야 한다."""
@@ -293,12 +303,7 @@ def deep_candidates(archive, source: dict, *, exclude_collection=None,
                                                  exclude_collection=exclude_collection):
         fields = (fields_of(identity["rom_identity_id"]) if fields_of else {}) or {}
         other = subject_of_identity(identity, fields)
-        tier, score, evidence = classify(source, other)
-        if not tier:
-            # 구조화된 필드의 동일성을 먼저 본다. 그게 안 되면 문자열 유사도로 내려간다.
-            tier, score, evidence = _metadata_match(source, other)
-            if not tier:
-                tier, score, evidence = _heuristic_match(source, other)
+        tier, score, evidence = classify_pair(source, other)
         if tier:
             found.append({**_identity_view(identity), "tier": tier,
                           "score": score, "evidence": evidence})

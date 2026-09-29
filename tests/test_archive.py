@@ -343,10 +343,11 @@ class ArchiveTests(unittest.TestCase):
         rid = next(row["romIdentityId"] for row in self.api.archive_rows()["data"]["rows"]
                    if row["file"] == "ws90.zip")
         self.api.archive_edit(rid, {"name": "World Soccer 90"})
-        imported = self.api.archive_to_collection(target_id, [rid])
+        imported = self.api.archive_to_collection(target_id, [rid], "overwrite")
         self.assertTrue(imported["ok"], imported.get("error"))
-        self.assertEqual(imported["data"]["updated"], 1)
-        self.assertEqual(imported["data"]["planned"], 0)
+        self.assertEqual(imported["data"]["planned"], 1)
+        self.api.start_apply(target_id)
+        wait_idle(self.api)
         row = next(row for row in self.api.list_rows(target_id)["data"]["rows"]
                    if row["file"] == "ws90.zip")
         self.assertEqual(row["title"], "World Soccer 90")
@@ -507,16 +508,23 @@ class ArchiveTests(unittest.TestCase):
     # ------------------------------------------------------------------
     # Archive -> Collection (§41, Scenario 8)
     # ------------------------------------------------------------------
-    def test_existing_game_gets_metadata_immediately_without_a_plan(self):
-        """이미 있는 항목은 바이트가 안 움직인다. Plan을 거치지 않고 바로 쓴다(D1)."""
+    def test_existing_game_metadata_is_staged_until_apply(self):
+        """기존 항목의 메타데이터도 Apply 전에는 바꾸지 않는다."""
         self.api.archive_ingest(self.src)
         rid = self._rid("MGS2.iso")
         self.api.archive_edit(rid, {"name": "새 제목", "genre": "Stealth"})
 
-        result = self.api.archive_to_collection(self.dst, [rid])["data"]
-        self.assertEqual(result["updated"], 1)
-        self.assertEqual(result["planned"], 0)
-        self.assertEqual(self.api.plan_state(self.dst)["data"]["total"], 0)
+        result = self.api.archive_to_collection(self.dst, [rid], "overwrite")["data"]
+        self.assertEqual(result["planned"], 1)
+        self.assertEqual(len(result["keys"]), 1)
+        self.assertEqual(self.api.plan_state(self.dst)["data"]["total"], 1)
+
+        before = ET.parse(self.target_root / "gamelists" / "ps2" / "gamelist.xml").getroot()
+        game_before = next(g for g in before.findall("game")
+                           if (g.findtext("path") or "").strip() == "./MGS2.iso")
+        self.assertNotEqual(game_before.findtext("name"), "새 제목")
+        self.api.start_apply(self.dst)
+        wait_idle(self.api)
 
         root = ET.parse(self.target_root / "gamelists" / "ps2" / "gamelist.xml").getroot()
         game = next(g for g in root.findall("game")
@@ -551,12 +559,12 @@ class ArchiveTests(unittest.TestCase):
         self.api.archive_ingest(source_id)
         rid = next(r["romIdentityId"] for r in self.api.archive_rows()["data"]["rows"]
                    if r["file"] == archive_name)
-        self.api.archive.put_match_link(target_id, "dreamcast", target_name, rid,
-                                        tier="normalized", score=88)
-
-        imported = self.api.archive_to_collection(target_id, [rid])
+        target_row = self.api.workspace.open(target_id).get_row_by_filename(
+            "dreamcast", target_name)
+        imported = self.api.archive_to_collection(
+            target_id, [rid], "overwrite", target_row["rom_uid"])
         self.assertTrue(imported["ok"], imported.get("error"))
-        self.assertEqual(imported["data"]["updated"], 1)
+        self.assertEqual(self.api.archive.match_links_of(target_id), {})
         self.assertEqual(imported["data"]["planned"], 1)
         self.assertEqual(imported["data"]["conflicts"], 1)
         self.assertEqual(target_cover.read_bytes(), b"old-target-cover")
@@ -583,7 +591,6 @@ class ArchiveTests(unittest.TestCase):
         self._drop_from_target_gamelist("FFX.iso")
 
         result = self.api.archive_to_collection(self.dst, [rid])["data"]
-        self.assertEqual(result["updated"], 0)
         self.assertEqual(result["planned"], 1)
 
         # 확정 전까지 파일은 그대로다.
@@ -594,7 +601,7 @@ class ArchiveTests(unittest.TestCase):
         self.assertTrue((self.target_root / "ps2" / "FFX.iso").exists())
         self.assertTrue((self.target_root / "downloaded_media" / "ps2" / "covers" / "FFX.png").exists())
 
-    def test_metadata_only_entry_gets_metadata_now_and_files_via_plan(self):
+    def test_metadata_only_entry_gets_metadata_and_files_via_plan(self):
         """gamelist에는 있는데 ROM이 없는 상태(ES-DE에서 흔하다).
 
         Metadata와 파일은 독립적으로 다뤄야 한다. 메타데이터는 즉시 갱신하면서
@@ -605,7 +612,6 @@ class ArchiveTests(unittest.TestCase):
         rid = self._rid("FFX.iso")
 
         result = self.api.archive_to_collection(self.dst, [rid])["data"]
-        self.assertEqual(result["updated"], 1, "메타데이터가 즉시 갱신되지 않았다")
         self.assertEqual(result["planned"], 1, "빠진 ROM이 Plan에 올라가지 않았다")
 
         self.api.start_apply(self.dst)
@@ -1584,6 +1590,8 @@ class BestEffortReachesTheCollectionImportTests(unittest.TestCase):
         self.api.archive_set_preferred(self.rid, sources[self.plain])
 
         self.api.archive_to_collection(self.plain, [self.rid])
+        self.api.start_apply(self.plain)
+        wait_idle(self.api)
         row = next(r for r in self.api.list_rows(self.plain, limit=50)["data"]["rows"]
                    if r["file"] == "FFX.iso")
         self.assertEqual(row["title"], "FFX 다른 제목", "고른 판의 제목이 안 갔다")

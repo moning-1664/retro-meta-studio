@@ -87,7 +87,7 @@ test.describe("System 폴더 열기", () => {
 });
 
 test.describe("System 전체 삭제 - 두 번 묻는다", () => {
-  const deleteItem = (page) => page.locator(".ctx-menu .ctx-item", { hasText: "전체 삭제" });
+  const deleteItem = (page) => page.locator(".ctx-menu .ctx-item", { hasText: "시스템과 파일 삭제…" });
   const openDelete = async (page, name) => {
     await navSystem(page, name).click({ button: "right" });
     await deleteItem(page).click();
@@ -104,7 +104,7 @@ test.describe("System 전체 삭제 - 두 번 묻는다", () => {
   test("메뉴 최하단에 빨간 [전체 삭제]가 있고 게임이 있어도 누를 수 있다", async ({ page }) => {
     await navSystem(page, "PS2").click({ button: "right" });
     const last = page.locator(".ctx-menu .ctx-item").last();
-    await expect(last).toHaveText(/전체 삭제/);
+    await expect(last).toHaveText("시스템과 파일 삭제…");
     await expect(last).toHaveClass(/danger/);
     await expect(last).toBeEnabled();
     await expect(page.locator(".ctx-menu .ctx-item", { hasText: "System 삭제" })).toHaveCount(0);
@@ -262,7 +262,7 @@ test.describe("ROM 없는 항목 정리", () => {
 // 미디어 선택 후 정리 - System 우클릭 메뉴(사용자 결정, 2026-09). Cover/Screenshot/
 // Video 등 media 종류를 체크박스로 골라 그 System 전체에서만 지운다.
 test.describe("미디어 선택 후 정리", () => {
-  const mediaItem = (page) => page.locator(".ctx-menu .ctx-item", { hasText: "미디어 선택 후 정리" });
+  const mediaItem = (page) => page.locator(".ctx-menu .ctx-item", { hasText: "미디어 정리…" });
   const mockTypes = (page, types) => page.evaluate((data) => {
     window.api.mediaCleanupPreview = async (id, system) => ({ ok: true, data: { system, types: data } });
   }, types);
@@ -376,7 +376,7 @@ test.describe("Storage 그룹 우클릭 메뉴", () => {
   test("System 메뉴의 그룹 단위 기능이 나온다", async ({ page }) => {
     await groupMenu(page);
     for (const label of ["언어 태그 적용", "gamelist 만들기", "ROM 없는 항목 정리",
-                         "미디어 선택 후 정리", "ROM 폴더", "Metadata 폴더", "Media 폴더"]) {
+                         "미디어 정리…", "ROM 폴더", "Metadata 폴더", "Media 폴더"]) {
       await expect(item(page, label).first()).toBeVisible();
     }
   });
@@ -412,7 +412,7 @@ test.describe("Storage 그룹 우클릭 메뉴", () => {
       window.api.mediaCleanup = async (id, system, types) => { window.__cleaned.push([system, types]); return { ok: true, data: { removed: 2, failed: [] } }; };
     });
     await groupMenu(page);
-    await item(page, "미디어 선택 후 정리").click();
+    await item(page, "미디어 정리…").click();
     await page.locator(".media-clean-row input").first().check();
     await page.locator(".modal-actions .btn.danger", { hasText: "삭제" }).click();
     await expect.poll(() => page.evaluate(() => window.__cleaned.length)).toBeGreaterThan(1);

@@ -4,6 +4,7 @@ import hashlib
 import logging
 import re
 import time
+import unicodedata
 import zlib
 import zipfile
 from dataclasses import dataclass, replace
@@ -350,12 +351,38 @@ class ScreenScraperClient(ScrapeProvider):
         # jeuInfos may also fall back to romnom on its side. The response does
         # not prove a checksum match, even when hashes were submitted.
         has_hash = any(key in params for key in ("crc", "md5", "sha1"))
-        confidence = 65 if has_hash else 45
+        # A ROM-set name alone is not proof of the game identity. In live
+        # queries ws89.zip and ws90.zip both resolved to game 44127; flag
+        # these results for explicit review in the candidate card.
+        confidence = 65 if has_hash else 40
         if not game:
             return []
         candidate = self._candidate(game, evidence=(evidence,), confidence=confidence)
         return [replace(candidate, confidence_reason=(
             "해시로 조회 · 일치 확인 필요" if has_hash else "ROM 이름으로 조회 · 직접 확인 필요"))]
+
+    def confirmed_game(self, remote_game_id: str, system_hint: str) -> list[ScrapeCandidate]:
+        """Refresh a user-confirmed identity without repeating fuzzy name searches."""
+        game_id = str(remote_game_id or "")
+        system_id = _system_id(system_hint)
+        if not game_id.isdecimal() or not system_id:
+            return []
+        try:
+            game = (self._get("jeuInfos.php", {"gameid": game_id, "systemeid": system_id})
+                    .get("response") or {}).get("jeu")
+        except ScreenScraperError as exc:
+            if exc.kind == "not_found":
+                return []
+            raise
+        if not isinstance(game, dict) or str(game.get("id") or game.get("jeu_id") or "") != game_id:
+            log.warning("ScreenScraper confirmed game ID mismatch requested=%s", game_id)
+            return []
+        if _game_system_id(game) is None or not _game_system_matches(game, system_id):
+            log.warning("ScreenScraper confirmed game system mismatch requested=%s system=%s",
+                        game_id, system_id)
+            return []
+        candidate = self._candidate(game, evidence=("이전에 적용한 게임",), confidence=95)
+        return [replace(candidate, confidence_reason="사용자가 이전에 적용한 게임")]
 
     def search(self, query: str, system_hint: str = "") -> list[ScrapeCandidate]:
         query = str(query or "").strip()
@@ -375,10 +402,13 @@ class ScreenScraperClient(ScrapeProvider):
         if isinstance(games, dict) and "jeu" in games:
             games = games["jeu"]
         candidates = []
+        review_candidates = []
         arcade_short_name = (system_id == "75"
                              and bool(re.fullmatch(r"[A-Za-z0-9_]{2,16}", query)))
+        query_words = {word for word in re.findall(r"\w+", query.casefold())
+                       if len(word) >= 5 and word not in {"super", "world", "game", "edition"}}
         other_systems = low_similarity = 0
-        for game in _list(games):
+        for rank, game in enumerate(_list(games)):
             if not isinstance(game, dict):
                 continue
             if not (game.get("id") or game.get("jeu_id")):
@@ -400,9 +430,17 @@ class ScreenScraperClient(ScrapeProvider):
             score = _title_similarity(query, candidate.title, candidate.alternate_titles)
             # Short arcade set names rarely resemble display titles. Rescue only
             # a result that explicitly confirms the requested arcade system.
-            review_only = (score < 0.45 and arcade_short_name
-                           and _game_system_id(game) is not None
-                           and _game_system_matches(game, system_id))
+            confirmed_system = (system_id is not None and _game_system_id(game) is not None
+                                and _game_system_matches(game, system_id))
+            arcade_review = score < 0.45 and arcade_short_name and confirmed_system
+            # For other systems, retain only near misses with a distinctive
+            # shared word and an explicit matching platform. An unrelated
+            # single API result must still appear as no match.
+            title_words = {word for value in (candidate.title, *candidate.alternate_titles)
+                           for word in re.findall(r"\w+", value.casefold())}
+            general_review = (0.30 <= score < 0.45 and rank < 3 and confirmed_system
+                              and not arcade_short_name and bool(query_words & title_words))
+            review_only = arcade_review or general_review
             # jeuRecherche는 관련 없는 단일 결과를 정상 응답으로 돌려주기도 한다. 제목이
             # 거의 겹치지 않으면 선택을 강요하지 않고 "후보 없음"으로 처리한다.
             if score < 0.45 and not review_only:
@@ -416,15 +454,18 @@ class ScreenScraperClient(ScrapeProvider):
                 continue
             confidence = (max(20, min(40, round(score * 100))) if review_only
                           else max(45, min(95, round(score * 100))))
-            candidates.append(replace(
+            reviewed = replace(
                 candidate, confidence=confidence,
-                confidence_reason=(f"아케이드 단축명 후보 · 직접 확인 필요 (제목 유사도 {score:.0%})"
-                                   if review_only else f"제목 유사도 {score:.0%}")))
+                confidence_reason=(f"제목 유사도 {score:.0%} · 직접 확인 필요"
+                                   if review_only else f"제목 유사도 {score:.0%}"))
+            (review_candidates if general_review else candidates).append(reviewed)
             log.info("ScreenScraper search candidate query=%s requestedSystem=%s id=%s "
                      "title=%s returnedSystem=%s similarity=%.3f decision=%s",
                      _log_label(query), system_id or "all", _log_label(candidate.remote_game_id),
                      _log_label(candidate.title), _game_system_id(game) or "unknown", score,
-                     "arcadeReview" if review_only else "candidate")
+                     "arcadeReview" if arcade_review else "review" if general_review else "candidate")
+        if not candidates:
+            candidates = review_candidates[:3]
         log.info("ScreenScraper search system=%s returned=%d kept=%d otherSystem=%d lowSimilarity=%d",
                  system_id or "all", len(_list(games)), len(candidates), other_systems, low_similarity)
         return candidates
@@ -484,7 +525,11 @@ class ScreenScraperClient(ScrapeProvider):
 
 def _title_similarity(query: str, title: str, alternate_titles=()) -> float:
     def clean(value):
-        return re.sub(r"[^0-9a-z가-힣]+", " ", str(value or "").casefold()).strip()
+        decomposed = unicodedata.normalize("NFKD", str(value or "").casefold())
+        plain = "".join(char for char in decomposed if not unicodedata.combining(char))
+        tokens = re.findall(r"[^\W_]+", plain, flags=re.UNICODE)
+        numerals = {"ii": "2", "iii": "3", "iv": "4", "vi": "6", "vii": "7", "viii": "8", "ix": "9"}
+        return " ".join(numerals.get(token, token) for token in tokens)
 
     wanted = clean(query)
     if not wanted:

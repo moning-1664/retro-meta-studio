@@ -163,6 +163,67 @@ class SharedArchiveCacheTests(unittest.TestCase):
         finally:
             third.close()
 
+    def test_refresh_pulls_another_pcs_revision_into_an_open_archive(self):
+        first = ArchiveStore(self.root / "first.db")
+        game = first.ensure_game("First", "first")
+        first.ensure_rom_identity(game, "ps2", "first.iso", filename="First.iso")
+        initial = shared_cache.publish(first, str(self.archive_dir), None)
+        self.assertEqual(initial["status"], "published")
+
+        other = self.root / "other_pc"
+        other.mkdir()
+        api = Api(registry_path=other / "registry.db", cache_dir=other / "cache")
+        try:
+            self.assertTrue(api.save_archive_config({"archiveDir": str(self.archive_dir)})["ok"])
+            self.assertEqual(api.archive_rows()["data"]["total"], 1)
+            second = first.ensure_game("Second", "second")
+            first.ensure_rom_identity(second, "ps2", "second.iso", filename="Second.iso")
+            self.assertEqual(shared_cache.publish(first, str(self.archive_dir), initial["digest"])
+                             ["status"], "published")
+
+            with patch("bridge.api.archive_directory.sync_from_directory",
+                       return_value={"systems": 0, "timings": {}}):
+                started = api.start_archive_refresh()
+                self.assertTrue(started["ok"], started)
+                self.assertTrue(api.jobs.wait_idle(5))
+            result = api.jobs.get(started["data"]["jobId"])
+            self.assertIsNone(result["error"])
+            self.assertEqual(result["result"]["sharedPull"]["status"], "loaded")
+            self.assertEqual(api.archive_rows()["data"]["total"], 2)
+        finally:
+            api.close()
+            first.close()
+
+    def test_refresh_rejects_diverged_local_archive_without_losing_either_copy(self):
+        first = ArchiveStore(self.root / "first.db")
+        game = first.ensure_game("First", "first")
+        first.ensure_rom_identity(game, "ps2", "first.iso", filename="First.iso")
+        initial = shared_cache.publish(first, str(self.archive_dir), None)
+
+        other = self.root / "other_pc"
+        other.mkdir()
+        api = Api(registry_path=other / "registry.db", cache_dir=other / "cache")
+        try:
+            self.assertTrue(api.save_archive_config({"archiveDir": str(self.archive_dir)})["ok"])
+            local = api.archive.ensure_game("Local", "local")
+            api.archive.ensure_rom_identity(local, "ps2", "local.iso", filename="Local.iso")
+            remote = first.ensure_game("Remote", "remote")
+            first.ensure_rom_identity(remote, "ps2", "remote.iso", filename="Remote.iso")
+            self.assertEqual(shared_cache.publish(first, str(self.archive_dir), initial["digest"])
+                             ["status"], "published")
+
+            with patch("bridge.api.archive_directory.sync_from_directory") as scan:
+                started = api.start_archive_refresh()
+                self.assertTrue(api.jobs.wait_idle(5))
+                scan.assert_not_called()
+            result = api.jobs.get(started["data"]["jobId"])
+            self.assertIn("자동으로 합칠 수 없습니다", result["error"])
+            self.assertEqual(api.archive_rows()["data"]["total"], 2)
+            self.assertEqual(len(first.list_rows()), 2)
+        finally:
+            api.close()
+            first.close()
+
     def test_internal_media_already_at_frontend_path_does_not_stat_or_copy(self):
         source = self.root / "archive" / "downloaded_media" / "ps2" / "covers" / "Test.png"
         adapter = Mock()

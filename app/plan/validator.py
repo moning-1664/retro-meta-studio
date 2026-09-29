@@ -17,8 +17,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from adapters import get_adapter
+from app.archive.service import ingest_fingerprint
 from app.model.plan import (
-    OP_ADD, OP_DELETE, OP_METADATA_EDIT, OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE)
+    OP_ADD, OP_ARCHIVE_INGEST, OP_DELETE, OP_METADATA_EDIT, OP_STORAGE_CHANGE,
+    OP_TITLE_EDIT, RESOLVE_OVERWRITE)
 from app.plan.builder import snapshot_matches, unapproved_overwrites
 
 
@@ -41,6 +43,12 @@ def validate(plan, collection, cache, provider) -> dict:
             _validate_title_edit(entry, cache)
         elif entry.op == OP_METADATA_EDIT:
             _validate_metadata_edit(entry, cache)
+        elif entry.op == OP_ARCHIVE_INGEST:
+            row = cache.get_row_by_filename(entry.system, entry.filename)
+            if row is None or ingest_fingerprint(row) != (entry.source or {}).get("fingerprint"):
+                entry.status, entry.error = "invalid", "원본 항목이 바뀌었습니다. 다시 스캔하고 수집 계획을 만드세요."
+            else:
+                entry.rom_uid = row["rom_uid"]
         if entry.status == "invalid":
             problems.append({"key": entry.key, "filename": entry.filename or entry.system,
                              "error": entry.error})

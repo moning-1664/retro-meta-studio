@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 from app.scrape import ScrapeCandidate, ScrapeIdentity, ScrapeMedia, ScrapeService
+from app.scrape.service import _query_fallbacks
 from app.scrape import secrets as scrape_secrets
 from app.scrape.providers.screenscraper import (
     ScreenScraperClient,
@@ -20,6 +21,7 @@ from app.scrape.providers.screenscraper import (
     ScreenScraperError,
     hashes_of_file,
     lookup_hashes,
+    _title_similarity,
 )
 from app.store.registry import RegistryStore
 from app.plan import builder
@@ -62,6 +64,20 @@ def candidate(media=()):
 
 
 class HashAndProviderTests(unittest.TestCase):
+    def test_confirmed_game_lookup_rejects_mismatched_game_or_system(self):
+        valid = {"response": {"jeu": {"id": "42", "nom": "Game", "systeme": {"id": "58"}}}}
+        http = FakeHttp([FakeResponse(valid)])
+        found = ScreenScraperClient(config(), http).confirmed_game("42", "ps2")
+        self.assertEqual(found[0].remote_game_id, "42")
+        self.assertEqual(http.calls[0][1]["params"]["gameid"], "42")
+        self.assertEqual(http.calls[0][1]["params"]["systemeid"], "58")
+        wrong = FakeHttp([FakeResponse({"response": {"jeu": {
+            "id": "43", "nom": "Wrong", "systeme": {"id": "58"}}}})])
+        self.assertEqual(ScreenScraperClient(config(), wrong).confirmed_game("42", "ps2"), [])
+        wrong_system = FakeHttp([FakeResponse({"response": {"jeu": {
+            "id": "42", "nom": "Wrong", "systeme": {"id": "2"}}}})])
+        self.assertEqual(ScreenScraperClient(config(), wrong_system).confirmed_game("42", "ps2"), [])
+
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix="rms_scraper_provider_"))
 
@@ -106,7 +122,7 @@ class HashAndProviderTests(unittest.TestCase):
             ScrapeIdentity("fbneo", "ws90.zip", None))
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].evidence, ("Arcade ROM-set 파일명으로 조회",))
-        self.assertEqual(found[0].confidence, 45)
+        self.assertEqual(found[0].confidence, 40)
         self.assertIn("직접 확인", found[0].confidence_reason)
         params = http.calls[0][1]["params"]
         self.assertEqual((params["romnom"], params["systemeid"]), ("ws90.zip", "75"))
@@ -204,12 +220,16 @@ class HashAndProviderTests(unittest.TestCase):
                          .default_query, "Game (Special Edition)")
 
     def test_patch_markers_skip_hash_lookup_and_leave_clean_search_title(self):
-        for filename in ("Game [T-Kor].zip", "Game (한글패치).zip",
-                         "Game (Hack).zip", "Game 번역판.zip"):
+        for filename, expected in (("Game [T-Kor].zip", "Game"),
+                                   ("Game (한글패치).zip", "Game"),
+                                   ("Queens Blade - Spiral Chaos T-En [U].chd",
+                                    "Queens Blade - Spiral Chaos"),
+                                   ("Game (Hack).zip", "Game"),
+                                   ("Game 번역판.zip", "Game")):
             with self.subTest(filename=filename):
                 identity = ScrapeIdentity("sfc", filename, str(self.dir / filename))
                 self.assertTrue(identity.is_modified_rom)
-                self.assertEqual(identity.default_query, "Game")
+                self.assertEqual(identity.default_query, expected)
                 provider = ScreenScraperClient(config(), FakeHttp([]))
                 self.assertEqual(provider.identify(identity), [])
                 self.assertEqual(provider.http.calls, [])
@@ -359,6 +379,15 @@ class HashAndProviderTests(unittest.TestCase):
         self.assertEqual(found[0].fields["releasedate"], "1988-01-01")
         self.assertIn("Godzilla: Monster of Monsters", found[0].alternate_titles)
 
+    def test_japanese_title_can_match_its_localized_name(self):
+        http = FakeHttp([FakeResponse({"response": {"jeux": [{
+            "id": "42", "nom": "Evangelion 2", "systeme": {"id": "58"},
+            "noms": {"nom_jp": "新世紀エヴァンゲリオン2"},
+        }]}})])
+        found = ScreenScraperClient(config(), http).search("新世紀エヴァンゲリオン2", "ps2")
+        self.assertEqual([row.remote_game_id for row in found], ["42"])
+        self.assertGreaterEqual(found[0].confidence, 80)
+
     def test_404_means_no_match_but_401_and_429_remain_visible(self):
         self.assertEqual(ScreenScraperClient(config(), FakeHttp([FakeResponse({}, status=404)]))
                          .search("missing", "msx"), [])
@@ -410,6 +439,60 @@ class HashAndProviderTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    def test_title_similarity_handles_accents_and_numbered_sequels(self):
+        self.assertEqual(_title_similarity("Pokemon 2", "Pokémon II"), 1.0)
+        self.assertEqual(_title_similarity("Final Fantasy III", "Final Fantasy 3"), 1.0)
+        self.assertLess(_title_similarity("Pokemon 2", "Final Fantasy 3"), 0.45)
+
+    def test_fullwidth_colon_gets_bounded_search_variants(self):
+        self.assertEqual(_query_fallbacks("Game： Subtitle"),
+                         ["Game:Subtitle", "Game"])
+
+    def test_weak_first_candidate_does_not_prevent_subtitle_fallback(self):
+        weak = candidate()
+        strong = ScrapeCandidate(**{**weak.__dict__, "candidate_id": "screenscraper:43",
+                                    "remote_game_id": "43", "confidence": 95})
+        weak = ScrapeCandidate(**{**weak.__dict__, "confidence": 50})
+        class Provider:
+            searches = []
+            def identify(self, identity):
+                return []
+            def search(self, query, system_hint=""):
+                self.__class__.searches.append(query)
+                return [strong] if query == "Game" else [weak]
+
+        service = ScrapeService(Provider)
+        item = service.item("1", "ps2", "Game: Subtitle.iso", {})
+        session = service.sessions.create("collection", "c1", [item])
+        result = service.search_item(session["id"], "1", None, None)
+        self.assertEqual(Provider.searches, ["Game: Subtitle", "Game:Subtitle", "Game"])
+        self.assertEqual(result["item"]["candidates"][0]["remote_game_id"], "43")
+        self.assertEqual(result["quota"]["requestsToday"], 3)
+
+    def test_confirmed_match_uses_game_id_only_for_unchanged_query_and_system(self):
+        class Provider:
+            calls = []
+            def confirmed_game(self, game_id, system):
+                self.__class__.calls.append(("confirmed", game_id, system))
+                return [candidate()]
+            def identify(self, identity):
+                self.__class__.calls.append(("identify", identity.system))
+                return []
+            def search(self, query, system_hint=""):
+                self.__class__.calls.append(("search", query))
+                return []
+
+        service = ScrapeService(Provider)
+        item = service.item("1", "ps2", "game.rom", {})
+        item["confirmedGameId"] = "42"
+        session = service.sessions.create("collection", "c1", [item])
+        result = service.search_item(session["id"], "1", None, None)
+        self.assertEqual(Provider.calls, [("confirmed", "42", "ps2")])
+        self.assertEqual(result["quota"]["requestsToday"], 1)
+        Provider.calls.clear()
+        service.search_item(session["id"], "1", "another game", None)
+        self.assertEqual(Provider.calls, [("identify", "ps2"), ("search", "another game")])
+
     def test_subtitle_variants_run_only_after_miss_and_stop_at_first_match(self):
         class Provider:
             searches = []
@@ -461,6 +544,27 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(result["item"]["query"], "World Soccer 90")
         self.assertEqual(result["item"]["status"], "review")
 
+    def test_weak_arcade_romname_result_also_checks_existing_english_title(self):
+        weak = ScrapeCandidate(**{**candidate().__dict__, "confidence": 40,
+                                  "remote_game_id": "42", "candidate_id": "screenscraper:42"})
+        strong = ScrapeCandidate(**{**candidate().__dict__, "confidence": 95,
+                                    "remote_game_id": "43", "candidate_id": "screenscraper:43"})
+        class Provider:
+            searches = []
+            def identify(self, identity):
+                return [weak]
+            def search(self, query, system_hint=""):
+                self.__class__.searches.append(query)
+                return [strong]
+
+        service = ScrapeService(Provider)
+        item = service.item("1", "fbneo", "ws90.zip", {"name": "World Stadium 90"})
+        session = service.sessions.create("archive", None, [item])
+        result = service.search_item(session["id"], "1", None, None)
+        self.assertEqual(Provider.searches, ["World Stadium 90"])
+        self.assertEqual(result["item"]["candidates"][0]["remote_game_id"], "43")
+
+
     def test_hash_miss_falls_back_to_name_without_waiting_for_quota(self):
         class Provider:
             statuses = 0
@@ -511,6 +615,21 @@ class SessionTests(unittest.TestCase):
 
 
 class SecretAndProvenanceTests(unittest.TestCase):
+    def test_confirmed_match_is_scoped_by_target_collection_system_and_size(self):
+        directory = Path(tempfile.mkdtemp(prefix="rms_scraper_matches_"))
+        store = RegistryStore(directory / "registry.db")
+        try:
+            store.set_scrape_confirmed_match(
+                target_kind="collection", collection_id="c1", system="ps2",
+                filename="Game.iso", size=123, provider="screenscraper", remote_game_id="42")
+            self.assertEqual(store.scrape_confirmed_match(
+                "collection", "c1", "ps2", "game.iso", 123)["remote_game_id"], "42")
+            self.assertIsNone(store.scrape_confirmed_match("archive", None, "ps2", "game.iso", 123))
+            self.assertIsNone(store.scrape_confirmed_match("collection", "c2", "ps2", "game.iso", 123))
+            self.assertIsNone(store.scrape_confirmed_match("collection", "c1", "ps2", "game.iso", 124))
+        finally:
+            store.close()
+
     @unittest.skipUnless(sys.platform.startswith("win"), "Windows secure storage test")
     def test_windows_secure_storage_round_trip(self):
         reference = scrape_secrets.store("tests/scraper-secret", "개발자-비밀번호")
@@ -557,8 +676,11 @@ class ApplyBoundaryTests(unittest.TestCase):
     class Registry:
         def __init__(self):
             self.rows = []
+            self.matches = []
         def add_scrape_provenance(self, **value):
             self.rows.append(value)
+        def set_scrape_confirmed_match(self, **value):
+            self.matches.append(value)
 
     def make_api(self):
         api = Api.__new__(Api)
@@ -585,10 +707,12 @@ class ApplyBoundaryTests(unittest.TestCase):
         self.assertEqual(item["selectedFields"], [])
         self.assertEqual(item["selectedMedia"], [0])
         self.assertEqual(api.registry.rows[0]["fields"], {"name": "게임"})
+        self.assertEqual(api.registry.matches, [])
 
         api._apply_scraped_collection_media = lambda *args: None
         second = api._apply_scrape_session(session["id"], lambda *args: None)
         self.assertEqual(second, {"applied": ["1"], "partial": [], "failed": []})
+        self.assertEqual(api.registry.matches[0]["remote_game_id"], "42")
         with self.assertRaises(KeyError):
             api.scrape.sessions.get(session["id"])
 

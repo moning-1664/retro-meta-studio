@@ -61,7 +61,7 @@ MEDIA_FOLDERS = {
 #: ES-DE가 자기 용도로 쓰는 최상위 폴더. Collection root와 ROM root가 같은 폴더인
 #: 설치(흔하다)에서 이걸 걸러내지 않으면 `gamelists`나 `downloaded_media`가 게임
 #: 시스템으로 잡혀 유령 항목이 생긴다.
-RESERVED_DIRS = {"gamelists", "downloaded_media", "themes", "custom_systems",
+RESERVED_DIRS = {".rms", "gamelists", "downloaded_media", "themes", "custom_systems",
                  "collections", "settings", "scripts", "logs", "tools", "emulators",
                  # 실제 ES-DE 3.x 설치에서 확인한 나머지 - 이걸 빼면 `controllers`나
                  # `screensavers`가 게임 시스템으로 잡혀 빈 항목이 목록에 뜬다.

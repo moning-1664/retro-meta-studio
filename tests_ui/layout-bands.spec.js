@@ -97,11 +97,11 @@ test.describe("버튼 크기", () => {
   test("메타데이터 보내기/가져오기는 아이콘 하나뿐이고, 설명은 툴팁에 있다(§4·§6)", async ({ page }) => {
     // "Archive로"는 Detail에서 HERO로 옮겨오며 글자 라벨 버튼에서 아이콘 버튼이
     // 됐다 - 폭이 출렁이던 문제 자체가 없어졌다.
-    const send = page.locator("#collection-header .cheader-right .icon-btn[title*='메타데이터 보내기']");
+    const send = page.locator("#collection-header .cheader-right .icon-btn[title*='Archive로 보내기']");
     await expect(send).toHaveAttribute("title", /Archive로/);
     expect((await send.boundingBox()).height).toBeLessThanOrEqual(24);
-    const receive = page.locator("#collection-header .cheader-right .icon-btn[title*='메타데이터 가져오기']");
-    await expect(receive).toHaveAttribute("title", /Archive에서/);
+    const receive = page.locator("#collection-header .cheader-right .icon-btn[title*='에서 가져오기']");
+    await expect(receive).toHaveAttribute("title", "다른 Collection 또는 Archive에서 가져오기");
     expect((await receive.boundingBox()).height).toBeLessThanOrEqual(24);
   });
 

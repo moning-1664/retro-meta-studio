@@ -24,7 +24,7 @@ test("우클릭하면 삭제 확인이 아니라 메뉴가 뜬다", async ({ pag
   await expect(page.locator(".modal-title")).toHaveCount(0);
   await expect(page.locator(".ctx-title")).toHaveText("Final Fantasy X");
   await expect(menuItem(page, "Game 삭제")).toBeVisible();
-  await expect(menuItem(page, "파일명 복사")).toBeVisible();
+  await expect(menuItem(page, "ROM 파일명 복사")).toBeVisible();
 });
 
 test("선택하지 않은 행을 우클릭하면 그 행 하나만 선택된다", async ({ page }) => {
@@ -120,7 +120,7 @@ test("이미 여러 개를 선택한 상태로 그중 하나를 우클릭하면 
 
   await page.locator(".lrow").nth(0).click({ button: "right" });
   await expect(page.locator(".ctx-title")).toContainText("2개 선택됨");
-  await expect(menuItem(page, "파일명 2개 복사")).toBeVisible();
+  await expect(menuItem(page, "ROM 파일명 2개 복사")).toBeVisible();
   // 선택이 그대로 유지된다 - 우클릭이 선택을 1개로 되돌리지 않는다.
   await expect(page.locator("#status-bar")).toContainText("Selected 2");
 });

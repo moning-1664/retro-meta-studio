@@ -8,8 +8,8 @@
 // 반드시 expect()의 auto-wait로 기다려야 하고, 고정 sleep을 넣으면 안 된다.
 const { expect } = require("@playwright/test");
 
-async function openApp(page) {
-  await page.goto("/index.html");
+async function openApp(page, { archiveUnconfigured = false } = {}) {
+  await page.goto(archiveUnconfigured ? "/index.html" : "/index.html?archive=on");
   // 목업 모드로 떴는지부터 확인한다 - 실수로 실제 브릿지에 붙으면 테스트가
   // 조용히 다른 것을 검증하게 된다.
   await expect.poll(() => page.evaluate(() => window.api && window.api.isMock())).toBe(true);

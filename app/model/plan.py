@@ -6,20 +6,21 @@ Plan - 실제 파일을 바꾸기 전에 계산해두는 변경 집합.
 **Plan은 세션 한정이다(결정 D2).** 메모리에만 존재하고 앱을 다시 켜면 사라진다.
 그래서 DB 테이블이 없고, Plan과 실제 파일 상태가 어긋난 채로 되살아나는 위험도 없다.
 
-**Plan에 들어가는 것은 저장 용량이 변하는 작업뿐이다(결정 D1).** 텍스트 메타데이터
-편집은 저장 즉시 파일에 기록되고 Plan을 거치지 않는다. 덕분에 Plan의 의미가 화면의
-`Actual -> Plan` 용량 표시와 정확히 일치한다.
+Plan은 파일 변경과 사용자가 묶어서 적용하기로 한 수집·가져오기 작업을 담는다.
+개별 텍스트 메타데이터 편집은 저장 즉시 파일에 기록된다. 용량 변화가 없는
+작업은 추정 용량을 0으로 두어 `Actual -> Plan` 표시를 유지한다.
 
-**예외가 둘 있다(둘 다 사용자 결정).**
+**용량 변화가 없어도 Plan을 거치는 작업이 있다(사용자 결정).**
 
 - TITLE_EDIT(Title Prefix/Postfix 일괄 적용): 한 번에 여러 게임의 제목을 규칙에 따라
   고쳐 쓰는 위험한 일괄 작업이라, 개별 편집과 달리 미리보기 → Plan → Apply를 거친다.
 - METADATA_EDIT(기기 Collection의 편집): MTP로 연결한 안드로이드 기기는 덮어쓰기가
   없어서 한 글자 고칠 때마다 gamelist 전체를 지우고 다시 만든다. 그래서 기기
   Collection에서는 편집을 Plan에 모았다가 Apply에서 한 번에 쓴다.
+- ARCHIVE_INGEST: Collection의 현재 항목을 Archive revision으로 수집한다.
+- Collection 가져오기: 다른 Collection이나 Archive에서 고른 내용을 대상에 적용한다.
 
-둘 다 용량은 바뀌지 않으므로(estimated_bytes, physical_delta 모두 비워 둔다) 화면의
-용량 표시(D1의 존재 이유)는 그대로 정확하다 - 이 예외가 D1을 무너뜨리지 않는다.
+용량이 바뀌지 않는 항목은 estimated_bytes와 physical_delta를 비워 둔다.
 
 용량 재계산은 O(1)이다. 엔트리를 넣고 뺄 때마다 Storage별 누적 델타를 갱신할 뿐,
 Collection 전체를 다시 훑지 않는다. 수천 개를 한 번에 붙여넣는 시나리오(스펙 §88
@@ -35,11 +36,12 @@ OP_DELETE = "delete"                  # 이 Collection에서 제거
 OP_STORAGE_CHANGE = "storage_change"  # System을 다른 Storage로 이동
 OP_TITLE_EDIT = "title_edit"          # Title Prefix/Postfix 일괄 적용
 OP_METADATA_EDIT = "metadata_edit"    # 기기(MTP) Collection의 메타데이터 편집
+OP_ARCHIVE_INGEST = "archive_ingest"  # Collection의 현재 판을 Archive Revision으로 수집
 
 #: Gamelist Status 영역에 쓰는 기호(스펙 §24). 작고 명확하게만 표시하고
 #: 제목이나 설명 전체를 색칠하지 않는다.
 MARKS = {OP_ADD: "+", OP_DELETE: "-", OP_STORAGE_CHANGE: "△",
-         OP_TITLE_EDIT: "✎", OP_METADATA_EDIT: "✎"}
+         OP_TITLE_EDIT: "✎", OP_METADATA_EDIT: "✎", OP_ARCHIVE_INGEST: "↑"}
 
 #: 삭제할 수 있는 부분(사용자 결정 - "롬 삭제 / 메타데이터 삭제 / 미디어 삭제"를 따로).
 #:   rom      ROM 파일
@@ -208,6 +210,7 @@ class Plan:
         moved = [e for e in self._entries.values() if e.op == OP_STORAGE_CHANGE]
         retitled = [e for e in self._entries.values() if e.op == OP_TITLE_EDIT]
         edited = [e for e in self._entries.values() if e.op == OP_METADATA_EDIT]
+        archived = [e for e in self._entries.values() if e.op == OP_ARCHIVE_INGEST]
         blocked = [e for e in self._entries.values() if e.blocked]
         failed = [e for e in self._entries.values()
                   if e.status in (STATUS_FAILED, STATUS_PARTIAL)]
@@ -222,7 +225,7 @@ class Plan:
             "runnable": len([e for e in self._entries.values()
                              if not e.blocked and e.status != STATUS_INVALID]),
             "added": len(added), "deleted": len(deleted), "moved": len(moved),
-            "retitled": len(retitled), "edited": len(edited),
+            "retitled": len(retitled), "edited": len(edited), "archived": len(archived),
             "addedBytes": sum(e.estimated_bytes for e in added),
             "deletedBytes": sum(e.estimated_bytes for e in deleted),
             "delta": self.delta(),

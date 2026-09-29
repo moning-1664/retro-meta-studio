@@ -23,32 +23,14 @@ BestEffort는 현재 구현되어 있다. 출처 Revision의 빈 값은 ABSENT�
 아예 빼는 것도 고려할 만하다(문서에 계속 "미결" 항목으로 남는 것 자체가 다음
 세션의 혼란 요인).
 
-## 2026-09-10 — Settings 화면 (신규 기능, UI/기능 모두 미확정)
+## 해결됨 — Settings 화면 (2026-09-29 상태 확인)
 
-레이아웃 재검토에서 Navigator 좌측 하단에 톱니바퀴 아이콘을 두기로 했지만,
-**그 뒤에 열릴 화면은 아직 아무것도 정해지지 않았다.** 코드를 뒤져봐도 지금
-앱에는 "설정 화면"이라 부를 만한 게 없다 - `app.js`에 settings 관련 코드가
-없고, 저장되는 상태는 Collection별 UI 상태(컬럼 폭, 정렬, 보기 모드,
-`saveUiState`)뿐이며 앱 전역 설정(테마·언어·확인창 여부 등)을 다루는 코드는
-Python 쪽에도 없다.
-
-원래 스펙(§26-28)은 "새로 만들지 말고 실제 존재하는 설정을 조사해 정리하라"는
-전제였는데, 조사 결과 정리할 실제 설정이 거의 없다 - 그래서 Settings는
-**신규 구현**으로 남겨두고, 화면/기능이 확정되기 전까지는 톱니바퀴를 눌러도
-빈 화면(또는 자리표시자)만 나온다.
-
-Navigator 하단 고정 영역(App Title + 톱니바퀴)은 만들었다 - 누르면 "아직
-준비 중" 안내만 뜬다.
-
-**다음에 물어볼 것**: General/Appearance/Frontend 등 카테고리에 실제로 무엇을
-넣을지 - 예를 들어 확인창(destructive operation confirm) on/off, 기본
-List/Card 모드, Preview 기본 상태 같은 것부터 시작할지, 아니면 다른 우선순위가
-있는지.
+현재 Settings에는 Archive 폴더·형식, Scraper, 언어, Emulator 등 실제 설정이
+있다. Archive는 폴더를 설정한 뒤에만 사용하며 폴더 구조를 읽고 형식을 제안한다.
+기존의 "설정 화면 미구현" 설명은 현재 코드와 달라 제거했다.
 
 ## 해결됨 — Archive ↔ Collection 버튼 위치 (2026-09-10)
 
-GameList Overview로 옮기는 안은 "Overview=상태 표시 전용" 원칙과 부딪혀서
-보류했었는데, 대신 **Detail 패널 상단의 새 빈 공간(.detail-topspace)**으로
-옮기는 것으로 해결됐다(사용자 지시) - 그 자리는 애초에 액션 버튼을 위한
-자리라 원칙과 부딪히지 않는다. Collection 탭에선 "Archive에 수집", Archive
-탭에선 "Collection으로 보내기"가 나온다. `renderDetailTopSpace()` 참고.
+Collection의 Archive 보내기는 HERO 아이콘에서 현재 선택 범위를 Plan에 담는다.
+Archive의 Collection 보내기는 Detail 패널 상단에서 대상 Collection을 고른 뒤
+그 Collection의 Plan에 담는다. 둘 다 Apply 전에는 실제 데이터를 변경하지 않는다.

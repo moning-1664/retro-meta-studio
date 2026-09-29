@@ -209,7 +209,8 @@ def plan_add(plan, collection, provider, items):
         added.append(entry)
 
     conflicted = [e.key for e in added if e.conflicts]
-    return {"added": len(added), "skipped": skipped, "conflicts": len(conflicted),
+    return {"added": len(added), "keys": [e.key for e in added],
+            "skipped": skipped, "conflicts": len(conflicted),
             "conflictKeys": conflicted}
 
 

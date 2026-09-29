@@ -136,6 +136,7 @@
   // plan_resolve_all_conflicts()가 이 배열을 실제로 줄여야, "해결하면 다이얼로그가
   // 다시 그려질 때 그 항목이 빠진다"를 목업으로도 확인할 수 있다.
   let mockConflictEntries = [];
+  let mockArchivePlanned = [];
 
   const mockMatchLinks = {};
   const mockFavorites = {};
@@ -197,10 +198,18 @@
   });
 
   //: Archive 설정(목업). 처음에는 정해진 곳이 없다 - Archive 탭의 빈 화면이 [Archive 설정]을 띄운다.
-  const mockArchiveConfig = { frontend: "es-de", archiveDir: "", romDir: "", mediaInternal: true };
+  const mockArchiveConfig = { frontend: "es-de",
+    archiveDir: new URLSearchParams(location.search).get("archive") === "on" ? "D:\\Archive" : "",
+    romDir: "", mediaInternal: true };
 
   const mock = {
     list_collections: () => ok(mockCollections),
+    inspect_collection_folder: (path) => ok({
+      path, archive: false, legacyArchive: false,
+      findings: path === "D:\\ES-DE" ? [{ frontend: "es-de", strong: true,
+        evidence: "gamelists + downloaded_media", systems: ["snes", "ps2"] }] : [],
+      suggestedFrontend: path === "D:\\ES-DE" ? "es-de" : null,
+    }),
     collection_detail: () => ok(mockDetailView()),
     open_collection: () => ok(mockDetailView()),
     close_collection: () => ok(true),
@@ -261,10 +270,12 @@
       const retitledKeys = Object.keys(mockTitlePlanned);
       const rows = {};
       retitledKeys.forEach((key) => { rows[key] = "✎"; });
+      mockArchivePlanned.forEach((entry) => { rows[`${entry.system}|${entry.filename}`] = "↑"; });
       return ok({
         total: Object.keys(mockPendingMoves).length + mockFailedEntries.length + retitledKeys.length
-          + mockConflictEntries.length,
+          + mockConflictEntries.length + mockArchivePlanned.length,
         added: 0, deleted: 0, moved: Object.keys(mockPendingMoves).length, retitled: retitledKeys.length, edited: 0,
+        archived: mockArchivePlanned.length,
         addedBytes: 0, deletedBytes: 0,
         delta: {}, marks: { rows, systems: Object.keys(mockPendingMoves) },
         capacity: mockDetail.storages.map((s) => ({
@@ -273,7 +284,7 @@
           capacityBytes: s.capacityBytes, freeBytes: s.freeBytes,
           over: false, overBytes: 0 })),
         conflictEntries: mockConflictEntries.filter((entry) => !entry.resolution),
-        entries: mockConflictEntries, failedEntries: mockFailedEntries,
+        entries: [...mockConflictEntries, ...mockArchivePlanned], failedEntries: mockFailedEntries,
         conflicts: mockConflictEntries.filter((entry) => !entry.resolution).length,
         failed: mockFailedEntries.length, clipboard: null,
         pendingMoves: { ...mockPendingMoves } });
@@ -336,6 +347,17 @@
       system: scope && scope.system,
       count: mockIngestCount(scope),
     }),
+    plan_archive_ingest: (id, scope) => {
+      const uids = mockIngestUids(scope);
+      mockArchivePlanned = uids.map((uid) => {
+        const row = mockRows.find((item) => item.romUid === uid) || {};
+        return { key: `archive_ingest|${row.system || "ps2"}|${row.file || uid}`,
+          op: "archive_ingest", system: row.system || "ps2", filename: row.file || String(uid),
+          status: "pending", parts: { metadata: true, media: 0, rom: !!row.present } };
+      });
+      return ok({ planned: mockArchivePlanned.length,
+        keys: mockArchivePlanned.map((entry) => entry.key), skipped: [], scope: scope.kind });
+    },
     get_archive_media_image: () => ok(null),
     get_archive_version_media_image: () => ok(null),
     archive_rows: (search, systems, limit, offset, conflictsOnly, favoritesOnly, romIdentityIds, priority) =>
@@ -390,6 +412,14 @@
     archive_set_preferred: (id, recordId) => ok({ romIdentityId: id, recordId }),
     archive_clear_preferred: (id) => ok({ romIdentityId: id, recordId: null }),
     archive_to_collection: () => ok({ updated: 0, planned: 0, skipped: [] }),
+    collection_import_candidates: (_targetId, romUid, _sourceId) => ok({
+      source: { system: "ps2", filename: "MGS2.iso", title: "Metal Gear Solid 2" },
+      candidates: [{ romUid: 2, romIdentityId: 2, system: "ps2", filename: "MGS2.iso",
+        title: "Metal Gear Solid 2", fields: { name: "Metal Gear Solid 2" },
+        mediaTypes: ["covers"], tier: "exact", score: 99,
+        evidence: ["파일명 일치", "크기 일치"] }],
+    }),
+    collection_import_plan: () => ok({ planned: 1, conflicts: 0, skipped: [], requested: 1 }),
     plan_delete: () => ok({ deleted: 1 }),
     plan_move_to_system: (id, romUids, system) =>
       ok({ moved: (romUids || []).length, target: system, conflicts: 0, skipped: [] }),
@@ -415,7 +445,7 @@
       mockPendingMoves[system] = storageTo;
       return ok({ system, bytes: 0 });
     },
-    plan_clear: () => ok(true),
+    plan_clear: () => { mockArchivePlanned = []; return ok(true); },
     copy_selection: (id, uids) => {
       // clipboard_items가 "정말 복사한 것"을 돌려주도록 실제로 기억해 둔다 - 예전엔
       // 고정된 목업이라 "이 항목에 붙여넣기"가 항상 같은 항목이 복사된 것처럼 보였다.
@@ -455,7 +485,7 @@
       // Plan에 올라간 제목 변경을 실제로 반영한다 - Storage 이동 등 다른 종류는
       // 아직 목업에서 흉내 내지 않지만(기존 동작), Title Prefix/Postfix는 화면에서
       // Apply 결과(새 제목이 목록에 보이는지)를 확인할 수 있어야 의미가 있다.
-      const applied = Object.keys(mockTitlePlanned).length;
+      const applied = Object.keys(mockTitlePlanned).length + mockArchivePlanned.length;
       Object.entries(mockTitlePlanned).forEach(([key, newTitle]) => {
         const [system, file] = key.split("|");
         const row = mockRows.find((r) => r.system === system && r.file === file);
@@ -463,6 +493,7 @@
         delete mockTitlePlanned[key];
       });
       mockLastApply = { applied, failed: 0, partial: 0, skipped: 0, systems: [] };
+      mockArchivePlanned = [];
       return ok({ jobId: "mock-job" });
     },
     start_scan: () => ok({ jobId: "mock-job" }),
@@ -964,6 +995,7 @@
     __setMockConflictEntries: (entries) => { mockConflictEntries = entries || []; },
 
     listCollections: () => call("list_collections"),
+    inspectCollectionFolder: (path) => call("inspect_collection_folder", path),
     createCollection: (name, frontend, rootPath, target, arch, romPath, mediaPath, storageLabel) =>
       call("create_collection", name, frontend, rootPath, target, arch,
            romPath || null, mediaPath || null, storageLabel || null),
@@ -1065,6 +1097,7 @@
     // 그것을 "Collection 전체"로 해석해서, System 하나만 보고 있던 사용자가 전체를
     // Archive에 넣게 되었다.
     startArchiveIngest: (id, scope) => call("start_archive_ingest", id, scope),
+    planArchiveIngest: (id, scope) => call("plan_archive_ingest", id, scope),
     archiveIngestPreview: (id, scope) => call("archive_ingest_preview", id, scope),
     getArchiveMediaImage: (romIdentityId, label, thumbnail) =>
       call("get_archive_media_image", romIdentityId, label, !!thumbnail),
@@ -1133,7 +1166,13 @@
     archiveVersions: (romIdentityId) => call("archive_versions", romIdentityId),
     archiveChooseVersion: (romIdentityId, recordId) =>
       call("archive_choose_version", romIdentityId, recordId),
-    archiveToCollection: (id, ids) => call("archive_to_collection", id, ids),
+    archiveToCollection: (id, ids, mode, targetRomUid) =>
+      call("archive_to_collection", id, ids, mode, targetRomUid ?? null),
+    collectionImportCandidates: (targetId, romUid, sourceId) =>
+      call("collection_import_candidates", targetId, romUid, sourceId),
+    collectionImportPlan: (targetId, sourceId, romUids, targetRomUid, targetSystem, mode) =>
+      call("collection_import_plan", targetId, sourceId, romUids || null,
+           targetRomUid ?? null, targetSystem || null, mode || null),
 
     matchCandidates: (id, romUid) => call("match_candidates", id, romUid),
     matchCounts: (id, romUids) => call("match_counts", id, romUids),

@@ -25,9 +25,9 @@ test.describe("System 우클릭 메뉴", () => {
     await rightClickSystem(page, "PS2");
     await expect(menuItem(page, "언어 태그 적용…")).toBeVisible();
     await expect(menuItem(page, "멀티 디스크 태그 적용…")).toBeVisible();
-    await expect(menuItem(page, "미디어 선택 후 정리")).toBeVisible();
-    await expect(menuItem(page, "시스템 전체 삭제")).toBeVisible();
-    await expect(menuItem(page, "메타데이터 스크랩…")).toBeEnabled();
+    await expect(menuItem(page, "미디어 정리…")).toBeVisible();
+    await expect(menuItem(page, "시스템과 파일 삭제…")).toBeVisible();
+    await expect(menuItem(page, "게임 정보 스크랩…")).toBeEnabled();
   });
 
   test("복사한 게임을 다른 System에 신규 추가한다", async ({ page }) => {
@@ -41,7 +41,7 @@ test.describe("System 우클릭 메뉴", () => {
     await page.locator(".lrow", { hasText: "Super Mario World" }).click();
     await page.keyboard.press("Control+c");
     await rightClickSystem(page, "PS2");
-    const item = menuItem(page, "Super Mario World를 여기로 복사");
+    const item = menuItem(page, "여기에 붙여넣기 (1개)");
     await expect(item).toBeEnabled();
     await expect(item).toHaveAttribute("title", /snes \/ Super Mario World/);
     await item.click();
@@ -54,7 +54,7 @@ test.describe("System 우클릭 메뉴", () => {
     await page.locator(".lrow", { hasText: "Final Fantasy X" }).click();
     await page.keyboard.press("Control+c");
     await rightClickSystem(page, "PS2");
-    await expect(menuItem(page, "Final Fantasy X를 여기로 복사")).toBeDisabled();
+    await expect(menuItem(page, "여기에 붙여넣기 (1개)")).toBeDisabled();
   });
 
   test("여러 게임을 복사하면 hover 설명에 대상 목록을 보여준다", async ({ page }) => {
@@ -62,7 +62,7 @@ test.describe("System 우클릭 메뉴", () => {
     await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).click({ modifiers: ["Control"] });
     await page.keyboard.press("Control+c");
     await rightClickSystem(page, "SNES");
-    const item = menuItem(page, "복사한 2개를 여기로 복사");
+    const item = menuItem(page, "여기에 붙여넣기 (2개)");
     await expect(item).toBeEnabled();
     await expect(item).toHaveAttribute("title", /Final Fantasy X.*\n.*Metal Gear Solid 2/);
   });
@@ -164,6 +164,6 @@ test.describe("Gamelist 행 우클릭 메뉴", () => {
 
   test("메타데이터 스크랩을 시작할 수 있다", async ({ page }) => {
     await rightClickRow(page, "Final Fantasy X");
-    await expect(menuItem(page, "메타데이터 스크랩…")).toBeEnabled();
+    await expect(menuItem(page, "게임 정보 스크랩…")).toBeEnabled();
   });
 });

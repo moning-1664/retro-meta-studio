@@ -5,9 +5,10 @@ import time
 import uuid
 import re
 import logging
+from dataclasses import replace
 from pathlib import Path
 
-from app.scrape.providers.screenscraper import ARCADE_SYSTEMS
+from app.scrape.providers.screenscraper import ARCADE_SYSTEMS, _system_id
 
 log = logging.getLogger(__name__)
 
@@ -15,8 +16,9 @@ from app.scrape.models import ScrapeIdentity
 
 
 def _query_fallbacks(query: str) -> list[str]:
-    """At most two specific spelling variants after the original search misses."""
+    """At most two specific spelling variants when the first result is weak."""
     value = re.sub(r"\s+", " ", str(query or "")).strip()
+    value = value.replace("：", ":")
     variants = []
     if ":" in value:
         main, subtitle = value.split(":", 1)
@@ -77,6 +79,7 @@ class ScrapeService:
         query = identity.default_query
         return {"id": str(item_id), "system": identity.system, "filename": identity.filename,
                 "path": identity.path, "size": identity.size, "query": query,
+                "originalQuery": query,
                 "fields": dict(fields or {}), "status": "pending", "candidates": [],
                 "selectedCandidateId": None, "selectedFields": [], "selectedMedia": []}
 
@@ -99,42 +102,73 @@ class ScrapeService:
         selected_system = item["system"] if system_hint is None else str(system_hint)
         identity = ScrapeIdentity(selected_system, item["filename"],
                                   item.get("path"), item.get("size"))
-        candidates = provider.identify(identity)
-        if (selected_system and not identity.is_modified_rom and
+        actual_query = str(query or item["query"]).strip()
+        confirmed_id = item.get("confirmedGameId")
+        confirmed_lookup = getattr(provider, "confirmed_game", None)
+        use_confirmed = (confirmed_id and callable(confirmed_lookup)
+                         and actual_query.casefold() == item["originalQuery"].casefold()
+                         and _system_id(selected_system) == _system_id(item["system"])
+                         and _system_id(selected_system) is not None)
+        candidates = confirmed_lookup(confirmed_id, selected_system) if use_confirmed else []
+        if use_confirmed:
+            request_count += 1
+            log.info("Scraper confirmed lookup system=%s filename=%s gameId=%s found=%d",
+                     selected_system, item["filename"], confirmed_id, len(candidates))
+        if not candidates:
+            candidates = provider.identify(identity)
+        identified = bool(candidates)
+        if (not use_confirmed or not candidates) and (selected_system and not identity.is_modified_rom and
                 (selected_system.lower() in ARCADE_SYSTEMS
                 or (identity.path and Path(identity.path).is_file()
                     and getattr(getattr(provider, "config", None), "use_hashes", True)))):
             request_count += 1
-        actual_query = str(query or item["query"]).strip()
-        if not candidates:
+        best_query = actual_query
+        by_id = {candidate.candidate_id: candidate for candidate in candidates}
+
+        def best_confidence() -> int:
+            return max((candidate.confidence for candidate in by_id.values()), default=0)
+
+        def search_with(search_query: str, source: str):
+            nonlocal request_count, best_query
             if progress:
-                progress(2, 3, f'"{actual_query}" 검색')
-            candidates = provider.search(actual_query, selected_system)
+                progress(2, 3, f'"{search_query}" 검색')
+            found = provider.search(search_query, selected_system)
             request_count += 1
-        if not candidates:
+            log.info("Scraper search source=%s system=%s query=%s candidates=%d",
+                     source, selected_system or "all", search_query, len(found))
+            before = best_confidence()
+            for candidate in found:
+                previous = by_id.get(candidate.candidate_id)
+                if previous is None:
+                    by_id[candidate.candidate_id] = candidate
+                else:
+                    evidence = tuple(dict.fromkeys((*previous.evidence, *candidate.evidence)))
+                    chosen = candidate if candidate.confidence > previous.confidence else previous
+                    by_id[candidate.candidate_id] = replace(chosen, evidence=evidence)
+            if best_confidence() > before:
+                best_query = search_query
+
+        if not by_id:
+            search_with(actual_query, "filename-or-manual")
+        # A weak first result must not block a better spelling. Bound extra
+        # requests and stop once a strong candidate is available for review.
+        if not identified and best_confidence() < 80:
             for alternative in _query_fallbacks(actual_query):
-                if progress:
-                    progress(2, 3, f'"{alternative}" 검색')
-                log.info("Scraper query fallback system=%s original=%s alternative=%s",
-                         selected_system or "all", actual_query, alternative)
-                candidates = provider.search(alternative, selected_system)
-                request_count += 1
-                if candidates:
-                    actual_query = alternative
+                search_with(alternative, "punctuation")
+                if best_confidence() >= 80:
                     break
-        if (not candidates and selected_system.lower() in ARCADE_SYSTEMS
-                and actual_query == item["query"]):
+        weak_arcade_identity = (identified and selected_system.lower() in ARCADE_SYSTEMS
+                                and best_confidence() < 45)
+        if (not identified or weak_arcade_identity) and best_confidence() < 80 and actual_query == item["query"]:
             known_title = str((item.get("fields") or {}).get("name") or "").strip()
-            # A pre-existing human title can rescue an unknown short ROM-set
-            # code; localized Hangul titles are poor ScreenScraper search keys.
             if (len(known_title) > 3 and re.search(r"[A-Za-z]", known_title)
-                    and known_title.casefold() != actual_query.casefold()):
-                if progress:
-                    progress(2, 3, f'기존 제목 "{known_title}" 검색')
-                candidates = provider.search(known_title, selected_system)
-                request_count += 1
-                if candidates:
-                    actual_query = known_title
+                    and known_title.casefold() not in
+                    {actual_query.casefold(), *[v.casefold() for v in _query_fallbacks(actual_query)]}):
+                search_with(known_title, "existing-title")
+        candidates = list(by_id.values())
+        if any(candidate.confidence >= 45 for candidate in candidates):
+            candidates = [candidate for candidate in candidates if candidate.confidence >= 45]
+        actual_query = best_query
         # Python's stable sort preserves provider rank among equally scored
         # short-name results, where title alphabetization loses search order.
         candidates = sorted(candidates, key=lambda c: -c.confidence)

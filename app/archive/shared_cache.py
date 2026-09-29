@@ -72,6 +72,61 @@ def _local_snapshot_digest(local_path: Path) -> str:
             os.unlink(temporary)
 
 
+def _store_snapshot_digest(store) -> str:
+    """Fingerprint the live connection, including uncheckpointed WAL changes."""
+    fd, temporary = tempfile.mkstemp(prefix="archive-live-compare-", suffix=".db")
+    os.close(fd)
+    try:
+        store.backup_to(temporary)
+        with closing(sqlite3.connect(temporary)) as snapshot:
+            snapshot.execute(f"PRAGMA application_id={PORTABLE_APPLICATION_ID}")
+        return _digest(Path(temporary))
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def pull_if_clean(store, archive_dir: str, expected_digest: str | None) -> dict:
+    """Load another PC's snapshot into the open store only if local data is clean.
+
+    The ArchiveStore connection remains open. Replacing its database file while
+    WebView requests can still use that connection would leave stale handles and
+    can reproduce the closed-database failure seen during Archive refresh.
+    """
+    source = snapshot_path(archive_dir)
+    if not source.is_file() or not _is_portable_snapshot(source):
+        return {"status": "missing"}
+    remote_digest = _digest(source)
+    if remote_digest == expected_digest:
+        return {"status": "unchanged", "digest": remote_digest}
+
+    fd, temporary = tempfile.mkstemp(prefix="archive-pull-", suffix=".db")
+    os.close(fd)
+    try:
+        shutil.copy2(source, temporary)
+        with closing(sqlite3.connect(temporary)) as incoming:
+            if incoming.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                raise sqlite3.DatabaseError("Archive snapshot failed quick_check")
+        if _digest(source) != remote_digest:
+            raise RuntimeError("Archive snapshot changed while loading")
+        # The store's connection lock covers both the clean check and restore;
+        # a concurrent Archive edit cannot slip between them.
+        with store._conn._lock:
+            live = store._conn._conn
+            if live.in_transaction:
+                return {"status": "conflict", "digest": remote_digest}
+            has_local_rows = bool(live.execute("SELECT 1 FROM rom_identities LIMIT 1").fetchone())
+            if has_local_rows and (expected_digest is None
+                                   or _store_snapshot_digest(store) != expected_digest):
+                return {"status": "conflict", "digest": remote_digest}
+            with closing(sqlite3.connect(temporary)) as incoming:
+                incoming.backup(live)
+        return {"status": "loaded", "digest": remote_digest}
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def seed_if_clean(local_path: Path, archive_dir: str,
                   expected_digest: str | None = None) -> str | None:
     """Load newer shared data when the local DB has no unpublished changes."""

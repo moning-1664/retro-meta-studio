@@ -21,6 +21,8 @@ Metadata와 Identity를 출처와 함께 보관할 뿐이고, 실제 파일의 �
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 from adapters import get_adapter
@@ -42,6 +44,20 @@ def _identity_of(row) -> tuple[str, str]:
 SCOPE_ALL = "all"
 SCOPE_SYSTEM = "system"
 SCOPE_SELECTED = "selected"
+
+
+def ingest_fingerprint(row) -> str:
+    """수집 계획을 만든 시점의 캐시 상태. Apply에서 다시 대조한다."""
+    snapshot = {
+        "system": row["system"], "filename": row["filename"],
+        "present": row["present"], "size": row["size"],
+        "mtimeNs": row["mtime_ns"], "fileId": row["volume_file_id"],
+        "fields": row["fields"], "frontendRaw": row["frontend_raw"],
+        "media": [{key: media[key] for key in ("media_type", "rel_path", "size", "mtime_ns")}
+                  for media in row["media"]],
+    }
+    data = json.dumps(snapshot, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    return hashlib.sha256(data).hexdigest()
 
 
 def resolve_scope(cache, scope) -> tuple[str, list[int]]:
@@ -250,15 +266,8 @@ def _language_matches(index, system, filename, frontend=None):
 
 
 def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
-                  media_resolver=None) -> dict:
-    """Archive 항목을 대상 Collection으로 보낸다(§41, Scenario 8).
-
-    반환: {"updated": n, "items": [...], "skipped": [...]}
-    - updated: 대상에 이미 있어서 메타데이터만 즉시 반영한 항목 수(D1 - Plan 미경유)
-    - items:   대상에 없어서 Plan에 올려야 하는 항목들(plan_add가 기대하는 형태)
-    - skipped: 원본 파일을 찾을 수 없어 가져올 수 없는 항목들
-    """
-    adapter = get_adapter(collection.frontend)
+                  media_resolver=None, explicit_target=None) -> dict:
+    """Build Archive import items. Actual changes happen only when the Plan is applied."""
     index = {(r["system"], r["filename"]): r for r in cache.query_rows()}
     linked_targets = {}
     for key, linked_id in archive.match_links_of(collection.id).items():
@@ -266,10 +275,12 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
         if row is not None:
             linked_targets.setdefault(linked_id, []).append(row)
 
-    updated, items, skipped = 0, [], []
+    items, skipped = [], []
     for rom_identity_id in rom_identity_ids:
         identity = archive.get_identity(rom_identity_id)
         if identity is None:
+            skipped.append({"filename": str(rom_identity_id),
+                            "reason": "Archive 항목을 찾을 수 없습니다."})
             continue
         system = identity["system"]
         filename = identity["filename"] or identity["filename_norm"]
@@ -278,7 +289,8 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
         # A user-confirmed Match is stronger than filename heuristics. In
         # particular, a patched ROM can carry translation tags which
         # language_base deliberately keeps, yet still be the selected target.
-        linked_matches = linked_targets.get(rom_identity_id, [])
+        linked_matches = ([explicit_target] if explicit_target is not None
+                          else linked_targets.get(rom_identity_id, []))
         matches = linked_matches or _language_matches(index, system, filename, collection.frontend)
         targets = [cache.get_row(r["rom_uid"]) for r in matches] or [None]
         available = [entry.system for entry in collection.systems]
@@ -287,34 +299,14 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
              if normalize_system(collection.frontend, entry) == normalize_system(collection.frontend, system)),
             system))
         for row in targets:
-            rom_uid = row["rom_uid"] if row is not None else None
             target_name = row["filename"] if row is not None else filename
             destination_system = row["system"] if row is not None else target_system
-
-            if row is not None:
-                # Metadata는 바이트가 움직이지 않으므로 바로 파일에 쓴다(D1).
-                layout = adapter.layout(collection, destination_system)
-                merged = {**(row["fields"] or {}), **fields}
-                # Archive의 frontend_raw는 그것을 올린 Collection의 것이라, 대상이 다른
-                # Frontend면 모양이 맞지 않아 되살릴 수 없다. 대상에 이미 있는 값이
-                # 있으면 그쪽을 쓰고, 없으면 내 것일 때만 가져온다.
-                existing_raw = row["frontend_raw"] if row else None
-                candidate = existing_raw or frontend_raw
-                preserved = candidate if adapter.raw_is_mine(candidate) else {}
-                adapter.write_index(layout, [GameEntry(filename=target_name, fields=merged,
-                                                       frontend_raw=preserved)])
-                title = (merged.get("name") or "").strip() or Path(target_name).stem
-                cache.update_metadata(rom_uid, merged, title=title, title_norm=normalize_title(title))
-                updated += 1
 
             # **Metadata와 파일은 독립적으로 다룬다.** gamelist에는 항목이 있는데 ROM이
             # 없는 상태(ES-DE에서 흔하다)라면, 메타데이터를 갱신하면서 동시에 빠진 ROM을
             # 가져와야 한다. "이미 있는 항목"으로 뭉뚱그리면 그 경우를 영영 못 채운다.
             # 언어 변종에는 ROM을 채우지 않는다 - 다른 언어판 ROM을 그 파일명으로 복사하면 안 된다.
             need_rom = row is None or (target_name == filename and not row["present"])
-            have_media = ({m["media_type"] for m in (row["media"] if row else [])}
-                          if not linked_matches else set())
-
             rom = None
             if need_rom:
                 rom = next((s for s in archive.rom_sources(rom_identity_id)
@@ -322,24 +314,20 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
             from app.archive.projection import effective_media
             media = []
             for media_type, ref in effective_media(archive, rom_identity_id).items():
-                if media_type in have_media:
-                    continue
                 path = media_resolver(rom_identity_id, media_type, ref) if media_resolver else ref["abs_path"]
                 if path and provider.exists(path):
                     media.append({"type": media_type, "path": path, "size": ref["size"]})
 
-            if rom is None and not media:
-                if row is None:
-                    # 메타데이터만 남고 실제 파일 출처가 전부 사라진 경우다. 조용히 넘기지
-                    # 않고 무엇이 빠졌는지 알린다(D3와 같은 태도).
-                    skipped.append({"filename": filename, "reason": "원본 파일을 찾을 수 없습니다."})
+            if rom is None and not media and row is None:
+                # 새 항목에 필요한 파일 출처가 사라졌다면 이유를 알린다.
+                skipped.append({"filename": filename, "reason": "원본 파일을 찾을 수 없습니다."})
                 continue
 
             items.append({
                 "system": destination_system, "filename": target_name,
-                "origin": "archive",
+                "origin": "archive", "sourceName": "Archive",
                 "rom": {"path": rom["abs_path"], "size": rom["size"]} if rom else None,
                 "media": media, "fields": fields, "frontend_raw": frontend_raw,
             })
 
-    return {"updated": updated, "items": items, "skipped": skipped}
+    return {"items": items, "skipped": skipped}

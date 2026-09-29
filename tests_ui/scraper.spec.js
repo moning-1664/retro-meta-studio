@@ -16,7 +16,7 @@ async function openForRows(page, count = 1, start = true) {
     await page.keyboard.up("Control");
   }
   await rows.nth(0).click({ button: "right" });
-  const label = count === 1 ? "메타데이터 스크랩…" : `메타데이터 스크랩… (${count}개)`;
+  const label = count === 1 ? "게임 정보 스크랩…" : `게임 정보 스크랩… (${count}개)`;
   await exactMenuItem(page, label).click();
   await expect(page.locator(".scrape-context-card")).toBeVisible();
   if (start) {
@@ -107,6 +107,35 @@ test("∨를 누르면 필드 비교와 미디어 선택을 펼친다", async ({
   await expect(page.locator(".scrape-media-option input")).toBeChecked();
 });
 
+test("후보는 cover와 screenshot만 미리 보고 다른 설정 미디어도 적용 대상으로 유지한다", async ({ page }) => {
+  await page.evaluate(() => {
+    const progress = window.api.jobProgress;
+    window.api.jobProgress = async (...args) => {
+      const result = await progress(...args);
+      const candidate = result.data?.result?.item?.candidates?.[0];
+      if (candidate) {
+        const url = candidate.media[0].url;
+        candidate.media.push({ media_type: "screenshots", url });
+        candidate.media.push({ media_type: "videos", url: "https://example.invalid/video.mp4" });
+        candidate.media.push({ media_type: "wheel", url: "https://example.invalid/wheel.png" });
+      }
+      return result;
+    };
+    const select = window.api.selectScrapeCandidate;
+    window.api.selectScrapeCandidate = (...args) => {
+      window.__previewSelectedMedia = args[4];
+      return select(...args);
+    };
+  });
+  await openForRows(page);
+  await page.locator(".scrape-expand").first().click();
+  await expect(page.locator(".scrape-media-option")).toHaveCount(2);
+  await expect(page.locator(".scrape-media-option img")).toHaveCount(2);
+  await expect(page.locator(".scrape-media-option", { hasText: "videos" })).toHaveCount(0);
+  await page.locator(".scrape-candidate-title").first().click();
+  await expect.poll(() => page.evaluate(() => window.__previewSelectedMedia)).toEqual([0, 1, 2, 3]);
+});
+
 test("확장한 후보를 선택해도 확장 상태와 하단 적용 버튼이 유지된다", async ({ page }) => {
   await openForRows(page);
   await page.locator(".scrape-expand").first().click();
@@ -160,7 +189,7 @@ test("후보가 없으면 선택 적용이 비활성화된다", async ({ page })
   const row = page.locator(".lrow").first();
   await row.click();
   await row.click({ button: "right" });
-  await exactMenuItem(page, "메타데이터 스크랩…").click();
+  await exactMenuItem(page, "게임 정보 스크랩…").click();
   await page.getByRole("button", { name: "스크랩 시작" }).click();
   await expect(page.locator(".scrape-candidates")).toContainText("후보가 없습니다");
   const apply = page.getByRole("button", { name: "선택 적용" });
@@ -186,7 +215,7 @@ test("스크랩 진행률은 모달 안에 표시하고 스크랩 시작 버튼�
   const row = page.locator(".lrow").first();
   await row.click();
   await row.click({ button: "right" });
-  await exactMenuItem(page, "메타데이터 스크랩…").click();
+  await exactMenuItem(page, "게임 정보 스크랩…").click();
   await page.getByRole("button", { name: "스크랩 시작" }).click();
   await expect(page.locator(".scrape-progress .scrape-progress-line")).toBeVisible();
   await expect(page.locator(".scrape-progress .job-progress-cancel")).toHaveCount(0);
@@ -335,7 +364,7 @@ test("compact candidate card uses click focus without a large selection button",
   await expect(card.locator(".scrape-expand")).toBeVisible();
 });
 
-test("candidate card includes rating, developer, genre and release year", async ({ page }) => {
+test("candidate card keeps year, developer and genre in one compact row", async ({ page }) => {
   await page.evaluate(() => {
     const original = window.api.jobProgress;
     window.api.jobProgress = async (...args) => {
@@ -352,9 +381,8 @@ test("candidate card includes rating, developer, genre and release year", async 
   await openForRows(page);
   const card = page.locator(".scrape-candidate").first();
   await expect(card.locator(".scrape-candidate-facts")).toContainText("1999");
-  await expect(card.locator(".scrape-candidate-facts")).toContainText("★★★★☆");
   await expect(card.locator(".scrape-candidate-facts")).toContainText("Nintendo");
   await expect(card.locator(".scrape-candidate-facts")).toContainText("Simulation");
-  await expect(card.locator(".scrape-fact-row")).toHaveCount(3);
+  await expect(card.locator(".scrape-fact-row")).toHaveCount(1);
   await expect(card.locator(".scrape-expand svg")).toHaveCount(1);
 });

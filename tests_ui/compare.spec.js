@@ -470,7 +470,7 @@ test("Exit Compare로 원래 Gamelist가 돌아온다", async ({ page }) => {
 });
 
 test("Compare는 읽기 전용이다 - 변경 버튼이 사라진다", async ({ page }) => {
-  const sendIcon = page.locator("#collection-header .icon-btn[title*='메타데이터 보내기']");
+  const sendIcon = page.locator("#collection-header .icon-btn[title*='Archive로 보내기']");
   await expect(sendIcon).toBeVisible();
   await startCompare(page);
   await expect(sendIcon).toHaveCount(0);
