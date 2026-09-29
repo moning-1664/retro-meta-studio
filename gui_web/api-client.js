@@ -210,6 +210,10 @@
         evidence: "gamelists + downloaded_media", systems: ["snes", "ps2"] }] : [],
       suggestedFrontend: path === "D:\\ES-DE" ? "es-de" : null,
     }),
+    start_inspect_collection_folder: (path) => ok({ jobId: `mock-folder:${encodeURIComponent(path)}` }),
+    archive_shared_conflict_status: () => ok({ digest: "mock-shared-digest" }),
+    archive_resolve_shared_conflict: (choice) => ok({ status: choice === "local" ? "published" : "loaded",
+      digest: "mock-shared-digest", backups: ["local-backup.db", "shared-backup.db"] }),
     collection_detail: () => ok(mockDetailView()),
     open_collection: () => ok(mockDetailView()),
     close_collection: () => ok(true),
@@ -501,7 +505,9 @@
       current: 1, total: 1, label: "완료", done: true, error: null,
       // Archive 수집/Apply는 결과의 개수를 화면이 그대로 읽는다. 빈 객체를 주면
       // 목업에서만 "undefined개 수집/적용"이 뜬다.
-      result: jobId === "mock-archive-ingest" ? { ...mockLastIngest }
+      result: String(jobId).startsWith("mock-folder:")
+        ? mock.inspect_collection_folder(decodeURIComponent(String(jobId).slice(12))).data
+        : jobId === "mock-archive-ingest" ? { ...mockLastIngest }
         : jobId === "mock-job" ? { ...mockLastApply }
           : jobId === "mock-scraper-account" ? { requestsToday: 12, requestsLimit: 100,
             requestsMinute: 1, requestsMinuteLimit: 20, maxThreads: 1, user: "mock" }
@@ -948,6 +954,7 @@
     select_scrape_candidate: () => ok(true),
     skip_scrape_item: () => ok(true),
     cancel_scrape_session: () => ok(true),
+    clear_scrape_confirmed_match: () => ok({ cleared: true }),
     start_apply_scrape_session: () => ok({ jobId: "mock-scrape-apply" }),
     archive_system_folder: () => ok("D:\\Archive\\roms\\ps2"),
     get_ui_state: (id) => ok({ ...mockUiState }),
@@ -996,6 +1003,10 @@
 
     listCollections: () => call("list_collections"),
     inspectCollectionFolder: (path) => call("inspect_collection_folder", path),
+    startInspectCollectionFolder: (path) => call("start_inspect_collection_folder", path),
+    archiveSharedConflictStatus: () => call("archive_shared_conflict_status"),
+    archiveResolveSharedConflict: (choice, digest) =>
+      call("archive_resolve_shared_conflict", choice, digest),
     createCollection: (name, frontend, rootPath, target, arch, romPath, mediaPath, storageLabel) =>
       call("create_collection", name, frontend, rootPath, target, arch,
            romPath || null, mediaPath || null, storageLabel || null),
@@ -1055,12 +1066,14 @@
     createScrapeSession: (target, collectionId, itemIds) =>
       call("create_scrape_session", target, collectionId, itemIds),
     scrapeSession: (sessionId) => call("scrape_session", sessionId),
-    startScrapeItem: (sessionId, itemId, query, systemHint) =>
-      call("start_scrape_item", sessionId, itemId, query, systemHint),
+    startScrapeItem: (sessionId, itemId, query, systemHint, forceSearch = false) =>
+      call("start_scrape_item", sessionId, itemId, query, systemHint, !!forceSearch),
     selectScrapeCandidate: (sessionId, itemId, candidateId, fields, media) =>
       call("select_scrape_candidate", sessionId, itemId, candidateId, fields, media),
     skipScrapeItem: (sessionId, itemId) => call("skip_scrape_item", sessionId, itemId),
     cancelScrapeSession: (sessionId) => call("cancel_scrape_session", sessionId),
+    clearScrapeConfirmedMatch: (sessionId, itemId) =>
+      call("clear_scrape_confirmed_match", sessionId, itemId),
     startApplyScrapeSession: (sessionId) => call("start_apply_scrape_session", sessionId),
     getUiState: (id) => call("get_ui_state", id),
     saveUiState: (id, state) => call("save_ui_state", id, state),

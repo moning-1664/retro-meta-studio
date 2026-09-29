@@ -13,17 +13,24 @@ def candidates(target, target_row, source, source_cache, limit=8):
     left = {**engine.subject_of_row(target_row), "system": target_system}
     source_systems = [entry.system for entry in source.systems
                       if normalize_system(source.frontend, entry.system) == target_system]
-    found = []
-    for row in source_cache.all_entries(systems=source_systems) if source_systems else []:
-        right = {**engine.subject_of_row(row), "system": target_system}
-        tier, score, evidence = engine.classify_pair(left, right)
-        if not tier:
-            continue
-        found.append({"romUid": row["rom_uid"], "romIdentityId": row["rom_uid"],
-                      "system": row["system"],
-                      "filename": row["filename"], "title": row["title"],
-                      "fields": row["fields"], "mediaTypes": row["media_types"],
-                      "tier": tier, "score": score, "evidence": evidence})
+    indexed = source_cache.indexed_import_candidates(
+        source_systems, left["title_norm"], target_row["filename"])
+    def match(rows):
+        found = []
+        for row in rows:
+            right = {**engine.subject_of_row(row), "system": target_system}
+            tier, score, evidence = engine.classify_pair(left, right)
+            if not tier:
+                continue
+            found.append({"romUid": row["rom_uid"], "romIdentityId": row["rom_uid"],
+                          "system": row["system"], "filename": row["filename"],
+                          "title": row["title"], "fields": row["fields"],
+                          "mediaTypes": row["media_types"], "tier": tier,
+                          "score": score, "evidence": evidence})
+        return found
+    found = match(indexed)
+    if not any(item["tier"] == engine.TIER_EXACT for item in found):
+        found = match(source_cache.all_entries(systems=source_systems) if source_systems else [])
     found.sort(key=lambda row: (engine.TIER_RANK[row["tier"]], -row["score"], row["filename"]))
     return found[:limit]
 

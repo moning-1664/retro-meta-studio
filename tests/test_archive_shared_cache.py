@@ -224,6 +224,44 @@ class SharedArchiveCacheTests(unittest.TestCase):
             api.close()
             first.close()
 
+    def test_explicit_shared_conflict_choice_preserves_both_versions(self):
+        first = ArchiveStore(self.root / "shared-source.db")
+        local = ArchiveStore(self.root / "local-copy.db")
+        try:
+            game = first.ensure_game("Remote", "remote")
+            first.ensure_rom_identity(game, "ps2", "remote.iso", filename="Remote.iso")
+            published = shared_cache.publish(first, str(self.archive_dir), None)
+            own = local.ensure_game("Local", "local")
+            local.ensure_rom_identity(own, "ps2", "local.iso", filename="Local.iso")
+            backups = self.root / "backups"
+            result = shared_cache.resolve_conflict(
+                local, str(self.archive_dir), published["digest"], "shared", backups)
+            self.assertEqual(result["status"], "loaded")
+            self.assertEqual(len(result["backups"]), 2)
+            self.assertTrue(all(Path(path).is_file() for path in result["backups"]))
+            self.assertEqual(len(local.list_rows()), 1)
+            self.assertEqual(local.list_rows()[0]["filename"], "Remote.iso")
+        finally:
+            local.close()
+            first.close()
+
+    def test_shared_conflict_refuses_stale_choice(self):
+        source = ArchiveStore(self.root / "source-stale.db")
+        local = ArchiveStore(self.root / "local-stale.db")
+        try:
+            game = source.ensure_game("First", "first")
+            source.ensure_rom_identity(game, "ps2", "first.iso", filename="First.iso")
+            first = shared_cache.publish(source, str(self.archive_dir), None)
+            more = source.ensure_game("Second", "second")
+            source.ensure_rom_identity(more, "ps2", "second.iso", filename="Second.iso")
+            shared_cache.publish(source, str(self.archive_dir), first["digest"])
+            result = shared_cache.resolve_conflict(
+                local, str(self.archive_dir), first["digest"], "local", self.root / "backups-stale")
+            self.assertEqual(result["status"], "conflict")
+        finally:
+            local.close()
+            source.close()
+
     def test_internal_media_already_at_frontend_path_does_not_stat_or_copy(self):
         source = self.root / "archive" / "downloaded_media" / "ps2" / "covers" / "Test.png"
         adapter = Mock()

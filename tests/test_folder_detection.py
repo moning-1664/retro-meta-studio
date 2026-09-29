@@ -1,7 +1,9 @@
 import sqlite3
+import pytest
 
 from adapters.es_de import EsDeAdapter
 from app.folder_detection import inspect_folder
+from bridge.jobs import JobCancelled
 import storage
 
 
@@ -70,3 +72,15 @@ def test_empty_folder_has_no_archive_or_frontend(tmp_path):
     assert not result["legacyArchive"]
     assert result["suggestedFrontend"] is None
     assert result["findings"] == []
+
+
+def test_folder_detection_checks_cancellation_between_entries(tmp_path):
+    (tmp_path / "gamelists").mkdir()
+    seen = []
+    def stop(_current, _total, label):
+        seen.append(label)
+        if len(seen) == 2:
+            raise JobCancelled()
+    with pytest.raises(JobCancelled):
+        inspect_folder(str(tmp_path), progress_cb=stop)
+    assert len(seen) == 2

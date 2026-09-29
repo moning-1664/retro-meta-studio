@@ -721,6 +721,20 @@
 
   // ------------------------------------------------------------------
   // Archive 설정 (Settings > Archive, Archive 첫 화면의 [Archive 설정])
+  async function inspectFolderInBackground(path, onStarted = () => {}) {
+    const started = await api.startInspectCollectionFolder(path);
+    if (!started.ok) return started;
+    const jobId = started.data.jobId;
+    onStarted(jobId);
+    while (true) {
+      const state = await api.jobProgress(jobId);
+      if (!state.ok) return state;
+      if (state.data.done) return state.data.error
+        ? { ok: false, error: state.data.error, cancelled: !!state.data.cancelled }
+        : { ok: true, data: state.data.result };
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
   // ------------------------------------------------------------------
   /** Archive를 어디에 어떤 형식으로 둘지. **디렉토리가 진실이다** - 여기서 정한 폴더에 그 Frontend의
    * 형식(gamelist/media)으로 항상 저장되고, archive.db는 Revision과 출처만 관리하는 색인이다.
@@ -754,18 +768,33 @@
       const folderInfo = h("div", { class: "folder-detection", role: "status" });
       let folderResult = null;
       let inspectRun = 0;
+      let inspectJobId = null;
+      let inspectPromise = null;
+      let apply = null;
       async function inspectArchiveFolder() {
         const run = ++inspectRun;
+        if (apply) apply.disabled = true;
+        if (inspectJobId) api.cancelJob(inspectJobId);
+        inspectJobId = null;
         const path = dirInput.value.trim();
         folderResult = null;
         if (!path) { folderInfo.textContent = "폴더를 고르면 기존 Archive 여부와 저장 형식을 확인합니다."; return; }
         folderInfo.replaceChildren("폴더 구조 확인 중… ", h("button", {
-          class: "btn compact", onClick: () => { inspectRun++; folderInfo.textContent = "폴더 확인을 중지했습니다."; },
+          class: "btn compact", onClick: () => {
+            inspectRun++;
+            if (inspectJobId) api.cancelJob(inspectJobId);
+            folderInfo.textContent = "폴더 확인을 중지했습니다.";
+          },
         }, ["중지"]));
-        const result = await api.inspectCollectionFolder(path);
+        const result = await inspectFolderInBackground(path, (jobId) => {
+          if (run !== inspectRun) api.cancelJob(jobId);
+          else inspectJobId = jobId;
+        });
         if (run !== inspectRun || dirInput.value.trim() !== path) return;
+        inspectJobId = null;
         if (!result.ok) { folderInfo.textContent = result.error; return; }
         folderResult = result.data;
+        if (apply) apply.disabled = false;
         const detected = folderResult.findings.map((f) => f.frontend.toUpperCase()).join(", ");
         folderInfo.textContent = (folderResult.archive || folderResult.legacyArchive)
           ? `기존 Archive DB를 찾았습니다.${detected ? ` 저장 형식 후보: ${detected}` : " 저장 형식은 직접 확인하세요."}`
@@ -773,7 +802,7 @@
             : "기존 Archive DB가 없습니다. 새 Archive의 저장 형식을 선택하세요.");
         if (folderResult.suggestedFrontend && !cfg.configured) frontendSel.value = folderResult.suggestedFrontend;
       }
-      dirInput.addEventListener("change", inspectArchiveFolder);
+      dirInput.addEventListener("change", () => { inspectPromise = inspectArchiveFolder(); });
       const browse = (input, title) => h("button", { class: "btn compact", onClick: async () => {
         const r = await api.pickFolder(title);
         if (r.ok && r.data) { input.value = r.data; input.dispatchEvent(new Event("change")); }
@@ -795,7 +824,7 @@
         "메타데이터(gamelist)와 미디어가 저장될 폴더입니다. 이전에 만든 Archive 폴더를 고르면 그 내용을 읽어 옵니다.",
         h("div", { class: "stg-path" }, [dirInput, browse(dirInput, "Archive 디렉토리")])));
       wrap.appendChild(folderInfo);
-      inspectArchiveFolder();
+      inspectPromise = inspectArchiveFolder();
       wrap.appendChild(rowOf("archive.romDir", "ROM 디렉토리 (선택)",
         "ROM을 둘 폴더입니다. 지정하면 여기에 ROM을 넣고 새로고침해서 Archive에 올릴 수 있고, Collection으로 ROM까지 보낼 수 있습니다.",
         h("div", { class: "stg-path" }, [romInput, browse(romInput, "ROM 디렉토리")])));
@@ -806,8 +835,41 @@
       const status = h("div", { class: "stg-help archive-apply-status" }, [
         cfg.configured ? "" : "Archive 디렉토리를 정하면 사용할 수 있습니다."]);
       const progressHost = h("div", { class: "stg-progress" });
-      const apply = h("button", { class: "btn primary archive-apply" }, ["저장하고 적용"]);
+      async function showSharedConflict() {
+        const observed = await api.archiveSharedConflictStatus();
+        if (!observed.ok) { showToast(observed.error, "error"); return; }
+        const busy = { value: false };
+        const resolve = async (choice) => {
+          if (busy.value) return;
+          busy.value = true;
+          const result = await api.archiveResolveSharedConflict(choice, observed.data.digest);
+          busy.value = false;
+          if (!result.ok) { showToast(result.error, "error"); return; }
+          if (result.data.status === "conflict") {
+            showToast("공유 Archive가 다시 바뀌었습니다. 충돌 내용을 다시 확인하세요.", "warning");
+            closeModal();
+            return;
+          }
+          closeModal();
+          const backups = result.data.backups || [];
+          showToast(`선택한 Archive DB를 적용했습니다. 두 버전의 백업: ${backups.join(" · ")}`, "success");
+          if (isArchive()) { resetList(); await reloadList(); renderAll(); }
+        };
+        showModal("Archive 공유 DB 충돌", h("div", { class: "modal-body" }, [
+          h("div", { class: "modal-text" }, [
+            "이 PC와 공유 폴더의 Archive가 각각 바뀌었습니다. 선택 전에 두 DB를 백업합니다."]),
+          h("div", { class: "modal-hint" }, [
+            "이 PC 내용 사용은 공유 폴더를 갱신하고, 공유 내용 사용은 이 PC의 DB를 교체합니다."]),
+        ]), [
+          h("button", { class: "btn", onClick: closeModal }, ["나중에"]),
+          h("button", { class: "btn", onClick: () => resolve("shared") }, ["공유 내용 사용"]),
+          h("button", { class: "btn primary", onClick: () => resolve("local") }, ["이 PC 내용 사용"]),
+        ]);
+      }
+      apply = h("button", { class: "btn primary archive-apply" }, ["저장하고 적용"]);
+      apply.disabled = !!inspectPromise;
       apply.addEventListener("click", async () => {
+        if (inspectPromise) await inspectPromise;
         if (!dirInput.value.trim()) { showToast("Archive 디렉토리를 정하세요.", "warning"); return; }
         if (!frontendSel.value) { showToast("Archive 저장 형식을 선택하세요.", "warning"); return; }
         if (!folderResult || folderResult.path !== dirInput.value.trim()) {
@@ -835,7 +897,11 @@
         const started = await api.startArchiveApply();
         if (!started.ok) { showToast(started.error, "error"); return; }
         const done = await pollJob(started.data.jobId, "Archive 정리 중", progressHost);
-        if (!done.ok) { if (!done.cancelled) showToast(done.error, "error"); return; }
+        if (!done.ok) {
+          if (String(done.error || "").includes("자동으로 합칠 수 없습니다")) await showSharedConflict();
+          else if (!done.cancelled) showToast(done.error, "error");
+          return;
+        }
         const d = done.data || {};
         const p = d.projection || {};
         const timing = d.timings || {};
@@ -845,7 +911,7 @@
         showToast(`Archive에 ${formatCount(p.entries || 0)}개를 ${formatCount(p.systems || 0)}개 System으로 정리했습니다. (${timing.scanSeconds ?? "?"}초 읽기, ${timing.projectionSeconds ?? "?"}초 쓰기)`
           + (d.imported && d.imported.identities ? ` (이전 Archive ${formatCount(d.imported.identities)}개 가져옴)` : ""));
         if (d.sharedSnapshot?.status === "conflict")
-          showToast("다른 PC의 Archive DB가 변경되어 공유 DB를 덮어쓰지 않았습니다.", "warning");
+          await showSharedConflict();
         else if (d.sharedSnapshot?.status === "error")
           showToast(`Archive 공유 DB 저장 실패: ${d.sharedSnapshot.error}`, "warning");
         if (onApplied) await onApplied();
@@ -857,13 +923,17 @@
         const started = await api.startArchiveRefresh();
         if (!started.ok) { showToast(started.error, "error"); return; }
         const done = await pollJob(started.data.jobId, "Archive 디렉터리 읽기", progressHost);
-        if (!done.ok) { if (!done.cancelled) showToast(done.error, "error"); return; }
+        if (!done.ok) {
+          if (String(done.error || "").includes("자동으로 합칠 수 없습니다")) await showSharedConflict();
+          else if (!done.cancelled) showToast(done.error, "error");
+          return;
+        }
         const scan = done.data?.timings || {};
         lastDiagnostics = `읽기 ${done.data?.scanSeconds ?? "?"}초 (메타 ${scan.metadataSeconds ?? "?"}, 미디어 ${scan.mediaSeconds ?? "?"}, ROM ${scan.romSeconds ?? "?"}, DB ${scan.databaseSeconds ?? "?"})`;
         status.textContent = lastDiagnostics;
         showToast(`Archive 디렉터리 읽기 완료 (${done.data?.scanSeconds ?? "?"}초)`);
         if (done.data?.sharedSnapshot?.status === "conflict")
-          showToast("다른 PC의 Archive DB가 변경되어 공유 DB를 덮어쓰지 않았습니다.", "warning");
+          await showSharedConflict();
         if (onApplied) await onApplied();
       });
       wrap.appendChild(h("div", { class: "stg-help" },
@@ -1621,6 +1691,7 @@
     let detectionPath = "";
     let lastDetection = null;
     let detectionRun = 0;
+    let detectionJobId = null;
     function showDetectedFolder(data) {
       const findings = data.findings.map((f) =>
         `${(frontends.find((item) => item.id === f.frontend) || {}).label || f.frontend} (${f.evidence}${f.systems.length ? `, 확인된 폴더 ${f.systems.length}개` : ""})`);
@@ -1633,6 +1704,8 @@
     }
     async function inspectSelectedFolder() {
       const run = ++detectionRun;
+      if (detectionJobId) api.cancelJob(detectionJobId);
+      detectionJobId = null;
       const path = pathInput.value.trim();
       detectionPath = path;
       lastDetection = null;
@@ -1641,11 +1714,19 @@
         return;
       }
       detectionInfo.replaceChildren("폴더 구조 확인 중… ", h("button", {
-        class: "btn compact", onClick: () => { detectionRun++; detectionInfo.textContent = "폴더 확인을 중지했습니다."; },
+        class: "btn compact", onClick: () => {
+          detectionRun++;
+          if (detectionJobId) api.cancelJob(detectionJobId);
+          detectionInfo.textContent = "폴더 확인을 중지했습니다.";
+        },
       }, ["중지"]));
-      const result = await api.inspectCollectionFolder(path);
+      const result = await inspectFolderInBackground(path, (jobId) => {
+        if (run !== detectionRun) api.cancelJob(jobId);
+        else detectionJobId = jobId;
+      });
       if (run !== detectionRun || source !== "local"
           || detectionPath !== path || pathInput.value.trim() !== path) return;
+      detectionJobId = null;
       if (!result.ok) { detectionInfo.textContent = result.error; return; }
       const data = result.data;
       lastDetection = data;
@@ -4551,6 +4632,10 @@
       win.appendChild(h("div", { class: "archive-empty" }, [
         activeDetail() ? "조건에 맞는 게임이 없습니다."
                        : "등록된 Collection이 없습니다. 상단의 \"+\"를 눌러 추가하세요.",
+        !activeDetail() && !S.archiveConfigured
+          ? h("button", { class: "btn compact", onClick: openArchiveSettings },
+            ["Archive는 Settings에서 선택해 사용할 수 있습니다."])
+          : null,
       ]));
       return;
     }
@@ -6444,14 +6529,14 @@
     $("modal-root").__beforeClose = cancelSession;
     const cancel = () => closeModal();
 
-    async function searchCurrent(query, systemHint) {
+    async function searchCurrent(query, systemHint, forceSearch = false) {
       if (searching || closed) return;
       searching = true;
       stopRequested = false;
       draw();
       const item = session.items[index];
       const started = await api.startScrapeItem(session.id, item.id, query || item.query,
-                                                systemHint);
+                                                systemHint, forceSearch);
       if (!started.ok) { searching = false; showToast(started.error, "error"); draw(); return; }
       currentJobId = started.data.jobId;
       if (stopRequested) await api.cancelJob(currentJobId);
@@ -6721,6 +6806,17 @@
       body.appendChild(h("div", { class: "scrape-progress" }));
       body.appendChild(h("div", { class: "scrape-results-head" }, [
         h("span", {}, [`후보 결과 : ${(item.candidates || []).length}건 감지됨`]), retry,
+      ]));
+      if (item.confirmedGameId || item.aliasGameId) body.appendChild(h("div", { class: "scrape-confirmed-actions" }, [
+        h("span", {}, ["이전에 확정한 게임을 우선 표시합니다."]),
+        h("button", { class: "btn compact", disabled: searching,
+          onClick: () => searchCurrent(query.value.trim(), system.value, true) }, ["다른 후보 검색"]),
+        h("button", { class: "btn compact", disabled: searching, onClick: async () => {
+          const cleared = await api.clearScrapeConfirmedMatch(session.id, item.id);
+          if (!cleared.ok) { showToast(cleared.error, "error"); return; }
+          delete item.confirmedGameId;
+          draw();
+        } }, ["확정·별칭 해제"]),
       ]));
       if (item.applyError) body.appendChild(h("div", { class: "modal-text error", role: "alert" },
         [`적용 실패: ${item.applyError}`]));
@@ -8276,8 +8372,24 @@
     const body = h("div", { class: "modal-body conflict-dialog-body" }, [
       h("div", { class: "modal-hint conflict-intro" },
         ["각 파일에서 사용할 쪽을 고르세요. 최종 적용은 Plan 적용 시 합니다."]),
+      h("div", { class: "conflict-bulk-actions" }, [
+        h("button", { class: "btn compact", onClick: () => bulkResolve("skip") },
+          ["전체 현재 파일 사용"]),
+        h("button", { class: "btn compact", onClick: () => bulkResolve("overwrite") },
+          ["전체 가져올 파일 사용"]),
+      ]),
       list,
     ]);
+    function bulkResolve(resolution) {
+      showConfirm("충돌 일괄 선택",
+        `미해결 충돌 ${formatCount(unresolved.length)}건에 같은 선택을 적용합니다. `
+        + "실제 파일은 Plan 적용 때 바뀝니다. 계속할까요?", resolution === "overwrite", async () => {
+          const result = await api.planResolveAllConflicts(S.activeId, resolution);
+          if (!result.ok) { showToast(result.error, "error"); return; }
+          await refreshPlan();
+          if (S.plan?.conflicts) openConflictDialog(0);
+        });
+    }
     const savePage = async (nextPage = null) => {
       for (const entry of pending) {
         const result = await api.planResolveConflict(S.activeId, entry.key, entry.choices);

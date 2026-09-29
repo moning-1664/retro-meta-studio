@@ -13,11 +13,14 @@ import os
 import shutil
 import sqlite3
 import tempfile
+import time
 import uuid
+import logging
 from contextlib import closing
 from pathlib import Path
 
 PORTABLE_APPLICATION_ID = 0x524D5341  # RMSA
+log = logging.getLogger(__name__)
 
 
 def snapshot_path(archive_dir: str) -> Path:
@@ -96,14 +99,19 @@ def pull_if_clean(store, archive_dir: str, expected_digest: str | None) -> dict:
     source = snapshot_path(archive_dir)
     if not source.is_file() or not _is_portable_snapshot(source):
         return {"status": "missing"}
+    started = time.perf_counter()
     remote_digest = _digest(source)
+    log.info("Archive shared pull remote digest seconds=%.3f bytes=%d",
+             time.perf_counter() - started, source.stat().st_size)
     if remote_digest == expected_digest:
         return {"status": "unchanged", "digest": remote_digest}
 
     fd, temporary = tempfile.mkstemp(prefix="archive-pull-", suffix=".db")
     os.close(fd)
     try:
+        stage_started = time.perf_counter()
         shutil.copy2(source, temporary)
+        log.info("Archive shared pull stage seconds=%.3f", time.perf_counter() - stage_started)
         with closing(sqlite3.connect(temporary)) as incoming:
             if incoming.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                 raise sqlite3.DatabaseError("Archive snapshot failed quick_check")
@@ -120,7 +128,9 @@ def pull_if_clean(store, archive_dir: str, expected_digest: str | None) -> dict:
                                    or _store_snapshot_digest(store) != expected_digest):
                 return {"status": "conflict", "digest": remote_digest}
             with closing(sqlite3.connect(temporary)) as incoming:
+                restore_started = time.perf_counter()
                 incoming.backup(live)
+                log.info("Archive shared pull restore seconds=%.3f", time.perf_counter() - restore_started)
         return {"status": "loaded", "digest": remote_digest}
     finally:
         if os.path.exists(temporary):
@@ -172,7 +182,9 @@ def publish(store, archive_dir: str, expected_digest: str | None,
     """Publish one consistent snapshot without replacing another PC's update."""
     destination = snapshot_path(archive_dir)
     destination.parent.mkdir(parents=True, exist_ok=True)
+    started = time.perf_counter()
     current = _digest(destination) if destination.is_file() else None
+    log.info("Archive shared publish remote digest seconds=%.3f", time.perf_counter() - started)
     upgrading_legacy = bool(current and current == legacy_digest
                             and not _is_portable_snapshot(destination))
     if current is not None and current != expected_digest and not upgrading_legacy:
@@ -182,11 +194,16 @@ def publish(store, archive_dir: str, expected_digest: str | None,
     staging = destination.with_name(f"archive.db.{uuid.uuid4().hex}.tmp")
     backup_staging = destination.with_name(f"archive.legacy.{uuid.uuid4().hex}.tmp")
     try:
+        backup_started = time.perf_counter()
         store.backup_to(temporary)
         with closing(sqlite3.connect(temporary)) as snapshot:
             snapshot.execute(f"PRAGMA application_id={PORTABLE_APPLICATION_ID}")
         digest = _digest(Path(temporary))
+        log.info("Archive shared publish local snapshot seconds=%.3f bytes=%d",
+                 time.perf_counter() - backup_started, Path(temporary).stat().st_size)
+        stage_started = time.perf_counter()
         shutil.copy2(temporary, staging)
+        log.info("Archive shared publish stage seconds=%.3f", time.perf_counter() - stage_started)
         if destination.is_file() and _digest(destination) != current:
             return {"status": "conflict", "digest": _digest(destination)}
         if upgrading_legacy:
@@ -203,3 +220,38 @@ def publish(store, archive_dir: str, expected_digest: str | None,
             backup_staging.unlink()
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def resolve_conflict(store, archive_dir: str, observed_digest: str,
+                     choice: str, backup_dir: Path) -> dict:
+    """Preserve both databases before explicitly choosing the local or shared copy."""
+    if choice not in ("local", "shared"):
+        raise ValueError("Archive 충돌 해결 방법을 선택하세요.")
+    source = snapshot_path(archive_dir)
+    if not source.is_file() or not _is_portable_snapshot(source):
+        raise ValueError("공유 Archive DB를 찾을 수 없습니다.")
+    if _digest(source) != observed_digest:
+        return {"status": "conflict", "digest": _digest(source)}
+    backup_dir = Path(backup_dir)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex[:12]
+    local_backup = backup_dir / f"archive-local-{token}.db"
+    shared_backup = backup_dir / f"archive-shared-{token}.db"
+    store.backup_to(local_backup)
+    shutil.copy2(source, shared_backup)
+    if _digest(source) != observed_digest or _digest(shared_backup) != observed_digest:
+        return {"status": "conflict", "digest": _digest(source),
+                "backups": [str(local_backup), str(shared_backup)]}
+    if choice == "local":
+        result = publish(store, archive_dir, observed_digest)
+        return {**result, "backups": [str(local_backup), str(shared_backup)]}
+    with store._conn._lock:
+        if _digest(source) != observed_digest:
+            return {"status": "conflict", "digest": _digest(source),
+                    "backups": [str(local_backup), str(shared_backup)]}
+        with closing(sqlite3.connect(shared_backup)) as incoming:
+            if incoming.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                raise sqlite3.DatabaseError("Archive snapshot failed quick_check")
+            incoming.backup(store._conn._conn)
+    return {"status": "loaded", "digest": observed_digest,
+            "backups": [str(local_backup), str(shared_backup)]}

@@ -64,7 +64,7 @@ from app.match import service as match_service
 from app.metadata import service as metadata_service
 from app.scrape import ScrapeService
 from app.scrape.providers import ScreenScraperClient, ScreenScraperConfig
-from app.scrape.providers.screenscraper import SYSTEM_IDS
+from app.scrape.providers.screenscraper import SYSTEM_IDS, _system_id
 from app.scrape import secrets as scrape_secrets
 import storage
 from app.store.archive import ARCHIVE_EDIT_SOURCE, ArchiveStore
@@ -269,6 +269,13 @@ class Api:
     def inspect_collection_folder(self, path):
         """Read-only frontend evidence for a folder selected in the UI."""
         return ok(inspect_folder(path))
+
+    @guarded
+    def start_inspect_collection_folder(self, path):
+        """Keep slow SMB directory checks off the WebView request thread."""
+        job_id = self.jobs.run(
+            lambda cb: inspect_folder(path, progress_cb=cb), mutates_state=False)
+        return ok({"jobId": job_id})
 
     @guarded
     def create_collection(self, name, frontend, root_path=None, target=None, arch=None,
@@ -697,12 +704,41 @@ class Api:
         return ok(self.scrape.sessions.get(session_id))
 
     @guarded
-    def start_scrape_item(self, session_id, item_id, query=None, system_hint=None):
+    def clear_scrape_confirmed_match(self, session_id, item_id):
+        session = self.scrape.sessions.get(str(session_id))
+        item = next((row for row in session["items"] if row["id"] == str(item_id)), None)
+        if item is None:
+            return err("스크랩할 항목을 찾을 수 없습니다.")
+        self.registry.delete_scrape_confirmed_match(
+            session["target"], session.get("collectionId"), item["system"],
+            item["filename"], item.get("size"))
+        system_id = _system_id(item.get("systemHint") or item["system"])
+        if system_id:
+            self.registry.delete_scrape_query_alias(
+                "screenscraper", system_id, item.get("requestedQuery") or item["originalQuery"])
+        item.pop("confirmedGameId", None)
+        item.pop("aliasGameId", None)
+        return ok({"cleared": True})
+
+    @guarded
+    def start_scrape_item(self, session_id, item_id, query=None, system_hint=None,
+                          force_search=False):
         # Search is network and hash I/O. Keep it outside the UI thread; it does
         # not mutate Collection/Archive state until apply_scrape_session().
+        session = self.scrape.sessions.get(str(session_id))
+        item = next((row for row in session["items"] if row["id"] == str(item_id)), None)
+        if item is None:
+            return err("스크랩할 항목을 찾을 수 없습니다.")
+        selected_system = item["system"] if system_hint is None else str(system_hint)
+        system_id = _system_id(selected_system)
+        item["aliasGameId"] = (self.registry.scrape_query_alias(
+            "screenscraper", system_id, str(query or item["query"]).strip())
+            if system_id else None)
+        item["systemHint"] = selected_system
         job_id = self.jobs.run(
             lambda cb: self.scrape.search_item(str(session_id), str(item_id), query,
-                                                system_hint, progress=cb),
+                                                system_hint, progress=cb,
+                                                force_search=bool(force_search)),
             mutates_state=False)
         return ok({"jobId": job_id})
 
@@ -979,6 +1015,12 @@ class Api:
                         system=item["system"], filename=item["filename"], size=item.get("size"),
                         provider=provenance["provider"],
                         remote_game_id=provenance["remoteGameId"])
+                    system_id = _system_id(item.get("systemHint") or item["system"])
+                    if system_id:
+                        self.registry.set_scrape_query_alias(
+                            provenance["provider"], system_id,
+                            item.get("requestedQuery") or item["originalQuery"],
+                            provenance["remoteGameId"])
             if errors:
                 log.warning("Scraper apply item=%s target=%s failed: %s",
                             item["id"], session["target"], "; ".join(errors))
@@ -1812,11 +1854,15 @@ class Api:
             "conflicts": entry.conflicts,
             "origin": (entry.source or {}).get("origin"),
             "sourceName": (entry.source or {}).get("sourceName"),
-            "parts": {
+            "parts": ({
+                "rom": bool((entry.source or {}).get("romPresent")),
+                "metadata": bool((entry.source or {}).get("metadataPresent")),
+                "media": int((entry.source or {}).get("mediaCount") or 0),
+            } if entry.op == OP_ARCHIVE_INGEST else {
                 "rom": bool((entry.source or {}).get("rom")),
                 "metadata": bool((entry.source or {}).get("fields")),
                 "media": len((entry.source or {}).get("media") or []),
-            } if entry.op in (OP_ADD, OP_ARCHIVE_INGEST) else None,
+            }) if entry.op in (OP_ADD, OP_ARCHIVE_INGEST) else None,
         }
         if entry.op == OP_TITLE_EDIT:
             summary["oldTitle"], summary["newTitle"] = entry.old_title, entry.new_title
@@ -2407,7 +2453,8 @@ class Api:
                 cb(1000, 1000, "Archive 수집 완료")
                 return {"applied": len(archive_ready), "archiveIngested": ingested["ingested"],
                         "archiveRevised": ingested["revised"], "failed": 0, "partial": 0,
-                        "skipped": 0, "invalid": archive_invalid, "errors": [], "systems": []}
+                        "skipped": 0, "invalid": archive_invalid if not file_entries else 0,
+                        "errors": [], "systems": []}
             except Exception:
                 if file_entries:
                     self.registry.release_lock(lock_name)
@@ -2428,8 +2475,6 @@ class Api:
                     self._rebind_plan_rows(collection_id, result["systems"])
                 self.registry.append_change(CHANGE_APPLIED, collection_id,
                                             {"applied": result["applied"]})
-                if not archive_ready and archive_invalid:
-                    result["invalid"] = result.get("invalid", 0) + archive_invalid
                 return result
             finally:
                 self.registry.release_lock(lock_name)
@@ -2489,8 +2534,9 @@ class Api:
         kind, uids = archive_service.resolve_scope(cache, scope)
         plan = self._plan(collection_id)
         keys, skipped = [], []
+        rows = cache.get_rows(uids)
         for uid in dict.fromkeys(uids):
-            row = cache.get_row(uid)
+            row = rows.get(int(uid))
             if row is None:
                 skipped.append({"filename": str(uid), "reason": "원본 항목을 찾을 수 없습니다."})
                 continue
@@ -2499,9 +2545,10 @@ class Api:
                 rom_uid=row["rom_uid"],
                 source={"fingerprint": archive_service.ingest_fingerprint(row),
                         "archiveDir": str(cfg["archiveDir"]), "origin": "archive-ingest",
-                        "sourceName": collection.name, "fields": row["fields"],
-                        "media": row["media"],
-                        "rom": {"present": True} if row["present"] else None},
+                        "sourceName": collection.name, "title": row["title"],
+                        "metadataPresent": bool(row["fields"]),
+                        "mediaCount": len(row["media"]),
+                        "romPresent": bool(row["present"])},
             )
             plan.add(entry)
             keys.append(entry.key)
@@ -3607,6 +3654,33 @@ class Api:
                 refresh,
                 mutates_state=True, target_ids=("archive",), kind="archive-refresh")
         return ok({"jobId": job_id})
+
+    @guarded
+    def archive_shared_conflict_status(self):
+        cfg = self._archive_config()
+        source = archive_shared_cache.snapshot_path(cfg["archiveDir"])
+        if not source.is_file():
+            return err("공유 Archive DB를 찾을 수 없습니다.")
+        return ok({"digest": archive_shared_cache.fingerprint(source)})
+
+    @guarded
+    def archive_resolve_shared_conflict(self, choice, observed_digest):
+        if choice not in ("local", "shared"):
+            return err("Archive 충돌 해결 방법을 선택하세요.")
+        if not observed_digest:
+            return err("공유 Archive DB를 다시 확인하세요.")
+        with self._archive_lifecycle_lock:
+            if self.jobs.active_jobs():
+                return err("진행 중인 작업이 끝난 뒤 Archive 충돌을 해결하세요.")
+            cfg = self._archive_config()
+            result = archive_shared_cache.resolve_conflict(
+                self.archive, cfg["archiveDir"], str(observed_digest), choice,
+                self._archive_path.parent / "archive_conflict_backups")
+            if result["status"] in ("loaded", "published"):
+                known = self.registry.get_setting("archive.shared_snapshot_hashes", {}) or {}
+                self.registry.set_setting("archive.shared_snapshot_hashes",
+                                          {**known, cfg["archiveDir"]: result["digest"]})
+            return ok(result)
 
     @guarded
     def archive_project(self):

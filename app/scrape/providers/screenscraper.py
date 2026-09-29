@@ -526,9 +526,13 @@ class ScreenScraperClient(ScrapeProvider):
 def _title_similarity(query: str, title: str, alternate_titles=()) -> float:
     def clean(value):
         decomposed = unicodedata.normalize("NFKD", str(value or "").casefold())
-        plain = "".join(char for char in decomposed if not unicodedata.combining(char))
+        # Latin accents are optional in ROM names; Japanese dakuten changes
+        # the syllable itself and must survive normalization.
+        plain = unicodedata.normalize("NFC", "".join(
+            char for char in decomposed
+            if not unicodedata.combining(char) or "\u3099" <= char <= "\u309a"))
         tokens = re.findall(r"[^\W_]+", plain, flags=re.UNICODE)
-        numerals = {"ii": "2", "iii": "3", "iv": "4", "vi": "6", "vii": "7", "viii": "8", "ix": "9"}
+        numerals = {"ii": "2", "iii": "3", "iv": "4", "v": "5", "vi": "6", "vii": "7", "viii": "8", "ix": "9"}
         return " ".join(numerals.get(token, token) for token in tokens)
 
     wanted = clean(query)

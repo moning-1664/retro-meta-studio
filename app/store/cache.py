@@ -521,6 +521,20 @@ class CacheStore:
             entry["media_types"].sort()
         return list(rows.values())
 
+    def indexed_import_candidates(self, systems, title_norm, filename) -> list[dict]:
+        """Small exact-name candidate set before the full fuzzy comparison."""
+        if not systems:
+            return []
+        marks = ",".join("?" for _ in systems)
+        rows = self._conn.execute(
+            f"SELECT rom_uid FROM roms WHERE system IN ({marks}) "
+            "AND (title_norm=? OR filename=?)",
+            [*systems, title_norm, filename]).fetchall()
+        resolved = self.get_rows(row["rom_uid"] for row in rows)
+        for entry in resolved.values():
+            entry["media_types"] = [media["media_type"] for media in entry["media"]]
+        return list(resolved.values())
+
     def get_row(self, rom_uid) -> dict | None:
         row = self._conn.execute("SELECT * FROM roms WHERE rom_uid=?", (rom_uid,)).fetchone()
         if row is None:
@@ -531,6 +545,30 @@ class CacheStore:
         result["frontend_raw"] = json.loads(meta["frontend_raw_json"]) if meta else {}
         result["media"] = [dict(m) for m in self._conn.execute(
             "SELECT media_type,rel_path,size,mtime_ns FROM media WHERE rom_uid=? ORDER BY media_type", (rom_uid,))]
+        return result
+
+    def get_rows(self, rom_uids) -> dict[int, dict]:
+        """Resolve a Plan scope in batches rather than three queries per ROM."""
+        ids = list(dict.fromkeys(int(uid) for uid in rom_uids))
+        result = {}
+        for start in range(0, len(ids), 900):
+            chunk = ids[start:start + 900]
+            marks = ",".join("?" for _ in chunk)
+            for row in self._conn.execute(f"SELECT * FROM roms WHERE rom_uid IN ({marks})", chunk):
+                entry = dict(row)
+                entry.update(fields={}, frontend_raw={}, media=[])
+                result[entry["rom_uid"]] = entry
+            for meta in self._conn.execute(
+                    f"SELECT * FROM metadata WHERE rom_uid IN ({marks})", chunk):
+                entry = result.get(meta["rom_uid"])
+                if entry is not None:
+                    entry["fields"] = json.loads(meta["fields_json"])
+                    entry["frontend_raw"] = json.loads(meta["frontend_raw_json"])
+            for media in self._conn.execute(
+                    f"SELECT * FROM media WHERE rom_uid IN ({marks}) ORDER BY media_type", chunk):
+                entry = result.get(media["rom_uid"])
+                if entry is not None:
+                    entry["media"].append(dict(media))
         return result
 
     def get_row_by_filename(self, system, filename) -> dict | None:

@@ -150,7 +150,7 @@ def _describe(entry) -> str:
     """진행률에 적을 한 줄 - **실제로 하는 일**과 사람이 읽는 이름(파일명이 아니라 제목)."""
     source = entry.source or {}
     fields = entry.payload or source.get("fields") or {}
-    name = (fields.get("name") or "").strip() or entry.new_title or entry.filename
+    name = (fields.get("name") or "").strip() or source.get("title") or entry.new_title or entry.filename
     if entry.op == OP_ADD:
         rom = source.get("rom") or {}
         if rom.get("path"):

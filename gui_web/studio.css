@@ -1968,6 +1968,10 @@ button.sb-badge { cursor: pointer; }
 .scrape-results-head { display: flex; align-items: center; justify-content: space-between; gap: 6px;
   padding: 3px 8px; color: var(--muted); font-size: var(--fs-caption); }
 .scrape-results-head .btn { flex: none; }
+.scrape-confirmed-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+  margin: 4px 0; color: var(--muted); font-size: 11px; }
+.scrape-confirmed-actions span { flex: 1 0 100%; }
+.conflict-bulk-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
 .scrape-query, .scrape-system { min-width: 0; height: 27px; }
 .scrape-candidates { min-height: 0; max-height: min(520px, calc(100vh - 250px)); flex: 1 1 auto; overflow: auto; padding: 0 7px 7px; }
 .scrape-candidate { margin: 5px 0; border: 1px solid var(--border); border-radius: var(--radius-sm);

@@ -76,6 +76,28 @@ class ArchiveIngestPlanTests(unittest.TestCase):
         self.assertEqual(self.api.archive_rows()["data"]["total"], 2)
         self.assertEqual(self.api.plan_state(self.collection_id)["data"]["total"], 0)
 
+    def test_mixed_plan_counts_invalid_archive_once(self):
+        self.api.plan_archive_ingest(self.collection_id, {"kind": "all"})
+        self.assertTrue(self.api.save_app_settings({"titleAffix": {
+            "en": {"enabled": True, "mode": "prefix", "text": "EN_"}
+        }})["ok"])
+        title = self.api.plan_title_edit(self.collection_id, system="ps2")
+        self.assertTrue(title["ok"])
+        self.assertGreater(title["data"]["added"], 0)
+        cache = self.api.workspace.open(self.collection_id)
+        row = next(r for r in cache.query_rows() if r["filename"] == "Two.iso")
+        cache.update_metadata(row["rom_uid"], {"name": "Changed since staging"})
+        started = self.api.start_apply(self.collection_id)
+        self.assertTrue(started["ok"], started.get("error"))
+        wait_idle(self.api)
+        result = self.api.jobs.get(started["data"]["jobId"])
+        self.assertIsNone(result["error"])
+        follow = result["result"].get("followUpJobId")
+        if follow:
+            wait_idle(self.api)
+            result = self.api.jobs.get(follow)
+        self.assertEqual(result["result"]["invalid"], 1, result["result"])
+
 
 if __name__ == "__main__":
     unittest.main()

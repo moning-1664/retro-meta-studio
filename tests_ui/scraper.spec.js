@@ -84,6 +84,34 @@ test("스크랩 창은 요청 없이 열리고 포인트 색 시작 버튼으로
   await expect(page.locator(".scrape-candidate")).toHaveCount(1);
 });
 
+test("확정 게임에서 다른 후보 검색과 확정 해제가 보인다", async ({ page }) => {
+  await page.evaluate(() => {
+    const create = window.api.createScrapeSession;
+    window.api.createScrapeSession = async (...args) => {
+      const result = await create(...args);
+      result.data.items[0].confirmedGameId = "42";
+      return result;
+    };
+    const start = window.api.startScrapeItem;
+    window.api.startScrapeItem = (...args) => {
+      window.__forceSearch = args[4];
+      return start(...args);
+    };
+    window.__cleared = 0;
+    const clear = window.api.clearScrapeConfirmedMatch;
+    window.api.clearScrapeConfirmedMatch = (...args) => {
+      window.__cleared += 1;
+      return clear(...args);
+    };
+  });
+  await openForRows(page, 1, false);
+  await page.getByRole("button", { name: "다른 후보 검색" }).click();
+  await expect.poll(() => page.evaluate(() => window.__forceSearch)).toBe(true);
+  await page.getByRole("button", { name: "확정·별칭 해제" }).click();
+  await expect.poll(() => page.evaluate(() => window.__cleared)).toBe(1);
+  await expect(page.getByRole("button", { name: "확정·별칭 해제" })).toHaveCount(0);
+});
+
 test("아케이드 단축명 후보에는 설명 없는 확인 필요 배지를 붙이지 않는다", async ({ page }) => {
   await page.evaluate(() => {
     const original = window.api.jobProgress;

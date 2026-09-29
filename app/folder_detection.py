@@ -9,22 +9,30 @@ from app.archive.legacy import has_legacy
 from app.model.constants import ESDE_IGNORED_SYSTEMS
 
 
-def inspect_folder(folder: str) -> dict:
+def inspect_folder(folder: str, progress_cb=None) -> dict:
     try:
-        return _inspect_folder(folder)
+        return _inspect_folder(folder, progress_cb)
     except OSError as exc:
         raise ValueError("폴더를 읽을 수 없습니다. 경로와 접근 권한을 확인하세요.") from exc
 
 
-def _inspect_folder(folder: str) -> dict:
+def _inspect_folder(folder: str, progress_cb=None) -> dict:
+    def checkpoint(label):
+        if progress_cb:
+            progress_cb(0, 1, label)
     root = Path(folder).expanduser()
+    checkpoint("폴더 확인")
     if not root.is_dir():
         raise ValueError("폴더를 읽을 수 없습니다. 경로와 접근 권한을 확인하세요.")
 
     # Only list the selected folder and immediate children. Never parse XML,
     # enumerate ROM files recursively, or create a database during detection.
     children = {entry.name.lower(): entry for entry in root.iterdir()}
-    dirs = {name: entry for name, entry in children.items() if entry.is_dir()}
+    dirs = {}
+    for name, entry in children.items():
+        checkpoint(entry.name)
+        if entry.is_dir():
+            dirs[name] = entry
     findings = []
 
     def add(frontend, evidence, strong, systems=()):
@@ -34,14 +42,22 @@ def _inspect_folder(folder: str) -> dict:
     platforms = dirs.get("data")
     platforms = platforms / "Platforms" if platforms else None
     if platforms and platforms.is_dir():
-        names = [p.stem for p in platforms.iterdir() if p.is_file() and p.suffix.lower() == ".xml"]
+        names = []
+        for p in platforms.iterdir():
+            checkpoint(p.name)
+            if p.is_file() and p.suffix.lower() == ".xml":
+                names.append(p.stem)
         if names:
             add("launchbox", "Data/Platforms의 플랫폼 XML", True, names)
 
     gamelists = dirs.get("gamelists")
     downloaded = dirs.get("downloaded_media")
-    central = [p.name for p in gamelists.iterdir()
-               if p.is_dir() and p.name.lower() not in ESDE_IGNORED_SYSTEMS] if gamelists else []
+    central = []
+    if gamelists:
+        for p in gamelists.iterdir():
+            checkpoint(p.name)
+            if p.is_dir() and p.name.lower() not in ESDE_IGNORED_SYSTEMS:
+                central.append(p.name)
     if gamelists or downloaded:
         add("es-de", "gamelists + downloaded_media" if gamelists and downloaded else
             "gamelists 또는 downloaded_media", bool(gamelists and downloaded), central)
@@ -51,6 +67,7 @@ def _inspect_folder(folder: str) -> dict:
     pegasus, pegasus_generic, es_systems = [], [], []
     reserved = {"gamelists", "downloaded_media", "data", "images", "games", "media", ".rms"}
     for name, entry in dirs.items():
+        checkpoint(entry.name)
         if name in reserved:
             continue
         if (entry / "metadata.pegasus.txt").is_file():
@@ -67,6 +84,7 @@ def _inspect_folder(folder: str) -> dict:
         add("emulationstation", "시스템 폴더의 gamelist.xml", True, es_systems)
 
     portable = snapshot_path(str(root))
+    checkpoint("Archive DB 확인")
     archive = _is_portable_snapshot(portable)
     legacy_archive = has_legacy(str(root))
     findings.sort(key=lambda item: (not item["strong"], item["frontend"]))

@@ -443,10 +443,31 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(_title_similarity("Pokemon 2", "Pokémon II"), 1.0)
         self.assertEqual(_title_similarity("Final Fantasy III", "Final Fantasy 3"), 1.0)
         self.assertLess(_title_similarity("Pokemon 2", "Final Fantasy 3"), 0.45)
+        self.assertLess(_title_similarity("ばか", "はか"), 1.0)
+        self.assertEqual(_title_similarity("Game V", "Game 5"), 1.0)
 
     def test_fullwidth_colon_gets_bounded_search_variants(self):
         self.assertEqual(_query_fallbacks("Game： Subtitle"),
-                         ["Game:Subtitle", "Game"])
+                         ["Game:Subtitle", "Game", "Subtitle"])
+
+    def test_weak_identification_also_searches_names_and_keeps_both_candidates(self):
+        identified = ScrapeCandidate(**{**candidate().__dict__, "confidence": 40})
+        named = ScrapeCandidate(**{**candidate().__dict__, "candidate_id": "screenscraper:99",
+                                  "remote_game_id": "99", "confidence": 90})
+        class Provider:
+            calls = []
+            def identify(self, identity):
+                self.__class__.calls.append("identify")
+                return [identified]
+            def search(self, query, system_hint=""):
+                self.__class__.calls.append(query)
+                return [named]
+        service = ScrapeService(Provider)
+        item = service.item("1", "ps2", "game.iso", {})
+        session = service.sessions.create("collection", "c1", [item])
+        result = service.search_item(session["id"], "1", None, None)
+        self.assertEqual(Provider.calls, ["identify", "game"])
+        self.assertEqual({c["remote_game_id"] for c in result["item"]["candidates"]}, {"42", "99"})
 
     def test_weak_first_candidate_does_not_prevent_subtitle_fallback(self):
         weak = candidate()
@@ -523,9 +544,9 @@ class SessionTests(unittest.TestCase):
         item = service.item("1", "ps2", "Game - Subtitle.iso", {})
         session = service.sessions.create("collection", "c1", [item])
         result = service.search_item(session["id"], "1", None, None)
-        self.assertEqual(Provider.searches, ["Game - Subtitle", "Game: Subtitle", "Game"])
+        self.assertEqual(Provider.searches, ["Game - Subtitle", "Game: Subtitle", "Game", "Subtitle"])
         self.assertEqual(result["item"]["status"], "not_found")
-        self.assertEqual(result["quota"]["requestsToday"], 3)
+        self.assertEqual(result["quota"]["requestsToday"], 4)
 
     def test_arcade_short_name_retries_existing_human_title(self):
         class Provider:
@@ -561,7 +582,7 @@ class SessionTests(unittest.TestCase):
         item = service.item("1", "fbneo", "ws90.zip", {"name": "World Stadium 90"})
         session = service.sessions.create("archive", None, [item])
         result = service.search_item(session["id"], "1", None, None)
-        self.assertEqual(Provider.searches, ["World Stadium 90"])
+        self.assertEqual(Provider.searches, ["ws90", "World Stadium 90"])
         self.assertEqual(result["item"]["candidates"][0]["remote_game_id"], "43")
 
 
@@ -630,6 +651,21 @@ class SecretAndProvenanceTests(unittest.TestCase):
         finally:
             store.close()
 
+    def test_query_alias_is_system_scoped_and_removable(self):
+        directory = Path(tempfile.mkdtemp(prefix="rms_scraper_aliases_"))
+        store = RegistryStore(directory / "registry.db")
+        try:
+            store.set_scrape_query_alias("screenscraper", "58", "  Neon Genesis   Evangelion 2 ", "42")
+            self.assertEqual(store.scrape_query_alias(
+                "screenscraper", "58", "neon genesis evangelion 2"), "42")
+            self.assertIsNone(store.scrape_query_alias(
+                "screenscraper", "75", "neon genesis evangelion 2"))
+            store.delete_scrape_query_alias("screenscraper", "58", "neon genesis evangelion 2")
+            self.assertIsNone(store.scrape_query_alias(
+                "screenscraper", "58", "neon genesis evangelion 2"))
+        finally:
+            store.close()
+
     @unittest.skipUnless(sys.platform.startswith("win"), "Windows secure storage test")
     def test_windows_secure_storage_round_trip(self):
         reference = scrape_secrets.store("tests/scraper-secret", "개발자-비밀번호")
@@ -681,6 +717,8 @@ class ApplyBoundaryTests(unittest.TestCase):
             self.rows.append(value)
         def set_scrape_confirmed_match(self, **value):
             self.matches.append(value)
+        def set_scrape_query_alias(self, *args):
+            self.matches.append({"queryAlias": args})
 
     def make_api(self):
         api = Api.__new__(Api)

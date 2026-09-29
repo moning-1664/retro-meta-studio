@@ -148,6 +148,13 @@ MIGRATIONS = (
                PRIMARY KEY (target_kind, collection_id, system, filename, rom_size)
            )""",
     )),
+    Migration(7, (
+        """CREATE TABLE scrape_query_aliases (
+               provider TEXT NOT NULL, system_id TEXT NOT NULL, query_key TEXT NOT NULL,
+               remote_game_id TEXT NOT NULL, confirmed_at REAL NOT NULL,
+               PRIMARY KEY (provider, system_id, query_key)
+           )""",
+    )),
 )
 
 
@@ -482,6 +489,42 @@ class RegistryStore:
                 "DO UPDATE SET provider=excluded.provider,remote_game_id=excluded.remote_game_id,"
                 "confirmed_at=excluded.confirmed_at",
                 (*key, str(provider), str(remote_game_id), time.time()))
+
+    def delete_scrape_confirmed_match(self, target_kind, collection_id, system, filename, size):
+        with transaction(self._conn):
+            self._conn.execute(
+                "DELETE FROM scrape_confirmed_matches WHERE "
+                "target_kind=? AND collection_id=? AND system=? AND filename=? AND rom_size=?",
+                self._scrape_match_key(target_kind, collection_id, system, filename, size))
+
+    @staticmethod
+    def _scrape_alias_key(provider, system_id, query):
+        return (str(provider), str(system_id), " ".join(str(query or "").casefold().split()))
+
+    def scrape_query_alias(self, provider, system_id, query):
+        row = self._conn.execute(
+            "SELECT remote_game_id FROM scrape_query_aliases WHERE "
+            "provider=? AND system_id=? AND query_key=?",
+            self._scrape_alias_key(provider, system_id, query)).fetchone()
+        return row["remote_game_id"] if row else None
+
+    def set_scrape_query_alias(self, provider, system_id, query, remote_game_id):
+        key = self._scrape_alias_key(provider, system_id, query)
+        if not key[1] or not key[2]:
+            return
+        with transaction(self._conn):
+            self._conn.execute(
+                "INSERT INTO scrape_query_aliases "
+                "(provider,system_id,query_key,remote_game_id,confirmed_at) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(provider,system_id,query_key) DO UPDATE SET "
+                "remote_game_id=excluded.remote_game_id,confirmed_at=excluded.confirmed_at",
+                (*key, str(remote_game_id), time.time()))
+
+    def delete_scrape_query_alias(self, provider, system_id, query):
+        with transaction(self._conn):
+            self._conn.execute(
+                "DELETE FROM scrape_query_aliases WHERE provider=? AND system_id=? AND query_key=?",
+                self._scrape_alias_key(provider, system_id, query))
 
     # ------------------------------------------------------------------
     def _build_collection(self, row) -> Collection:

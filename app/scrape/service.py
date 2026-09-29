@@ -16,7 +16,7 @@ from app.scrape.models import ScrapeIdentity
 
 
 def _query_fallbacks(query: str) -> list[str]:
-    """At most two specific spelling variants when the first result is weak."""
+    """Bounded punctuation and subtitle variants for weak searches."""
     value = re.sub(r"\s+", " ", str(query or "")).strip()
     value = value.replace("：", ":")
     variants = []
@@ -24,17 +24,18 @@ def _query_fallbacks(query: str) -> list[str]:
         main, subtitle = value.split(":", 1)
         if main.strip() and subtitle.strip():
             variants.extend((f"{main.strip()}:{subtitle.strip()}" if subtitle.startswith(" ")
-                             else f"{main.strip()}: {subtitle.strip()}", main.strip()))
+                             else f"{main.strip()}: {subtitle.strip()}", main.strip(), subtitle.strip()))
     else:
         parts = re.split(r"\s+[-–—]\s+", value, maxsplit=1)
         if len(parts) == 2 and all(part.strip() for part in parts):
-            variants.extend((f"{parts[0].strip()}: {parts[1].strip()}", parts[0].strip()))
+            variants.extend((f"{parts[0].strip()}: {parts[1].strip()}",
+                             parts[0].strip(), parts[1].strip()))
         else:
             parenthesized = re.fullmatch(r"(.+?)\s+\([^()]+\)", value)
             if parenthesized:
                 variants.append(parenthesized.group(1).strip())
     return list(dict.fromkeys(candidate for candidate in variants
-                              if candidate and candidate.casefold() != value.casefold()))[:2]
+                              if candidate and candidate.casefold() != value.casefold()))[:3]
 
 
 class ScrapeSessionStore:
@@ -84,7 +85,7 @@ class ScrapeService:
                 "selectedCandidateId": None, "selectedFields": [], "selectedMedia": []}
 
     def search_item(self, session_id: str, item_id: str, query: str | None,
-                    system_hint: str | None, progress=None) -> dict:
+                    system_hint: str | None, progress=None, force_search=False) -> dict:
         session = self.sessions.get(session_id)
         item = next((row for row in session["items"] if row["id"] == str(item_id)), None)
         if item is None:
@@ -103,9 +104,10 @@ class ScrapeService:
         identity = ScrapeIdentity(selected_system, item["filename"],
                                   item.get("path"), item.get("size"))
         actual_query = str(query or item["query"]).strip()
+        item["requestedQuery"] = actual_query
         confirmed_id = item.get("confirmedGameId")
         confirmed_lookup = getattr(provider, "confirmed_game", None)
-        use_confirmed = (confirmed_id and callable(confirmed_lookup)
+        use_confirmed = (not force_search and confirmed_id and callable(confirmed_lookup)
                          and actual_query.casefold() == item["originalQuery"].casefold()
                          and _system_id(selected_system) == _system_id(item["system"])
                          and _system_id(selected_system) is not None)
@@ -114,16 +116,24 @@ class ScrapeService:
             request_count += 1
             log.info("Scraper confirmed lookup system=%s filename=%s gameId=%s found=%d",
                      selected_system, item["filename"], confirmed_id, len(candidates))
+        alias_id = item.get("aliasGameId") if not force_search and not candidates else None
+        if alias_id and callable(confirmed_lookup):
+            candidates = [replace(candidate, confidence=85,
+                                  confidence_reason="이전에 확정한 검색어 별칭")
+                          for candidate in confirmed_lookup(alias_id, selected_system)]
+            request_count += 1
         if not candidates:
             candidates = provider.identify(identity)
         identified = bool(candidates)
-        if (not use_confirmed or not candidates) and (selected_system and not identity.is_modified_rom and
+        if not candidates and (selected_system and not identity.is_modified_rom and
                 (selected_system.lower() in ARCADE_SYSTEMS
                 or (identity.path and Path(identity.path).is_file()
                     and getattr(getattr(provider, "config", None), "use_hashes", True)))):
             request_count += 1
         best_query = actual_query
         by_id = {candidate.candidate_id: candidate for candidate in candidates}
+        weak_arcade_identity = (identified and selected_system.lower() in ARCADE_SYSTEMS
+                                and max((c.confidence for c in candidates), default=0) < 45)
 
         def best_confidence() -> int:
             return max((candidate.confidence for candidate in by_id.values()), default=0)
@@ -148,26 +158,22 @@ class ScrapeService:
             if best_confidence() > before:
                 best_query = search_query
 
-        if not by_id:
+        if best_confidence() < 80:
             search_with(actual_query, "filename-or-manual")
         # A weak first result must not block a better spelling. Bound extra
         # requests and stop once a strong candidate is available for review.
-        if not identified and best_confidence() < 80:
+        if best_confidence() < 80:
             for alternative in _query_fallbacks(actual_query):
                 search_with(alternative, "punctuation")
                 if best_confidence() >= 80:
                     break
-        weak_arcade_identity = (identified and selected_system.lower() in ARCADE_SYSTEMS
-                                and best_confidence() < 45)
-        if (not identified or weak_arcade_identity) and best_confidence() < 80 and actual_query == item["query"]:
+        if (weak_arcade_identity or best_confidence() < 80) and actual_query == item["query"]:
             known_title = str((item.get("fields") or {}).get("name") or "").strip()
             if (len(known_title) > 3 and re.search(r"[A-Za-z]", known_title)
                     and known_title.casefold() not in
                     {actual_query.casefold(), *[v.casefold() for v in _query_fallbacks(actual_query)]}):
                 search_with(known_title, "existing-title")
         candidates = list(by_id.values())
-        if any(candidate.confidence >= 45 for candidate in candidates):
-            candidates = [candidate for candidate in candidates if candidate.confidence >= 45]
         actual_query = best_query
         # Python's stable sort preserves provider rank among equally scored
         # short-name results, where title alphabetization loses search order.
