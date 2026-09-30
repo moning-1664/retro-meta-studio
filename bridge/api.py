@@ -62,6 +62,7 @@ from app.archive import projection as archive_projection
 from app.archive import shared_cache as archive_shared_cache
 from app.archive import service as archive_service
 from app.archive import paste as archive_paste_service
+from app.archive.file_copy import copy_complete as archive_copy_complete
 from app.compare import engine as compare_engine
 from app.convert import service as convert_service
 from app.match import service as match_service
@@ -3503,7 +3504,7 @@ class Api:
                 else:
                     if not destination.exists():
                         destination.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(rom["path"], destination)
+                        archive_copy_complete(rom["path"], destination)
                         copied_roms += 1
                     self.archive.put_rom_source(
                         rid, archive_directory.DIRECTORY_SOURCE, destination,

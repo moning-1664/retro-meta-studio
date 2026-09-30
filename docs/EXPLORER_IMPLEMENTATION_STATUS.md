@@ -15,6 +15,7 @@
 - 작업 후 외부에서 바뀐 파일은 실행 취소로 덮어쓰지 않는다. 연속 실행 취소 시 인덱스 복원으로 바뀐 파일 ID를 보정한다.
 - 네트워크·MTP에는 로컬 실행 취소를 보장하지 않으며 파일 작업 전에 확인한다.
 - Archive 붙여넣기도 같은 충돌 UI에서 독립 실행한다. 실행 전 대상 상태와 원본 파일의 크기·수정시각·파일 ID를 확인한다.
+- Archive ROM·Revision 미디어·frontend 미디어는 같은 폴더의 임시 파일에 한 번 복사하고 크기 및 원본 상태를 확인한 뒤 게시한다. 실패하면 기존 미디어를 유지한다. 프로세스 강제 종료 때 남은 임시 파일 정리와 DB 통합 복원은 별도 미완료 작업이다.
 - Archive 수동 편집의 frontend 반영 뒤 공유 DB도 게시한다. DB digest CAS와 충돌 시 양쪽 백업은 유지한다.
 - DAT/listxml 가져오기는 공식 제목을 검색 힌트로 제공한다. ZIP은 단일 파일일 때 중앙 디렉토리의 크기·CRC를 읽는다. 모호한 CRC는 정확한 매칭으로 취급하지 않는다.
 - 실패한 이름 조회는 짧은 캐시를 사용하며 강제 재검색으로 우회할 수 있다. 추가 쿼리 수는 제한한다.
@@ -42,8 +43,9 @@
 
 ## 이번 검증 결과
 
-- 전체 Python: 1,401 passed / 1 skipped / 1 xfailed / 42 subtests passed.
+- 전체 Python 최신 실행: 1,411 passed / 1 skipped / 1 xfailed / 42 subtests passed (201.10초).
 - 이후 동일 ROM 경로를 참조하는 두 Collection의 잘라내기 거부 검증을 추가한 targeted 파일 작업 테스트: 19 passed.
+- Archive 완전 파일 복사 실패 주입 및 기존 Archive 회귀 테스트: 165 passed.
 - UI: 복사·붙여넣기·행 메뉴 37, Compare 45, Archive 42, 제목 일괄 변경 16 passed.
 - Archive 파일·DB 통합 Undo, Archive 잘라내기·이름 변경, Redo와 백업 보관 관리는 미완료다.
 - 실제 두 PC/NAS에서의 잠금 인계·중단 복구는 테스트 대역 결과로 통과 판정하지 않는다.

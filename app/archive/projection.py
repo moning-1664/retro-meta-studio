@@ -16,13 +16,13 @@ from __future__ import annotations
 
 import os
 import logging
-import shutil
 import time
 import uuid
 from pathlib import Path
 
 from adapters import get_adapter
 from adapters.base import GameEntry, MediaFile
+from app.archive.file_copy import copy_complete
 from app.model.collection import (Collection, StorageLocation, STORAGE_INTERNAL)
 
 #: 투영용 Collection의 ID. 실제 Collection이 아니다(registry에 없다).
@@ -172,7 +172,7 @@ def snapshot_revision_media(archive, config, record_ids, *, progress_cb=None) ->
                                f"{media['media_type']}-{uuid.uuid4().hex}{source.suffix}")
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 try:
-                    shutil.copy2(source, destination)
+                    copy_complete(source, destination)
                 except OSError:
                     log.exception("Archive revision media copy failed record=%s type=%s "
                                   "source=%s destination=%s", record_id,
@@ -302,7 +302,7 @@ def _copy_media(archive, adapter, layout, rid, filename, fields, *, overwrite=()
                     pass
             dest_path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                shutil.copy2(src, dest_path)
+                copy_complete(src, dest_path, replace=True)
             except OSError:
                 log.exception("Archive frontend media copy failed item=%s type=%s "
                               "source=%s destination=%s", rid, media_type, src, dest)
