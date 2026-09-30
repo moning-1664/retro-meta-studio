@@ -34,7 +34,7 @@ test("Settings에서 연결 상태와 일일 요청량을 확인한다", async (
   await expect(page.locator(".stg-scraper")).toContainText("동시 요청 1");
   await expect(page.locator(".stg-scraper")).toContainText("ROM 해시로 먼저 찾기");
   await expect(page.locator(".stg-scraper .stg-switch input").first()).toBeChecked();
-  await expect(page.locator(".stg-scraper .stg-subsection-title")).toHaveText("가져올 미디어");
+  await expect(page.locator(".stg-scraper .stg-subsection-title", { hasText: /^가져올 미디어$/ })).toBeVisible();
   await expect(page.locator(".scrape-media-choice")).toHaveCount(12);
 });
 

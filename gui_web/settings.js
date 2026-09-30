@@ -310,15 +310,9 @@
         // 값이 없으면 기본값(둘 다 "Plan에서 직접 고르기"/"복사 안 함"에 준하는 값)을 그대로
         // 쓰므로(bridge/api.py TRANSFER_DEFAULTS), 화면에서 안 보여도 동작은 바뀌지 않는다.
         add(h("div", { class: "stg-subsection-title" }, ["Collection 간 복사 설정"]));
-        add(row("transfer.pasteMode", "붙여넣기 모드",
-          select(t.pasteMode, [["patch", "Patch - 보완(없는 것만 채움)"], ["overwrite", "Overwrite - 덮어쓰기(원본 값 적용)"],
-                               ["replace", "Replace - 완전 교체(원본으로 다시 만듦)"]],
-            (v) => ctx.update("transfer", { pasteMode: v })),
-          "Patch: 이미 있는 항목의 빈 값과 없는 미디어만 채웁니다. Overwrite: 원본의 값과 미디어가 대상 것을 대신합니다. "
-          + "Replace: 게임의 메타데이터와 미디어를 원본으로 다시 만듭니다. 상단 Plan 버튼 옆에서도 바꿀 수 있습니다."));
         add(row("transfer.includeRom", "ROM 파일 복사",
           toggle(t.includeRom, (v) => ctx.update("transfer", { includeRom: v })),
-          "켜면 **대상에 ROM 파일이 없을 때만** 원본 ROM을 복사합니다. 이미 있는 ROM은 어느 모드에서도 덮어쓰지 않습니다."));
+          "기존 ROM과 같은 이름이면 충돌 확인 뒤 교체할 수 있습니다. 로컬 작업은 원본을 보관해 되돌릴 수 있습니다."));
         add(row("transfer.includeMedia", "Media 복사",
           toggle(t.includeMedia, (v) => ctx.update("transfer", { includeMedia: v })),
           "끄면 커버·스크린샷·동영상을 옮기지 않습니다."));

@@ -162,33 +162,22 @@ class MtpCollectionTests(unittest.TestCase):
         self.assertEqual([c["capacityBytes"] for c in capacity], [64 * 1024 ** 3])
 
     # ------------------------------------------------------------------
-    def test_editing_a_title_goes_into_the_plan_first(self):
-        """기기 Collection의 편집은 Plan을 거친다(사용자 결정) - Apply해야 기기에 쓴다."""
+    def test_editing_a_title_writes_immediately_without_queue(self):
         cid = self.create()
         uid = self.rows(cid)["SMW.sfc"]["romUid"]
         r = self.api.save_fields(cid, uid, {"name": "슈퍼 마리오 월드"})
         self.assertTrue(r["ok"], r.get("error"))
-        self.assertTrue(r["data"]["planned"])
-
-        state = self.api.plan_state(cid)["data"]
-        self.assertEqual(state["edited"], 1)
-        self.assertEqual(state["delta"], {})   # 용량은 바뀌지 않는다
-        names = [g.findtext("name") for g in self.device_xml("snes").findall("game")]
-        self.assertEqual(names, ["Super Mario World"])   # 아직 기기는 그대로다
-
-        wait_job(self.api, self.api.start_apply(cid)["data"]["jobId"])
+        self.assertEqual(self.api.plan_state(cid)["data"]["edited"], 0)
         names = [g.findtext("name") for g in self.device_xml("snes").findall("game")]
         self.assertIn("슈퍼 마리오 월드", names)
 
-    def test_two_edits_to_one_game_keep_both(self):
-        """한 항목을 두 번 고쳐도 Plan 엔트리는 하나 - 먼저 고친 값이 사라지면 안 된다."""
+    def test_two_immediate_edits_to_one_game_keep_both(self):
         cid = self.create()
         uid = self.rows(cid)["SMW.sfc"]["romUid"]
-        self.api.save_fields(cid, uid, {"name": "슈퍼 마리오 월드"})
-        self.api.save_fields(cid, uid, {"desc": "마리오가 공룡을 탄다"})
-        self.assertEqual(self.api.plan_state(cid)["data"]["edited"], 1)
-
-        wait_job(self.api, self.api.start_apply(cid)["data"]["jobId"])
+        for fields in ({"name": "슈퍼 마리오 월드"}, {"desc": "마리오가 공룡을 탄다"}):
+            result = self.api.save_fields(cid, uid, fields)
+            self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(self.api.plan_state(cid)["data"]["edited"], 0)
         game = self.device_xml("snes").find("game")
         self.assertEqual(game.findtext("name"), "슈퍼 마리오 월드")
         self.assertEqual(game.findtext("desc"), "마리오가 공룡을 탄다")
@@ -208,9 +197,9 @@ class MtpCollectionTests(unittest.TestCase):
         """MTP는 지우고 새로 만드는 수밖에 없다 - 실패하면 원본이 남아 있어야 한다."""
         cid = self.create()
         uid = self.rows(cid)["SMW.sfc"]["romUid"]
-        self.api.save_fields(cid, uid, {"name": "안 써져야 한다"})
         self.backend.fail_next_creates = 1
-        wait_job(self.api, self.api.start_apply(cid)["data"]["jobId"])
+        result = self.api.save_fields(cid, uid, {"name": "안 써져야 한다"})
+        self.assertFalse(result["ok"])
         names = [g.findtext("name") for g in self.device_xml("snes").findall("game")]
         self.assertEqual(names, ["Super Mario World"])
 

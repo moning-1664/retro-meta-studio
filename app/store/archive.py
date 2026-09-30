@@ -3,13 +3,14 @@ app/store/archive.py
 =====================
 archive.db - Metadata / Identity 보관과 출처 추적.
 
-**Archive는 MasterDB의 대체가 아니다**(스펙 §37, §92). Canonical Source가 아니라
-여러 Collection에서 수집한 정보의 보관소이며, Media 파일을 복제하지 않고 원본
-위치만 가리킨다(결정 D3).
+Archive는 설정했을 때 사용하는 이력 보관용 마스터 Collection이다.
+메타데이터는 Archive 자체 값이며, 미디어는 설정에 따라 내부 복사본 또는 외부
+링크를 사용한다. 실제 파일 배치는 frontend projection이 맡는다.
 
 Game Identity와 ROM Identity를 분리한다(§46). 같은 게임의 Japan/USA/Korea판은
 서로 다른 ROM Identity이고 하나의 Game에 묶인다. Collection의 Gamelist는 ROM 단위로
-표시되지만(사용자 결정), Archive와 Match는 이 Game 묶음을 사용한다.
+표시된다. 붙여넣기는 System과 전체 ROM 파일명이 같은 경우에만 충돌로 취급하며,
+Game 묶음이나 제목 유사도로 서로 다른 ROM을 자동 병합하지 않는다.
 """
 
 from __future__ import annotations
@@ -206,18 +207,25 @@ MIGRATIONS = (
                updated_at REAL NOT NULL
            )""",
     )),
+    Migration(12, (
+        # ROM 교체/붙여넣기는 확장자를 포함한 이름으로 충돌을 판단한다. 이전
+        # stem 키는 Game.zip과 Game.chd를 한 Identity로 합쳐 버렸다. 이미
+        # 합쳐진 기록을 자동 분리할 근거는 없으므로 표시 파일명으로 재키하고,
+        # 이후 들어오는 다른 확장자는 별도 Identity를 만든다.
+        "UPDATE rom_identities SET rom_key = lower(trim(CASE WHEN filename <> ''"
+        " THEN filename ELSE filename_norm END))",
+    )),
 )
 
 
 def rom_key_of(filename: str) -> str:
-    """ROM Identity를 가르는 키. 확장자를 떼고 대소문자/공백만 정리한다.
+    """ROM Identity를 가르는 키. 확장자를 포함하고 대소문자/공백만 정리한다.
 
     괄호 안 정보((USA)/(Europe)/(Rev 1)/(Disc 1))는 **일부러 남긴다** - 그게 변종을
     구분하는 유일한 단서인 경우가 대부분이기 때문이다. 느슨하게 묶는 일은 Match
     엔진이 별도 티어에서 한다.
     """
-    stem = str(filename or "").rsplit(".", 1)[0] if "." in str(filename or "") else str(filename or "")
-    return " ".join(stem.split()).strip().lower()
+    return " ".join(str(filename or "").split()).strip().casefold()
 
 
 def content_hash(fields, frontend_raw=None, media_fp="") -> str:
@@ -289,7 +297,7 @@ class ArchiveStore:
                             size=None, sha256=None, region=None, disc_info=None, title=None) -> str:
         """이 ROM의 Identity를 찾거나 만든다.
 
-        식별 키는 **(system, rom_key)뿐이다.** rom_key는 파일명 stem을 대소문자/공백만 정리한
+        식별 키는 **(system, rom_key)뿐이다.** rom_key는 전체 파일명을 대소문자/공백만 정리한
         값이라 "Game (USA)"와 "Game (Europe)"은 그대로 갈린다(§46) - 변종을 가르는 일은 이 키가
         이미 한다.
 

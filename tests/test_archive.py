@@ -137,7 +137,7 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(self.api.archive_find_row_index(
             {"search": "final"}, "m", -1)["data"], -1)
 
-    def test_archive_multi_paste_downgrades_replace_to_patch(self):
+    def test_archive_multi_paste_keeps_replace(self):
         configure(self.api, {"archiveDir": str(self.dir / "archive")})
         self.api.archive_ingest(self.src)
         rid = self._rid("FFX.iso")
@@ -148,10 +148,76 @@ class ArchiveTests(unittest.TestCase):
         self.assertTrue(self.api.copy_selection(self.src, uids)["ok"])
         result = self.api.archive_paste("replace")
         self.assertTrue(result["ok"], result.get("error"))
-        self.assertEqual(result["data"]["downgradedFrom"], "replace")
-        self.assertEqual(result["data"]["policy"]["pasteMode"], "patch")
-        self.assertEqual(self.api.archive_detail(rid)["data"]["fields"]["genre"],
-                         "Archive only")
+        self.assertIsNone(result["data"]["downgradedFrom"])
+        self.assertEqual(result["data"]["policy"]["pasteMode"], "replace")
+        self.assertEqual(self.api.archive_detail(rid)["data"]["fields"]["genre"], "RPG")
+
+    def test_archive_paste_preview_requires_game_decision_and_keeps_current_until_execute(self):
+        configure(self.api, {"archiveDir": str(self.dir / "archive_preview")})
+        self.api.archive_ingest(self.src)
+        rid = self._rid("FFX.iso")
+        self.api.archive_edit(rid, {"genre": "Keep me"})
+        uid = next(row["romUid"] for row in self.api.list_rows(self.src)["data"]["rows"]
+                   if row["file"] == "FFX.iso")
+        self.api.copy_selection(self.src, [uid])
+        preview = self.api.archive_paste("overwrite", immediate=True)
+        self.assertTrue(preview["ok"], preview.get("error"))
+        data = preview["data"]
+        self.assertEqual(data["target"], "archive")
+        self.assertEqual([row["filename"] for row in data["collisions"]], ["FFX.iso"])
+        self.assertEqual(self.api.archive_detail(rid)["data"]["fields"]["genre"], "Keep me")
+        unresolved = self.api.paste_execute(data["operationId"], {}, True)
+        self.assertFalse(unresolved["ok"])
+        started = self.api.paste_execute(data["operationId"], {"ps2|FFX.iso": "overwrite"}, True)
+        self.assertTrue(started["ok"], started.get("error"))
+        wait_idle(self.api)
+        job = self.api.get_job_progress(started["data"]["jobId"])["data"]
+        self.assertIsNone(job["error"], job)
+        self.assertEqual(job["result"]["applied"], 1)
+        self.assertEqual(self.api.archive_detail(rid)["data"]["fields"]["genre"], "RPG")
+
+    def test_archive_paste_preview_rejects_changed_target(self):
+        configure(self.api, {"archiveDir": str(self.dir / "archive_changed")})
+        self.api.archive_ingest(self.src)
+        rid = self._rid("FFX.iso")
+        self.api.archive_edit(rid, {"genre": "Before"})
+        uid = next(row["romUid"] for row in self.api.list_rows(self.src)["data"]["rows"]
+                   if row["file"] == "FFX.iso")
+        self.api.copy_selection(self.src, [uid])
+        preview = self.api.archive_paste("overwrite", immediate=True)["data"]
+        self.api.archive_edit(rid, {"genre": "Changed after preview"})
+        result = self.api.paste_execute(preview["operationId"], {"ps2|FFX.iso": "overwrite"}, True)
+        self.assertFalse(result["ok"])
+        self.assertEqual(self.api.archive_detail(rid)["data"]["fields"]["genre"], "Changed after preview")
+
+    def test_archive_paste_rejects_source_media_changed_after_preview(self):
+        configure(self.api, {"archiveDir": str(self.dir / "archive_source_changed")})
+        uid = next(row["romUid"] for row in self.api.list_rows(self.src)["data"]["rows"]
+                   if row["file"] == "FFX.iso")
+        self.api.copy_selection(self.src, [uid])
+        preview = self.api.archive_paste("overwrite", immediate=True)["data"]
+        source = next(iter(self.api._paste_ops[preview["operationId"]]["sourceStates"]))
+        Path(source).write_bytes(b"CHANGED AFTER PREVIEW")
+        result = self.api.paste_execute(preview["operationId"], {}, True)
+        self.assertFalse(result["ok"])
+        self.assertEqual(self.api.archive_rows()["data"]["total"], 0)
+
+    def test_manual_archive_edit_is_published_for_another_pc(self):
+        archive_root = self.dir / "portable_edit"
+        configure(self.api, {"archiveDir": str(archive_root)})
+        self.api.archive_ingest(self.src)
+        rid = self._rid("FFX.iso")
+        self.assertTrue(self.api.archive_edit(rid, {"name": "Edited on PC A"})["ok"])
+        other = Api(registry_path=self.dir / "pc-b" / "registry.db",
+                    cache_dir=self.dir / "pc-b" / "cache")
+        try:
+            saved = other.save_archive_config({"archiveDir": str(archive_root)})
+            self.assertTrue(saved["ok"], saved.get("error"))
+            rows = other.archive_rows()["data"]["rows"]
+            self.assertEqual(next(row["title"] for row in rows if row["file"] == "FFX.iso"),
+                             "Edited on PC A")
+        finally:
+            other.close()
 
     def test_archive_system_target_paste_adds_only_new_games(self):
         archive_root = self.dir / "archive_target_paste"

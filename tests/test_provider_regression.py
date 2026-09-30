@@ -116,7 +116,8 @@ class AdapterRoundTripCase:
         original = storage.for_path
         storage.for_path = lambda path, _p=BlockingProvider(): _p
         try:
-            self._write(BASE_FIELDS)
+            with self.assertRaises(OSError):
+                self._write(BASE_FIELDS)
         finally:
             storage.for_path = original
         self.assertFalse(Path(self.layout.metadata_file).exists(),

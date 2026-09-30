@@ -26,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 import traceback
 import time
+import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -48,21 +49,25 @@ from app import system_ops
 from app import storage_layout
 from app import title_affix
 from app.launch import retroarch
-from app.model.plan import OP_ADD, OP_ARCHIVE_INGEST, OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan, PlanEntry
+from app.model.plan import OP_ADD, OP_DELETE, OP_ARCHIVE_INGEST, OP_METADATA_EDIT, OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan, PlanEntry
 from app.plan import builder, clipboard, transfer
-from app.plan.applier import apply_plan
+from app.plan.paste_journal import PasteJournal, supports_local_undo
+from app.plan.applier import apply_plan, delete_destinations
 from app.plan.validator import check_capacity, validate
+from app.archive.edit_lock import archive_write, writing as archive_writing, status as archive_lock_status, release_orphan as release_archive_orphan
 from app.archive import conflicts as conflict_service
 from app.archive import directory as archive_directory
 from app.archive import legacy as archive_legacy
 from app.archive import projection as archive_projection
 from app.archive import shared_cache as archive_shared_cache
 from app.archive import service as archive_service
+from app.archive import paste as archive_paste_service
 from app.compare import engine as compare_engine
 from app.convert import service as convert_service
 from app.match import service as match_service
 from app.metadata import service as metadata_service
 from app.scrape import ScrapeService
+from app.scrape.dat_catalog import DatCatalog
 from app.scrape.providers import ScreenScraperClient, ScreenScraperConfig
 from app.scrape.providers.screenscraper import SYSTEM_IDS, _system_id
 from app.scrape import secrets as scrape_secrets
@@ -207,6 +212,14 @@ class Api:
         # Plan은 세션 한정이다(D2). DB에 저장하지 않고 여기서만 들고 있다가 앱이
         # 꺼지면 사라진다.
         self._plans: dict[str, Plan] = {}
+        # 복사 작업은 기존 Plan과 섞지 않는다. 미리보기와 실행 사이에만 보관한다.
+        self._paste_ops: dict[str, dict] = {}
+        undo_root = (Path(cache_dir).parent / "paste_undo") if cache_dir else (paths.DB_DIR / "paste_undo")
+        self._paste_journal = PasteJournal(undo_root)
+        recovered = self._paste_journal.recover_interrupted()
+        if recovered:
+            log.warning("Recovered %d interrupted paste operation(s): %s",
+                        len(recovered), recovered)
         # 썸네일 캐시(LRU). 파일이 그대로면 인코딩 결과도 그대로다.
         self._thumb_cache: OrderedDict = OrderedDict()
         self._clipboard_dir = (Path(cache_dir).parent / "clipboard") if cache_dir else paths.CLIPBOARD_DIR
@@ -242,7 +255,9 @@ class Api:
         self._compare = None
         # 영상 전용 로컬 서버(bridge/media_server.py). 처음 영상을 볼 때 켜진다.
         self._media_server = MediaServer()
-        self.scrape = ScrapeService(self._screen_scraper_client)
+        dat_path = (Path(cache_dir).parent / "user_dat.db") if cache_dir else (paths.DB_DIR / "user_dat.db")
+        self.dat_catalog = DatCatalog(dat_path)
+        self.scrape = ScrapeService(self._screen_scraper_client, dat_catalog=self.dat_catalog)
 
     def close(self):
         """앱 종료. 진행 중인 작업을 먼저 멈춘 뒤에 DB를 닫는다.
@@ -649,6 +664,21 @@ class Api:
     @guarded
     def start_scraper_account_status(self):
         job_id = self.jobs.run(lambda cb: self._scraper_account_job(cb), mutates_state=False)
+        return ok({"jobId": job_id})
+
+    @guarded
+    def dat_sources(self):
+        return ok(self.dat_catalog.sources())
+
+    @guarded
+    def start_dat_import(self, file_path, system):
+        if not file_path or not Path(file_path).is_file():
+            return err("DAT XML 파일을 선택하세요.")
+        if not str(system or "").strip():
+            return err("DAT에 대응할 System을 선택하세요.")
+        job_id = self.jobs.run(
+            lambda cb: self.dat_catalog.import_xml(file_path, system, cb),
+            mutates_state=True)
         return ok({"jobId": job_id})
 
     def _scraper_account_job(self, progress):
@@ -1765,10 +1795,7 @@ class Api:
         Adapter에 이 항목 하나만 넘기므로 gamelist.xml의 다른 항목과 우리가
         해석하지 않는 요소는 그대로 남는다.
 
-        **기기(MTP) Collection만 예외로 Plan을 거친다(사용자 결정).** MTP에는
-        덮어쓰기가 없어서 한 글자 고칠 때마다 gamelist 전체를 지우고 다시 만든다 -
-        편집을 모아서 Apply 한 번에 쓰는 편이 안전하고 빠르다. 자세한 이유는
-        app/model/collection.py의 `Collection.is_device` 참고.
+        기기(MTP)도 독립 작업으로 즉시 저장한다. 쓰기 실패는 성공으로 표시하지 않는다.
         """
         from adapters.base import GameEntry
 
@@ -1789,23 +1816,43 @@ class Api:
 
         merged = {**row["fields"], **{k: v for k, v in (fields or {}).items()}}
         if collection.is_device:
-            entry = builder.plan_metadata_edit(self._plan(collection_id), cache, int(rom_uid),
+            operation = Plan(collection_id)
+            entry = builder.plan_metadata_edit(operation, cache, int(rom_uid),
                                                fields or {}, frontend_raw=frontend_raw)
+            outcome = apply_plan(operation, collection, cache, self.registry,
+                                 self.workspace.provider_for(collection))
+            if outcome.get("failed") or outcome.get("partial"):
+                return err("메타데이터 저장 실패: " + "; ".join(outcome.get("errors") or []))
             title = (entry.payload.get("name") or "").strip() or Path(row["filename"]).stem
-            return ok({"title": title, "planned": True})
+            return ok({"title": title})
 
         # frontend_raw는 보통 읽은 그대로 다시 쓴다. 즐겨찾기처럼 사용자가 직접 바꾸는
         # Frontend 고유 값일 때만 새 것이 들어온다.
         raw = row["frontend_raw"] if frontend_raw is None else frontend_raw
         adapter = get_adapter(collection.frontend)
         layout = adapter.layout(collection, row["system"])
-        adapter.write_index(layout, [GameEntry(filename=row["filename"], fields=merged,
-                                               frontend_raw=raw)])
+        undo_id = None
+        if layout.metadata_file and supports_local_undo([layout.metadata_file]):
+            edit_plan = Plan(collection_id)
+            edit_plan.add(PlanEntry(op=OP_METADATA_EDIT, system=row["system"],
+                                   filename=row["filename"], rom_uid=int(rom_uid),
+                                   payload=merged))
+            undo_id = uuid.uuid4().hex
+            self._paste_journal.begin(undo_id, collection_id, collection, edit_plan)
+        try:
+            adapter.write_index(layout, [GameEntry(filename=row["filename"], fields=merged,
+                                                   frontend_raw=raw)])
+            if undo_id:
+                self._paste_journal.commit(undo_id)
+        except Exception:
+            if undo_id:
+                self._paste_journal.rollback_running(undo_id)
+            raise
 
         title = (merged.get("name") or "").strip() or Path(row["filename"]).stem
         cache.update_metadata(int(rom_uid), merged, title=title, title_norm=normalize_title(title),
                               frontend_raw=None if frontend_raw is None else raw)
-        return ok({"title": title})
+        return ok({"title": title, "undoOperationId": undo_id})
 
     # ------------------------------------------------------------------
     # Plan (세션 한정 - 결정 D2)
@@ -1823,12 +1870,19 @@ class Api:
         return collection, self.workspace.open(collection_id), self.workspace.provider_for(collection)
 
     @guarded
+    def operation_state(self, collection_id):
+        self._plan_context(collection_id)
+        return ok({"undoOperationId": self._paste_journal.latest_committed(collection_id),
+                   "clipboard": clipboard.peek(self.registry)})
+
+    @guarded
     def plan_state(self, collection_id):
         """Gamelist의 Status 기호와 하단 바가 필요로 하는 것."""
         plan = self._plan(collection_id)
         collection, cache, provider = self._plan_context(collection_id)
         return ok({
             **plan.summary(),
+            "undoOperationId": self._paste_journal.latest_committed(collection_id),
             "marks": plan.marks(),
             "capacity": check_capacity(plan, collection, cache, provider),
             "clipboard": clipboard.peek(self.registry),
@@ -1922,6 +1976,160 @@ class Api:
         return ok({"resolved": len(keys), "resolution": resolution})
 
     @guarded
+    def delete_immediate(self, collection_id, rom_uids, parts=None, permanent=False):
+        """Move local assets to recoverable sidecar files, then update the index."""
+        collection, cache, provider = self._plan_context(collection_id)
+        rows = [cache.get_row(int(uid)) for uid in (rom_uids or [])]
+        rows = [row for row in rows if row is not None]
+        if not rows:
+            return err("삭제할 게임을 찾을 수 없습니다.")
+        blocked = self._ensure_file_ops(collection) or self._ensure_writable(
+            collection, sorted({row["system"] for row in rows}))
+        if blocked:
+            return blocked
+        adapter = get_adapter(collection.frontend)
+        layouts = [adapter.layout(collection, system) for system in {row["system"] for row in rows}]
+        undoable = supports_local_undo(
+                path for layout in layouts
+                for path in (layout.rom_dir, layout.metadata_file, layout.media_dir))
+        if not permanent and not undoable:
+            return ok({"requiresConfirmation": True, "undoable": False})
+        plan = Plan(collection_id)
+        builder.plan_delete(plan, collection, cache,
+                            [row["rom_uid"] for row in rows], provider, parts=parts)
+        report = validate(plan, collection, cache, provider)
+        if report["blocked"] or report["entries"]:
+            return err("대상 파일이 바뀌었습니다. 다시 선택한 뒤 삭제하세요.")
+        paths = [path for entry in plan.entries
+                 for path in delete_destinations(entry, collection, cache, adapter)]
+        operation_id = uuid.uuid4().hex
+        lock_name = f"apply:{collection_id}"
+        if not self.registry.acquire_lock(lock_name, kind="delete"):
+            return err("다른 창에서 같은 Collection을 수정하는 중입니다.")
+
+        def run(progress):
+            journal_started = False
+            try:
+                suffix = None
+                if not permanent:
+                    suffix = self._paste_journal.begin(
+                        operation_id, collection_id, collection, plan, extra_paths=paths)
+                    journal_started = True
+                result = apply_plan(plan, collection, cache, self.registry, provider,
+                                    progress_cb=progress, trash_suffix=suffix)
+                if journal_started and (result.get("failed") or result.get("partial")
+                                        or result.get("invalid")):
+                    self._paste_journal.rollback_running(operation_id)
+                    result["rolledBack"], result["applied"] = True, 0
+                elif journal_started:
+                    self._paste_journal.commit(operation_id)
+                    result["undoOperationId"] = operation_id
+                if result.get("systems"):
+                    self.workspace.scan(collection_id, force=True, systems=result["systems"])
+                return result
+            except Exception:
+                if journal_started:
+                    self._paste_journal.rollback_running(operation_id)
+                raise
+            finally:
+                self.registry.release_lock(lock_name)
+
+        try:
+            job_id = self.jobs.run_heavy(run, mutates_state=True,
+                                         target_ids=(collection_id,), kind="apply")
+        except Exception:
+            self.registry.release_lock(lock_name)
+            raise
+        return ok({"jobId": job_id})
+
+    @guarded
+    def rename_game(self, collection_id, rom_uid, new_name):
+        """Rename local ROM and its own media with one recoverable transaction."""
+        from adapters.base import GameEntry
+        collection, cache, provider = self._plan_context(collection_id)
+        row = cache.get_row(int(rom_uid))
+        if row is None:
+            return err("게임을 찾을 수 없습니다.")
+        name = str(new_name or "").strip()
+        if (not name or name in (".", "..") or name[-1:] in (".", " ")
+                or any(ord(c) < 32 or c in '<>:"/\\|?*' for c in name)
+                or name.split(".")[0].upper() in {"CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1,10)], *[f"LPT{i}" for i in range(1,10)]}):
+            return err("Windows에서 사용할 수 없는 파일명입니다.")
+        if Path(name).suffix.lower() != Path(row["filename"]).suffix.lower():
+            return err("ROM 확장자는 유지해주세요.")
+        if name.lower() == row["filename"].lower():
+            return err("기존 이름과 같은 파일명입니다.")
+        blocked = self._ensure_file_ops(collection) or self._ensure_writable(collection, [row["system"]])
+        if blocked:
+            return blocked
+        adapter = get_adapter(collection.frontend)
+        layout = adapter.layout(collection, row["system"])
+        if not supports_local_undo([layout.rom_dir, layout.media_dir, layout.metadata_file]):
+            return err("이름 변경은 현재 로컬 Collection에서 지원합니다.")
+        if cache.get_row_by_filename(row["system"], name):
+            return err("같은 파일명의 게임이 이미 있습니다.")
+        pairs = []
+        old_rom = Path(layout.rom_dir) / row["filename"]
+        if row["present"]:
+            pairs.append((old_rom, old_rom.with_name(name)))
+        old_stem, new_stem = Path(row["filename"]).stem, Path(name).stem
+        links = []
+        for media in row.get("media") or []:
+            source = Path(media["rel_path"])
+            # Linked/shared media keep their paths. Only this game's named files move.
+            if (source.stem == old_stem and source.is_file()
+                    and layout.media_dir and _path_within(source, layout.media_dir)
+                    and not cache.db.execute("SELECT 1 FROM media WHERE rel_path=? AND rom_uid<>? LIMIT 1",
+                                             (str(source), int(rom_uid))).fetchone()):
+                destination = source.with_name(new_stem + source.suffix)
+                pairs.append((source, destination))
+                links.append((media["media_type"], str(destination)))
+            else:
+                links.append((media["media_type"], str(source)))
+        pairs = list(dict.fromkeys(pairs))
+        if any(destination.exists() for _, destination in pairs):
+            return err("변경할 이름의 파일이 이미 있습니다.")
+        operation_id = uuid.uuid4().hex
+        lock_name = f"apply:{collection_id}"
+        if not self.registry.acquire_lock(lock_name, kind="rename"):
+            return err("다른 창에서 같은 Collection을 수정하는 중입니다.")
+        plan = Plan(collection_id)
+        builder.plan_metadata_edit(plan, cache, int(rom_uid), {})
+        def run(progress):
+            begun = False
+            try:
+                self._paste_journal.begin(operation_id, collection_id, collection, plan,
+                    extra_paths=[path for pair in pairs for path in pair])
+                begun = True
+                self._paste_journal.record_renames(operation_id, pairs)
+                for source, destination in pairs:
+                    if destination.exists():
+                        raise ValueError("대상 파일이 새로 생겼습니다.")
+                    os.rename(source, destination)
+                adapter.remove_entries(layout, [row["filename"]])
+                raw = adapter.strip_location_raw(row["frontend_raw"])
+                adapter.write_index(layout, [GameEntry(filename=name, fields=row["fields"], frontend_raw=raw)])
+                if links:
+                    adapter.write_media_links(layout, {name: links})
+                self._paste_journal.commit(operation_id)
+                self.workspace.scan(collection_id, force=True, systems=[row["system"]])
+                progress(1, 1, "이름 변경 완료")
+                return {"applied": 1, "filename": name, "undoOperationId": operation_id}
+            except Exception:
+                if begun:
+                    self._paste_journal.rollback_running(operation_id)
+                    self.workspace.scan(collection_id, force=True, systems=[row["system"]])
+                raise
+            finally:
+                self.registry.release_lock(lock_name)
+        try:
+            job_id = self.jobs.run_heavy(run, mutates_state=True, target_ids=(collection_id,), kind="apply")
+        except Exception:
+            self.registry.release_lock(lock_name)
+            raise
+        return ok({"jobId": job_id})
+
+    @guarded
     def plan_delete(self, collection_id, rom_uids, parts=None):
         """삭제 예정으로 올린다. `parts`(rom/metadata/media/video의 목록)로 무엇을 지울지 고른다.
         정하지 않으면 전부다."""
@@ -1945,7 +2153,7 @@ class Api:
     _FIXED_SYSTEM_FRONTENDS = {"es-de", "emulationstation"}
 
     @guarded
-    def plan_move_to_system(self, collection_id, rom_uids, target_system):
+    def plan_move_to_system(self, collection_id, rom_uids, target_system, _operation=None):
         """고른 게임을 **다른 System으로 옮긴다**(ROM+메타데이터+미디어).
 
         사용자 결정 - "FBNEO ACT는 FBNEO 중 action 장르를 모은 디렉토리인데, FBNEO로 모으고 싶을 때
@@ -1977,21 +2185,26 @@ class Api:
         uids = [r["rom_uid"] for r in rows]
         items, _bytes = clipboard.build_items(collection, cache, uids)
         items = [{**item, "system": target} for item in items]
-        plan = self._plan(collection_id)
+        plan = _operation if _operation is not None else self._plan(collection_id)
         added = builder.plan_add(plan, collection, provider, items)
         # 대상에 이미 같은 파일이 있으면 사용자가 정해야 한다 - 옮기기가 조용히 덮어쓰지 않는다.
         conflicts = added.pop("conflictKeys", [])
         builder.plan_delete(plan, collection, cache, uids, provider)
+        if _operation is not None:
+            for entry in plan.entries:
+                if entry.op == OP_DELETE:
+                    entry.source = {**(entry.source or {}),
+                                    "requiresCopy": f"add|{target}|{entry.filename}"}
         return ok({"moved": added["added"], "target": target, "conflicts": len(conflicts),
                    "skipped": added.get("skipped", [])})
 
     @guarded
-    def plan_storage_change(self, collection_id, system, storage_to):
+    def plan_storage_change(self, collection_id, system, storage_to, _operation=None):
         collection, cache, _ = self._plan_context(collection_id)
         blocked = self._ensure_file_ops(collection) or self._ensure_writable(collection, [system])
         if blocked:
             return blocked
-        result = builder.plan_storage_change(self._plan(collection_id), collection, cache,
+        result = builder.plan_storage_change(_operation if _operation is not None else self._plan(collection_id), collection, cache,
                                              system, storage_to)
         return ok(result)
 
@@ -2037,7 +2250,7 @@ class Api:
         return ok({"items": changes, "changed": sum(1 for c in changes if c["changed"])})
 
     @guarded
-    def plan_disc_retag(self, collection_id, system, fmt=None):
+    def plan_disc_retag(self, collection_id, system, fmt=None, _operation=None):
         """미리보기에서 확인한 대로 Plan에 올린다(Title Prefix/Postfix와 같은 D1 예외 -
         Plan을 거치는 텍스트 편집)."""
         collection, cache, _provider = self._plan_context(collection_id)
@@ -2049,11 +2262,11 @@ class Api:
             return blocked
         fmt = fmt or self._disc_title_option()["format"]
         changes = title_affix.preview_disc_retag(rows, fmt)
-        result = builder.plan_title_edit(self._plan(collection_id), cache, changes)
+        result = builder.plan_title_edit(_operation if _operation is not None else self._plan(collection_id), cache, changes)
         return ok(result)
 
     @guarded
-    def plan_title_edit(self, collection_id, rom_uids=None, system=None):
+    def plan_title_edit(self, collection_id, rom_uids=None, system=None, _operation=None):
         """미리보기에서 확인한 대로 Plan에 올린다. 실제 파일은 Apply를 눌러야 바뀐다(사용자 결정).
 
         미리보기와 똑같은 대상 선택을 다시 받아 서버에서 새로 계산한다 - 클라이언트가
@@ -2067,7 +2280,7 @@ class Api:
         if blocked:
             return blocked
         changes = title_affix.preview_titles(rows, self._title_affix_config())
-        result = builder.plan_title_edit(self._plan(collection_id), cache, changes)
+        result = builder.plan_title_edit(_operation if _operation is not None else self._plan(collection_id), cache, changes)
         return ok(result)
 
     @guarded
@@ -2085,6 +2298,16 @@ class Api:
         collection, cache, _ = self._plan_context(collection_id)
         return ok(clipboard.copy_selection(self.registry, collection, cache, rom_uids,
                                            self._clipboard_dir))
+
+    @guarded
+    def cut_selection(self, collection_id, rom_uids):
+        result = self.copy_selection(collection_id, rom_uids)
+        if not result["ok"]:
+            return result
+        descriptor = clipboard.peek(self.registry)
+        descriptor["cut"] = True
+        self.registry.set_setting(clipboard.CLIPBOARD_KEY, descriptor)
+        return ok({**result["data"], "cut": True})
 
     @guarded
     def clipboard_items(self):
@@ -2143,7 +2366,7 @@ class Api:
         summaries = []
         for item in items:
             mapped = {**item, "system": system}
-            match, _ = index.find(mapped)
+            match, _ = index.find(mapped, exact_only=True)
             if match is not None:
                 duplicates.append({"filename": item["filename"],
                                    "targetFilename": match["filename"]})
@@ -2153,7 +2376,7 @@ class Api:
 
     @guarded
     def paste(self, collection_id, mode=None, system_map=None, target_map=None,
-              fallback_target=None, new_only=False):
+              fallback_target=None, new_only=False, immediate=False):
         """붙여넣기. **Settings의 복사 정책(transfer)을 따른다.**
 
         `mode`(patch/overwrite/replace)가 이미 있는 항목을 어떻게 다룰지 정한다
@@ -2178,6 +2401,14 @@ class Api:
         descriptor, items = clipboard.read_items(self.registry)
         if not items:
             return err("붙여넣을 항목이 없습니다.")
+        cut = bool(descriptor.get("cut"))
+        if cut:
+            if not immediate or target_map or fallback_target:
+                return err("잘라낸 게임은 대상 System의 빈 공간에 붙여넣으세요.")
+            if mode and transfer.normalize_mode(mode) != transfer.MODE_OVERWRITE:
+                return err("잘라낸 게임은 붙여넣기로 이동하세요.")
+            items = [{**item, "cutSourceSystem": item["system"],
+                      "cutSourceFilename": item["filename"]} for item in items]
         # System 이름 바꾸기는 **정책을 따지기 전에** 한다 - 이 뒤의 검사(쓰기 가능한 System인가)는
         # 실제로 파일이 놓일 System을 봐야 한다.
         remap = {str(k): str(v).strip() for k, v in (system_map or {}).items() if str(v or "").strip()}
@@ -2203,14 +2434,10 @@ class Api:
         if blocked:
             return blocked
         policy = self._transfer_policy()
+        if cut:
+            policy = {**policy, "includeRom": True, "includeMedia": True}
         mode = transfer.normalize_mode(mode or policy["pasteMode"])
-        # **여러 개를 한 번에 붙일 때 Replace는 Patch로 내려간다**(사용자 결정).
-        # Replace는 대상의 메타데이터를 원본 것으로 다시 만드는(= 원본에 없는 값은 지우는)
-        # 모드라, 수십~수백 개에 한꺼번에 걸면 되돌리기 어렵다. 조용히 바꾸지 않고
-        # `downgradedFrom`으로 알려 준다 - 화면이 모드 토글을 잠깐 Patch로 보여 준다.
         downgraded_from = None
-        if mode == transfer.MODE_REPLACE and len(items) > 1:
-            downgraded_from, mode = mode, transfer.MODE_PATCH
         policy = {**policy, "pasteMode": mode}
 
         # **사용자가 지목한 대상**({"system|원본파일명": "system|대상파일명"}). 자동 판단(파일명 일치)이
@@ -2227,7 +2454,8 @@ class Api:
             if system not in {entry.system for entry in collection.systems}:
                 return err(f"대상 System을 찾을 수 없습니다: {system}")
             new_index = transfer.TargetIndex(target_cache, {system})
-            duplicates = [item["filename"] for item in items if new_index.find(item)[0] is not None]
+            duplicates = [item["filename"] for item in items
+                          if new_index.find(item, exact_only=True)[0] is not None]
             if duplicates:
                 return err(f"대상 System에 같은 게임이 이미 있습니다: {', '.join(duplicates[:3])}")
         for source_key, dest_key in (target_map or {}).items():
@@ -2237,7 +2465,7 @@ class Api:
                 return err(f"지목한 대상을 찾을 수 없습니다: {dest_key}")
             targets[str(source_key)] = row
 
-        # **화면에서 고른 행**(`fallback_target`). 자동으로 대상을 못 찾았을 때만 쓴다.
+        # **화면에서 고른 행**(`fallback_target`). 단일 붙여넣기에서는 명시적 대상이 우선한다.
         #
         # 사용자 모델은 "행을 고르고 붙여넣으면 그 행에 붙는다"인데, 예전의 Ctrl+V는 고른 행을
         # 아예 보지 않고 이름으로만 대상을 찾았다. 그래서 이름이 전혀 다른 두 게임
@@ -2253,7 +2481,6 @@ class Api:
         # 수 있다. 자기 자신에게 붙여넣는 것은 아무 일도 아니므로, 그것 때문에 사용자가 고른
         # 행을 무시하면 안 된다(실사용 리포트 - 같은 nes 안에서 `Dragon Ball 2 (K).zip`을 복사해
         # `Dragon Ball Z1 (K).zip`에 붙이려 했는데, 원본 자신이 대상으로 잡혀 아무 일도 없었다).
-        pasting_into_source = descriptor.get("sourceCollectionId") == collection_id
         unmatched = policy["unmatchedRom"]
         # **대상 찾기는 한 곳에서만 한다.** 예전에는 여기서 `get_row_by_filename()`으로 정확한
         # 파일명만 보고 "대상이 없다 = ROM 미매칭"으로 걸러 낸 뒤, 그 뒤의 transfer.prepare()가
@@ -2267,16 +2494,11 @@ class Api:
             key = transfer.item_key(item)
             existing = targets.get(key)
             how = "manual" if existing is not None else None
-            if existing is None:
-                existing, how = index.find(item, accept_similar=(mode == transfer.MODE_REPLACE))
-                if (existing is not None and pasting_into_source and fallback_row is not None
-                        and (existing["system"], existing["filename"]) == (item["system"], item["filename"])
-                        and existing["rom_uid"] != fallback_row["rom_uid"]):
-                    existing, how = None, None      # 자기 자신이다 - 고른 행에 양보한다
             if existing is None and fallback_row is not None:
-                # 이름으로는 확실한 대상을 못 찾았고, 화면에서 고른 행이 있다 - 그 행이 대상이다.
                 existing, how = fallback_row, "selected"
-                targets[key] = fallback_row        # prepare()도 같은 판단을 쓰게 한다
+                targets[key] = fallback_row
+            if existing is None:
+                existing, how = index.find(item, exact_only=True)
             if item.get("rom") or existing is not None:
                 # ROM이 있거나, 대상 Game이 이미 있거나, 비슷한 후보가 있다. 대상이 있으면 이건
                 # 그냥 평범한 Metadata/Media 갱신이다 - ROM 유무와 무관하게 모드(Patch/Overwrite/
@@ -2311,8 +2533,20 @@ class Api:
         # 모드는 **원본에 ROM이 없던 항목의 정책(위)을 거친 뒤에** 적용한다 - 모드가 대상에 이미 있는 ROM을
         # 걷어 낸 항목은 "원본에 ROM이 없는" 항목이 아니다. 걷어 내고 나면 바뀔 것이 없는 항목은 Plan에
         # 올리지 않고 이유를 알린다.
+        destination_systems = {item["system"] for item in prepared}
+        destination_systems.update(row["system"] for row in targets.values())
+        if fallback_row is not None:
+            destination_systems.add(fallback_row["system"])
+        adapter = get_adapter(collection.frontend)
+        layouts = [adapter.layout(collection, system) for system in destination_systems]
+        undoable = supports_local_undo(
+            path for layout in layouts
+            for path in (layout.rom_dir, layout.metadata_file, layout.media_dir))
         prepared, mode_skipped = transfer.prepare(prepared, target_cache, mode,
-                                                  targets=targets, index=index)
+                                                  targets=targets, index=index,
+                                                  exact_only=True,
+                                                  allow_rom_replace=immediate and undoable,
+                                                  force_media=immediate and mode == transfer.MODE_REPLACE)
         extra_skipped.extend(mode_skipped)
 
         if not prepared:
@@ -2320,9 +2554,56 @@ class Api:
                       "source": descriptor.get("sourceName"), "policy": policy,
                       "downgradedFrom": downgraded_from})
 
-        plan = self._plan(collection_id)
+        plan = Plan(collection_id) if immediate else self._plan(collection_id)
+        if immediate and undoable:
+            prepared = [{**item, "retainBackups": True} for item in prepared]
         result = builder.plan_add(plan, collection, provider, prepared)
         keys = result.pop("conflictKeys", [])
+        if immediate:
+            # 충돌 기준은 파일명까지 같은 대상이 이미 있는가이다. 명시적으로 행을
+            # 지목한 경우만 다른 파일명의 대상에 기록한다. Plan의 파일 충돌 목록은
+            # 실행 직전에 다시 검증하며, 기존 Plan 항목을 이 작업에 섞지 않는다.
+            collisions = []
+            file_conflicts = {f"{entry.system}|{entry.filename}" for entry in plan.entries
+                              if entry.conflicts}
+            for item in prepared:
+                existing = target_cache.get_row_by_filename(item["system"], item["filename"])
+                key = transfer.item_key(item)
+                if existing is None and key not in file_conflicts:
+                    continue
+                collisions.append({
+                    "key": key, "system": item["system"],
+                    "filename": item["filename"],
+                    "existingRomUid": existing["rom_uid"] if existing else None,
+                    "existingFields": existing.get("fields") or {} if existing else {},
+                    "incomingFields": item.get("fields") or {},
+                    "existingTitle": ((existing.get("fields") or {}).get("name")
+                                      if existing else None) or item["filename"],
+                    "incomingTitle": (item.get("fields") or {}).get("name") or item["filename"],
+                    "existingDescription": ((existing.get("fields") or {}).get("desc")
+                                            if existing else None) or "",
+                    "incomingDescription": (item.get("fields") or {}).get("desc") or "",
+                })
+            op_id = uuid.uuid4().hex
+            if len(self._paste_ops) >= 20:
+                self._paste_ops.pop(next(iter(self._paste_ops)))
+            cut_source_id = descriptor.get("sourceCollectionId") if cut else None
+            if cut:
+                source_collection, source_cache, _ = self._plan_context(cut_source_id)
+                source_layouts = [get_adapter(source_collection.frontend).layout(source_collection, item["cutSourceSystem"])
+                                  for item in prepared]
+                if not undoable or not supports_local_undo(path for layout in source_layouts
+                    for path in (layout.rom_dir, layout.media_dir, layout.metadata_file)):
+                    return err("잘라내기는 현재 로컬 경로 사이에서만 지원합니다.")
+                if cut_source_id == collection_id and any(item["system"] == item["cutSourceSystem"] for item in prepared):
+                    return err("같은 System으로 이동할 수 없습니다.")
+            self._paste_ops[op_id] = {"collectionId": collection_id, "plan": plan,
+                                      "collisions": collisions, "prepared": prepared,
+                                      "undoable": undoable, "cutSourceId": cut_source_id}
+            return ok({"operationId": op_id, "source": descriptor.get("sourceName"),
+                       "action": "move" if cut else "paste", "count": len(prepared), "collisions": collisions,
+                       "undoable": undoable,
+                       "skipped": extra_skipped + result.get("skipped", [])})
         if mode in (transfer.MODE_OVERWRITE, transfer.MODE_REPLACE):
             # 덮어쓰기 모드: **미디어만** 충돌한 항목은 덮어쓴다(원하는 그림으로 바꾸려는 것이므로).
             # ROM이 충돌한 항목은 설정의 충돌 정책을 따른다 - 다른 ROM 파일을 덮어쓰는 것은
@@ -2342,6 +2623,282 @@ class Api:
         result["skipped"] = [*extra_skipped, *result.get("skipped", [])]
         return ok({**result, "source": descriptor.get("sourceName"), "policy": policy,
                    "downgradedFrom": downgraded_from})
+
+    @guarded
+    def operation_preview(self, collection_id, action, options=None):
+        """Build an isolated operation. There is no user-managed pending queue."""
+        options = options or {}
+        collection, cache, provider = self._plan_context(collection_id)
+        operation = Plan(collection_id)
+        if action == "title":
+            result = self.plan_title_edit(collection_id, options.get("romUids"),
+                                          options.get("system"), _operation=operation)
+        elif action == "disc":
+            result = self.plan_disc_retag(collection_id, options.get("system"),
+                                          options.get("format"), _operation=operation)
+        elif action == "move":
+            result = self.plan_move_to_system(collection_id, options.get("romUids"),
+                                              options.get("system"), _operation=operation)
+        elif action == "storage":
+            result = self.plan_storage_change(collection_id, options.get("system"),
+                                              options.get("storageId"), _operation=operation)
+        elif action == "archive-import":
+            result = self.archive_to_collection(collection_id, options.get("ids") or [],
+                options.get("mode"), options.get("targetRomUid"), _operation=operation)
+        elif action == "import":
+            result = self.collection_import_plan(collection_id, options.get("sourceId"),
+                options.get("romUids"), options.get("targetRomUid"), options.get("system"),
+                options.get("mode"), _operation=operation)
+        else:
+            return err("지원하지 않는 작업입니다.")
+        if not result["ok"]:
+            return result
+        return self._register_operation(collection_id, action, operation, result)
+
+    def _register_operation(self, collection_id, action, operation, result):
+        collection, cache, provider = self._plan_context(collection_id)
+        adapter = get_adapter(collection.frontend)
+        paths = []
+        for entry in operation.entries:
+            layout = adapter.layout(collection, entry.system)
+            paths.extend([layout.rom_dir, layout.metadata_file, layout.media_dir])
+        undoable = action != "storage" and supports_local_undo(paths)
+        prepared, collisions = [], []
+        for entry in operation.entries:
+            if entry.op != OP_ADD:
+                continue
+            entry.source = {**(entry.source or {}), "retainBackups": undoable}
+            item = {**entry.source, "system": entry.system, "filename": entry.filename}
+            prepared.append(item)
+            existing = cache.get_row_by_filename(entry.system, entry.filename)
+            if existing or entry.conflicts:
+                fields = (existing or {}).get("fields") or {}
+                incoming = item.get("fields") or {}
+                collisions.append({"key": transfer.item_key(item), "system": entry.system,
+                    "filename": entry.filename, "existingRomUid": (existing or {}).get("rom_uid"),
+                    "existingFields": fields, "incomingFields": incoming,
+                    "existingTitle": fields.get("name") or entry.filename,
+                    "incomingTitle": incoming.get("name") or entry.filename,
+                    "existingDescription": fields.get("desc") or "",
+                    "incomingDescription": incoming.get("desc") or ""})
+        operation_id = uuid.uuid4().hex
+        self._paste_ops[operation_id] = {"collectionId": collection_id, "plan": operation,
+            "prepared": prepared, "collisions": collisions, "undoable": undoable}
+        return ok({"operationId": operation_id, "action": action, "targetCollectionId": collection_id, "count": len({(e.system, e.filename) for e in operation.entries}),
+                   "collisions": collisions, "undoable": undoable,
+                   "skipped": result["data"].get("skipped", [])})
+
+    @guarded
+    def paste_execute(self, operation_id, decisions=None, acknowledge_non_undoable=False):
+        """미리 본 복사만 실행한다. 결정하지 않은 충돌은 안전하게 보류한다."""
+        op = self._paste_ops.get(str(operation_id))
+        if op is None:
+            return err("복사 미리보기가 만료되었습니다. 다시 붙여넣으세요.")
+        if op.get("target") == "archive":
+            return self._execute_archive_paste_operation(
+                str(operation_id), op, decisions or {}, acknowledge_non_undoable)
+        collection_id, plan = op["collectionId"], op["plan"]
+        if not op["undoable"] and not acknowledge_non_undoable:
+            return err("네트워크 또는 기기 경로의 작업은 자동 되돌리기를 보장할 수 없습니다. 실행 전 확인이 필요합니다.")
+        decisions = decisions or {}
+        expected = {c["key"] for c in op["collisions"]}
+        if any(decisions.get(key) not in ("overwrite", "skip") for key in expected):
+            return err("충돌한 게임마다 덮어쓰기 또는 건너뛰기를 선택하세요.")
+        collection, cache, provider = self._plan_context(collection_id)
+        for entry in list(plan.entries):
+            choice = decisions.get(f"{entry.system}|{entry.filename}")
+            if choice == "skip":
+                plan.remove(entry.key)
+                for dependent in list(plan.entries):
+                    if (dependent.source or {}).get("requiresCopy") == entry.key:
+                        plan.remove(dependent.key)
+            elif entry.conflicts:
+                builder.resolve_conflict(plan, collection, provider, entry.key,
+                                         RESOLVE_OVERWRITE)
+        if not len(plan):
+            self._paste_ops.pop(str(operation_id), None)
+            return ok({"jobId": None, "skipped": len(expected)})
+        report = validate(plan, collection, cache, provider)
+        if report["blocked"] or report["entries"]:
+            return err("대상 파일이 바뀌었거나 저장 공간이 부족합니다. 다시 붙여넣으세요.")
+        source_id = op.get("cutSourceId")
+        source_plan = None
+        if source_id:
+            source_collection, source_cache, source_provider = self._plan_context(source_id)
+            source_plan = Plan(source_id)
+            source_uids = []
+            for entry in plan.entries:
+                original = entry.source or {}
+                row = source_cache.get_row_by_filename(original["cutSourceSystem"], original["cutSourceFilename"])
+                if not row:
+                    return err("잘라낸 원본 게임이 바뀌었습니다. 다시 잘라내세요.")
+                source_uids.append(row["rom_uid"])
+            builder.plan_delete(source_plan, source_collection, source_cache, source_uids, source_provider)
+            target_adapter = get_adapter(collection.frontend)
+            source_adapter = get_adapter(source_collection.frontend)
+            from app.plan.builder import add_destinations
+            destination_paths = [Path(path) for entry in plan.entries
+                for _, path, _, _ in add_destinations(entry, target_adapter.layout(collection, entry.system), target_adapter)]
+            destination_paths += [Path(target_adapter.layout(collection, entry.system).metadata_file) for entry in plan.entries]
+            source_paths = [Path(path) for entry in source_plan.entries
+                for path in delete_destinations(entry, source_collection, source_cache, source_adapter)]
+            source_paths += [Path(source_adapter.layout(source_collection, entry.system).metadata_file) for entry in source_plan.entries]
+            def path_keys(paths):
+                names, identities = set(), set()
+                for path in set(paths):
+                    names.add(os.path.normcase(os.path.abspath(path)))
+                    try:
+                        stat = path.stat()
+                        if stat.st_ino:
+                            identities.add((stat.st_dev, stat.st_ino))
+                    except FileNotFoundError:
+                        pass
+                return names, identities
+            source_names, source_ids = path_keys(source_paths)
+            destination_names, destination_ids = path_keys(destination_paths)
+            if source_names & destination_names or source_ids & destination_ids:
+                return err("원본과 대상이 같은 파일을 참조해 이동할 수 없습니다. 복사를 사용하세요.")
+            source_report = validate(source_plan, source_collection, source_cache, source_provider)
+            if source_report["entries"] or source_report["blocked"]:
+                return err("잘라낸 원본 파일이 바뀌었습니다. 다시 잘라내세요.")
+        lock_name = f"apply:{collection_id}"
+        if not self.registry.acquire_lock(lock_name, kind="apply"):
+            return err("다른 창에서 같은 Collection을 적용하는 중입니다.")
+        source_lock = f"apply:{source_id}" if source_id and source_id != collection_id else None
+        if source_lock and not self.registry.acquire_lock(source_lock, kind="move"):
+            self.registry.release_lock(lock_name)
+            return err("원본 Collection에서 다른 작업이 진행 중입니다.")
+        self._paste_ops.pop(str(operation_id), None)
+
+        def run(progress):
+            journal_started = False
+            try:
+                if op["undoable"]:
+                    suffix = self._paste_journal.begin(operation_id, collection_id,
+                                                       collection, plan, extra_paths=[
+                        path for entry in plan.entries if entry.op == OP_DELETE
+                        for path in delete_destinations(entry, collection, cache,
+                                                       get_adapter(collection.frontend))])
+                    journal_started = True
+                    if source_plan:
+                        source_paths = [path for entry in source_plan.entries for path in delete_destinations(
+                            entry, source_collection, source_cache, get_adapter(source_collection.frontend))]
+                        self._paste_journal.include_source(operation_id, source_collection, source_plan, source_paths)
+                else:
+                    suffix = None
+                result = apply_plan(plan, collection, cache, self.registry, provider,
+                                    progress_cb=progress, disc_titles=self._disc_title_option(),
+                                    backup_suffix=suffix, retain_backups=op["undoable"],
+                                    rom_staging=op["undoable"], trash_suffix=suffix)
+                if source_plan and not (result.get("failed") or result.get("partial") or result.get("invalid")):
+                    moved = apply_plan(source_plan, source_collection, source_cache, self.registry,
+                                       source_provider, trash_suffix=suffix)
+                    for key in ("failed", "partial", "invalid"):
+                        result[key] = result.get(key, 0) + moved.get(key, 0)
+                    result["errors"] = result.get("errors", []) + moved.get("errors", [])
+                    self.workspace.scan(source_id, force=True, systems=[e.system for e in source_plan.entries] or
+                        sorted({item["cutSourceSystem"] for item in op["prepared"]}))
+                    if not (result.get("failed") or result.get("partial") or result.get("invalid")):
+                        current = clipboard.peek(self.registry) or {}
+                        if current.get("cut") and current.get("sourceCollectionId") == source_id:
+                            clipboard.clear(self.registry)
+                if journal_started:
+                    if result.get("failed") or result.get("partial") or result.get("invalid"):
+                        self._paste_journal.rollback_running(operation_id)
+                        result["rolledBack"] = True
+                        result["applied"] = 0
+                        if source_id:
+                            self.workspace.scan(source_id, force=True, systems=sorted({item["cutSourceSystem"] for item in op["prepared"]}))
+                    else:
+                        self._paste_journal.commit(operation_id)
+                        result["undoOperationId"] = operation_id
+                if result.get("systems"):
+                    self.workspace.scan(collection_id, force=True, systems=result["systems"])
+                self.registry.append_change(CHANGE_APPLIED, collection_id,
+                                            {"applied": result["applied"]})
+                return result
+            except Exception:
+                if journal_started:
+                    self._paste_journal.rollback_running(operation_id)
+                    if source_id:
+                        self.workspace.scan(source_id, force=True, systems=sorted({item["cutSourceSystem"] for item in op["prepared"]}))
+                raise
+            finally:
+                self.registry.release_lock(lock_name)
+                if source_lock:
+                    self.registry.release_lock(source_lock)
+
+        try:
+            job_id = self.jobs.run_heavy(run, mutates_state=True,
+                                         target_ids=tuple({collection_id, source_id} - {None}), kind="apply")
+        except Exception:
+            self.registry.release_lock(lock_name)
+            if source_lock:
+                self.registry.release_lock(source_lock)
+            raise
+        return ok({"jobId": job_id})
+
+    @guarded
+    def paste_preview_media(self, operation_id, key, media_type):
+        """현재 복사 미리보기의 작은 원본 이미지 하나만 필요할 때 읽는다."""
+        op = self._paste_ops.get(str(operation_id))
+        if op is None or str(media_type) not in ("covers", "screenshots"):
+            return ok(None)
+        item = next((i for i in op["prepared"] if transfer.item_key(i) == key), None)
+        if item is None:
+            return ok(None)
+        media = next((m for m in item.get("media") or []
+                      if (m.get("type") or m.get("media_type")) == media_type), None)
+        return ok(self._encode_image(media.get("path"), THUMBNAIL_MAX) if media else None)
+
+    @guarded
+    def paste_undo(self, collection_id):
+        """마지막 로컬 작업을 되돌린다. 이후 파일 변경이 있으면 거절한다."""
+        operation_id = self._paste_journal.latest_committed(collection_id)
+        if not operation_id:
+            return err("되돌릴 수 있는 로컬 작업이 없습니다.")
+        lock_name = f"apply:{collection_id}"
+        if not self.registry.acquire_lock(lock_name, kind="undo"):
+            return err("다른 창에서 같은 Collection을 수정하는 중입니다.")
+
+        related_ids = self._paste_journal.details(operation_id).get("relatedCollections", {})
+        acquired_related = []
+        for related_id in sorted(related_ids):
+            if related_id == collection_id:
+                continue
+            related_lock = f"apply:{related_id}"
+            if not self.registry.acquire_lock(related_lock, kind="undo"):
+                for held in acquired_related:
+                    self.registry.release_lock(held)
+                self.registry.release_lock(lock_name)
+                return err("원본 Collection에서 다른 작업이 진행 중입니다.")
+            acquired_related.append(related_lock)
+
+        def run(progress):
+            try:
+                progress(0, 1, "파일 상태 확인 중")
+                restored = self._paste_journal.undo(operation_id)
+                if restored["systems"]:
+                    self.workspace.scan(collection_id, force=True, systems=restored["systems"])
+                for related_id, systems in restored.get("relatedCollections", {}).items():
+                    if related_id != collection_id:
+                        self.workspace.scan(related_id, force=True, systems=systems)
+                progress(1, 1, "되돌리기 완료")
+                return {"operationId": operation_id, "systems": restored["systems"]}
+            finally:
+                self.registry.release_lock(lock_name)
+                for held in acquired_related:
+                    self.registry.release_lock(held)
+
+        try:
+            job_id = self.jobs.run_heavy(run, mutates_state=True,
+                                         target_ids=tuple({collection_id, *related_ids}), kind="apply")
+        except Exception:
+            self.registry.release_lock(lock_name)
+            for held in acquired_related:
+                self.registry.release_lock(held)
+            raise
+        return ok({"jobId": job_id})
 
     def _disc_title_option(self) -> dict:
         """여러 장짜리 게임의 제목 뒤에 장 번호를 붙일지(사용자 결정 - 기본은 끔).
@@ -2502,6 +3059,7 @@ class Api:
     # Archive (스펙 §37-44)
     # ------------------------------------------------------------------
     @guarded
+    @archive_write
     def archive_ingest(self, collection_id, rom_uids=None, scope=None):
         """동기 수집. 프로그램 호출과 테스트용이다.
 
@@ -2576,16 +3134,17 @@ class Api:
                  collection_id, kind, (scope or {}).get("system"), len(uids))
 
         def run(cb):
-            result = archive_service.ingest_collection(
-                self.archive, collection, cache, uids, progress_cb=cb)
-            log.info("archive ingest done: scope=%s requested=%d ingested=%d",
-                     kind, len(uids), len(result["ingestedRomUids"]))
-            # **cb를 여기도 넘긴다.** 안 넘기면 DB 수집이 끝나 진행률이 100%를 찍은 뒤에도
-            # gamelist.xml/media 쓰기가 조용히 이어져서(전송량이 큰 Archive는 이 단계가
-            # 더 오래 걸린다), 막대는 100%에서 멈춘 것처럼 보이고 취소도 다음 progress_cb
-            # 호출까지 반영되지 않아 안 먹는 것처럼 보였다(실사용 버그 리포트).
-            projection = self._project_archive(result, result["romIdentityIds"], progress_cb=cb)
-            return {**result, "scope": kind, "projection": projection}
+            with archive_writing(self._archive_config()["archiveDir"]):
+                result = archive_service.ingest_collection(
+                    self.archive, collection, cache, uids, progress_cb=cb)
+                log.info("archive ingest done: scope=%s requested=%d ingested=%d",
+                         kind, len(uids), len(result["ingestedRomUids"]))
+                # **cb를 여기도 넘긴다.** 안 넘기면 DB 수집이 끝나 진행률이 100%를 찍은 뒤에도
+                # gamelist.xml/media 쓰기가 조용히 이어져서(전송량이 큰 Archive는 이 단계가
+                # 더 오래 걸린다), 막대는 100%에서 멈춘 것처럼 보이고 취소도 다음 progress_cb
+                # 호출까지 반영되지 않아 안 먹는 것처럼 보였다(실사용 버그 리포트).
+                projection = self._project_archive(result, result["romIdentityIds"], progress_cb=cb)
+                return {**result, "scope": kind, "projection": projection}
 
         job_id = self.jobs.run_heavy(run, mutates_state=True, target_ids=(collection_id,),
                                      kind="archive-ingest")
@@ -2805,8 +3364,9 @@ class Api:
         return ok({"system": target, "items": items, "duplicates": duplicates})
 
     @guarded
+    @archive_write
     def archive_paste(self, mode=None, target_rom_identity_id=None, target_system=None,
-                      new_only=False):
+                      new_only=False, immediate=False):
         """Paste handoff items into Archive using the shared transfer policy.
 
         ROM bytes are internalized under Archive's configured ROM root and are
@@ -2816,9 +3376,32 @@ class Api:
         cfg = self._archive_config()
         if not archive_projection.is_configured(cfg):
             return err("Archive 디렉토리를 먼저 설정하세요.")
-        _descriptor, source_items = clipboard.read_items(self.registry)
+        descriptor, source_items = clipboard.read_items(self.registry)
         if not source_items:
             return err("붙여넣을 항목이 없습니다.")
+        if immediate:
+            preview = archive_paste_service.prepare(
+                self.archive, cfg, source_items, mode,
+                target_id=target_rom_identity_id, target_system=target_system,
+                new_only=bool(new_only))
+            if not preview["prepared"]:
+                return ok({"count": 0, "skipped": preview["skipped"]})
+            operation_id = uuid.uuid4().hex
+            if len(self._paste_ops) >= 20:
+                self._paste_ops.pop(next(iter(self._paste_ops)))
+            self._paste_ops[operation_id] = {
+                **preview, "target": "archive", "config": dict(cfg),
+                "collectionId": "__archive__", "undoable": False}
+            return ok({"operationId": operation_id, "target": "archive",
+                       "source": descriptor.get("sourceName"),
+                       "count": len(preview["prepared"]), "undoable": False,
+                       "collisions": preview["collisions"], "skipped": preview["skipped"]})
+        return self._archive_paste_items(
+            cfg, source_items, mode, target_rom_identity_id, target_system, new_only)
+
+    def _archive_paste_items(self, cfg, source_items, mode=None,
+                             target_rom_identity_id=None, target_system=None,
+                             new_only=False, progress_cb=None):
         log.info("Archive paste requested mode=%s items=%d targetSystem=%s targetRow=%s newOnly=%s",
                  mode, len(source_items), target_system, target_rom_identity_id, new_only)
         if target_rom_identity_id and len(source_items) != 1:
@@ -2841,8 +3424,6 @@ class Api:
         rom_root = Path(cfg["romDir"] or cfg["archiveDir"])
         normalized_mode = transfer.normalize_mode(mode)
         downgraded_from = None
-        if normalized_mode == transfer.MODE_REPLACE and len(source_items) > 1:
-            downgraded_from, normalized_mode = normalized_mode, transfer.MODE_PATCH
         pasted = copied_roms = 0
         skipped, conflicts, changed_ids, record_ids = [], [], [], []
         overwrite_media = {}
@@ -2878,8 +3459,10 @@ class Api:
             existing = None
             if identity:
                 existing_fields, existing_raw = self.archive.resolve_fields(identity["rom_identity_id"])
-                existing_media = list(archive_projection.effective_media(
-                    self.archive, identity["rom_identity_id"]).values())
+                existing_media = [
+                    {**media, "rel_path": media.get("abs_path")}
+                    for media in archive_projection.effective_media(
+                        self.archive, identity["rom_identity_id"]).values()]
                 existing = {
                     "system": identity["system"],
                     "filename": identity["filename"] or identity["filename_norm"],
@@ -2889,7 +3472,9 @@ class Api:
                     "fields": existing_fields, "frontend_raw": existing_raw,
                     "media": existing_media,
                 }
-            prepared, reason = transfer.decide(item, existing, normalized_mode)
+            prepared, reason = transfer.decide(
+                item, existing, normalized_mode,
+                force_media=normalized_mode == transfer.MODE_REPLACE)
             if prepared is None:
                 skipped.append({"filename": filename, "reason": reason})
                 continue
@@ -2954,13 +3539,50 @@ class Api:
 
         projection = self._project_archive(
             {"revisionRecordIds": record_ids}, changed_ids,
-            overwrite_media=overwrite_media) if changed_ids else None
+            overwrite_media=overwrite_media, progress_cb=progress_cb) if changed_ids else None
         log.info("Archive paste completed pasted=%d romsCopied=%d skipped=%d conflicts=%d",
                  pasted, copied_roms, len(skipped), len(conflicts))
         return ok({"pasted": pasted, "copiedRoms": copied_roms,
                    "policy": {"pasteMode": normalized_mode},
                    "downgradedFrom": downgraded_from,
                    "skipped": skipped, "conflicts": conflicts, "projection": projection})
+
+    def _execute_archive_paste_operation(self, operation_id, op, decisions, acknowledged):
+        if not acknowledged:
+            return err("마스터 붙여넣기의 파일 복원은 아직 보장하지 못합니다. 실행 전 확인이 필요합니다.")
+        if op["config"] != self._archive_config():
+            return err("마스터 디렉토리 설정이 바뀌었습니다. 다시 붙여넣으세요.")
+        if not archive_paste_service.unchanged(self.archive, op):
+            return err("마스터의 대상 게임이 바뀌었습니다. 다시 붙여넣으세요.")
+        expected = {item["key"] for item in op["collisions"]}
+        if any(decisions.get(key) not in {"overwrite", "skip"} for key in expected):
+            return err("충돌한 게임마다 덮어쓰기 또는 건너뛰기를 선택하세요.")
+        selected = [item for item in op["prepared"]
+                    if decisions.get(transfer.item_key(item)) != "skip"]
+        if not selected:
+            self._paste_ops.pop(operation_id, None)
+            return ok({"jobId": None, "skipped": len(expected)})
+        def run(progress):
+            with archive_writing(self._archive_config()["archiveDir"]):
+                with self._archive_lifecycle_lock:
+                    if not archive_paste_service.unchanged(self.archive, op):
+                        raise ValueError("마스터의 대상 게임이 바뀌었습니다. 다시 붙여넣으세요.")
+                    result = self._archive_paste_items(
+                        op["config"], selected, op["mode"], progress_cb=progress)
+                    if not result["ok"]:
+                        raise ValueError(result["error"])
+                    data = result["data"]
+                    projection = data.get("projection") or {}
+                    incomplete = (projection.get("error") or
+                                  (projection.get("sharedSnapshot") or {}).get("status")
+                                  in {"error", "conflict"})
+                    return {"applied": data["pasted"], "failed": 0,
+                            "partial": data["pasted"] if incomplete else 0,
+                            "archive": data}
+        self._paste_ops.pop(operation_id, None)
+        job_id = self.jobs.run_heavy(run, mutates_state=True,
+                                     target_ids=("archive",), kind="archive-paste")
+        return ok({"jobId": job_id})
 
     @guarded
     def archive_systems(self):
@@ -3235,7 +3857,15 @@ class Api:
     def archive_config(self):
         """Archive 설정(Frontend 형식 / 디렉토리 / ROM 디렉토리 / media 보관)."""
         cfg = self._archive_config()
-        return ok({**cfg, "configured": archive_projection.is_configured(cfg)})
+        return ok({**cfg, "configured": archive_projection.is_configured(cfg),
+                   "editLock": archive_lock_status(cfg["archiveDir"]) if cfg.get("archiveDir") else None})
+
+    @guarded
+    def archive_release_edit_lock(self, observed_token, acknowledged=False):
+        cfg = self._archive_config()
+        if not cfg.get("archiveDir"):
+            return err("Archive 디렉토리가 설정되지 않았습니다.")
+        return ok(release_archive_orphan(cfg["archiveDir"], observed_token, acknowledged))
 
     @guarded
     def save_archive_config(self, patch):
@@ -3276,6 +3906,7 @@ class Api:
                    "needsApply": bool(moved and archive_projection.is_configured(new)),
                    "hasLegacy": archive_legacy.has_legacy(new["archiveDir"])})
 
+    @archive_write
     def _apply_archive_config(self, progress_cb=None) -> dict:
         """이전 버전 Archive가 있으면 가져오고, Archive 전체를 설정한 디렉토리/형식으로 쓴다."""
         cfg = self._archive_config()
@@ -3349,6 +3980,7 @@ class Api:
                                          target_ids=("archive",), kind="archive-apply")
         return ok({"jobId": job_id})
 
+    @archive_write
     def _project_archive(self, result, rom_identity_ids=None, progress_cb=None,
                          overwrite_media=None):
         """Archive가 바뀐 뒤 설정된 디렉토리에 반영한다. 설정이 없으면 아무것도 안 한다."""
@@ -3363,9 +3995,11 @@ class Api:
                     if edited:
                         record_ids.append(edited["record_id"])
             archive_projection.snapshot_revision_media(self.archive, cfg, record_ids)
-            return archive_projection.project(self.archive, cfg, rom_identity_ids,
-                                              overwrite_media=overwrite_media,
-                                              progress_cb=progress_cb)
+            projected = archive_projection.project(self.archive, cfg, rom_identity_ids,
+                                                    overwrite_media=overwrite_media,
+                                                    progress_cb=progress_cb)
+            projected["sharedSnapshot"] = self._publish_archive_snapshot(cfg)
+            return projected
         except JobCancelled:
             # job의 progress_cb가 던진다(bridge/jobs.py) - 그대로 올려보내야
             # worker()가 "취소되었습니다"로 끝낸다. 여기서 삼키면 media 복사 중
@@ -3398,6 +4032,7 @@ class Api:
         return ok({"romIdentityId": rom_identity_id, "versions": versions})
 
     @guarded
+    @archive_write
     def archive_choose_version(self, rom_identity_id, record_id):
         """버전 하나를 고른다 - 이후 그 버전이 쓰이고 `[n]`은 사라진다."""
         result = archive_service.set_preferred(self.archive, rom_identity_id, int(record_id))
@@ -3419,7 +4054,7 @@ class Api:
         return item["rel_path"] if item else None
 
     @guarded
-    def media_paste(self, collection_id, rom_uid, media_key, source):
+    def media_paste(self, collection_id, rom_uid, media_key, source, immediate=False):
         """**Collection의 게임 한 개에 그림 한 장만 갈아 끼운다**(사용자 결정 - "특정 media를 복사하고
         타겟 media에서 붙여넣기").
 
@@ -3445,14 +4080,17 @@ class Api:
             # 메타데이터는 지금 값을 그대로 둔다 - 그림 한 장만 바꾸는 것이다.
             "fields": row["fields"], "frontend_raw": row["frontend_raw"],
         }
-        plan = self._plan(collection_id)
+        plan = Plan(collection_id) if immediate else self._plan(collection_id)
         result = builder.plan_add(plan, collection, provider, item and [item])
         for key in result.pop("conflictKeys", []):
             builder.resolve_conflict(plan, collection, provider, key, RESOLVE_OVERWRITE)
         result["conflicts"] = 0
+        if immediate:
+            return self._register_operation(collection_id, "media", plan, ok(result))
         return ok({**result, "mediaType": media_type, "romUid": int(rom_uid)})
 
     @guarded
+    @archive_write
     def archive_media_paste(self, rom_identity_id, media_key, source):
         """다른 항목(Collection 또는 Archive)의 media 하나를 이 Archive 항목에 붙인다.
 
@@ -3531,7 +4169,7 @@ class Api:
         return ok({"romIdentityId": rom_identity_id, "mediaType": media_type, "projection": projection})
 
     @guarded
-    def import_media_image(self, target, collection_id, item_id, media_key, encoded):
+    def import_media_image(self, target, collection_id, item_id, media_key, encoded, immediate=False):
         """Stage a validated local image, then reuse the normal media paste path."""
         if str(target) not in ("archive", "collection"):
             return err("미디어 대상이 올바르지 않습니다.")
@@ -3541,7 +4179,7 @@ class Api:
         source = {"kind": "scraper", "path": str(path)}
         if str(target) == "archive":
             return self.archive_media_paste(str(item_id), media_key, source)
-        return self.media_paste(str(collection_id), item_id, media_key, source)
+        return self.media_paste(str(collection_id), item_id, media_key, source, immediate=immediate)
 
     def _archive_edit_media_state(self, rom_identity_id):
         """Latest Archive edit media as a complete, per-type mutable snapshot."""
@@ -3550,6 +4188,7 @@ class Api:
         return {item["media_type"]: dict(item) for item in items}
 
     @guarded
+    @archive_write
     def archive_media_delete(self, rom_identity_id, media_key):
         """Remove the currently effective source link for one media type.
 
@@ -3605,6 +4244,7 @@ class Api:
                    "projection": projection})
 
     @guarded
+    @archive_write
     def archive_refresh(self):
         """Archive 디렉토리를 다시 읽어 DB에 없는 항목(직접 넣은 ROM, 고친 gamelist)을 채운다."""
         cfg = self._archive_config()
@@ -3627,27 +4267,28 @@ class Api:
         provider = storage.for_path(cfg["archiveDir"])
         queued_at = time.perf_counter()
         def refresh(cb):
-            log.info("Archive refresh started after %.3fs wait", time.perf_counter() - queued_at)
-            started_at = time.perf_counter()
-            try:
-                cb(0, 1000, "다른 PC의 Archive 변경 확인")
-                pulled = self._pull_archive_snapshot(cfg)
-                if pulled["status"] == "conflict":
-                    raise ValueError("다른 PC의 Archive DB와 이 PC의 수정 내용이 달라 자동으로 합칠 수 없습니다.")
-                result = archive_directory.sync_from_directory(
-                    self.archive, cfg, provider, progress_cb=cb)
-                result["sharedPull"] = pulled
-                result["scanSeconds"] = round(time.perf_counter() - started_at, 3)
-                result["sharedSnapshot"] = self._publish_archive_snapshot(cfg)
-                log.info("Archive refresh scan: %.3fs, systems=%s, stages=%s",
-                         result["scanSeconds"], result["systems"], result.get("timings"))
-                return result
-            except JobCancelled:
-                log.info("Archive refresh cancelled after %.3fs", time.perf_counter() - started_at)
-                raise
-            except Exception:
-                log.exception("Archive refresh failed after %.3fs", time.perf_counter() - started_at)
-                raise
+            with archive_writing(self._archive_config()["archiveDir"]):
+                log.info("Archive refresh started after %.3fs wait", time.perf_counter() - queued_at)
+                started_at = time.perf_counter()
+                try:
+                    cb(0, 1000, "다른 PC의 Archive 변경 확인")
+                    pulled = self._pull_archive_snapshot(cfg)
+                    if pulled["status"] == "conflict":
+                        raise ValueError("다른 PC의 Archive DB와 이 PC의 수정 내용이 달라 자동으로 합칠 수 없습니다.")
+                    result = archive_directory.sync_from_directory(
+                        self.archive, cfg, provider, progress_cb=cb)
+                    result["sharedPull"] = pulled
+                    result["scanSeconds"] = round(time.perf_counter() - started_at, 3)
+                    result["sharedSnapshot"] = self._publish_archive_snapshot(cfg)
+                    log.info("Archive refresh scan: %.3fs, systems=%s, stages=%s",
+                             result["scanSeconds"], result["systems"], result.get("timings"))
+                    return result
+                except JobCancelled:
+                    log.info("Archive refresh cancelled after %.3fs", time.perf_counter() - started_at)
+                    raise
+                except Exception:
+                    log.exception("Archive refresh failed after %.3fs", time.perf_counter() - started_at)
+                    raise
         log.info("Archive refresh requested")
         with self._archive_lifecycle_lock:
             job_id = self.jobs.run_heavy(
@@ -3664,6 +4305,7 @@ class Api:
         return ok({"digest": archive_shared_cache.fingerprint(source)})
 
     @guarded
+    @archive_write
     def archive_resolve_shared_conflict(self, choice, observed_digest):
         if choice not in ("local", "shared"):
             return err("Archive 충돌 해결 방법을 선택하세요.")
@@ -3683,6 +4325,7 @@ class Api:
             return ok(result)
 
     @guarded
+    @archive_write
     def archive_project(self):
         """Archive 전체를 설정된 디렉토리에 다시 쓴다(복구/재배치용)."""
         cfg = self._archive_config()
@@ -3693,6 +4336,7 @@ class Api:
         return ok(archive_projection.project(self.archive, cfg))
 
     @guarded
+    @archive_write
     def archive_edit(self, rom_identity_id, fields):
         """Archive의 Metadata를 고친다. **Collection에는 반영되지 않는다**(§40)."""
         result = archive_service.edit(self.archive, rom_identity_id, fields)
@@ -3700,6 +4344,7 @@ class Api:
         return ok(result)
 
     @guarded
+    @archive_write
     def archive_metadata_delete(self, rom_identity_ids):
         """Hide effective metadata while retaining ROM, media, and source history."""
         ids = [str(value) for value in (rom_identity_ids or [])]
@@ -3729,6 +4374,7 @@ class Api:
         return ok({"cleared": cleared, "failures": failures})
 
     @guarded
+    @archive_write
     def archive_set_favorite(self, rom_identity_id, favorite=True):
         """즐겨찾기를 켜고 끈다. **Collection과 같은 방식이다**(사용자 결정).
 
@@ -3767,6 +4413,7 @@ class Api:
         return ok({"romIdentityId": rom_identity_id, "favorite": bool(favorite)})
 
     @guarded
+    @archive_write
     def archive_delete(self, rom_identity_ids):
         """Archive에서 이 항목들의 기록을 지운다.
 
@@ -3826,6 +4473,7 @@ class Api:
         return ok({"eligible": eligible, "blocked": blocked})
 
     @guarded
+    @archive_write
     def archive_delete_owned(self, rom_identity_ids):
         """Delete a fully Archive-owned game including its Archive files.
 
@@ -3930,6 +4578,7 @@ class Api:
         return ok({"items": changes, "changed": sum(1 for c in changes if c["changed"])})
 
     @guarded
+    @archive_write
     def archive_apply_title_affix(self, system, rom_identity_ids=None):
         """미리보기에서 확인한 대로 **바로** 적용한다. Archive는 Plan을 거치지
         않는다(D1 - 텍스트만 바뀌고 바이트는 안 움직인다) - archive_edit()과 같은
@@ -3948,6 +4597,7 @@ class Api:
         return ok({"items": changes, "changed": sum(1 for c in changes if c["changed"])})
 
     @guarded
+    @archive_write
     def archive_apply_disc_retag(self, system, fmt=None):
         rows = self._archive_title_affix_rows(system)
         fmt = fmt or self._disc_title_option()["format"]
@@ -3987,6 +4637,7 @@ class Api:
              "title": r["title"]} for r in rows]})
 
     @guarded
+    @archive_write
     def archive_cleanup_orphans(self, system):
         rows = [r for r in self.archive.list_rows(systems=[system], limit=None)
                 if not r["rom_count"]]
@@ -4011,6 +4662,7 @@ class Api:
         return ok({"path": parent})
 
     @guarded
+    @archive_write
     def archive_rom_delete(self, rom_identity_ids):
         """Delete only ROM files that are inside Archive's configured ROM root.
 
@@ -4078,6 +4730,7 @@ class Api:
             counts.values(), key=lambda item: (-item["count"], item["type"]))})
 
     @guarded
+    @archive_write
     def archive_media_delete_selected(self, rom_identity_ids, part):
         """Delete only Archive-owned media/video for selected identities."""
         if part not in ("media", "video"):
@@ -4108,6 +4761,7 @@ class Api:
         return ok({"removed": removed, "linkedKept": linked_kept, "failures": failures})
 
     @guarded
+    @archive_write
     def archive_media_delete_system(self, system, media_types=None):
         """Remove selected Archive-owned media types from one System."""
         selected = (set(str(media_type) for media_type in media_types)
@@ -4137,6 +4791,7 @@ class Api:
         return ok({"removed": removed, "linkedKept": linked_kept, "failures": failures})
 
     @guarded
+    @archive_write
     def archive_delete_system(self, system):
         """"시스템 전체 삭제"의 Archive판 - 그 System의 Identity를 전부 지운다.
         archive_delete()와 같은 이유로 실제 ROM/Media 파일은 그대로다."""
@@ -4149,17 +4804,19 @@ class Api:
         return ok(self.archive.revisions_of(rom_identity_id, source_collection_id))
 
     @guarded
+    @archive_write
     def archive_set_preferred(self, rom_identity_id, record_id):
         """이 Revision을 Preferred로 지정한다(정책 §8). 내용은 바뀌지 않는다."""
         return ok(archive_service.set_preferred(self.archive, rom_identity_id, int(record_id)))
 
     @guarded
+    @archive_write
     def archive_clear_preferred(self, rom_identity_id):
         return ok(archive_service.clear_preferred(self.archive, rom_identity_id))
 
     @guarded
     def archive_to_collection(self, collection_id, rom_identity_ids, mode=None,
-                              target_rom_uid=None):
+                              target_rom_uid=None, _operation=None):
         """Archive 항목의 메타데이터와 파일을 함께 Plan에 담는다."""
         collection, cache, provider = self._plan_context(collection_id)
         blocked = self._ensure_file_ops(collection)
@@ -4189,9 +4846,10 @@ class Api:
                   "frontend_raw": item.get("frontend_raw") or {}
                   if target_adapter.raw_is_mine(item.get("frontend_raw") or {}) else {}}
                  for item in result["items"]]
-        prepared, skipped = transfer.prepare(items, cache, mode or policy["pasteMode"])
+        prepared, skipped = transfer.prepare(items, cache, mode or policy["pasteMode"],
+                                             exact_only=target_row is None)
         added = {"added": 0, "skipped": [], "conflicts": 0}
-        plan = self._plan(collection_id)
+        plan = _operation if _operation is not None else self._plan(collection_id)
         if prepared:
             added = builder.plan_add(plan, collection, provider, prepared)
         keys = list(dict.fromkeys(added.get("keys", [])))
@@ -4217,7 +4875,7 @@ class Api:
 
     @guarded
     def collection_import_plan(self, target_id, source_id, rom_uids=None,
-                               target_rom_uid=None, target_system=None, mode=None):
+                               target_rom_uid=None, target_system=None, mode=None, _operation=None):
         if source_id == target_id:
             return err("다른 Collection을 출처로 선택하세요.")
         target, target_cache, provider = self._plan_context(target_id)
@@ -4241,7 +4899,7 @@ class Api:
             ids = [row["rom_uid"] for row in source_cache.all_entries()
                    if wanted is None or normalize_system(source.frontend, row["system"]) == wanted]
         result = collection_import.plan_import(
-            self._plan(target_id), source, source_cache, target, target_cache, provider,
+            _operation if _operation is not None else self._plan(target_id), source, source_cache, target, target_cache, provider,
             ids, mode=mode or self._transfer_policy()["pasteMode"],
             policy=self._transfer_policy(), target_row=target_row,
             target_system=target_system)
@@ -4348,7 +5006,7 @@ class Api:
         return ok(convert_service.preview(source, cache, target))
 
     @guarded
-    def start_convert(self, source_collection_id, target_collection_id):
+    def start_convert(self, source_collection_id, target_collection_id, immediate=False):
         """변환 결과를 target의 Plan에 올린다. Auto Plan이 꺼져 있어도 여기서는
         파일을 건드리지 않는다 - 확정은 언제나 Apply의 몫이다."""
         if source_collection_id == target_collection_id:
@@ -4358,8 +5016,11 @@ class Api:
             return err("원본 Collection을 찾을 수 없습니다.")
         source_cache = self.workspace.open(source_collection_id)
         target, _cache, provider = self._plan_context(target_collection_id)
-        result = convert_service.plan_convert(self._plan(target_collection_id), source,
+        operation = Plan(target_collection_id) if immediate else self._plan(target_collection_id)
+        result = convert_service.plan_convert(operation, source,
                                               source_cache, target, provider)
+        if immediate:
+            return self._register_operation(target_collection_id, "convert", operation, ok(result))
         return ok(result)
 
     # ------------------------------------------------------------------
@@ -4501,8 +5162,28 @@ class Api:
         return {**side, "collectionId": collection_id, "romPath": rom_path}
 
     @guarded
+    def compare_operation_preview(self, options=None):
+        options = options or {}
+        if not self._compare:
+            return err("Compare Mode가 아닙니다.")
+        direction = options.get("direction")
+        operation = Plan("")
+        if options.get("sourceKey"):
+            result = self.compare_manual_copy(options["sourceKey"], options.get("targetKey"),
+                options.get("mode"), _operation=operation)
+        else:
+            result = self.compare_copy_rows(options.get("keys"), direction,
+                metadata_only=options.get("metadataOnly", True), overwrite=False,
+                media_types=options.get("mediaTypes"), _operation=operation)
+        if not result["ok"]:
+            return result
+        target_id = result["data"]["targetId"]
+        operation.collection_id = target_id
+        return self._register_operation(target_id, "compare", operation, result)
+
+    @guarded
     def compare_copy_rows(self, keys, direction, metadata_only=True, overwrite=True, mode=None,
-                          media_types=None):
+                          media_types=None, _operation=None):
         """**고른 여러 행**을 한 번에 반대쪽 Plan에 올린다(사용자 결정 - Compare 상단의 `<` `>`는
         "선택된 항목들의 메타데이터+미디어를 좌/우측으로 overwrite").
 
@@ -4521,7 +5202,7 @@ class Api:
         for key in keys:
             result = self.compare_copy_row(key, direction, metadata_only=metadata_only,
                                            overwrite=overwrite, mode=mode,
-                                           media_types=media_types)
+                                           media_types=media_types, _operation=_operation)
             if not result["ok"]:
                 skipped.append({"key": key, "reason": result["error"]})
                 continue
@@ -4536,7 +5217,7 @@ class Api:
                    "metadataOnly": bool(metadata_only)})
 
     @guarded
-    def compare_manual_copy(self, source_key, target_key, mode=None):
+    def compare_manual_copy(self, source_key, target_key, mode=None, _operation=None):
         """**사용자가 직접 이은 두 항목** 사이의 전송(제안서 §5, §15.3-15.4).
 
         자동 짝짓기는 파일명/제목이 비슷할 때만 잇는다. `Final Fantasy 7.zip`과 `ff7.rom`처럼
@@ -4587,7 +5268,7 @@ class Api:
             return ok({"added": 0, "skipped": skipped, "conflicts": 0, "targetId": target_id,
                        "targetName": target.name, "targetFile": other["filename"]})
 
-        plan = self._plan(target_id)
+        plan = _operation if _operation is not None else self._plan(target_id)
         result = builder.plan_add(plan, target, provider, prepared)
         for conflict_key in result.pop("conflictKeys", []):
             # 직접 지목해서 보낸 것이다 - 이번에 생긴 media 충돌은 다시 묻지 않는다.
@@ -4600,7 +5281,7 @@ class Api:
 
     @guarded
     def compare_copy_row(self, key, direction, metadata_only=False, overwrite=False, mode=None,
-                         media_types=None):
+                         media_types=None, _operation=None):
         """Compare 한 행을 반대쪽 Collection의 **Plan에 올린다**(사용자 결정 - "모든 변경은
         PLAN 기준 / 실제 Apply를 눌러야 적용").
 
@@ -4663,7 +5344,7 @@ class Api:
                            "conflicts": 0, "targetId": target_id, "targetName": target.name,
                            "direction": direction, "metadataOnly": bool(metadata_only)})
             items = [out]
-        plan = self._plan(target_id)
+        plan = _operation if _operation is not None else self._plan(target_id)
         result = builder.plan_add(plan, target, provider, items)
         keys = result.pop("conflictKeys", [])
         if overwrite and keys:

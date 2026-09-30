@@ -111,9 +111,9 @@ test.describe("Gamelist 우클릭 - 선택한 게임에 적용", () => {
 
     await rightClickRow(page, "Final Fantasy X");
     await menuItem(page, "제목 앞·뒤 태그 적용…").click();
-    await modalButton(page, "Plan에 추가").click();
-    await expect(page.locator(".toast-msg")).toContainText("Plan에 올렸습니다");
-    await expect(page.locator(".lrow", { hasText: "Final Fantasy X" }).locator(".status-mark.edit")).toBeVisible();
+    await modalButton(page, "적용").click();
+    await expect(page.locator(".toast-msg")).toContainText("제목 변경");
+    await expect(page.locator(".lrow", { hasText: "KR_Final Fantasy X" })).toBeVisible();
   });
 
   test("여러 개를 선택하면 그 개수만큼 대상이 되고 메뉴에 개수가 보인다", async ({ page }) => {
@@ -142,8 +142,8 @@ test.describe("System 우클릭 - 전체 일괄 적용", () => {
     await expect(page.locator(".modal-text")).toContainText("PS2");
     await expect(page.locator(".modal-text")).toContainText("1개");
 
-    await modalButton(page, "Plan에 추가").click();
-    await expect(page.locator(".toast-msg")).toContainText("1개를 Plan에 올렸습니다");
+    await modalButton(page, "적용").click();
+    await expect(page.locator(".toast-msg")).toContainText("제목 변경");
   });
 
   test("아무 구역도 안 켜져 있으면 System 메뉴 항목도 흐리게 나온다", async ({ page }) => {
@@ -196,19 +196,11 @@ test.describe("공유 계산 모듈(gui_web/title-affix.js)", () => {
 });
 
 test.describe("Apply로 실제 반영", () => {
-  test("Plan에 올린 뒤 Apply하면 목록의 제목이 바뀌고 표시가 사라진다", async ({ page }) => {
+  test("확인하면 제목이 직접 반영되고 별도 Apply 버튼은 없다", async ({ page }) => {
     await configureRegion(page, "kr", { mode: "prefix", text: "KR" });
     await rightClickRow(page, "Final Fantasy X");
     await menuItem(page, "제목 앞·뒤 태그 적용…").click();
-    await modalButton(page, "Plan에 추가").click();
-
-    const row = page.locator(".lrow", { hasText: "Final Fantasy X" });
-    await expect(row.locator(".status-mark.edit")).toBeVisible();
-
-    await page.locator("#filter-bar .plan-actions .seg-btn", { hasText: "Apply" }).click();
-    // Apply는 항상 확인 대화상자를 먼저 보여준다(추가/삭제/이동/편집 요약).
-    await expect(page.locator(".modal-text")).toContainText("편집 1");
-    await page.locator(".modal-actions .btn.primary").click();
+    await modalButton(page, "적용").click();
 
     await expect(page.locator(".lrow", { hasText: "KR_Final Fantasy X" })).toBeVisible();
     await expect(page.locator(".lrow", { hasText: "KR_Final Fantasy X" }).locator(".status-mark.edit")).toHaveCount(0);

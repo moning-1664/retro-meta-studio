@@ -217,6 +217,30 @@ class CompareApiTests(unittest.TestCase):
     def tearDown(self):
         self.api.close()
 
+    def test_immediate_compare_has_no_pending_queue_and_supports_undo(self):
+        from tests.fixtures import wait_job
+        self.api.start_compare(self.base, self.other)
+        preview = self.api.compare_operation_preview({"keys": ["ps2|Conflict.iso"],
+            "direction": "toRight", "metadataOnly": True})
+        self.assertTrue(preview["ok"], preview.get("error"))
+        data = preview["data"]
+        self.assertEqual(data["targetCollectionId"], self.other)
+        self.assertEqual(self.api.plan_state(self.other)["data"]["total"], 0)
+        decisions = {c["key"]: "overwrite" for c in data["collisions"]}
+        started = self.api.paste_execute(data["operationId"], decisions)
+        self.assertTrue(started["ok"], started.get("error"))
+        result = wait_job(self.api, started["data"]["jobId"])
+        self.assertFalse(result.get("error"), result.get("error"))
+        rows = self.api.list_rows(self.other)["data"]["rows"]
+        row = next(r for r in rows if r["file"] == "Conflict.iso")
+        self.assertEqual(self.api.workspace.open(self.other).get_row(row["romUid"])["fields"]["genre"], "RPG")
+        undo = self.api.paste_undo(self.other)
+        self.assertTrue(undo["ok"], undo.get("error"))
+        wait_job(self.api, undo["data"]["jobId"])
+        rows = self.api.list_rows(self.other)["data"]["rows"]
+        row = next(r for r in rows if r["file"] == "Conflict.iso")
+        self.assertEqual(self.api.workspace.open(self.other).get_row(row["romUid"])["fields"]["genre"], "Action")
+
     def test_compare_is_off_until_started(self):
         self.assertIsNone(self.api.compare_state()["data"])
         self.assertFalse(self.api.compare_rows()["ok"])

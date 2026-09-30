@@ -36,8 +36,10 @@ test("메뉴의 삭제를 고르면 삭제를 요청하고 메뉴를 닫는다",
   const deleted = [];
   await page.exposeFunction("__deleted", (uids) => deleted.push(uids));
   await page.evaluate(() => {
-    const original = window.api.planDelete;
-    window.api.planDelete = (id, romUids) => { window.__deleted(romUids); return original(id, romUids); };
+    const original = window.api.deleteImmediate;
+    window.api.deleteImmediate = (id, romUids, parts, permanent) => {
+      window.__deleted(romUids); return original(id, romUids, parts, permanent);
+    };
   });
 
   await rightClick(page, "Final Fantasy X");
@@ -54,8 +56,10 @@ test.describe("부분 삭제", () => {
   async function spy(page) {
     await page.evaluate(() => {
       window.__parts = [];
-      const original = window.api.planDelete;
-      window.api.planDelete = (id, uids, parts) => { window.__parts.push(parts); return original(id, uids, parts); };
+      const original = window.api.deleteImmediate;
+      window.api.deleteImmediate = (id, uids, parts, permanent) => {
+        window.__parts.push(parts); return original(id, uids, parts, permanent);
+      };
     });
   }
 

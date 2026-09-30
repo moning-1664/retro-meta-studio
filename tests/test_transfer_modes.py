@@ -233,17 +233,16 @@ class PasteIntoAnotherSystemTests(unittest.TestCase):
         self._apply()
         self.assertTrue((self.dst_root / "ps2" / "1941.zip").exists())
 
-    def test_system_new_only_rejects_same_game_before_staging(self):
-        # Filename differs, but the shared game identity still sees the same game.
+    def test_system_new_only_allows_a_different_extension(self):
+        # 같은 stem이라도 확장자를 포함한 ROM 이름이 다르면 별도 항목이다.
         write_file(self.dst_root / "ps2" / "1941.iso", b"existing")
         scan(self.api, self.dst)
         self._copy_1941()
         preview = self.api.clipboard_system_target(self.dst, "ps2")
-        self.assertEqual(preview["data"]["duplicates"][0]["targetFilename"], "1941.iso")
+        self.assertEqual(preview["data"]["duplicates"], [])
         result = self.api.paste(self.dst, "overwrite", {"fbneo act": "ps2"}, None, None, True)
-        self.assertFalse(result["ok"])
-        self.assertIn("이미", result["error"])
-        self.assertEqual(self.api.plan_state(self.dst)["data"]["total"], 0)
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(self.api.plan_state(self.dst)["data"]["total"], 1)
 
     def test_system_target_requires_clipboard_and_existing_system(self):
         empty = self.api.clipboard_system_target(self.dst, "ps2")
@@ -346,21 +345,21 @@ class MultiPasteDowngradesReplaceTests(unittest.TestCase):
         self.assertIsNone(result["downgradedFrom"])
         self.assertEqual(result["policy"]["pasteMode"], "replace")
 
-    def test_several_items_fall_back_to_patch_and_say_so(self):
+    def test_several_items_keep_replace(self):
         self._copy("A.iso", "B.iso")
         result = self.api.paste(self.d, "replace")["data"]
-        self.assertEqual(result["downgradedFrom"], "replace")
-        self.assertEqual(result["policy"]["pasteMode"], "patch")
+        self.assertIsNone(result["downgradedFrom"])
+        self.assertEqual(result["policy"]["pasteMode"], "replace")
 
-    def test_the_downgrade_really_behaves_like_patch(self):
-        """Patch는 대상에 있는 값을 지킨다 - Replace였다면 genre가 사라졌을 것이다."""
+    def test_multi_replace_really_replaces(self):
+        """교체하기 명령은 개수에 따라 조용히 채우기로 바뀌지 않는다."""
         self._copy("A.iso", "B.iso")
         self.api.paste(self.d, "replace")
         self.api.start_apply(self.d)
         wait_idle(self.api)
         rows = {r["file"]: r for r in self.api.list_rows(self.d, limit=50)["data"]["rows"]}
-        self.assertEqual(rows["A.iso"]["title"], "A", "Patch인데 대상 제목이 바뀌었다")
-        self.assertEqual(rows["A.iso"]["genre"], "RPG", "Replace처럼 값이 지워졌다")
+        self.assertNotEqual(rows["A.iso"]["title"], "A")
+        self.assertNotEqual(rows["A.iso"]["genre"], "RPG")
 
     def test_other_modes_are_never_downgraded(self):
         for mode in ("patch", "overwrite"):

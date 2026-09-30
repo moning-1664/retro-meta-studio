@@ -96,9 +96,9 @@ test.describe("Favorite / Play", () => {
     await expect(page.locator("#detail-panel .detail-launch")).toBeVisible();
   });
 
-  test("실행 검증 안 된 System(PS2)은 재생 버튼이 꺼져 있고 이유를 알려준다", async ({ page }) => {
+  test("실행 검증 안 된 System도 설정된 core로 실행할 수 있다", async ({ page }) => {
     await openFirstGame(page);
-    await expect(page.locator("#detail-panel .detail-launch")).toBeDisabled();
+    await expect(page.locator("#detail-panel .detail-launch")).toBeEnabled();
     await expect(page.locator("#detail-panel .detail-launch")).toHaveAttribute("title", /RetroArch/);
   });
 

@@ -401,34 +401,32 @@ class PasteReachesNamesThatCompareDeliberatelyLeavesApartTests(unittest.TestCase
         self.assertEqual({r["status"] for r in rows}, {"only_a", "only_b"})
         self.api.exit_compare()
 
-    def test_replace_reaches_the_same_game_even_with_a_different_filename(self):
-        """사용자 결정 - "replace는 다른 게임이더라도 매뉴얼하게 소스 중심으로 붙여넣기"."""
+    def test_replace_adds_a_different_filename_as_a_new_item(self):
+        """확장자까지 다른 ROM 이름은 유사해도 자동으로 합치지 않는다."""
         self._copy_all()
         result = self.api.paste(self.d, "replace")["data"]
         self.assertEqual(result["added"], 1,
                          f"Compare가 짝지은 게임에 붙지 않았다: {result['skipped']}")
         entry = self.api._plan(self.d).entries[0]
-        # 대상의 파일명으로 쓴다 - 원본 이름으로 새 항목을 만드는 것이 아니다.
-        self.assertEqual(entry.filename, "Aleste (Japan) (T-En by Tsunami v1.0).zip")
+        self.assertEqual(entry.filename, "Aleste [J].zip")
         self.assertEqual(entry.payload.get("genre"), "Shooter")
 
-    def test_every_mode_reaches_it_because_it_is_the_same_game(self):
-        """사용자 결정(번복) - 같은 게임인지는 `gameid`가 정하고, 모드는 **어떻게 옮길지**만
-        정한다. 예전에는 Patch/Overwrite가 "확증이 없다"며 안 붙였는데, 그러면 모드에 따라
-        같은 게임이 같은 게임이 아니게 된다."""
+    def test_every_mode_adds_a_separate_variant(self):
+        """다른 ROM 이름은 세 명령 모두 별도 항목으로 취급한다."""
         for mode in ("patch", "overwrite", "replace"):
             self.api.plan_clear(self.d)
             self._copy_all()
             result = self.api.paste(self.d, mode)["data"]
             self.assertEqual(result["added"], 1, f"{mode}: {result['skipped']}")
             self.assertEqual(self.api._plan(self.d).entries[0].filename,
-                             "Aleste (Japan) (T-En by Tsunami v1.0).zip", mode)
+                             "Aleste [J].zip", mode)
 
-    def test_the_rom_is_not_copied_onto_the_other_filename(self):
+    def test_the_rom_keeps_its_own_filename(self):
         self._copy_all()
         self.api.paste(self.d, "replace")
         for entry in self.api._plan(self.d).entries:
-            self.assertFalse(entry.source.get("rom"), "이름이 다른 대상에 ROM을 옮기려 했다")
+            self.assertEqual(entry.filename, "Aleste [J].zip")
+            self.assertTrue(entry.source.get("rom"))
 
 
 class SeveralCandidatesArePickedByARuleNotAtRandomTests(unittest.TestCase):
@@ -462,7 +460,7 @@ class SeveralCandidatesArePickedByARuleNotAtRandomTests(unittest.TestCase):
             result = self.api.paste(self.d, "replace")["data"]
             self.assertEqual(result["added"], 1, result["skipped"])
             chosen.add(self.api._plan(self.d).entries[0].filename)
-        self.assertEqual(chosen, {"Game (Europe).zip"}, "고르는 대상이 실행할 때마다 달라진다")
+        self.assertEqual(chosen, {"Game.zip"}, "다른 이름의 게임을 대상으로 삼으면 안 된다")
 
     def test_manual_designation_still_works(self):
         """모호하다고 막아 두기만 하면 안 된다 - 사람이 지목하면 그대로 간다."""
@@ -533,9 +531,8 @@ class TheSelectedRowIsTheTargetTests(unittest.TestCase):
         for entry in self.api._plan(self.d).entries:
             self.assertFalse(entry.source.get("rom"))
 
-    def test_a_confident_name_match_still_wins_over_a_stale_selection(self):
-        """다른 볼일로 남아 있던 선택이 조용히 덮어쓰기 대상이 되면 안 된다 - 이름으로
-        확실한 대상을 찾았으면 그쪽이 이긴다."""
+    def test_explicit_row_wins_over_an_exact_name_match(self):
+        """한 항목을 행에 붙여넣으면 명시적으로 지목한 행이 우선한다."""
         # 대상에 원본과 **같은 이름**의 항목을 만들어 둔다.
         extra = build_custom_esde_tree(self.dir / "dst2", "ps2", [
             {"filename": "Final Fantasy 7.zip", "title": "예전 제목"},
@@ -546,7 +543,7 @@ class TheSelectedRowIsTheTargetTests(unittest.TestCase):
         self._copy_source()
         self.api.paste(other, "replace", fallback_target="ps2|ff7.rom")
         self.assertEqual([e.filename for e in self.api._plan(other).entries],
-                         ["Final Fantasy 7.zip"], "이름이 정확히 맞는 대상을 두고 고른 행에 붙였다")
+                         ["ff7.rom"], "지목한 행 대신 이름이 같은 다른 행에 붙였다")
 
     def test_several_copied_items_never_collapse_onto_one_row(self):
         """여러 개를 한 행에 붙일 수는 없다 - 고른 행은 무시하고 평소대로 간다."""

@@ -939,6 +939,20 @@
       wrap.appendChild(h("div", { class: "stg-help" },
         ["저장된 DB를 먼저 표시합니다. 파일 변경분은 필요할 때 다시 읽으세요."]));
       if (lastDiagnostics) status.textContent = lastDiagnostics;
+      if (cfg.editLock) {
+        const lockInfo = h("div", {class: "stg-help"}, [
+          `읽기 전용 · ${cfg.editLock.host || "다른 PC"}에서 Archive 편집 중`,
+        ]);
+        const release = h("button", {class: "btn compact", disabled: !cfg.editLock.token,
+          onClick: () => showConfirm("편집 잠금 인계",
+            "기존 PC의 편집 앱이 종료되었는지 확인하세요. 실행 중인 편집의 잠금을 해제하면 데이터가 충돌할 수 있습니다.",
+            true, async () => {
+              const result = await api.archiveReleaseEditLock(cfg.editLock.token, true);
+              if (!result.ok) { showToast(result.error, "error"); return; }
+              cfg.editLock = null; draw(); showToast("중단된 편집 잠금을 해제했습니다.");
+            })}, ["중단된 잠금 해제"]);
+        wrap.appendChild(h("div", {class: "archive-config-actions"}, [lockInfo, release]));
+      }
       wrap.appendChild(progressHost);
       wrap.appendChild(h("div", { class: "archive-config-actions" }, [status, rescan, apply]));
     };
@@ -2409,28 +2423,13 @@
     let uids = [];
     try { uids = JSON.parse(raw) || []; } catch (_) { return; }
     if (!uids.length) return;
-    const r = await api.planMoveToSystem(S.activeId, uids, targetSystem);
-    if (!r.ok) { showToast(r.error, "error"); return; }
-    const d = r.data;
-    await refreshPlan();
-    renderListWindow();
-    showToast(`${formatCount(d.moved)}개를 ${String(targetSystem).toUpperCase()}(으)로 옮기도록 `
-      + `Plan에 올렸습니다. Apply를 누르면 반영됩니다.`
-      + (d.conflicts ? ` (충돌 ${formatCount(d.conflicts)}개는 직접 정하세요)` : ""),
-      d.conflicts ? "warning" : "info");
+    await runImmediateAction("move", { romUids: uids, system: targetSystem });
   }
 
   async function moveSystemToStorage(system, storageId) {
     if (blockedInCompare("System을 이동")) return;
     // 실제 파일은 아직 움직이지 않는다. Plan에 올려두고 확정할 때 옮긴다(스펙 §10, §28).
-    const r = await api.planStorageChange(S.activeId, system, storageId);
-    if (!r.ok) { showToast(r.error, "error"); return; }
-    await refreshPlan();
-    if (S.autoPlan) {
-      showToast(`${system.toUpperCase()} 이동을 Plan에 올렸습니다. Apply로 확정하세요.`);
-    } else {
-      await applyPlan();
-    }
+    await runImmediateAction("storage", { system, storageId });
   }
 
   function openAddStorage() {
@@ -2531,14 +2530,14 @@
     const pastePreview = await api.archiveClipboardSystemTarget(sys.system);
     const copied = pastePreview.ok ? pastePreview.data.items || [] : [];
     const duplicate = pastePreview.ok ? pastePreview.data.duplicates || [] : [];
+    const totalCopied = copied.length + duplicate.length;
     const items = [
-      { label: copied.length ? `여기에 붙여넣기 (${formatCount(copied.length)}개)` : "여기에 붙여넣기", icon: "upload",
-        disabled: !copied.length || !!duplicate.length,
-        title: duplicate.length
-          ? `같은 게임이 이미 있습니다: ${duplicate.map((item) => item.filename).join(", ")}`
-          : copied.length ? copied.map((item) => `${item.title} (${item.filename})`).join("\n")
-            : "복사한 게임이 없습니다.",
-        onSelect: () => pasteClipboard(null, sys.system, pastePreview.data) },
+      ...[["overwrite", "붙여넣기"], ["patch", "채우기"], ["replace", "교체하기"]].map(([mode, label]) => ({
+        label: totalCopied ? "여기에 " + label + " (" + formatCount(totalCopied) + "개)" : "여기에 " + label,
+        icon: "upload", disabled: !totalCopied,
+        title: duplicate.length ? "같은 이름의 게임은 충돌창에서 결정합니다." : "복사한 게임을 이 System으로 가져옵니다.",
+        onSelect: () => pasteClipboard(null, sys.system, pastePreview.data, mode),
+      })),
       "separator",
       { label: "게임 정보 스크랩…", icon: "sparkles", disabled: !sys.count,
         title: "이 System의 Archive 항목을 순서대로 검토합니다.",
@@ -2646,13 +2645,13 @@
     const duplicate = pastePreview?.duplicates || [];
     const copiedLabel = copied.length
       ? `여기에 붙여넣기 (${formatCount(copied.length)}개)` : "여기에 붙여넣기";
-    items.push({ label: copiedLabel, icon: "upload",
-      disabled: deviceOnly || !copied.length || !!duplicate.length,
+    [["overwrite", copiedLabel], ["patch", "여기에 채우기"], ["replace", "여기에 교체하기"]].forEach(([mode, label]) => items.push({ label, icon: "upload",
+      disabled: deviceOnly || !copied.length,
       title: deviceOnly ? deviceTip : !clipboardTarget.ok ? clipboardTarget.error : duplicate.length
         ? `같은 게임이 이미 있습니다: ${duplicate.map((d) => d.filename).join(", ")}`
         : copied.length ? copied.map((item) => `${item.system} / ${item.title} (${item.filename})`).join("\n")
           : "복사한 게임이 없습니다.",
-      onSelect: () => pasteClipboard(null, sys.system, pastePreview) });
+      onSelect: () => pasteClipboard(null, sys.system, pastePreview, mode) }));
     items.push("separator", { section: "폴더 열기" });
     [["rom", "ROM 폴더"], ["metadata", "Metadata 폴더"], ["media", "Media 폴더"]].forEach(([kind, label]) =>
       items.push({ label, icon: "folderOpen", onSelect: () => openSystemFolder(sys.system, kind) }));
@@ -2765,14 +2764,21 @@
       h("button", { class: "btn danger", onClick: async () => {
         closeModal();
         const uids = items.map((item) => item.romUid);
-        const r = await api.planDelete(collectionId, uids);
+        let r = await api.deleteImmediate(collectionId, uids, ["metadata", "media", "video"]);
         if (!r.ok) { showToast(r.error, "error"); return; }
+        if (r.data.requiresConfirmation) {
+          r = await api.deleteImmediate(collectionId, uids, ["metadata", "media", "video"], true);
+          if (!r.ok) { showToast(r.error, "error"); return; }
+        }
+        const done = await pollJob(r.data.jobId, "항목 정리 중");
+        if (!done.ok) { showToast(done.error, "error"); return; }
+        resetList();
+        await reloadList();
         await refreshPlan();
         // Auto Plan이 켜져 있으면(기본값) 아직 파일이 지워지지 않는다 - deleteSelection과
         // 같은 규칙이다. 꺼져 있으면 applyPlan()이 용량 확인 모달을 띄운 뒤 실제로 적용하고
         // 목록도 그 안에서 새로고침한다.
-        if (S.autoPlan) showToast(`${formatCount(uids.length)}개를 삭제 예정으로 표시했습니다.`);
-        else await applyPlan();
+        showToast(`${formatCount(uids.length)}개를 정리했습니다.`);
       } }, ["삭제"]),
     ]);
   }
@@ -2885,7 +2891,7 @@
         `${target.label} - 제목 ${formatCount(changed.length)}개가 바뀝니다`
         + (unchanged ? ` (변경 없음 ${formatCount(unchanged)}개 제외)` : "") + ". "
         + (archive ? "Archive는 Plan을 거치지 않고 바로 적용됩니다."
-          : "Plan에 추가한 뒤 목록 위 Apply를 눌러야 실제 파일에 반영됩니다."),
+          : "확인하면 바로 적용됩니다."),
       ]),
       list,
     ]);
@@ -2901,11 +2907,8 @@
           showToast(`제목 ${formatCount(r.data.applied)}개를 바꿨습니다.`);
           return;
         }
-        const r = await api.planTitleEdit(collectionId, target.romUids || null, target.system || null);
-        if (!r.ok) { showToast(r.error, "error"); return; }
-        if (collectionId === S.activeId) await refreshPlan();
-        showToast(`제목 ${formatCount(r.data.added)}개를 Plan에 올렸습니다. Apply를 누르면 반영됩니다.`);
-      } }, [archive ? "적용" : "Plan에 추가"]),
+        await runImmediateAction("title", { romUids: target.romUids || null, system: target.system || null });
+      } }, ["적용"]),
     ]);
   }
 
@@ -2940,7 +2943,7 @@
       h("div", { class: "modal-text" }, [
         `${label} - 제목 ${formatCount(changed.length)}개가 바뀝니다. `
         + (archive ? "Archive는 Plan을 거치지 않고 바로 적용됩니다."
-          : "Plan에 추가한 뒤 목록 위 Apply를 눌러야 실제 파일에 반영됩니다."),
+          : "확인하면 바로 적용됩니다."),
       ]),
       list,
     ]);
@@ -2956,11 +2959,8 @@
           showToast(`제목 ${formatCount(r.data.applied)}개를 바꿨습니다.`);
           return;
         }
-        const r = await api.planDiscRetag(collectionId, system);
-        if (!r.ok) { showToast(r.error, "error"); return; }
-        if (collectionId === S.activeId) await refreshPlan();
-        showToast(`제목 ${formatCount(r.data.added)}개를 Plan에 올렸습니다. Apply를 누르면 반영됩니다.`);
-      } }, [archive ? "적용" : "Plan에 추가"]),
+        await runImmediateAction("disc", { system });
+      } }, ["적용"]),
     ]);
   }
 
@@ -4044,109 +4044,14 @@
   /** Archive에 수집 / Delete / AutoPlan / Apply / Cancel. Gamelist 위 툴바 한 곳에
    * 모은다 - 예전에는 이 중 일부가 하단 상태바에도 똑같이 있어서 두 번 보였다.
    * Copy/Paste는 없앴다(QA 재검토 P1) - Collection 사이 이동은 Archive를 거친다. */
-  //: 붙여넣기 모드와 설명(사용자 결정 - 모드마다 무엇을 하는지 말해 줘야 한다).
-  const PASTE_MODES = [
-    ["patch", "Patch", "보완 - 없는 것만 채웁니다",
-     "이미 있는 게임은 비어 있는 값과 없는 미디어만 원본에서 채웁니다. 대상에 있는 값과 미디어, ROM은 그대로 둡니다."],
-    ["overwrite", "Overwrite", "덮어쓰기 - 원본의 값을 적용합니다",
-     "원본의 메타데이터와 미디어가 대상 것을 대신합니다. 원본이 비어 있는 값으로 대상 값을 지우지는 않습니다."],
-    ["replace", "Replace", "완전 교체 - 원본으로 다시 만듭니다",
-     "게임의 메타데이터와 미디어를 원본 것으로 다시 만듭니다(원본에 없는 메타데이터 값은 사라집니다). "
-     + "대상에만 있는 미디어 파일은 지우지 않습니다. ROM은 어느 모드에서도 덮어쓰지 않습니다."],
-  ];
-  const currentPasteMode = () => (S.settings.transfer && S.settings.transfer.pasteMode) || "overwrite";
-
-  /** 실제로 쓰인 모드를 토글에서 잠깐 밝혀 준다. 설정 값 자체는 바꾸지 않는다 -
-   * 이번 붙여넣기에만 적용된 일이므로 다음 번에는 고른 모드가 그대로 쓰인다. */
-  function flashPasteMode(used, requested) {
-    const labelOf = (mode) => (PASTE_MODES.find(([m]) => m === mode) || [null, mode])[1];
-    document.querySelectorAll(".paste-mode .seg-btn").forEach((btn) => {
-      btn.classList.toggle("flash", btn.dataset.mode === used);
-    });
-    setTimeout(() => {
-      document.querySelectorAll(".paste-mode .seg-btn.flash").forEach((btn) => btn.classList.remove("flash"));
-    }, 2200);
-    // 토스트는 직접 띄우지 않는다 - 바로 뒤에 오는 결과 토스트가 덮어쓴다. 문구만 돌려주고
-    // 호출부가 결과 메시지에 붙인다.
-    return ` 여러 개라 ${labelOf(requested)} 대신 ${labelOf(used)}로 붙였습니다.`;
-  }
-
-  /** 붙여넣기 모드 토글(list/card 토글과 같은 모양). 다음 붙여넣기(Ctrl+V)부터 적용된다. */
-  function pasteModeToggle() {
-    const group = h("div", { class: "seg paste-mode",
-                             title: "붙여넣기 모드 - 다음 Ctrl+V부터 적용됩니다" });
-    PASTE_MODES.forEach(([mode, label, short, help]) => {
-      const btn = h("button", {
-        class: "seg-btn" + (currentPasteMode() === mode ? " on" : ""), "data-mode": mode,
-        title: `${label} - ${short}\n${help}`,
-      }, [label]);
-      btn.addEventListener("click", () => {
-        if (currentPasteMode() === mode) return;
-        updateSettings("transfer", { pasteMode: mode });
-        showToast(`${label} 모드 - ${short}. 다음 붙여넣기부터 적용됩니다.`);
-        renderStatusBar();
-        renderFilterBar();
-      });
-      group.appendChild(btn);
-    });
-    return group;
-  }
+  const currentPasteMode = () => "overwrite";
 
   function renderPlanActions(bar) {
     if (isCompare()) return;
     if (isArchive()) {
-      bar.appendChild(h("span", { class: "toolbar-group-label" }, ["Paste"]));
-      bar.appendChild(pasteModeToggle());
       return;
     }
-    const plan = S.plan;
 
-    // Archive에 수집은 여기 없다 - Detail 패널 상단(.detail-topspace)으로
-    // 옮겼다(레이아웃 재검토).
-    //
-    // Delete는 상시 버튼을 두지 않는다(레이아웃 재검토 결론) - DEL 키와 목록
-    // 우클릭 메뉴로만 접근한다. 파괴적인 동작이라 눈에 항상 띄는 자리에 두면
-    // 오클릭 위험이 커진다(PENDING_DECISIONS.md).
-
-    // Apply/Cancel은 한 그룹이다 - 같은 Plan을 두고 하는 순간의 동작이라는 걸
-    // 구분선으로 보여준다. Auto Plan 토글은 뺐다(실사용 시나리오가 확인될 때까지
-    // 화면에서 감춘다, PENDING_DECISIONS.md) - 내부 값은 기본 ON을 유지한다.
-    // 붙여넣기 모드(사용자 결정) - Ctrl+V가 이미 있는 항목을 어떻게 다룰지. Plan 버튼 왼쪽에 둔다.
-    bar.appendChild(h("span", { class: "toolbar-group-label" }, ["Paste"]));
-    bar.appendChild(pasteModeToggle());
-
-    const planGroup = h("div", { class: "seg plan-actions" });
-    // **Apply는 실제로 처리될 수(runnable)를 말한다.** total에는 해결 안 된 충돌도
-    // 들어 있는데 Apply는 그것을 건너뛰므로, total을 보여주면 누른 뒤에야 "12개
-    // 중 9개만 됐다"를 알게 된다. Cancel은 충돌뿐인 Plan도 버릴 수 있어야 하니
-    // 그쪽은 total을 그대로 쓴다.
-    const runnable = plan ? (plan.runnable != null ? plan.runnable : plan.total) : 0;
-    // 개수는 괄호 글자가 아니라 오른쪽 위 대각선에 빨간 동그라미 뱃지로 보여준다
-    // (사용자 결정) - 알림 뱃지와 같은 언어라 "지금 처리될 게 있다"는 게 글자를
-    // 읽지 않아도 한눈에 들어온다. 99개가 넘으면 "99+"로 자른다 - 세 자리
-    // 숫자까지 다 들어가게 뱃지를 늘리면 원 모양이 무너진다.
-    const apply = h("button", {
-      class: "seg-btn" + (runnable ? " on" : ""), disabled: !runnable,
-      title: runnable ? "Plan을 실제 파일에 적용합니다"
-        : (plan && plan.total ? "충돌을 먼저 해결해야 적용할 수 있습니다" : "적용할 Plan이 없습니다"),
-    }, [
-      "Apply",
-      runnable ? h("span", { class: "plan-apply-badge" }, [runnable > 99 ? "99+" : String(runnable)]) : null,
-    ]);
-    if (runnable) apply.addEventListener("click", applyPlan);
-    planGroup.appendChild(apply);
-
-    const cancel = h("button", {
-      class: "seg-btn", disabled: !(plan && plan.total), title: "계산해둔 변경을 버립니다",
-    }, ["Cancel"]);
-    if (plan && plan.total) {
-      cancel.addEventListener("click", () => showConfirm(
-        "Plan 취소", "계산해둔 변경을 모두 버립니다. 실제 파일은 바뀌지 않습니다.", true,
-        async () => { await api.planClear(S.activeId); await refreshPlan(); }));
-    }
-    planGroup.appendChild(cancel);
-    bar.appendChild(h("span", { class: "toolbar-group-label" }, ["Plan"]));
-    bar.appendChild(planGroup);
   }
 
   /** 선택이 바뀌었을 때 툴바에서 **실제로 달라지는 것만** 고친다.
@@ -4469,17 +4374,7 @@
 
   /** 연산자 버튼이 부르는 것 - 실제 파일은 건드리지 않고 반대쪽 Plan에만 올린다. */
   async function compareCopyRow(row, direction, metadataOnly) {
-    const r = await api.compareCopyRow(row.key, direction, metadataOnly);
-    if (!r.ok) { showToast(r.error, "error"); return; }
-    const d = r.data || {};
-    // 비교 결과는 시작 시점의 스냅샷이라 다시 계산하지 않는다 - 대신 이 행이 이미 처리됐다는
-    // 것만 표시해 같은 것을 두 번 누르지 않게 한다.
-    S.comparePlanned.add(`${row.key}|${direction}`);
-    renderListWindow();
-    const what = metadataOnly ? "메타데이터" : "ROM+메타데이터";
-    showToast(d.added
-      ? `${what}를 ${d.targetName}의 Plan에 올렸습니다. 그 탭에서 Apply하세요.`
-      : `${d.targetName}에 이미 있어 Plan에 올리지 않았습니다.`, d.added ? "info" : "warning");
+    await runCompareOperation({keys: [row.key], direction, metadataOnly});
   }
 
   //: Gamelist Status 아이콘 4개(실사용 피드백 - "Missing Rom/Media/Description/Cover가
@@ -5158,15 +5053,23 @@
           disabled: !single || !!launchBlockReason(row), title: single ? launchBlockReason(row) : null,
           onSelect: () => launchGame(row) },
         "separator",
+        ...(!isArchive() ? [{ label: "이름 변경", icon: "edit", hint: "F2",
+          disabled: locked || !single, onSelect: () => renameSelectedGame(row) }] : []),
+        ...(!isArchive() ? [{label: "잘라내기", icon: "scissors", hint: "Ctrl+X",
+          disabled: locked, onSelect: cutSelectedRows}] : []),
         { label: "게임 복사", icon: "copy", hint: "Ctrl+C", disabled: locked, onSelect: copySelectedRows },
         { label: "붙여넣기", icon: "upload", hint: "Ctrl+V", disabled: locked,
-          title: "파일명으로 대상을 찾고, 없으면 선택한 게임을 대상으로 사용합니다.",
-          onSelect: () => pasteClipboard() },
-        ...(isArchive() ? [{ label: "이 게임에 붙여넣기…", icon: "upload",
-          disabled: !single || locked,
-          title: "복사한 항목의 파일명이 이 게임과 달라도, 이 게임을 대상으로 지목해서 붙입니다(설정된 모드를 따릅니다). "
-            + "예: 파일명이 전혀 다른 두 게임을 직접 이어 붙일 때.",
-          onSelect: () => pasteClipboard(row) }] : []),
+          title: "같은 System과 ROM 파일명에 붙여넣습니다. 이 행을 선택했다면 이 게임에 붙여넣습니다.",
+          onSelect: () => pasteClipboard(single ? row : null) },
+        { label: "채우기", icon: "upload", disabled: locked,
+          title: "비어 있는 메타데이터와 없는 미디어만 채웁니다.",
+          onSelect: () => pasteClipboard(single ? row : null, null, null, "patch") },
+        { label: "교체하기", icon: "upload", disabled: locked,
+          title: "메타데이터를 복사한 게임의 값으로 교체합니다.",
+          onSelect: () => pasteClipboard(single ? row : null, null, null, "replace") },
+        ...(!isArchive() && S.lastPasteUndoId ? [{ label: "실행 취소",
+          icon: "cornerUpLeft", hint: "Ctrl+Z", disabled: locked,
+          onSelect: undoLastPaste }] : []),
         "separator",
         { label: single ? "게임 정보 스크랩…" : `게임 정보 스크랩… (${formatCount(count)}개)`,
           icon: "sparkles", disabled: locked,
@@ -5600,7 +5503,7 @@
       newBlock,
       existingBlock,
       h("div", { class: "modal-hint" },
-        ["원본은 그대로 둡니다. 변환 결과는 Plan에 올라가고, Apply를 눌러야 실제로 반영됩니다."]),
+        ["원본은 그대로 둡니다. 변환할 항목을 확인한 뒤 대상에 적용합니다."]),
     ]);
 
     showModal("Convert", body, [
@@ -5682,17 +5585,9 @@
         closeModal();
         const result = await api.startConvert(sourceId, targetId);
         if (!result.ok) { showToast(result.error, "error"); return; }
-        const added = result.data.added || 0;
-        const skipped = (result.data.skipped || []).length;
-        // 대상 Collection의 Plan에 올라갔으므로 그쪽으로 데려간다 - 아니면 사용자는
-        // 아무 일도 안 일어난 것처럼 느낀다.
         await openTab(targetId);
-        await refreshPlan();
-        renderAll();
-        showToast(`${formatCount(added)}개를 Plan에 올렸습니다`
-                  + (skipped ? ` (원본이 없어 ${skipped}개 제외)` : "")
-                  + ". Apply를 눌러야 실제로 반영됩니다.");
-      } }, ["Plan에 올리기"]),
+        await acceptOperationPreview(result.data);
+      } }, ["변환하기"]),
     ]);
   }
 
@@ -5761,12 +5656,7 @@
   function openManualLinkDialog(pair) {
     const send = async (source, target) => {
       closeModal();
-      const r = await api.compareManualCopy(source.key, target.key, "replace");
-      if (!r.ok) { showToast(r.error, "error"); return; }
-      const d = r.data || {};
-      S.comparePlanned.add(`${source.key}|manual`);
-      renderListWindow();
-      showToast(`«${d.sourceFile}» → «${d.targetFile}», ${d.targetName}의 Plan에 올렸습니다.`);
+      await runCompareOperation({sourceKey: source.key, targetKey: target.key, mode: "replace"});
     };
     const choice = (source, target) => {
       const btn = h("button", { class: "btn picker-row" }, [
@@ -5790,15 +5680,8 @@
 
   async function compareSendSelected(direction) {
     if (!S.selected.size) { showToast("보낼 항목을 먼저 고르세요.", "warning"); return; }
-    const r = await api.compareCopyRows([...S.selected], direction, [...S.compareMediaSel]);
-    if (!r.ok) { showToast(r.error, "error"); return; }
-    const d = r.data || {};
-    [...S.selected].forEach((key) => S.comparePlanned.add(`${key}|${direction}`));
-    renderListWindow();
-    const failed = (d.skipped || []).length;
-    showToast(`${formatCount(d.added || 0)}개의 메타데이터+미디어를 ${d.targetName}의 Plan에 올렸습니다.`
-      + (failed ? ` (${formatCount(failed)}개 제외)` : "") + " 그 탭에서 Apply하세요.",
-      failed ? "warning" : "info");
+    await runCompareOperation({keys: [...S.selected], direction, metadataOnly: true,
+      mediaTypes: [...S.compareMediaSel]});
   }
 
   async function exitCompare() {
@@ -6109,7 +5992,7 @@
         h("div", { class: "picker-main" }, [
           h("div", { class: "picker-name" }, ["Archive"]),
           h("div", { class: "picker-sub" },
-            ["메타데이터와 파일을 Plan에서 확인"]),
+            ["가져올 메타데이터와 미디어 확인"]),
         ]),
       ]);
       choice.addEventListener("click", () => {
@@ -6214,22 +6097,13 @@
     applyBtn.addEventListener("click", async () => {
       closeModal();
       if (sourceCollectionId) {
-        const planned = await api.collectionImportPlan(
-          S.activeId, sourceCollectionId, [chosen], row.romUid, null, currentPasteMode());
-        if (!planned.ok) { showToast(planned.error, "error"); return; }
-        await refreshPlan();
-        const d = planned.data;
-        openImportResult(d,
-          S.collections.find((collection) => collection.id === sourceCollectionId)?.name || "Collection",
-          row.file);
+        await runImmediateAction("import", { sourceId: sourceCollectionId,
+          romUids: [chosen], targetRomUid: row.romUid, mode: currentPasteMode() });
         return;
       }
       if (importOnSelect) {
-        const imported = await api.archiveToCollection(
-          S.activeId, [chosen], currentPasteMode(), row.romUid);
-        if (!imported.ok) { showToast(imported.error, "error"); return; }
-        await refreshPlan();
-        openImportResult(imported.data, "Archive", row.file);
+        await runImmediateAction("archive-import", { ids: [chosen],
+          targetRomUid: row.romUid, mode: currentPasteMode() });
         return;
       }
       const applied = await api.applyMatch(S.activeId, row.romUid, chosen);
@@ -6252,7 +6126,7 @@
       actions.push(unlink);
     }
     actions.push(applyBtn);
-    applyBtn.textContent = importOnSelect ? "Plan에 추가" : "Match 확정";
+    applyBtn.textContent = importOnSelect ? "가져오기" : "Match 확정";
     showModal(sourceCollectionId ? "Collection에서 가져오기" : "Archive에서 가져오기", body, actions);
   }
 
@@ -6419,6 +6293,44 @@
         ]));
       });
       wrap.appendChild(mediaChoices);
+      const datHeading = h("div", { class: "stg-subsection-title" }, ["식별 데이터"]);
+      const datHelp = h("div", { class: "stg-help" },
+        ["보유한 Logiqx DAT 또는 MAME listxml을 가져오면 ROM 코드명과 CRC를 정식 제목 검색에 활용합니다. 결과는 직접 확인해야 합니다."]);
+      const datStatus = h("div", { class: "stg-info" }, ["가져온 DAT를 확인하는 중…"]);
+      const datProgress = h("div", { class: "stg-progress" });
+      const systemSelect = h("select", { class: "field-input", "aria-label": "DAT System" });
+      const systems = await api.scraperSystems();
+      (systems.ok ? systems.data : []).filter((row) => row.name && row.id).forEach((row) => {
+        systemSelect.appendChild(h("option", { value: row.name }, [row.name]));
+      });
+      const datButton = h("button", { class: "btn", onClick: async () => {
+        const picked = await api.pickFile("DAT XML 선택", ["XML files (*.xml;*.dat)"]);
+        if (!picked.ok || !picked.data) return;
+        datButton.disabled = true;
+        const started = await api.startDatImport(picked.data, systemSelect.value);
+        if (!started.ok) {
+          datStatus.textContent = started.error;
+          datButton.disabled = false;
+          return;
+        }
+        const completed = await pollJob(started.data.jobId, "DAT 가져오기", datProgress);
+        datStatus.textContent = completed.ok
+          ? completed.data.name + " · " + completed.data.system + " · " + completed.data.games.toLocaleString() + "개 게임"
+          : completed.error;
+        datButton.disabled = false;
+        if (completed.ok) refreshDatSources();
+      } }, ["DAT 추가…"]);
+      const datSources = h("div", { class: "stg-help" });
+      const refreshDatSources = async () => {
+        const sources = await api.datSources();
+        datSources.textContent = !sources.ok ? sources.error
+          : sources.data.length
+            ? sources.data.map((source) => source.name + " (" + source.system + ", " + source.entries.toLocaleString() + "개)").join(" · ")
+            : "가져온 DAT 없음";
+      };
+      wrap.append(datHeading, datHelp, h("div", { class: "stg-inline-actions" },
+        [systemSelect, datButton]), datProgress, datStatus, datSources);
+      refreshDatSources();
     };
     draw();
     return wrap;
@@ -7347,8 +7259,7 @@
         await refreshArchiveRows([itemId]);
         showToast(`${slot.label} 이미지를 적용했습니다.`);
       } else {
-        await refreshPlan();
-        showToast(`${slot.label} 이미지를 Plan에 올렸습니다. Apply를 누르면 반영됩니다.`);
+        await acceptOperationPreview(result.data);
       }
     } catch (error) {
       showToast(`이미지를 읽지 못했습니다: ${error}`, "error");
@@ -7458,8 +7369,7 @@
             showToast(`${slot.label}을(를) 붙여넣었습니다.`);
             return;
           }
-          await refreshPlan();
-          showToast(`${slot.label}을(를) Plan에 올렸습니다. Apply를 누르면 반영됩니다.`);
+          await acceptOperationPreview(r.data);
         } },
       ...(state.archive ? [{ label: ownsMedia ? "Archive 보관 미디어 삭제" : "Archive에서 미디어 연결 제거",
         icon: "trash", danger: true,
@@ -8007,6 +7917,7 @@
     }
     renderListWindow();
     showToast("저장되었습니다.");
+    await refreshPlan();
   }
 
   // ------------------------------------------------------------------
@@ -8015,12 +7926,13 @@
   async function refreshPlan() {
     if (!S.activeId || isArchive()) { S.plan = null; renderStatusBar(); return; }
     const collectionId = S.activeId;
-    const r = await api.planState(collectionId);
+    const r = await api.operationState(collectionId);
     // 늦게 온 이전 Collection의 Plan은 버린다. 이게 없으면 A -> B로 빠르게 옮겼을 때
     // A의 응답이 나중에 도착해 S.plan이 A의 것이 되고, 툴바는 A의 건수를 보여주면서
     // Apply는 B에 걸린다 - 사용자가 보는 숫자와 눌렀을 때 벌어지는 일이 달라진다.
     if (S.activeId !== collectionId) return;
     S.plan = r.ok ? r.data : null;
+    S.lastPasteUndoId = S.plan?.undoOperationId || null;
     renderHeader();
     // Apply/Cancel이 목록 위 툴바에 있으므로 Plan이 바뀌면 툴바도 다시 그려야 한다.
     renderFilterBar();
@@ -8041,6 +7953,37 @@
   // 충돌로 뜨고, 사용자가 "메타데이터만"을 고르면 ROM은 그대로 두고 메타데이터/
   // media만 채워진다(파일이 없는 조각만 옮겨진다는 뜻과 같다). 그래서 여기서는
   // 새 로직을 만들지 않고 Apply 흐름과 같은 충돌 다이얼로그를 그대로 쓴다.
+  function renameSelectedGame(row) {
+    if (!row || isArchive() || isCompare()) return;
+    const input = h("input", { class: "input", value: row.file });
+    const apply = async () => {
+      const started = await api.renameGame(S.activeId, row.romUid, input.value);
+      if (!started.ok) { showToast(started.error, "error"); return; }
+      closeModal();
+      const result = await pollJob(started.data.jobId, "이름 변경 중");
+      if (!result.ok) { showToast(result.error, "error"); return; }
+      S.lastPasteUndoId = result.data.undoOperationId;
+      resetList(); await reloadList(); await refreshPlan();
+      const rows = await api.listRows(S.activeId, {systems: [row.system], search: result.data.filename, limit: 100});
+      const renamed = rows.ok && rows.data.rows.find(item => item.file === result.data.filename);
+      if (renamed) { S.selected = new Set([renamed.romUid]); await openDetail(renamed); }
+      showToast("이름을 변경했습니다.", "success");
+    };
+    input.addEventListener("keydown", event => { if (event.key === "Enter") apply(); });
+    showModal("이름 변경", h("div", {class: "modal-body"}, [input]), [
+      h("button", {class: "btn", onClick: closeModal}, ["취소"]),
+      h("button", {class: "btn primary", onClick: apply}, ["변경"]),
+    ]);
+    input.focus(); input.setSelectionRange(0, row.file.lastIndexOf(".") > 0 ? row.file.lastIndexOf(".") : row.file.length);
+  }
+
+  async function cutSelectedRows() {
+    if (isArchive() || isCompare() || !S.selected.size) return;
+    const result = await api.cutSelection(S.activeId, [...S.selected]);
+    if (!result.ok) { showToast(result.error, "error"); return; }
+    showToast(`${formatCount(result.data.count)}개 잘라냈습니다. 대상 System에서 붙여넣으세요.`);
+  }
+
   async function copySelectedRows() {
     if (blockedInCompare("복사")) return;
     if (!S.selected.size) { showToast("복사할 항목을 선택하세요.", "warning"); return; }
@@ -8056,16 +7999,21 @@
    * (실사용 버그 리포트 - "Replace로 다른 이름의 게임에 덮어썼는데 결과가 똑같다": 원인은
    * 이 경로가 없어서, 평범한 Ctrl+V가 **복사한 항목 자신의 자리**에 조용히 다시 채워지고
    * 실제로 고르려던 대상 행은 전혀 건드리지 못했던 것이다). */
-  async function pasteClipboard(targetRow, targetSystem = null, targetPreview = null) {
+  async function pasteClipboard(targetRow, targetSystem = null, targetPreview = null, mode = "overwrite") {
     if (blockedInCompare("붙여넣기")) return;
     if (isArchive()) {
       const scope = activeScope();
       const destinationSystem = targetSystem || (!targetRow && scope.kind === "system" ? scope.id : null);
-      const r = await api.archivePaste(currentPasteMode(),
+      const r = await api.archivePaste(mode,
         targetRow?.romIdentityId || targetRow?.romUid || null,
-        destinationSystem, !!targetSystem);
+        destinationSystem, false, true);
       if (!r.ok) { showToast(r.error, "error"); return; }
       const d = r.data || {};
+      if (d.operationId) {
+        if (d.collisions?.length) openPasteConflictDialog(d);
+        else await executePasteOperation(d, {});
+        return;
+      }
       await reloadList();
       if (targetRow && S.detailState?.archive) {
         const detail = await api.archiveDetail(targetRow.romIdentityId || targetRow.romUid);
@@ -8074,14 +8022,11 @@
           renderDetailPanel();
         }
       }
-      const downgrade = d.downgradedFrom
-        ? flashPasteMode(d.policy.pasteMode, d.downgradedFrom) : "";
       showToast(`Archive에 ${formatCount(d.pasted || 0)}개를 붙여넣었습니다.`
         + ((d.copiedRoms || 0) ? ` ROM ${formatCount(d.copiedRoms)}개를 보관 폴더로 복사했습니다.` : "")
         + ((d.conflicts || []).length ? ` 기존 ROM ${formatCount(d.conflicts.length)}개는 덮어쓰지 않았습니다.` : "")
-        + ((d.skipped || []).length ? ` 건너뜀 ${formatCount(d.skipped.length)}개: ${d.skipped[0].reason || "사유 없음"}.` : "")
-        + downgrade,
-      (d.conflicts || []).length || (d.skipped || []).length || downgrade ? "warning" : "success");
+        + ((d.skipped || []).length ? ` 건너뜀 ${formatCount(d.skipped.length)}개: ${d.skipped[0].reason || "사유 없음"}.` : ""),
+        (d.conflicts || []).length || (d.skipped || []).length ? "warning" : "success");
       return;
     }
     let systemMap = {};
@@ -8109,28 +8054,212 @@
     // 이게 없으면 이름이 전혀 다른 두 게임(`FF7.zip` <-> `ff7.rom`)은 대상을 골라 놓고
     // 붙여넣어도 닿지 않았다.
     const fallback = !targetRow && !targetSystem && S.selected.size === 1 ? selectedRowKey() : null;
-    const r = await api.paste(S.activeId, currentPasteMode(), systemMap, targetMap, fallback,
-      !!targetSystem);
+    const r = await api.paste(S.activeId, mode, systemMap, targetMap, fallback,
+      false, true);
     if (!r.ok) { showToast(r.error, "error"); return; }
     const d = r.data;
-    await refreshPlan();
-    resetList();
-    await reloadList();
-    // 여러 개를 한 번에 붙이면 Replace는 Patch로 내려간다(사용자 결정) - 조용히 바꾸지
-    // 않고 **모드 토글이 잠깐 Patch로 바뀌었다가 돌아오게** 해서 눈으로 알려 준다.
-    const downgrade = d.downgradedFrom ? flashPasteMode(d.policy.pasteMode, d.downgradedFrom) : "";
-    if (d.conflicts) {
-      showToast(`추가 ${formatCount(d.added)}개 · 충돌 ${formatCount(d.conflicts)}개 - 대상에 이미 있는 항목입니다.`, "warning");
-      openConflictDialog();
+    if (d.operationId) {
+      if (d.collisions?.length) openPasteConflictDialog(d);
+      else await executePasteOperation(d, {});
       return;
     }
-    // 올리지 않은 항목이 있으면 **이유를 말한다** - Plan에 올라갔는데 적용해 보니 아무 일도 없던 것이
-    // 아니라, 올릴 때 왜 올리지 않았는지를 알려 준다(사용자 결정).
-    const left = (d.skipped || []).filter((s) => s.reason);
-    const why = left.length ? ` (${formatCount(left.length)}개 제외: ${left[0].reason})` : "";
-    if (d.added) showToast(`Plan에 ${formatCount(d.added)}개를 추가했습니다.${why}${downgrade}`,
-                           downgrade ? "warning" : "info");
-    else showToast(left.length ? `붙여넣을 내용이 없습니다 - ${left[0].reason}` : "붙여넣을 새 내용이 없습니다(전부 이미 있음).", "info");
+    const left = (d.skipped || []).filter((item) => item.reason);
+    showToast(left.length ? `붙여넣을 내용이 없습니다 - ${left[0].reason}`
+      : "작업 미리보기를 받지 못했습니다. 다시 시도하세요.", "warning");
+  }
+
+  async function acceptOperationPreview(preview) {
+    if (!preview.operationId) { showToast("작업 미리보기를 받지 못했습니다.", "error"); return; }
+    if (preview.collisions?.length) openPasteConflictDialog(preview);
+    else await executePasteOperation(preview, {});
+  }
+
+  async function runCompareOperation(options) {
+    const response = await api.compareOperationPreview(options);
+    if (!response.ok) { showToast(response.error, "error"); return; }
+    if (!response.data.count) { showToast(response.data.skipped?.[0]?.reason || "적용할 변경이 없습니다.", "warning"); return; }
+    if (response.data.collisions?.length) openPasteConflictDialog(response.data);
+    else await executePasteOperation(response.data, {});
+  }
+
+  async function runImmediateAction(action, options) {
+    const response = await api.operationPreview(S.activeId, action, options);
+    if (!response.ok) { showToast(response.error, "error"); return; }
+    if (!response.data.count) { showToast(response.data.skipped?.[0]?.reason || "변경할 항목이 없습니다."); return; }
+    if (response.data.collisions?.length) openPasteConflictDialog(response.data);
+    else await executePasteOperation(response.data, {});
+  }
+
+  async function executePasteOperation(preview, decisions, acknowledged = false) {
+    const operationLabel = ({ title: "제목 변경", disc: "디스크 태그 변경", move: "이동",
+      storage: "Storage 이동", media: "미디어 붙여넣기", compare: "비교 결과 적용", convert: "변환", import: "가져오기", "archive-import": "가져오기" })[preview.action] || "붙여넣기";
+    if (!preview.undoable && !acknowledged) {
+      showConfirm(`${operationLabel} 확인`,
+        preview.target === "archive"
+          ? "마스터에는 변경 이력이 남지만 파일 전체 되돌리기는 아직 보장하지 못합니다. 계속할까요?"
+          : "이 작업은 자동 되돌리기를 보장할 수 없습니다. 계속할까요?",
+        true, () => executePasteOperation(preview, decisions, true));
+      return;
+    }
+    const collectionId = S.activeId;
+    const compareSnapshot = preview.action === "compare" ? S.compare : null;
+    const focused = S.focused == null ? null : rowByUid(S.focused);
+    const focusedKey = focused ? `${focused.system}|${focused.file}` : null;
+    const started = await api.pasteExecute(preview.operationId, decisions, acknowledged);
+    if (!started.ok) { showToast(started.error, "error"); return; }
+    if (!started.data.jobId) { showToast("건너뛴 항목 외에 붙여넣을 내용이 없습니다."); return; }
+    const result = await pollJob(started.data.jobId, `${operationLabel} 중`);
+    if (!result.ok) { showToast(result.error || "붙여넣기가 중단되었습니다.", "error"); return; }
+    const data = result.data || {};
+    if (data.undoOperationId) S.lastPasteUndoId = data.undoOperationId;
+    showToast((data.rolledBack ? `${operationLabel}에 실패해 변경을 복구했습니다.` : `${operationLabel} ${formatCount(data.applied || 0)}개`)
+      + (data.failed ? ` · 실패 ${formatCount(data.failed)}개` : "")
+      + (data.partial ? ` · 일부 반영 ${formatCount(data.partial)}개` : ""),
+    data.failed || data.partial ? "warning" : "success");
+    if (S.activeId !== collectionId) return;
+    if (compareSnapshot) {
+      const updated = await api.startCompare(compareSnapshot.baseId || S.compareBase,
+        compareSnapshot.otherId);
+      if (updated.ok) { S.compare = updated.data; resetList(); await reloadList(); renderAll(); }
+      else showToast(updated.error, "warning");
+      return;
+    }
+    resetList();
+    await reloadList();
+    if (focusedKey) {
+      const [system, file] = focusedKey.split(/\|(.*)/s);
+      const query = { systems: [system], search: file, limit: 100, offset: 0 };
+      const found = preview.target === "archive"
+        ? await api.archiveRows(query) : await api.listRows(collectionId, query);
+      const row = found.ok && (found.data.rows || []).find((item) =>
+        item.system === system && item.file === file);
+      if (row) {
+        S.selected = new Set([row.romUid]);
+        S.selectAnchor = row.romUid;
+        await openDetail(row);
+      }
+    }
+    await refreshPlan();
+  }
+
+  async function undoLastPaste() {
+    if (isArchive() || !S.activeId) return;
+    const collectionId = S.activeId;
+    const started = await api.pasteUndo(collectionId);
+    if (!started.ok) { showToast(started.error, "warning"); return; }
+    const result = await pollJob(started.data.jobId, "작업 되돌리는 중");
+    if (!result.ok) { showToast(result.error, "error"); return; }
+    S.lastPasteUndoId = null;
+    if (S.activeId === collectionId) {
+      resetList();
+      await reloadList();
+    }
+    showToast("직전 작업을 되돌렸습니다.", "success");
+    await refreshPlan();
+  }
+
+  function openPasteConflictDialog(preview) {
+    const collisions = preview.collisions || [];
+    const decisions = {};
+    let position = 0;
+    const body = h("div", { class: "modal-body paste-conflict-body" });
+    const applyRemaining = h("input", { type: "checkbox" });
+    const render = () => {
+      clear(body);
+      const item = collisions[position];
+      if (!item) return;
+      body.appendChild(h("div", { class: "modal-hint" }, [
+        `${preview.source || "원본"}에서 ${preview.target === "archive" ? "마스터" : "현재 Collection"}로 ${formatCount(preview.count)}개 복사 예정`
+        + ` (${formatCount(collisions.length)}건 충돌) · ${position + 1}/${collisions.length}`,
+      ]));
+      body.appendChild(h("div", { class: "paste-conflict-filename" },
+        [`대상 게임 ${item.filename}이(가) 이미 있습니다.`]));
+      const makeSide = (label, title, desc, fields, incoming) => {
+        const cover = h("img", { alt: "커버", class: "paste-conflict-thumb" });
+        const screen = h("img", { alt: "스크린샷", class: "paste-conflict-thumb" });
+        const detailCover = h("img", { alt: "커버", class: "scrape-thumb" });
+        [cover, screen, detailCover].forEach((image) => { image.style.visibility = "hidden"; });
+        const facts = [fields?.developer, fields?.publisher, fields?.genre, fields?.region,
+          String(fields?.releasedate || "").match(/\d{4}/)?.[0], fields?.rating,
+          fields?.players].filter(Boolean).slice(0, 5);
+        const expanded = h("div", { class: "paste-conflict-expanded scrape-candidate" }, [
+          h("div", { class: "scrape-candidate-head" }, [
+            detailCover,
+            h("div", { class: "scrape-candidate-main" }, [
+              h("span", { class: "scrape-candidate-title" }, [title]),
+              h("span", { class: "scrape-candidate-desc" }, [desc || "설명 없음"]),
+              h("div", { class: "scrape-candidate-facts" }, [
+                h("div", { class: "scrape-fact-row" },
+                  facts.map((value) => h("span", { class: "scrape-fact", title: String(value) },
+                    [String(value)]))),
+              ]),
+            ]),
+          ]),
+        ]);
+        const toggle = h("button", { class: "btn compact paste-conflict-expand",
+          title: "자세히 보기", "aria-expanded": "false" }, [icon("chevronDown", IC.sm)]);
+        toggle.addEventListener("click", () => {
+          const open = expanded.classList.toggle("open");
+          toggle.setAttribute("aria-expanded", String(open));
+        });
+        const row = h("div", { class: "paste-conflict-side", title: desc || title }, [
+          h("span", { class: "paste-conflict-side-label" }, [label]),
+          h("span", { class: "paste-conflict-side-title truncate" }, [title]),
+          cover, screen, toggle, expanded,
+        ]);
+        for (const [type, image] of [["covers", cover], ["screenshots", screen]]) {
+          const request = incoming
+            ? api.pastePreviewMedia(preview.operationId, item.key, type)
+            : preview.target === "archive"
+              ? api.getArchiveMediaImage(item.existingRomUid,
+                type === "covers" ? "Covers" : "Screenshots", true)
+              : api.getMediaImage(S.activeId, item.existingRomUid,
+                type === "covers" ? "Covers" : "Screenshots", true);
+          request.then((result) => {
+            if (result.ok && result.data && row.isConnected) {
+              image.src = result.data;
+              image.style.visibility = "visible";
+              if (type === "covers") {
+                detailCover.src = result.data;
+                detailCover.style.visibility = "visible";
+              }
+            }
+            else image.classList.add("empty");
+          });
+        }
+        return row;
+      };
+      body.appendChild(makeSide("기존", item.existingTitle,
+        item.existingDescription, item.existingFields, false));
+      body.appendChild(makeSide("대상", item.incomingTitle,
+        item.incomingDescription, item.incomingFields, true));
+      const checkbox = h("label", { class: "paste-conflict-remaining" }, [
+        applyRemaining, h("span", {}, ["남은 충돌에 모두 적용"]),
+      ]);
+      body.appendChild(checkbox);
+    };
+    const choose = async (choice) => {
+      decisions[collisions[position].key] = choice;
+      if (applyRemaining.checked) {
+        collisions.slice(position + 1).forEach((item) => { decisions[item.key] = choice; });
+        closeModal();
+        await executePasteOperation(preview, decisions);
+        return;
+      }
+      position += 1;
+      if (position >= collisions.length) {
+        closeModal();
+        await executePasteOperation(preview, decisions);
+      } else render();
+    };
+    render();
+    const card = showModal("같은 이름의 게임", body, [
+      h("button", { class: "btn", onClick: closeModal }, ["취소"]),
+      h("button", { class: "btn", onClick: () => choose("skip") }, ["이 게임 건너뛰기"]),
+      h("button", { class: "btn primary", onClick: () => choose("overwrite") },
+        ["기존 게임 덮어쓰기"]),
+    ]);
+    card.classList.add("paste-conflict-card");
   }
 
   /** 붙여넣기 전에 System 이름을 맞춘다. 반환: {원본:대상} 또는 취소면 null, 물을 것이 없으면 {}.
@@ -8250,7 +8379,7 @@
   }
 
   /** `parts`를 지운다(정하지 않으면 전부). 무엇이 지워지는지 확인창과 토스트가 그대로 말한다. */
-  async function deleteSelection(parts) {
+  async function deleteSelection(parts, permanent = false) {
     if (blockedInCompare("삭제")) return;
     if (!S.selected.size) { showToast("삭제할 항목을 선택하세요.", "warning"); return; }
     const count = S.selected.size;
@@ -8276,17 +8405,33 @@
     }
     const chosen = Array.isArray(parts) && parts.length ? parts : DELETE_ALL;
     const what = chosen.map((p) => DELETE_PART_LABEL[p]).join(" + ");
-    const run = async () => {
-      const r = await api.planDelete(S.activeId, [...S.selected], chosen);
+    const collectionId = S.activeId;
+    const ids = [...S.selected];
+    const run = async (force = false) => {
+      const r = await api.deleteImmediate(collectionId, ids, chosen, force);
       if (!r.ok) { showToast(r.error, "error"); return; }
+      if (r.data.requiresConfirmation) {
+        showConfirm("삭제 확인", formatCount(count) + "개의 " + what
+          + "을(를) 영구 삭제합니다. 이 경로에서는 되돌릴 수 없습니다.", true, () => run(true));
+        return;
+      }
+      const completed = await pollJob(r.data.jobId, "삭제하는 중");
+      if (!completed.ok) { showToast(completed.error, "error"); return; }
+      const result = completed.data || {};
+      if (result.undoOperationId) S.lastPasteUndoId = result.undoOperationId;
+      if (S.activeId !== collectionId) return;
       S.selected.clear();
+      resetList();
+      await reloadList();
       await refreshPlan();
-      if (S.autoPlan) showToast(`${formatCount(count)}개의 ${what}을(를) 삭제 예정으로 표시했습니다.`);
-      else await applyPlan();
+      showToast(result.rolledBack ? "삭제에 실패해 변경을 복구했습니다."
+        : formatCount(result.applied || 0) + "개 삭제"
+          + (result.undoOperationId ? " · Ctrl+Z로 실행 취소" : ""),
+      result.failed || result.partial ? "warning" : "success");
     };
-    // Auto Plan이 켜져 있으면 아직 파일이 지워지지 않으므로 확인창까지 띄우지 않는다.
-    if (S.autoPlan) run();
-    else showConfirm("삭제", `${formatCount(count)}개의 ${what}을(를) 즉시 삭제합니다. 되돌릴 수 없습니다.`, true, run);
+    if (permanent) showConfirm("영구 삭제", formatCount(count) + "개의 " + what
+      + "을(를) 영구 삭제합니다. 되돌릴 수 없습니다.", true, () => run(true));
+    else await run();
   }
 
   /** 충돌 하나의 종류 라벨 - ROM이면 "ROM 파일", media면 그 종류(Covers 등). */
@@ -8327,88 +8472,7 @@
       [current, incoming]);
   }
 
-  async function openConflictDialog(page = 0) {
-    const allEntries = ((S.plan && S.plan.entries) || S.plan?.conflictEntries || [])
-      .filter((entry) => (entry.conflicts || []).length);
-    if (!allEntries.length) return;
-    // Resolve outstanding conflicts first. Resolved entries retain their
-    // conflict details, so slicing all entries always trapped bulk plans on
-    // the same first 50 games.
-    const unresolved = allEntries.filter((entry) => !entry.resolution);
-    const entries = unresolved.length ? unresolved : allEntries;
-    const pageSize = 50;
-    const pageCount = Math.ceil(entries.length / pageSize);
-    const currentPage = Math.max(0, Math.min(Number.isInteger(page) ? page : 0,
-      pageCount - 1));
-    const start = currentPage * pageSize;
-    const visible = entries.slice(start, start + pageSize);
 
-    const list = h("div", { class: "conflict-list" });
-    const pending = [];
-    visible.forEach((entry) => {
-      const conflicts = entry.conflicts || [];
-      const choices = Object.fromEntries(conflicts.map((conflict, index) => [index,
-        entry.resolution === "overwrite" ? "overwrite"
-          : entry.resolution === "custom"
-            ? entry.conflictChoices?.[conflict.dest] || "skip" : "skip"]));
-      pending.push({ key: entry.key, choices });
-      const incomingLabel = entry.origin === "archive" ? "Archive" : "가져올 파일";
-      const row = h("div", { class: "copy-conflict-row" }, [
-        h("div", { class: "copy-conflict-main" }, [
-          h("div", { class: "conflict-header" }, [
-            h("span", { class: "conflict-filename truncate" }, [entry.filename]),
-          ]),
-          h("div", { class: "conflict-column-heads" }, [
-            h("span", {}, ["현재 Collection"]), h("span", {}, [incomingLabel]),
-          ]),
-          ...conflicts.map((c, i) => conflictDetailRow(c, entry.key, i, choices)),
-        ]),
-      ]);
-      list.appendChild(row);
-    });
-    if (entries.length > pageSize) list.prepend(h("div", { class: "modal-hint conflict-page-count" },
-      [`${unresolved.length ? "미해결 " : "충돌 "}${formatCount(start + 1)}–${formatCount(start + visible.length)} / ${formatCount(entries.length)}건`]));
-
-    const body = h("div", { class: "modal-body conflict-dialog-body" }, [
-      h("div", { class: "modal-hint conflict-intro" },
-        ["각 파일에서 사용할 쪽을 고르세요. 최종 적용은 Plan 적용 시 합니다."]),
-      h("div", { class: "conflict-bulk-actions" }, [
-        h("button", { class: "btn compact", onClick: () => bulkResolve("skip") },
-          ["전체 현재 파일 사용"]),
-        h("button", { class: "btn compact", onClick: () => bulkResolve("overwrite") },
-          ["전체 가져올 파일 사용"]),
-      ]),
-      list,
-    ]);
-    function bulkResolve(resolution) {
-      showConfirm("충돌 일괄 선택",
-        `미해결 충돌 ${formatCount(unresolved.length)}건에 같은 선택을 적용합니다. `
-        + "실제 파일은 Plan 적용 때 바뀝니다. 계속할까요?", resolution === "overwrite", async () => {
-          const result = await api.planResolveAllConflicts(S.activeId, resolution);
-          if (!result.ok) { showToast(result.error, "error"); return; }
-          await refreshPlan();
-          if (S.plan?.conflicts) openConflictDialog(0);
-        });
-    }
-    const savePage = async (nextPage = null) => {
-      for (const entry of pending) {
-        const result = await api.planResolveConflict(S.activeId, entry.key, entry.choices);
-        if (!result.ok) { showToast(result.error, "error"); return; }
-      }
-      closeModal();
-      await refreshPlan();
-      if (S.plan?.conflicts) openConflictDialog(0);
-      else if (nextPage !== null) openConflictDialog(nextPage);
-    };
-    const actions = [h("button", { class: "btn", onClick: closeModal }, ["나중에"])];
-    if (!unresolved.length && currentPage > 0) actions.push(h("button", { class: "btn",
-      onClick: () => savePage(currentPage - 1) }, ["이전"]));
-    if (!unresolved.length && currentPage + 1 < pageCount) actions.push(h("button", { class: "btn",
-      onClick: () => savePage(currentPage + 1) }, ["다음"]));
-    actions.push(h("button", { class: "btn primary", onClick: () => savePage() }, ["선택 완료"]));
-    const card = showModal("충돌 확인", body, actions);
-    card.classList.add("conflict-modal-card");
-  }
 
   /** 지난 Apply에서 실패해 Plan에 남은 항목을 보여준다.
    *
@@ -8417,132 +8481,9 @@
    * 방법이 없어서 Apply를 눌러도 계속 실패만 반복됐다(실사용 피드백). 이유를
    * 보여주고, 재시도(다음 Apply가 자동으로 다시 시도한다)나 포기(Plan에서
    * 제거)를 고르게 한다. */
-  async function openFailedDialog() {
-    const entries = (S.plan && S.plan.failedEntries) || [];
-    if (!entries.length) return;
 
-    const list = h("div", { class: "picker-list" });
-    entries.slice(0, 50).forEach((entry) => {
-      const row = h("div", { class: "conflict-row" }, [
-        h("div", { class: "conflict-main" }, [
-          h("div", { class: "picker-name truncate" }, [entry.filename]),
-          h("div", { class: "picker-sub truncate" }, [entry.error || "원인을 알 수 없는 실패"]),
-        ]),
-      ]);
-      const remove = h("button", { class: "btn compact", title: "이 항목을 Plan에서 지웁니다 - 다시 시도하지 않습니다" },
-        ["Plan에서 제거"]);
-      remove.addEventListener("click", async () => {
-        await api.planRemoveEntry(S.activeId, entry.key);
-        await refreshPlan();
-        closeModal();
-        openFailedDialog();
-      });
-      row.appendChild(remove);
-      list.appendChild(row);
-    });
-    if (entries.length > 50) {
-      list.appendChild(h("div", { class: "modal-hint" }, [`외 ${formatCount(entries.length - 50)}개 더 있습니다.`]));
-    }
 
-    const body = h("div", { class: "modal-body" }, [
-      h("div", { class: "modal-text" }, [
-        `지난 Apply에서 실패해 Plan에 남은 항목 ${formatCount(entries.length)}개입니다.`]),
-      h("div", { class: "modal-hint" }, [
-        "다음 Apply 때 다시 시도합니다. 원인이 해결되지 않았다면 같은 이유로 " +
-        "또 실패합니다 - 예를 들어 대상 Storage에 같은 이름의 파일이 이미 있으면 " +
-        "그 파일을 먼저 지우거나 옮겨야 합니다."]),
-      list,
-    ]);
-    showModal("실패한 항목", body, [
-      h("button", { class: "btn", onClick: closeModal }, ["닫기"]),
-    ]);
-  }
 
-  async function applyPlan() {
-    if (!S.plan || !S.plan.total) { showToast("적용할 Plan이 없습니다.", "warning"); return; }
-    // 미해결 충돌이 있으면 먼저 결정하게 한다. 그냥 진행하면 그 항목들이 조용히
-    // 빠진 채 "적용 완료"로 보인다.
-    if (S.plan.conflicts) { openConflictDialog(); return; }
-    const check = await api.validatePlan(S.activeId);
-    if (!check.ok) { showToast(check.error, "error"); return; }
-    const report = check.data;
-
-    const body = h("div", { class: "modal-body" });
-    body.appendChild(h("div", { class: "modal-text" }, [
-      `추가 ${formatCount(S.plan.added)} · 삭제 ${formatCount(S.plan.deleted)} · 이동 ${formatCount(S.plan.moved)}`
-      + ` · 편집 ${formatCount((S.plan.retitled || 0) + (S.plan.edited || 0))}`
-      + ` · Archive 수집 ${formatCount(S.plan.archived || 0)}`,
-    ]));
-    (report.capacity || []).forEach((c) => {
-      const row = h("div", { class: "health-row" + (c.over ? " over" : "") }, [
-        h("span", {}, [c.label]),
-        h("span", {}, [
-          `${formatBytes(c.actualBytes)} → ${formatBytes(c.planBytes)}`,
-          c.capacityBytes == null ? " (Capacity Unknown)" : "",
-          c.over ? ` · 용량 초과 +${formatBytes(c.overBytes)}` : "",
-        ]),
-      ]);
-      body.appendChild(row);
-    });
-    if (report.entries && report.entries.length) {
-      body.appendChild(h("div", { class: "modal-hint" }, [
-        `확정할 수 없는 항목 ${report.entries.length}개: ` +
-        report.entries.slice(0, 3).map((e) => `${e.filename} (${e.error})`).join(", "),
-      ]));
-    }
-
-    const actions = [h("button", { class: "btn", onClick: closeModal }, ["취소"])];
-    if (!report.blocked && S.plan.total > (report.entries || []).length) {
-      actions.push(h("button", { class: "btn primary", onClick: async () => {
-        const appliedCollectionId = S.activeId;
-        const focusedBefore = S.focused == null ? null : rowByUid(S.focused);
-        const focusedFile = focusedBefore && { system: focusedBefore.system, file: focusedBefore.file };
-        const scrollBefore = $("list-scroll")?.scrollTop || 0;
-        closeModal();
-        const r = await api.startApply(appliedCollectionId);
-        if (!r.ok) { showToast(r.error, "error"); return; }
-        const result = await pollJob(r.data.jobId, "Plan 적용 중");
-        if (!result.ok) {
-          if (!result.cancelled) showToast(result.error, "error");
-        } else {
-          const data = result.data || {};
-          const remaining = (data.failed || 0) + (data.partial || 0)
-            + (data.skipped || 0) + (data.invalid || 0);
-          let message = `적용 ${formatCount(data.applied || 0)}개`;
-          if (data.failed) message += ` · 실패 ${formatCount(data.failed)}개`;
-          if (data.partial) message += ` · 일부만 반영 ${formatCount(data.partial)}개`;
-          if (data.skipped) message += ` · 충돌로 건너뜀 ${formatCount(data.skipped)}개`;
-          if (data.invalid) message += ` · 검증 실패 ${formatCount(data.invalid)}개`;
-          // "Apply 했으니 끝났다"고 오해하지 않도록 남은 항목을 반드시 말한다.
-          if (remaining) message += ` — ${formatCount(remaining)}개가 Plan에 남아 있습니다`;
-          showToast(message, remaining ? "warning" : "info");
-        }
-        if (S.activeId !== appliedCollectionId) return;
-        await ensureDetail(S.activeId);
-        resetList();
-        renderAll();
-        await reloadList();
-        await refreshPlan();
-        if (focusedFile) {
-          const found = await api.listRows(appliedCollectionId, {
-            systems: [focusedFile.system], search: focusedFile.file, limit: 100, offset: 0,
-          });
-          const row = found.ok && (found.data.rows || []).find((entry) =>
-            entry.system === focusedFile.system && entry.file === focusedFile.file);
-          if (row && S.activeId === appliedCollectionId) {
-            S.selected = new Set([row.romUid]);
-            S.selectAnchor = row.romUid;
-            await openDetail(row);
-            const listScroll = $("list-scroll");
-            if (listScroll) listScroll.scrollTop = scrollBefore;
-            renderListWindow();
-            renderStatusBar();
-          }
-        }
-      } }, ["적용"]));
-    }
-    showModal(report.blocked ? "용량 부족" : "Plan 적용", body, actions);
-  }
 
   // Auto Plan을 껐다 켰다 하는 UI는 없앴다(레이아웃 재검토 결론) - 실사용
   // 시나리오가 확인되기 전까지는 화면에서 감춘다. `S.autoPlan`은 기본 ON으로
@@ -8579,12 +8520,11 @@
     if (!(await ensureArchiveConfigured())) return;
     const scope = archiveScope();
     const label = archiveScopeLabel(scope);
-    const result = await api.planArchiveIngest(S.activeId, scope);
+    const result = await api.startArchiveIngest(S.activeId, scope);
     if (!result.ok) { showToast(result.error, "error"); return; }
-    if (!result.data.planned) { showToast("수집할 항목이 없습니다.", "warning"); return; }
-    await refreshPlan();
-    showToast(`${label} · Archive 수집 ${formatCount(result.data.planned)}개를 Plan에 추가했습니다.`);
-    openPlanOverview();
+    const done = await pollJob(result.data.jobId, "Archive로 보내는 중");
+    if (!done.ok) { showToast(done.error, "error"); return; }
+    showToast(`${label} · Archive에 저장했습니다.`);
   }
 
   function importParts(entry) {
@@ -8597,69 +8537,13 @@
   }
 
   /** 방금 가져온 항목만 보여 준다. 기존 Plan 항목과 섞어 결과를 과장하지 않는다. */
-  function openImportResult(result, sourceLabel, scopeLabel) {
-    const keys = new Set(result.keys || []);
-    const entries = (S.plan?.entries || []).filter((entry) => keys.has(entry.key));
-    const skipped = result.skipped || [];
-    const body = h("div", { class: "modal-body import-result" }, [
-      h("div", { class: "import-result-counts" }, [
-        h("span", {}, [`Plan ${formatCount(result.planned || 0)}`]),
-        h("span", {}, [`충돌 ${formatCount(result.conflicts || 0)}`]),
-        h("span", {}, [`제외 ${formatCount(skipped.length)}`]),
-      ]),
-      h("div", { class: "modal-hint" },
-        [`${sourceLabel}${scopeLabel ? ` → ${scopeLabel}` : ""} · 실제 변경은 Plan의 Apply를 누를 때 반영됩니다.`]),
-    ]);
-    if (entries.length) {
-      const list = h("div", { class: "plan-overview import-result-list" });
-      entries.slice(0, 100).forEach((entry) => {
-        list.appendChild(h("div", { class: "plan-overview-row" }, [
-          h("b", {}, [entry.system]),
-          h("span", { title: `${entry.filename} · ${entry.sourceName || ""}` },
-            [entry.filename]),
-          h("small", { title: importParts(entry) },
-            [entry.status === "conflict" ? `충돌 · ${importParts(entry)}` : importParts(entry)]),
-        ]));
-      });
-      body.appendChild(list);
-      if (entries.length > 100) body.appendChild(h("div", { class: "modal-hint" },
-        [`외 ${formatCount(entries.length - 100)}개는 Plan에서 확인하세요.`]));
-    }
-    if (skipped.length) {
-      body.appendChild(h("div", { class: "field-label" }, ["제외된 항목"]));
-      const list = h("div", { class: "plan-overview import-result-list" });
-      skipped.slice(0, 30).forEach((item) => list.appendChild(h("div", {
-        class: "plan-overview-row import-result-skipped" }, [
-        h("span", { title: item.filename || "" }, [item.filename || "항목"]),
-        h("small", { title: item.reason || "" }, [item.reason || "가져올 변경 없음"]),
-      ])));
-      body.appendChild(list);
-      if (skipped.length > 30) body.appendChild(h("div", { class: "modal-hint" },
-        [`외 ${formatCount(skipped.length - 30)}개가 제외됐습니다.`]));
-    }
-    if (!entries.length && !skipped.length) body.appendChild(h("div", { class: "empty-msg" },
-      ["가져올 변경 사항이 없습니다."]));
-    const actions = [h("button", { class: "btn", onClick: closeModal }, ["닫기"])];
-    if (S.plan?.total) actions.push(h("button", { class: "btn", onClick: () => {
-      closeModal(); openPlanOverview();
-    } }, ["Plan 보기"]));
-    if (result.conflicts && S.plan?.conflicts) actions.push(h("button", {
-      class: "btn primary", onClick: () => { closeModal(); openConflictDialog(); },
-    }, ["충돌 확인"]));
-    showModal("가져오기 결과", body, actions);
-  }
+
 
   async function importFromCollection(sourceId, targetId) {
     const scope = activeScope();
     const system = scope.kind === "system" ? scope.id : null;
     const label = system ? `${String(system).toUpperCase()} 전체` : "Collection 전체";
-    const r = await api.collectionImportPlan(targetId, sourceId, null, null,
-      system, currentPasteMode());
-    if (!r.ok) { showToast(r.error, "error"); return; }
-    await refreshPlan();
-    openImportResult(r.data,
-      S.collections.find((collection) => collection.id === sourceId)?.name || "Collection",
-      label);
+    await runImmediateAction("import", { sourceId, system, mode: currentPasteMode() });
   }
 
   /** 현재 범위에 해당하는 Archive 항목을 Plan에 담는다. */
@@ -8670,10 +8554,7 @@
     const uidsR = await api.archiveUids(systems);
     if (!uidsR.ok) { showToast(uidsR.error, "error"); return; }
     if (!uidsR.data.length) { showToast(`${label}에 해당하는 Archive 항목이 없습니다.`, "warning"); return; }
-    const r = await api.archiveToCollection(S.activeId, uidsR.data, currentPasteMode());
-    if (!r.ok) { showToast(r.error, "error"); return; }
-    await refreshPlan();
-    openImportResult(r.data, "Archive", label);
+    await runImmediateAction("archive-import", { ids: uidsR.data, mode: currentPasteMode() });
   }
 
   function openSendToCollection() {
@@ -8697,56 +8578,24 @@
         [`선택한 ${formatCount(S.selected.size)}개를 어느 Collection으로 보낼까요?`]),
       list,
       h("div", { class: "modal-hint" }, [
-        "메타데이터와 파일을 Plan에서 확인한 뒤 Apply로 반영합니다."]),
+        "대상을 선택한 뒤 충돌을 확인하고 바로 복사합니다."]),
     ]);
     showModal("Collection으로 보내기", body, [h("button", { class: "btn", onClick: closeModal }, ["취소"])]);
   }
 
   async function sendToCollection(collectionId) {
     const ids = [...S.selected];
-    const r = await api.archiveToCollection(collectionId, ids, currentPasteMode());
-    if (!r.ok) { showToast(r.error, "error"); return; }
     await selectTab(collectionId);
     if (S.activeId !== collectionId) {
-      showToast(`대상 Collection의 Plan에 ${formatCount(r.data.planned)}개 추가했습니다.`);
       return;
     }
-    openImportResult(r.data, "Archive", `선택한 ${formatCount(ids.length)}개`);
+    await runImmediateAction("archive-import", { ids, mode: currentPasteMode() });
   }
 
   // ------------------------------------------------------------------
   // 하단 상태 바
   // ------------------------------------------------------------------
-  function openPlanOverview(page = 0) {
-    const entries = S.plan?.entries || [];
-    const body = h("div", { class: "modal-body plan-overview" });
-    if (!entries.length) body.appendChild(h("div", { class: "modal-text" }, ["Plan에 대기 중인 항목이 없습니다."]));
-    const pageSize = 100;
-    const pageCount = Math.max(1, Math.ceil(entries.length / pageSize));
-    const currentPage = Math.max(0, Math.min(Number.isInteger(page) ? page : 0, pageCount - 1));
-    const start = currentPage * pageSize;
-    if (pageCount > 1) body.appendChild(h("div", { class: "modal-hint" },
-      [`${formatCount(start + 1)}–${formatCount(Math.min(start + pageSize, entries.length))} / ${formatCount(entries.length)}개`]));
-    entries.slice(start, start + pageSize).forEach((entry) => {
-      const action = ({ add: "추가", delete: "삭제", metadata_edit: "메타데이터 수정",
-                        title_edit: "제목 수정", storage_change: "Storage 이동",
-                        archive_ingest: "Archive 수집" })[entry.op] || entry.op;
-      body.appendChild(h("div", { class: "plan-overview-row" }, [
-        h("b", {}, [action]),
-        h("span", { title: `${entry.system} / ${entry.filename}` },
-          [`${entry.system} / ${entry.filename}`]),
-        h("small", { title: entry.op === "add" ? importParts(entry) : (entry.status || "대기") },
-          [entry.status === "conflict" ? "충돌" : entry.op === "add" ? importParts(entry)
-            : entry.op === "archive_ingest" ? "수집 예정" : (entry.status || "대기")]),
-      ]));
-    });
-    const actions = [h("button", { class: "btn", onClick: closeModal }, ["닫기"])];
-    if (currentPage > 0) actions.push(h("button", { class: "btn",
-      onClick: () => openPlanOverview(currentPage - 1) }, ["이전"]));
-    if (currentPage + 1 < pageCount) actions.push(h("button", { class: "btn",
-      onClick: () => openPlanOverview(currentPage + 1) }, ["다음"]));
-    showModal(`Plan · ${formatCount(S.plan?.total || 0)}개`, body, actions);
-  }
+
 
   function renderStatusBar() {
     const bar = $("status-bar");
@@ -8763,40 +8612,6 @@
       icon("layoutList", IC.sm),
       h("span", {}, [`Selected ${formatCount(S.selected.size)}`]),
     ]);
-    if (plan && plan.total) {
-      // 바이트만 보여주면 "3GB가 늘어난다"는 알아도 "몇 개가 바뀌는지"는 다시
-      // 세어봐야 했다(사용자 결정 - "n개 추가/m개 삭제를 노랑/빨강으로 표시하면
-      // 의미 전달이 더 잘될 듯"). 개수를 앞에 세우고 용량은 괄호로 보탠다 -
-      // Gamelist 위 노란 미리보기 띠, No. 칸의 +/- 아이콘과 같은 색 언어다.
-      if (plan.added) right.appendChild(h("button", { class: "sb-add sb-plan-count", onClick: openPlanOverview },
-        [`+${formatCount(plan.added)}개`, plan.addedBytes ? ` (${formatBytes(plan.addedBytes)})` : ""]));
-      if (plan.deleted) right.appendChild(h("button", { class: "sb-del sb-plan-count", onClick: openPlanOverview },
-        [`−${formatCount(plan.deleted)}개`, plan.deletedBytes ? ` (${formatBytes(plan.deletedBytes)})` : ""]));
-      if (plan.archived) right.appendChild(h("button", { class: "sb-add sb-plan-count", onClick: openPlanOverview },
-        [`Archive 수집 ${formatCount(plan.archived)}개`]));
-      if (plan.conflicts) {
-        const btn = h("button", { class: "sb-badge warn", title: "충돌을 확인하고 처리 방식을 정하세요" },
-          [`충돌 ${formatCount(plan.conflicts)}`]);
-        btn.addEventListener("click", openConflictDialog);
-        right.appendChild(btn);
-      } else {
-        const resolved = (plan.entries || []).filter((entry) =>
-          (entry.conflicts || []).length && entry.resolution).length;
-        if (resolved) {
-          const btn = h("button", { class: "sb-badge success", title: "선택한 파일을 다시 확인하거나 바꿉니다" },
-            [`충돌 ${formatCount(resolved)} · 선택 완료`]);
-          btn.addEventListener("click", openConflictDialog);
-          right.appendChild(btn);
-        }
-      }
-      if (plan.failed) {
-        const btn = h("button", { class: "sb-badge danger",
-          title: "지난 적용에서 실패해 Plan에 남아 있는 항목 - 눌러서 이유를 보세요" },
-          [`실패 ${formatCount(plan.failed)}`]);
-        btn.addEventListener("click", openFailedDialog);
-        right.appendChild(btn);
-      }
-    }
     const left = h("div", { class: "sb-middle" });
     if (detail) {
       detail.storages.forEach((storage) => {
@@ -9077,7 +8892,7 @@
       if (e.key === "Escape") { if ($("modal-root").firstChild) closeModal(); else closeDetail(); }
       // F5 = 지금 탭 다시 스캔. WebView의 페이지 새로고침은 막는다 - 그러면 열어 둔 탭과
       // 선택이 전부 사라진다.
-      if (e.key === "F5") { e.preventDefault(); if (S.activeId) refreshActive(); return; }
+      if (e.key === "F5") { e.preventDefault(); if (S.activeId && !$("modal-root").firstChild) refreshActive(); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         // Compare 상세도 tab이 "metadata"라서, 이 조건만으로는 비교 화면에서 저장
@@ -9088,7 +8903,14 @@
       // 입력 중에는 목록 단축키가 끼어들면 안 된다.
       const tag = (e.target && e.target.tagName) || "";
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if ($("modal-root").firstChild) return;
       if (!S.activeId) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        const search = document.querySelector(".search-input");
+        if (search) { search.focus(); search.select(); }
+        return;
+      }
       // 비교 중에도 단축키를 삼키지는 않는다 - 각 동작이 blockedInCompare()로 막으면서
       // "왜 안 되는지"를 말해준다. 조용히 무시하면 사용자는 키가 안 먹었다고 여긴다.
       if (!$("modal-root").firstChild && S.view !== "dashboard") {
@@ -9103,9 +8925,17 @@
           e.preventDefault(); jumpToLetter(e.key); return;
         }
       }
-      if (e.key === "Delete") { e.preventDefault(); deleteSelection(); }
+      if (e.key === "F2" && !$("modal-root").firstChild && S.selected.size === 1) {
+        e.preventDefault(); renameSelectedGame(rowByUid([...S.selected][0])); return;
+      }
+      if (e.key === "Delete" && !$("modal-root").firstChild) {
+        e.preventDefault(); deleteSelection(null, e.shiftKey);
+      }
       // 글자를 드래그해 골라 둔 상태면 그 글자를 복사한다(브라우저 기본 동작). 예전엔 늘
       // 게임 복사로 가로채서 Detail의 파일명 같은 글자를 복사할 수 없었다.
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "x" && !hasTextSelection()) {
+        e.preventDefault(); cutSelectedRows(); return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && !hasTextSelection()) {
         e.preventDefault(); copySelectedRows();
       }
@@ -9119,6 +8949,10 @@
           return;
         }
         e.preventDefault(); pasteClipboard();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z"
+          && !e.target.closest("input,textarea,[contenteditable=true]")) {
+        e.preventDefault(); undoLastPaste();
       }
     });
   }

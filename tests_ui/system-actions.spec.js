@@ -184,8 +184,8 @@ test.describe("ROM 없는 항목 정리", () => {
   const spyPlanDelete = async (page) => {
     await page.evaluate(() => {
       window.__planDeleted = [];
-      const original = window.api.planDelete;
-      window.api.planDelete = (id, uids) => { window.__planDeleted.push(uids); return original(id, uids); };
+      const original = window.api.deleteImmediate;
+      window.api.deleteImmediate = (id, uids) => { window.__planDeleted.push(uids); return original(id, uids); };
     });
   };
 
@@ -202,7 +202,7 @@ test.describe("ROM 없는 항목 정리", () => {
     await expect(page.locator(".modal-title")).toHaveCount(0);
   });
 
-  test("항목이 있으면 목록을 보여주고, 확인하면 Plan에 올린다", async ({ page }) => {
+  test("항목이 있으면 목록을 보여주고, 확인하면 독립 작업으로 적용한다", async ({ page }) => {
     await mockOrphans(page, [{ romUid: 101, filename: "Ghost.iso", title: "Ghost Game" }]);
     await spyPlanDelete(page);
     await navSystem(page, "PS2").click({ button: "right" });
@@ -213,7 +213,7 @@ test.describe("ROM 없는 항목 정리", () => {
     await modalButton(page, "삭제").click();
     await expect.poll(() => page.evaluate(() => window.__planDeleted)).toEqual([[101]]);
     // 기본값(Auto Plan 켜짐)에서는 아직 파일이 지워지지 않고 Plan에만 올라간다.
-    await expect(page.locator(".toast-msg")).toHaveText("1개를 삭제 예정으로 표시했습니다.");
+    await expect(page.locator(".toast-msg")).toHaveText("1개를 정리했습니다.");
   });
 
   test("취소하면 아무것도 하지 않는다", async ({ page }) => {
@@ -465,13 +465,13 @@ test.describe("게임을 끌어 다른 System으로", () => {
     await expect(page.locator(".lrow").first()).toHaveAttribute("draggable", "true");
   });
 
-  test("System 행에 떨어뜨리면 그 System으로 옮기도록 Plan에 올린다", async ({ page }) => {
+  test("System 행에 떨어뜨리면 그 System으로 옮기도록 독립 작업으로 적용한다", async ({ page }) => {
     await page.evaluate(() => {
       window.__moved = [];
-      const original = window.api.planMoveToSystem;
-      window.api.planMoveToSystem = (id, uids, system) => {
-        window.__moved.push({ uids, system });
-        return original(id, uids, system);
+      const original = window.api.operationPreview;
+      window.api.operationPreview = (id, action, options) => {
+        window.__moved.push({ uids: options.romUids, system: options.system });
+        return original(id, action, options);
       };
     });
     // 끌어다 놓기는 DataTransfer를 직접 만들어 흉내 낸다(Playwright의 dragTo는 HTML5 DnD를 못 쓴다).
@@ -489,15 +489,15 @@ test.describe("게임을 끌어 다른 System으로", () => {
     const moved = (await page.evaluate(() => window.__moved))[0];
     expect(moved.system).toBe("snes");
     expect(moved.uids).toHaveLength(1);
-    await expect(page.locator("#toast")).toContainText("Plan에 올렸습니다");
+    await expect(page.locator("#toast")).toContainText("이동");
   });
 
   test("고른 여러 개가 함께 간다", async ({ page }) => {
     await page.evaluate(() => {
       window.__moved = [];
-      window.api.planMoveToSystem = (id, uids, system) => {
-        window.__moved.push(uids);
-        return Promise.resolve({ ok: true, data: { moved: uids.length, target: system, conflicts: 0, skipped: [] } });
+      window.api.operationPreview = (id, action, options) => {
+        window.__moved.push(options.romUids);
+        return Promise.resolve({ ok: true, data: { operationId: "mock-move", action, count: options.romUids.length, undoable: true, collisions: [], skipped: [] } });
       };
     });
     await page.locator(".lrow").nth(0).click();

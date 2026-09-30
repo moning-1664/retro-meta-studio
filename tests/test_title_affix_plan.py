@@ -96,6 +96,21 @@ class TitleAffixPlanTests(unittest.TestCase):
         # 미리보기는 아무것도 쓰지 않는다.
         self.assertEqual(self.gamelist_names()["FFX (U).iso"], "Final Fantasy X")
 
+    def test_title_operation_applies_without_shared_queue_and_can_be_undone(self):
+        before = self.gamelist_names()
+        preview = self.api.operation_preview(self.cid, "title", {"system": "ps2"})
+        self.assertTrue(preview["ok"], preview)
+        self.assertEqual(self.api.plan_state(self.cid)["data"]["total"], 0)
+        self.assertEqual(self.gamelist_names(), before)
+        started = self.api.paste_execute(preview["data"]["operationId"], {})
+        self.assertTrue(started["ok"], started)
+        wait_job(self.api, started["data"]["jobId"])
+        self.assertEqual(self.gamelist_names()["FFX (U).iso"], "EN_Final Fantasy X")
+        undone = self.api.paste_undo(self.cid)
+        self.assertTrue(undone["ok"], undone)
+        wait_job(self.api, undone["data"]["jobId"])
+        self.assertEqual(self.gamelist_names(), before)
+
     def test_preview_accepts_a_gamelist_selection_instead_of_a_whole_system(self):
         r = self.api.title_affix_preview(self.cid, rom_uids=[self.uid("FFX (U).iso")])
         self.assertTrue(r["ok"], r.get("error"))

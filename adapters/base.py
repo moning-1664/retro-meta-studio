@@ -344,7 +344,9 @@ def read_document(path, provider=None) -> "bytes | None":
 
 def write_document(path, data: bytes, provider=None) -> bool:
     """메타데이터 파일 전체를 쓴다. 부모 디렉터리는 Provider가 만든다."""
-    return _provider_for(path, provider).write_bytes(path, data)
+    if not _provider_for(path, provider).write_bytes(path, data):
+        raise OSError(f"메타데이터 파일을 쓰지 못했습니다: {path}")
+    return True
 
 
 def resolve_existing(candidates, provider=None):

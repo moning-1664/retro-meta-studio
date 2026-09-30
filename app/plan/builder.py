@@ -77,7 +77,8 @@ def snapshot_matches(provider, path, saved) -> bool:
     return True
 
 
-def classify_destination(provider, src_path, src_size, dest_path, *, size_only=False) -> tuple[str, dict | None]:
+def classify_destination(provider, src_path, src_size, dest_path, *, size_only=False,
+                         force=False) -> tuple[str, dict | None]:
     """목적지 상태를 보고 이 파일을 어떻게 다뤄야 하는지 판정한다.
 
     **용량 계산과 충돌 판정은 별개다.** 예전에는 "목적지에 같은 크기의 파일이 있으면
@@ -111,7 +112,9 @@ def classify_destination(provider, src_path, src_size, dest_path, *, size_only=F
         return ACTION_COPY, None
 
     source = provider.stat(src_path)
-    if size_only:
+    if force:
+        pass  # 사용자가 교체하기를 명시했다. 같은 크기의 미디어도 교체 대상으로 남긴다.
+    elif size_only:
         if existing.size == int(src_size or 0):
             return ACTION_IDENTICAL, None
     elif (source is not None and existing.size == source.size
@@ -120,7 +123,8 @@ def classify_destination(provider, src_path, src_size, dest_path, *, size_only=F
 
     # size_only인데 여기까지 왔다면 크기 자체가 다른 경우뿐이다(크기가 같으면 위에서 이미
     # ACTION_IDENTICAL로 반환한다) - "크기는 같지만"이라는 문구는 그 경우엔 나올 일이 없다.
-    reason = ("크기가 다릅니다" if size_only or existing.size != int(src_size or 0)
+    reason = ("명시적으로 교체합니다" if force else
+              "크기가 다릅니다" if size_only or existing.size != int(src_size or 0)
               else "크기는 같지만 같은 파일이라고 확신할 수 없습니다")
     return ACTION_CONFLICT, {
         "source": str(src_path), "dest": str(dest_path),
@@ -190,7 +194,9 @@ def plan_add(plan, collection, provider, items):
             dest = pairs[0][1] if pairs else None
             if dest is None:
                 continue
-            action, conflict = classify_destination(provider, media["path"], size, dest, size_only=True)
+            action, conflict = classify_destination(provider, media["path"], size, dest,
+                                                     size_only=True,
+                                                     force=bool(item.get("forceMedia")))
             if action == ACTION_COPY:
                 _bump(delta, media_storage, size)
             elif action == ACTION_CONFLICT:
@@ -218,7 +224,7 @@ def resolve_conflict(plan, collection, provider, key, resolution):
     """충돌 항목의 처리 방식을 정하고 용량 계산을 다시 한다.
 
     덮어쓰기는 `기존 크기 → 새 크기`이므로 물리 증가가 새 파일 크기 전부가 아니라
-    **차이만큼**이다. 줄어들 수도 있다. 건너뛰기는 증가가 0이다.
+    **차이만큼**이다. 실행 취소용 백업을 유지하는 작업은 새 파일 전체 크기가 필요하다.
     """
     entry = plan.get(key)
     if entry is None:
@@ -247,7 +253,8 @@ def resolve_conflict(plan, collection, provider, key, resolution):
     for conflict in entry.conflicts:
         dest = str(conflict["dest"])
         storage = rom_storage if conflict["kind"] == "rom" else media_storage
-        difference = int(conflict["sourceSize"]) - int(conflict["destSize"])
+        difference = int(conflict["sourceSize"]) - (
+            0 if (entry.source or {}).get("retainBackups") else int(conflict["destSize"]))
         if dest in old_approved:
             _bump(delta, storage, -difference)
         approved = (choices.get(dest) == RESOLVE_OVERWRITE if resolution == RESOLVE_CUSTOM
@@ -352,7 +359,8 @@ def unapproved_overwrites(entry, layout, adapter, provider) -> list:
                 blocked.append(dest)
             continue
         action, _ = classify_destination(provider, src_path, size, dest,
-                                         size_only=kind == "media")
+                                         size_only=kind == "media",
+                                         force=kind == "media" and bool((entry.source or {}).get("forceMedia")))
         if action != ACTION_CONFLICT:
             continue
         if str(dest) in approved and snapshot_matches(provider, dest, approved[str(dest)]):

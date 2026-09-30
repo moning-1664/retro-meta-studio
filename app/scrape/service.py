@@ -5,12 +5,15 @@ import time
 import uuid
 import re
 import logging
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
 from app.scrape.providers.screenscraper import ARCADE_SYSTEMS, _system_id
 
 log = logging.getLogger(__name__)
+MISS_TTL_SECONDS = 10 * 60
+MAX_NAME_REQUESTS = 5
 
 from app.scrape.models import ScrapeIdentity
 
@@ -34,6 +37,12 @@ def _query_fallbacks(query: str) -> list[str]:
             parenthesized = re.fullmatch(r"(.+?)\s+\([^()]+\)", value)
             if parenthesized:
                 variants.append(parenthesized.group(1).strip())
+    # "Neon Genesis Evangelion 2" may only be indexed as
+    # "Shinseiki Evangelion 2". Keep a number-bearing distinctive suffix as a
+    # bounded suggestion; never auto-confirm a candidate returned by it.
+    tokens = value.split()
+    if len(tokens) >= 4 and re.search(r"\d", tokens[-1]):
+        variants.append(" ".join(tokens[-2:]))
     return list(dict.fromkeys(candidate for candidate in variants
                               if candidate and candidate.casefold() != value.casefold()))[:3]
 
@@ -66,9 +75,13 @@ class ScrapeSessionStore:
 
 
 class ScrapeService:
-    def __init__(self, provider_factory, sessions: ScrapeSessionStore | None = None):
+    def __init__(self, provider_factory, sessions: ScrapeSessionStore | None = None,
+                 dat_catalog=None):
         self.provider_factory = provider_factory
         self.sessions = sessions or ScrapeSessionStore()
+        self.dat_catalog = dat_catalog
+        self._failed_queries: dict[tuple[str, str], float] = {}
+        self._failed_lock = threading.Lock()
 
     @staticmethod
     def item(item_id, system, filename, fields, *, path=None, size=None) -> dict:
@@ -105,6 +118,16 @@ class ScrapeService:
                                   item.get("path"), item.get("size"))
         actual_query = str(query or item["query"]).strip()
         item["requestedQuery"] = actual_query
+        dat_hint = None
+        if (self.dat_catalog is not None and not force_search
+                and actual_query.casefold() == item["originalQuery"].casefold()):
+            try:
+                dat_hint = self.dat_catalog.lookup(
+                    selected_system, item["filename"], item.get("path"), item.get("size"))
+            except (OSError, ValueError, sqlite3.Error):
+                log.exception("DAT lookup failed system=%s filename=%s",
+                              selected_system, item["filename"])
+        item["datHint"] = dat_hint
         confirmed_id = item.get("confirmedGameId")
         confirmed_lookup = getattr(provider, "confirmed_game", None)
         use_confirmed = (not force_search and confirmed_id and callable(confirmed_lookup)
@@ -134,16 +157,36 @@ class ScrapeService:
         by_id = {candidate.candidate_id: candidate for candidate in candidates}
         weak_arcade_identity = (identified and selected_system.lower() in ARCADE_SYSTEMS
                                 and max((c.confidence for c in candidates), default=0) < 45)
+        name_requests = 0
 
         def best_confidence() -> int:
             return max((candidate.confidence for candidate in by_id.values()), default=0)
 
         def search_with(search_query: str, source: str):
-            nonlocal request_count, best_query
+            nonlocal request_count, best_query, name_requests
+            if name_requests >= MAX_NAME_REQUESTS:
+                return
+            miss_key = (selected_system.casefold(), search_query.casefold())
+            with self._failed_lock:
+                last_miss = self._failed_queries.get(miss_key)
+            if (last_miss is not None and not force_search
+                    and time.monotonic() - last_miss < MISS_TTL_SECONDS):
+                log.info("Scraper recent miss cache system=%s query=%s",
+                         selected_system, search_query)
+                return
             if progress:
                 progress(2, 3, f'"{search_query}" 검색')
             found = provider.search(search_query, selected_system)
+            name_requests += 1
             request_count += 1
+            with self._failed_lock:
+                if found:
+                    self._failed_queries.pop(miss_key, None)
+                else:
+                    self._failed_queries[miss_key] = time.monotonic()
+                    if len(self._failed_queries) > 1024:
+                        oldest = min(self._failed_queries, key=self._failed_queries.get)
+                        self._failed_queries.pop(oldest, None)
             log.info("Scraper search source=%s system=%s query=%s candidates=%d",
                      source, selected_system or "all", search_query, len(found))
             before = best_confidence()
@@ -158,6 +201,9 @@ class ScrapeService:
             if best_confidence() > before:
                 best_query = search_query
 
+        if (dat_hint and dat_hint["title"].casefold() != actual_query.casefold()
+                and best_confidence() < 80):
+            search_with(dat_hint["title"], "user-dat")
         if best_confidence() < 80:
             search_with(actual_query, "filename-or-manual")
         # A weak first result must not block a better spelling. Bound extra

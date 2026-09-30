@@ -17,9 +17,9 @@ app/plan/transfer.py
 | `overwrite` (기본, 덮어쓰기) | 원본의 비어 있지 않은 값이 이긴다(빈 값은 대상을 지우지 않는다) | 원본이 이긴다(같은 파일은 건너뜀) |
 | `replace` (완전 교체) | 원본의 값으로 게임의 Metadata를 다시 만든다(대상에만 있던 값도 원본에 없으면 사라진다) | 원본이 이긴다. 대상에만 있는 미디어는 **지우지 않는다**(파일 삭제는 Delete의 일) |
 
-**ROM은 모드와 무관하고, 절대 덮어쓰지 않는다**(사용자 결정 - "롬은 항상 부차적인 asset").
-설정의 `ROM 파일 복사`가 켜져 있고 **대상에 ROM 파일이 없을 때만** 복사한다. 그래서 ROM
-파일 충돌은 구조적으로 생길 수 없다 - 덮어쓸 일 자체가 없기 때문이다.
+ROM 복사가 켜져 있으면 없는 ROM을 추가한다. 로컬 즉시 붙여넣기는 같은 파일명의
+ROM 교체를 충돌 확인 후 실행하고 백업을 보존한다. 채우기와 명시적 다른 행 대상은
+기존 ROM을 유지한다. 기존 Plan/Archive 호출은 교체를 허용하지 않는다.
 
 대상 항목의 파일명이 원본과 다르면(지역 태그가 다르거나 사람이 직접 지목한 경우) ROM은
 옮기지 않는다. `Final Fantasy 7.zip`의 바이트를 `ff7.rom`이라는 이름으로 놓으면 확장자가
@@ -33,6 +33,7 @@ app/plan/transfer.py
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from app import gameid
@@ -71,7 +72,8 @@ def _media_type(m) -> str:
     return m.get("type") or m.get("media_type")
 
 
-def decide(item, existing, mode) -> tuple[dict | None, str | None]:
+def decide(item, existing, mode, *, allow_rom_replace=False,
+           force_media=False) -> tuple[dict | None, str | None]:
     """게임 하나의 구성요소별 전송 의도를 정한다.
 
     `existing`: 대상의 같은 게임 행(없으면 None). 반환: (`plan_add`에 넘길 항목 또는 None, 건너뛴 이유).
@@ -80,19 +82,23 @@ def decide(item, existing, mode) -> tuple[dict | None, str | None]:
     if existing is None:
         return item, None                  # 대상에 없다 - 모드와 무관하게 원본 그대로 붙는다
 
-    # ROM: 대상에 이미 있으면 손대지 않는다(덮어쓰지 않는다). 이름이 다른 대상이면
-    # 원본 ROM을 그 이름으로 놓을 수 없으므로 역시 옮기지 않는다.
+    # ROM 교체는 호출자가 안전한 실행 경로를 제공한 경우에만 허용한다.
+    # 이름이 다른 명시적 대상과 채우기는 기존 ROM을 보존한다.
     rom = item.get("rom")
-    if rom and (existing["present"]
-                or (existing["system"], existing["filename"]) != (item["system"], item["filename"])):
+    same_name = (existing["system"], str(existing["filename"]).casefold()) == (
+        item["system"], str(item["filename"]).casefold())
+    if rom and (not same_name or (existing["present"] and
+                (not allow_rom_replace or mode == MODE_PATCH))):
         rom = None
 
     # Media
     have = {m["media_type"]: m for m in (existing.get("media") or [])}
-    media = list(item.get("media") or [])
+    media = [m for m in (item.get("media") or [])
+             if not _same_path(m.get("path"),
+                               (have.get(_media_type(m)) or {}).get("rel_path"))]
     if mode == MODE_PATCH:
         media = [m for m in media if _media_type(m) not in have]
-    else:
+    elif not force_media:
         media = [m for m in media if not _same_media(m, have.get(_media_type(m)))]
 
     # Metadata. ES-DE의 favorite처럼 대상 Frontend가 관리하는 값(frontend_raw)은 대상의 것을 지킨다.
@@ -101,7 +107,8 @@ def decide(item, existing, mode) -> tuple[dict | None, str | None]:
 
     if not (fields != (existing.get("fields") or {}) or media or rom):
         return None, _nothing_to_change(mode, item)
-    return {**item, "fields": fields, "frontend_raw": raw, "rom": rom, "media": media}, None
+    return {**item, "fields": fields, "frontend_raw": raw, "rom": rom,
+            "media": media, "forceMedia": force_media}, None
 
 
 def item_key(item) -> str:
@@ -130,13 +137,13 @@ class TargetIndex:
         self._by_name = {}
         self._buckets = {}
         for row in cache.all_entries(systems=sorted({s for s in systems if s})):
-            self._by_name[(row["system"], row["filename"])] = row["rom_uid"]
+            self._by_name[(row["system"], str(row["filename"]).casefold())] = row["rom_uid"]
             key = gameid.key_of(row["filename"])
             entry = (row["filename"], row["rom_uid"], key)
             for bucket in key.buckets:
                 self._buckets.setdefault((row["system"], bucket), []).append(entry)
 
-    def find(self, item, *, accept_similar=False) -> tuple[dict | None, str | None]:
+    def find(self, item, *, accept_similar=False, exact_only=False) -> tuple[dict | None, str | None]:
         """(대상 행, 어떻게 찾았는지). 못 찾으면 (None, None).
 
         "같은 게임인가"는 `app/gameid.py` **한 곳**이 정한다 - Compare/Archive/붙여넣기가
@@ -147,9 +154,11 @@ class TargetIndex:
         `accept_similar`는 남겨 둔다(호출부 호환). 지금 규칙에서는 같은 게임이면 모드와
         무관하게 대상이 되므로 결과에 영향이 없다.
         """
-        exact = self._by_name.get((item["system"], item["filename"]))
+        exact = self._by_name.get((item["system"], str(item["filename"]).casefold()))
         if exact is not None:
             return self._cache.get_row(exact), "exact"
+        if exact_only:
+            return None, None
 
         mine = gameid.key_of(item["filename"])
         seen, candidates = set(), []
@@ -177,7 +186,8 @@ class TargetIndex:
         return out
 
 
-def prepare(items, cache, mode, *, targets=None, index=None) -> tuple[list, list]:
+def prepare(items, cache, mode, *, targets=None, index=None, exact_only=False,
+            allow_rom_replace=False, force_media=False) -> tuple[list, list]:
     """붙여넣기 - 어느 대상 행에 쓸지 정하고 구성요소별 의도를 계산한다.
 
     같은 게임인지 아는 방법은 둘이다.
@@ -198,15 +208,20 @@ def prepare(items, cache, mode, *, targets=None, index=None) -> tuple[list, list
         if chosen is not None:
             existing, how = chosen, "manual"
         else:
-            existing, how = index.find(item, accept_similar=(mode == MODE_REPLACE))
+            existing, how = index.find(item, accept_similar=(mode == MODE_REPLACE),
+                                       exact_only=exact_only)
         if existing is not None:
-            out, reason = decide(item, existing, mode)
+            out, reason = decide(item, existing, mode,
+                                 allow_rom_replace=allow_rom_replace,
+                                 force_media=force_media)
             if out is not None and (existing["system"], existing["filename"]) != (item["system"], item["filename"]):
                 # 대상의 이름으로 쓴다 - 그래야 gamelist의 그 항목에 들어가고, 미디어도 그
                 # 파일명으로 놓여 프론트엔드가 찾는다.
                 out = {**out, "system": existing["system"], "filename": existing["filename"]}
         else:
-            out, reason = decide(item, existing, mode)
+            out, reason = decide(item, existing, mode,
+                                 allow_rom_replace=allow_rom_replace,
+                                 force_media=force_media)
         if out is None:
             skipped.append({"filename": item["filename"], "reason": reason})
         else:
@@ -233,6 +248,12 @@ def _same_media(media, existing) -> bool:
     except (OSError, KeyError, TypeError):
         return False
     return stat.st_size == int(existing.get("size") or 0)
+
+
+def _same_path(left, right) -> bool:
+    if not left or not right:
+        return False
+    return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
 
 
 def _nothing_to_change(mode, item) -> str:

@@ -7,6 +7,26 @@ const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
+test("열린 설정창 뒤의 목록에 붙여넣기·삭제 단축키가 전달되지 않는다", async ({ page }) => {
+  await page.locator(".lrow").first().click();
+  await page.evaluate(() => {
+    window.__backgroundWrites = [];
+    window.api.paste = async () => { window.__backgroundWrites.push("paste"); return { ok: true, data: {} }; };
+    window.api.deleteImmediate = async () => { window.__backgroundWrites.push("delete"); return { ok: true, data: {} }; };
+  });
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Settings", exact: true })).toBeVisible();
+  await page.keyboard.press("Control+v");
+  await page.keyboard.press("Delete");
+  expect(await page.evaluate(() => window.__backgroundWrites)).toEqual([]);
+  await expect(page.getByRole("dialog", { name: "Settings", exact: true })).toBeVisible();
+});
+
+test("Ctrl+F는 목록 검색 입력을 선택한다", async ({ page }) => {
+  await page.keyboard.press("Control+f");
+  await expect(page.locator(".search-input")).toBeFocused();
+});
+
 test.describe("복사/붙여넣기", () => {
   test("Ctrl+C는 선택한 항목으로 copy_selection을 부른다", async ({ page }) => {
     const calls = [];
@@ -70,47 +90,33 @@ test.describe("복사/붙여넣기", () => {
   });
 });
 
-// 붙여넣기 모드(Patch / Overwrite / Replace) - 사용자 결정.
-test.describe("붙여넣기 모드", () => {
-  test("넓은 목록에는 Paste와 Plan 그룹명을 표시하고 좁으면 숨긴다", async ({ page }) => {
+// 명령 자체가 방식을 정하므로 별도 모드 토글을 두지 않는다.
+test.describe("붙여넣기 명령", () => {
+  test("Plan 대기 버튼과 Paste 모드 토글은 보이지 않는다", async ({ page }) => {
     await page.setViewportSize({ width: 2400, height: 900 });
-    await expect(page.locator("#filter-bar .toolbar-group-label")).toHaveText(["Paste", "Plan"]);
-    await expect(page.locator("#filter-bar .toolbar-group-label").first()).toBeVisible();
-    await page.setViewportSize({ width: 1000, height: 800 });
-    await expect(page.locator("#filter-bar .toolbar-group-label").first()).toBeHidden();
-    await expect(page.locator("#filter-bar .paste-mode .seg-btn")).toHaveCount(3);
+    await expect(page.locator("#filter-bar .toolbar-group-label")).toHaveCount(0);
+    await expect(page.locator("#filter-bar button").filter({hasText: /^Apply$|^Cancel$/})).toHaveCount(0);
+    await expect(page.locator("#filter-bar .paste-mode")).toHaveCount(0);
   });
 
-  test("Plan 버튼 옆에 세 모드 토글이 있고 Patch가 기본이다", async ({ page }) => {
-    const modes = page.locator(".paste-mode .seg-btn");
-    await expect(modes).toHaveCount(3);
-    await expect(modes).toHaveText(["Patch", "Overwrite", "Replace"]);
-    await expect(page.locator(".paste-mode .seg-btn.on")).toHaveText("Patch");
-    // Plan 버튼(Apply/Cancel)보다 왼쪽에 있다.
-    const [mode, apply] = await Promise.all([
-      page.locator(".paste-mode").boundingBox(), page.locator(".plan-actions").boundingBox()]);
-    expect(mode.x + mode.width).toBeLessThanOrEqual(apply.x + 1);
+  test("우클릭에 세 명령이 직접 나온다", async ({ page }) => {
+    await page.locator(".lrow").first().click({ button: "right" });
+    const labels = page.locator(".ctx-menu .ctx-label");
+    await expect(labels.filter({ hasText: /^붙여넣기$|^채우기$|^교체하기$/ })).toHaveCount(3);
   });
 
-  test("각 모드가 무엇을 하는지 툴팁으로 설명한다", async ({ page }) => {
-    await expect(page.locator(".paste-mode [data-mode='patch']")).toHaveAttribute("title", /없는 것만 채웁니다/);
-    await expect(page.locator(".paste-mode [data-mode='overwrite']")).toHaveAttribute("title", /덮어쓰기/);
-    await expect(page.locator(".paste-mode [data-mode='replace']")).toHaveAttribute("title", /완전 교체/);
-  });
-
-  test("모드를 고르면 표시가 바뀌고 다음 붙여넣기가 그 모드로 요청된다", async ({ page }) => {
+  test("채우기는 patch를 보내고 기본 붙여넣기는 overwrite를 보낸다", async ({ page }) => {
     await page.evaluate(() => {
       window.__modes = [];
       const original = window.api.paste;
       window.api.paste = (id, mode) => { window.__modes.push(mode); return original(id, mode); };
     });
-    await page.locator(".paste-mode [data-mode='overwrite']").click();
-    await expect(page.locator(".paste-mode .seg-btn.on")).toHaveText("Overwrite");
-    await expect(page.locator("#toast")).toContainText("다음 붙여넣기부터");
     await page.locator(".lrow").first().click();
     await page.keyboard.press("Control+c");
     await page.keyboard.press("Control+v");
-    await expect.poll(() => page.evaluate(() => window.__modes)).toEqual(["overwrite"]);
+    await page.locator(".lrow").first().click({ button: "right" });
+    await page.locator(".ctx-menu .ctx-label", { hasText: /^채우기$/ }).click();
+    await expect.poll(() => page.evaluate(() => window.__modes)).toEqual(["overwrite", "patch"]);
   });
 
   test("올리지 않은 항목이 있으면 이유를 알려 준다", async ({ page }) => {
@@ -241,31 +247,42 @@ test.describe("고른 행을 대상으로 삼기", () => {
   });
 });
 
-// 여러 개를 한 번에 붙이면 Replace는 Patch로 내려간다(사용자 결정) - 조용히 바꾸지 않고
-// 모드 토글이 잠깐 Patch로 밝혀진다.
-test("Replace가 Patch로 내려가면 모드 토글이 잠깐 밝혀진다", async ({ page }) => {
-  await page.evaluate(() => {
-    window.api.paste = () => Promise.resolve({ ok: true, data: {
-      added: 2, skipped: [], conflicts: 0,
-      policy: { pasteMode: "patch" }, downgradedFrom: "replace",
-    } });
-  });
+test("같은 파일명 충돌은 기존/대상을 보고 결정하며 확장해도 버튼이 보인다", async ({ page }) => {
+  await page.evaluate(() => { window.__RMS_MOCK_IMMEDIATE_PASTE = true; });
   await page.locator(".lrow").first().click();
   await page.keyboard.press("Control+c");
   await page.keyboard.press("Control+v");
-  await expect(page.locator(".paste-mode .seg-btn[data-mode='patch']")).toHaveClass(/flash/);
-  await expect(page.locator("#toast")).toContainText("대신 Patch로 붙였습니다");
+  const modal = page.locator(".paste-conflict-card");
+  await expect(modal).toBeVisible();
+  await expect(modal.locator(".paste-conflict-side-label")).toHaveText(["기존", "대상"]);
+  await modal.locator(".paste-conflict-expand").first().click();
+  await expect(modal.locator(".paste-conflict-expanded.open")).toHaveCount(1);
+  await expect(modal.locator(".modal-actions .btn", { hasText: "기존 게임 덮어쓰기" })).toBeVisible();
+  await modal.locator(".modal-actions .btn", { hasText: "기존 게임 덮어쓰기" }).click();
+  await expect.poll(() => page.evaluate(() => window.__RMS_MOCK_PASTE_DECISIONS?.decisions))
+    .toEqual({ "ps2|FFX.iso": "overwrite" });
 });
 
-test("내려가지 않았으면 토글은 그대로다", async ({ page }) => {
+
+test("Ctrl+X는 잘라내기만 예약하고 붙여넣기 전에는 파일 작업을 요청하지 않는다", async ({page}) => {
   await page.evaluate(() => {
-    window.api.paste = () => Promise.resolve({ ok: true, data: {
-      added: 1, skipped: [], conflicts: 0,
-      policy: { pasteMode: "replace" }, downgradedFrom: null,
-    } });
+    window.__cutCalls = [];
+    window.api.cutSelection = async (id, uids) => {window.__cutCalls.push([id, uids]); return {ok: true, data: {count: uids.length, cut: true}};};
+    window.api.pasteExecute = async () => {throw new Error("cut deleted source too early");};
   });
   await page.locator(".lrow").first().click();
-  await page.keyboard.press("Control+c");
-  await page.keyboard.press("Control+v");
-  await expect(page.locator(".paste-mode .seg-btn.flash")).toHaveCount(0);
+  await page.keyboard.press("Control+x");
+  await expect.poll(()=>page.evaluate(()=>window.__cutCalls.length)).toBe(1);
+  await expect(page.locator("#toast")).toContainText("잘라냈습니다");
+  await expect(page.locator(".lrow")).not.toHaveCount(0);
+});
+
+test("F2 이름 변경은 확장자를 남기고 확인 후 독립 작업으로 실행한다", async ({page}) => {
+  await page.locator(".lrow").first().click();
+  await page.keyboard.press("F2");
+  await expect(page.locator(".modal-title")).toHaveText("이름 변경");
+  await page.locator(".modal-body input").fill("Renamed.iso");
+  await page.locator(".modal-actions .btn.primary").click();
+  await expect(page.locator("#toast")).toContainText("이름을 변경했습니다");
+  await expect(page.locator(".lrow").filter({hasText: "Renamed.iso"})).toBeVisible();
 });

@@ -228,10 +228,10 @@ test.describe("연산자로 Plan에 올리기", () => {
   async function spy(page) {
     await page.evaluate(() => {
       window.__copied = [];
-      const original = window.api.compareCopyRow;
-      window.api.compareCopyRow = (key, direction, metadataOnly) => {
-        window.__copied.push({ key, direction, metadataOnly });
-        return original(key, direction, metadataOnly);
+      const original = window.api.compareOperationPreview;
+      window.api.compareOperationPreview = (options) => {
+        window.__copied.push({key: options.keys[0], direction: options.direction, metadataOnly: options.metadataOnly});
+        return original(options);
       };
     });
   }
@@ -240,7 +240,7 @@ test.describe("연산자로 Plan에 올리기", () => {
     await startCompare(page);
     await spy(page);
     await page.locator(".lrow.s-only_a .cmp-op.one-side").click();
-    await expect(page.locator("#toast")).toContainText("Plan에 올렸습니다");
+    await expect(page.locator("#toast")).toContainText("비교 결과 적용");
     expect(await page.evaluate(() => window.__copied))
       .toEqual([{ key: "ps2|OnlyBase.iso", direction: "toRight", metadataOnly: false }]);
     // 눌러도 상세가 열리지 않는다.
@@ -271,8 +271,8 @@ test.describe("연산자로 Plan에 올리기", () => {
   test("Plan에 올린 행은 다시 누르지 않도록 표시가 바뀐다", async ({ page }) => {
     await startCompare(page);
     await page.locator(".lrow.s-only_a .cmp-op.one-side").click();
-    await expect(page.locator(".lrow.s-only_a .cmp-op.planned")).toBeVisible();
-    await expect(page.locator(".lrow.s-only_a .cmp-op.one-side")).toHaveCount(0);
+    await expect(page.locator(".lrow.s-only_a")).toHaveCount(0);
+    await expect(page.locator(".lrow.s-same", {hasText: "Only Base"})).toBeVisible();
   });
 });
 
@@ -336,10 +336,10 @@ test.describe("고른 항목을 좌/우로 보내기", () => {
     await startCompare(page);
     await page.evaluate(() => {
       window.__sent = [];
-      const original = window.api.compareCopyRows;
-      window.api.compareCopyRows = (keys, direction) => {
-        window.__sent.push({ keys, direction });
-        return original(keys, direction);
+      const original = window.api.compareOperationPreview;
+      window.api.compareOperationPreview = (options) => {
+        window.__sent.push({keys: options.keys, direction: options.direction});
+        return original(options);
       };
     });
     await page.locator(".lrow").nth(0).locator(".lc-srcTitle").click();
@@ -350,7 +350,7 @@ test.describe("고른 항목을 좌/우로 보내기", () => {
     const sent = (await page.evaluate(() => window.__sent))[0];
     expect(sent.direction).toBe("toRight");
     expect(sent.keys).toHaveLength(2);
-    await expect(page.locator("#toast")).toContainText("Plan에 올렸습니다");
+    await expect(page.locator("#toast")).toContainText("비교 결과 적용");
   });
 });
 
@@ -497,8 +497,8 @@ test("Media 탭에서 여러 종류를 체크하면 상단 < >가 그 종류만 
   const calls = [];
   await page.exposeFunction("__note", (args) => calls.push(args));
   await page.evaluate(() => {
-    const original = window.api.compareCopyRows;
-    window.api.compareCopyRows = (keys, dir, types) => { window.__note([keys, dir, types]); return original(keys, dir, types); };
+    const original = window.api.compareOperationPreview;
+    window.api.compareOperationPreview = (options) => { window.__note([options.keys, options.direction, options.mediaTypes]); return original(options); };
   });
   await openDetail(page, "Media Only");
   await page.locator("#compare-left .detail-tab", { hasText: "Media" }).click();
@@ -518,8 +518,8 @@ test("한쪽에만 있는 항목 둘을 고르면 직접 잇기가 열린다", a
   const calls = [];
   await page.exposeFunction("__note", (args) => calls.push(args));
   await page.evaluate(() => {
-    const original = window.api.compareManualCopy;
-    window.api.compareManualCopy = (a, b, mode) => { window.__note([a, b, mode]); return original(a, b, mode); };
+    const original = window.api.compareOperationPreview;
+    window.api.compareOperationPreview = (options) => { window.__note([options.sourceKey, options.targetKey, options.mode]); return original(options); };
   });
 
   // 고르기 전에는 누를 수 없다.

@@ -45,8 +45,8 @@ def plan_import(plan, source, source_cache, target, target_cache, provider,
         return {"planned": 0, "conflicts": 0, "skipped": [], "requested": 0}
     if target_row is not None and len(rom_uids) != 1:
         raise ValueError("게임 한 개를 선택하세요.")
-    downgraded = mode == transfer.MODE_REPLACE and len(rom_uids) > 1
-    mode = transfer.MODE_PATCH if downgraded else transfer.normalize_mode(mode)
+    downgraded = False
+    mode = transfer.normalize_mode(mode)
     items, _ = clipboard.build_items(source, source_cache, rom_uids)
     target_adapter = get_adapter(target.frontend)
     target_systems = {}
@@ -87,7 +87,7 @@ def plan_import(plan, source, source_cache, target, target_cache, provider,
         else:
             prepared.append(mapped)
     if target_row is None and prepared:
-        prepared, more_skipped = transfer.prepare(prepared, target_cache, mode)
+        prepared, more_skipped = transfer.prepare(prepared, target_cache, mode, exact_only=True)
         skipped.extend(more_skipped)
     result = builder.plan_add(plan, target, provider, prepared) if prepared else {
         "added": 0, "conflicts": 0, "skipped": []}

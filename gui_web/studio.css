@@ -2103,3 +2103,23 @@ button.sb-badge { cursor: pointer; }
   0%, 60% { box-shadow: 0 0 0 1px var(--warning); }
   100% { box-shadow: none; }
 }
+.paste-conflict-card { width: min(600px, calc(100vw - 32px)); }
+.paste-conflict-body { display: flex; flex-direction: column; gap: 8px; min-height: 0;
+  max-height: min(68vh, 560px); overflow-y: auto; }
+.paste-conflict-filename { color: var(--text); font-weight: 600; padding: 5px 0; }
+.paste-conflict-side { display: grid; grid-template-columns: 42px minmax(0, 1fr) 56px 56px 28px;
+  align-items: center; gap: 8px; padding: 6px 8px; background: var(--card);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.paste-conflict-side-label { color: var(--muted); font-size: var(--fs-caption); }
+.paste-conflict-side-title { min-width: 0; font-weight: 600; }
+.paste-conflict-thumb { display: block; width: 56px; height: 44px; object-fit: contain;
+  background: var(--bg); border-radius: 4px; }
+.paste-conflict-thumb.empty { opacity: .18; }
+.paste-conflict-expand { padding: 3px 6px; min-width: 26px; }
+.paste-conflict-expanded { display: none; grid-column: 2 / -1; width: 100%; }
+.paste-conflict-expanded.open { display: block; }
+.paste-conflict-expanded .scrape-candidate-head { display: grid; }
+.paste-conflict-expanded .scrape-candidate-desc { display: -webkit-box;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.paste-conflict-remaining { display: flex; align-items: center; gap: 7px;
+  color: var(--muted); font-size: var(--fs-caption); padding-top: 4px; }

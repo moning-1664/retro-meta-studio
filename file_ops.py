@@ -22,6 +22,7 @@ File Operation Layer - 파일을 실제로 복사/이동/삭제해야 할 때 �
 네이티브 워커로 자동 폴백한다(워커도 없으면 워커 모듈이 in-process fallback을 쓴다).
 """
 
+import os
 from pathlib import Path
 
 from engines.native_worker_engine import NativeWorkerEngine
@@ -77,6 +78,26 @@ def delete_files(paths, timeout_sec: float = 180.0) -> dict:
 def move_files(pairs: list, timeout_sec: float = 300.0) -> dict:
     """반환: {str(dest): 성공여부}. 실패해도 원본은 남는다."""
     return engine().move_pairs([(Path(s), Path(d)) for s, d in pairs], timeout_sec=timeout_sec)
+
+
+def rename_same_directory(pairs: list) -> dict:
+    """검증된 같은 폴더의 임시 파일을 최종 이름으로 확정한다.
+
+    ROM을 목적지 볼륨에 미리 한 번 복사한 뒤 이 함수를 쓰면 두 번째 전체 복사가
+    발생하지 않는다. 서로 다른 폴더/볼륨으로는 이 경로를 사용하지 않는다.
+    """
+    results = {}
+    for source, destination in pairs:
+        source, destination = Path(source), Path(destination)
+        if source.parent != destination.parent:
+            results[str(destination)] = False
+            continue
+        try:
+            os.replace(source, destination)
+            results[str(destination)] = destination.exists() and not source.exists()
+        except OSError:
+            results[str(destination)] = False
+    return results
 
 
 class MediaCopyBatch:

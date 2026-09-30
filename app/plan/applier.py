@@ -46,7 +46,8 @@ log = logging.getLogger(__name__)
 
 
 def apply_plan(plan, collection, cache, registry, provider, progress_cb=None,
-               disc_titles=None) -> dict:
+               disc_titles=None, *, backup_suffix=None, retain_backups=False,
+               rom_staging=False, trash_suffix=None) -> dict:
     """Plan을 실행한다.
 
     반환: {"applied", "failed", "partial", "skipped", "errors":[...], "systems":[...]}
@@ -102,9 +103,19 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None,
     media_links: dict[str, dict[str, list]] = {}
 
     prepared_adds = _apply_adds(adds, collection, adapter, provider, errors, media_links, step,
-                                disc_titles)
+                                disc_titles, backup_suffix=backup_suffix,
+                                rom_staging=rom_staging)
+    _write_media_links(adds, collection, adapter, media_links, errors)
     for entry in deletes:
-        _apply_delete(entry, collection, adapter, cache, provider, errors)
+        required = (entry.source or {}).get("requiresCopy")
+        copied = plan.get(required) if required else None
+        if required and (copied is None or copied.status != STATUS_APPLIED):
+            entry.status, entry.error = STATUS_FAILED, "대상 복사가 완료되지 않아 원본을 유지했습니다."
+            errors.append(entry.error)
+            step(entry)
+            continue
+        _apply_delete(entry, collection, adapter, cache, provider, errors,
+                      trash_suffix=trash_suffix)
         step(entry)
     for entry in moves:
         reported = _apply_storage_change(entry, collection, adapter, cache, registry,
@@ -116,10 +127,9 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None,
 
     _apply_title_edits(retitles, collection, adapter, cache, errors, step, disc_titles)
 
-    _write_media_links(adds, collection, adapter, media_links, errors)
     # 백업은 **여기서** 정리한다. 복사가 끝난 시점이 아니라 그 항목의 작업 전체가
     # 끝난 시점이 커밋이다(§ADD 덮어쓰기).
-    _settle_backups(prepared_adds, errors)
+    _settle_backups(prepared_adds, errors, retain=retain_backups)
 
     applied = [e for e in runnable if e.status == STATUS_APPLIED]
     failed = [e for e in runnable if e.status == STATUS_FAILED]
@@ -143,6 +153,11 @@ def apply_plan(plan, collection, cache, registry, provider, progress_cb=None,
         "applied": len(applied), "failed": len(failed), "partial": len(partial),
         "skipped": len(blocked), "invalid": len(invalid),
         "errors": errors, "systems": sorted(touched_systems),
+        "retainedBackups": [
+            {"dest": str(dest), "backup": str(backup)}
+            for item in prepared_adds if item["entry"].status == STATUS_APPLIED
+            for dest, backup in item.get("backups") or []
+        ] if retain_backups else [],
     }
 
 
@@ -218,7 +233,8 @@ def _plan_copies(entry, layout, adapter, provider):
                 blocked.append(dest)
             continue
         action, _ = classify_destination(provider, src, size, dest,
-                                         size_only=kind == "media")
+                                         size_only=kind == "media",
+                                         force=kind == "media" and bool((entry.source or {}).get("forceMedia")))
         if action == ACTION_IDENTICAL:
             continue  # 이미 같은 파일이 있다. 건드릴 이유가 없다.
         if action == ACTION_CONFLICT:
@@ -253,12 +269,14 @@ COPY_BATCH = 25
 BACKUP_SUFFIX = ".rms-backup"
 
 
-def _prepare_add(entry, collection, adapter, provider):
+def _prepare_add(entry, collection, adapter, provider, *, backup_suffix=None,
+                 rom_staging=False):
     """복사할 쌍을 계산만 한다. 파일은 건드리지 않는다."""
     layout = adapter.layout(collection, entry.system)
     pairs, created, replaced, blocked = _plan_copies(entry, layout, adapter, provider)
     return {"entry": entry, "layout": layout, "pairs": pairs, "created": created,
-            "replaced": replaced, "blocked": blocked, "backups": [], "provider": provider}
+            "replaced": replaced, "blocked": blocked, "backups": [], "provider": provider,
+            "backup_suffix": backup_suffix or BACKUP_SUFFIX, "rom_staging": rom_staging}
 
 
 def _backup_replaced(item, errors) -> bool:
@@ -270,8 +288,9 @@ def _backup_replaced(item, errors) -> bool:
     targets = item.get("replaced") or []
     if not targets:
         return True
-    pairs = [(dest, Path(str(dest) + BACKUP_SUFFIX)) for dest in targets]
-    results = file_ops.move_files(pairs)
+    pairs = [(dest, Path(str(dest) + item["backup_suffix"])) for dest in targets]
+    results = (file_ops.rename_same_directory(pairs) if item.get("rom_staging")
+               else file_ops.move_files(pairs))
     item["backups"] = [(dest, backup) for dest, backup in pairs if results.get(str(backup))]
     if len(item["backups"]) == len(pairs):
         return True
@@ -293,7 +312,9 @@ def _restore_backups(item, errors) -> bool:
     occupied = [dest for dest, _b in backups if Path(dest).exists()]
     if occupied:
         file_ops.delete_files(occupied)
-    results = file_ops.move_files([(backup, dest) for dest, backup in backups])
+    pairs = [(backup, dest) for dest, backup in backups]
+    results = (file_ops.rename_same_directory(pairs) if item.get("rom_staging")
+               else file_ops.move_files(pairs))
     failed = [dest for dest, _b in backups if not results.get(str(dest))]
     _refresh_approval(item, [dest for dest, _b in backups if results.get(str(dest))])
     if failed:
@@ -325,12 +346,13 @@ def _refresh_approval(item, restored):
             conflict["destSnapshot"] = snapshot(provider, conflict["dest"])
 
 
-def _settle_backups(prepared, errors):
+def _settle_backups(prepared, errors, *, retain=False):
     """작업이 끝난 뒤 백업을 정리한다. **여기까지 와야 커밋이다.**
 
     - 실패한 항목: 원본을 되돌린다. 사용자에게는 "아무 일도 없었다"가 되어야 한다.
-    - 성공/부분성공: 백업을 지운다. 부분성공은 파일을 일부러 남겨두는 상태이므로
-      되돌리면 안 된다 - 사용자가 손대야 한다는 표시일 뿐이다.
+    - 기존 Plan의 성공/부분성공: 백업을 정리한다.
+    - retain=True인 즉시 작업: 성공/부분성공 백업을 journal에 넘긴다.
+      journal이 전체 작업의 commit 또는 rollback 뒤 보관 여부를 결정한다.
     """
     for item in prepared:
         if not item.get("backups"):
@@ -338,6 +360,10 @@ def _settle_backups(prepared, errors):
         if item["entry"].status == STATUS_FAILED:
             if not _restore_backups(item, errors):
                 item["entry"].status = STATUS_PARTIAL
+            continue
+        if retain:
+            # Immediate operations roll back partial results as a whole. The journal
+            # owns these backups until commit or rollback has finished.
             continue
         leftovers = [backup for _dest, backup in item["backups"] if Path(backup).exists()]
         item["backups"] = []
@@ -371,26 +397,64 @@ def _copy_prepared(prepared, errors, step):
         errors.append(f"{entry.filename}: {entry.error}")
 
     for start in range(0, len(prepared), COPY_BATCH):
-        batch = [item for item in prepared[start:start + COPY_BATCH]
+        candidates = prepared[start:start + COPY_BATCH]
+        # ROM 교체는 새 바이트를 목적지 볼륨의 임시 파일에 **한 번만** 복사한다.
+        # 크기 검증이 끝나기 전에는 기존 ROM을 옮기지 않는다.
+        for item in candidates:
+            if item["entry"].status == STATUS_FAILED or not item.get("rom_staging"):
+                continue
+            rom_path = ((item["entry"].source or {}).get("rom") or {}).get("path")
+            item["staged_roms"] = []
+            for src, dest in list(item["pairs"]):
+                if not rom_path or Path(src) != Path(rom_path) or dest not in item["replaced"]:
+                    continue
+                temp = Path(str(dest) + item["backup_suffix"] + ".rms-part")
+                copied = file_ops.copy_files([str(temp.parent)], [(src, temp)])
+                try:
+                    expected = Path(src).stat().st_size
+                    verified = copied.get(str(temp)) and temp.is_file() and temp.stat().st_size == expected
+                except OSError:
+                    verified = False
+                if not verified:
+                    file_ops.delete_files([temp]) if temp.exists() else None
+                    item["entry"].status = STATUS_FAILED
+                    item["entry"].error = "새 ROM의 임시 복사와 크기 검증에 실패했습니다."
+                    errors.append(f"{item['entry'].filename}: {item['entry'].error}")
+                    break
+                item["staged_roms"].append((temp, dest))
+                item["pairs"].remove((src, dest))
+        batch = [item for item in candidates
                  if item["entry"].status != STATUS_FAILED and _backup_replaced(item, errors)]
         for skipped in prepared[start:start + COPY_BATCH]:
             if skipped not in batch:
+                for temp, _dest in skipped.get("staged_roms") or []:
+                    if temp.exists():
+                        file_ops.delete_files([temp])
                 step(skipped["entry"])   # 진행률은 항목 수 기준이라 빼먹지 않는다
         pairs = [pair for item in batch for pair in item["pairs"]]
         results = {}
         if pairs:
             dest_dirs = sorted({str(dest.parent) for _src, dest in pairs})
             results = file_ops.copy_files(dest_dirs, pairs)
+        for item in batch:
+            staged = item.get("staged_roms") or []
+            if staged:
+                results.update(file_ops.rename_same_directory(staged))
 
         for item in batch:
             entry = item["entry"]
             failed = [dest for _src, dest in item["pairs"] if not results.get(str(dest))]
+            failed.extend(dest for _temp, dest in item.get("staged_roms") or []
+                          if not results.get(str(dest)))
             if failed:
                 # 파일 단계에서 실패했으면 메타데이터는 쓰지 않는다. 이번에 새로 만든
                 # 파일을 지우고, 덮어쓰려고 치워뒀던 원본은 제자리로 돌려놓는다.
                 _undo(item, errors)
                 entry.status, entry.error = STATUS_FAILED, f"{len(failed)}개 파일 복사 실패"
                 errors.append(f"{entry.filename}: 파일 복사 실패")
+            for temp, _dest in item.get("staged_roms") or []:
+                if temp.exists():
+                    file_ops.delete_files([temp])
             step(entry)
 
 
@@ -465,14 +529,16 @@ def _write_metadata(prepared, adapter, errors, media_links, disc_titles=None):
 
 
 def _apply_adds(adds, collection, adapter, provider, errors, media_links, step,
-                disc_titles=None):
+                disc_titles=None, *, backup_suffix=None, rom_staging=False):
     """ADD 전체를 세 단계로 실행한다: 준비 -> 묶어 복사 -> System당 메타데이터.
 
     항목마다 복사하고 항목마다 메타데이터를 쓰던 것을 묶은 것이다. **관찰 가능한
     동작(어떤 항목이 성공/실패하고 무엇이 되돌려지는가)은 그대로 두고 호출 횟수만
     줄인다.**
     """
-    prepared = [_prepare_add(entry, collection, adapter, provider) for entry in adds]
+    prepared = [_prepare_add(entry, collection, adapter, provider,
+                             backup_suffix=backup_suffix, rom_staging=rom_staging)
+                for entry in adds]
     _copy_prepared(prepared, errors, step)
     _write_metadata(prepared, adapter, errors, media_links, disc_titles)
     return prepared
@@ -494,7 +560,21 @@ def _rollback_files(paths, errors, entry) -> bool:
 # ----------------------------------------------------------------------
 # DELETE
 # ----------------------------------------------------------------------
-def _apply_delete(entry, collection, adapter, cache, provider, errors):
+def delete_destinations(entry, collection, cache, adapter):
+    layout = adapter.layout(collection, entry.system)
+    row = cache.get_row(entry.rom_uid) if entry.rom_uid is not None else None
+    targets = []
+    if row:
+        if "rom" in entry.delete_parts and row["present"]:
+            targets.append(Path(layout.rom_dir) / row["filename"])
+        for media in row["media"]:
+            is_video = media["media_type"] == "videos"
+            if ("video" in entry.delete_parts) if is_video else ("media" in entry.delete_parts):
+                targets.append(Path(media["rel_path"]))
+    return targets
+
+
+def _apply_delete(entry, collection, adapter, cache, provider, errors, *, trash_suffix=None):
     """게임을 지운다: ROM + Media + gamelist 항목.
 
     사용자가 Gamelist에서 Delete를 눌렀을 때 기대하는 것은 셋 다 사라지는 것이다.
@@ -502,22 +582,20 @@ def _apply_delete(entry, collection, adapter, cache, provider, errors):
     되살아난 것처럼 보인다.
     """
     layout = adapter.layout(collection, entry.system)
-    row = cache.get_row(entry.rom_uid) if entry.rom_uid is not None else None
-    # 고른 부분만 지운다(롬 삭제 / 메타데이터 삭제 / 미디어 삭제를 따로 - 사용자 결정).
     parts = entry.delete_parts
-    targets = []
-    if row:
-        if "rom" in parts and row["present"]:
-            targets.append(Path(layout.rom_dir) / row["filename"])
-        for m in row["media"]:
-            is_video = m["media_type"] == "videos"
-            if "video" in parts if is_video else "media" in parts:
-                targets.append(Path(m["rel_path"]))
+    targets = delete_destinations(entry, collection, cache, adapter)
 
     existing = [p for p in targets if provider.exists(p)]
     if existing:
-        results = file_ops.delete_files(existing)
-        failed = [p for p in existing if not results.get(str(p))]
+        if trash_suffix:
+            # Local Undo uses a same-directory rename, so a large ROM is not
+            # copied merely to put it in the app's recoverable trash.
+            pairs = [(p, Path(str(p) + trash_suffix)) for p in existing]
+            results = file_ops.rename_same_directory(pairs)
+            failed = [p for p, backup in pairs if not results.get(str(backup))]
+        else:
+            results = file_ops.delete_files(existing)
+            failed = [p for p in existing if not results.get(str(p))]
         if failed:
             entry.status, entry.error = STATUS_FAILED, f"{len(failed)}개 파일 삭제 실패"
             errors.append(f"{entry.filename}: 파일 삭제 실패")

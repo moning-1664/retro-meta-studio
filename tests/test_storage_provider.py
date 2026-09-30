@@ -144,7 +144,8 @@ class AdaptersGoThroughTheProviderTests(unittest.TestCase):
         layout = self._es_de_layout(root)
 
         from adapters.base import GameEntry
-        EsDeAdapter().write_index(layout, [GameEntry(filename="Zelda.sfc", fields={"name": "Z"})])
+        with self.assertRaises(OSError):
+            EsDeAdapter().write_index(layout, [GameEntry(filename="Zelda.sfc", fields={"name": "Z"})])
 
         self.assertTrue(provider.writes, "Provider를 아예 안 불렀다")
         self.assertFalse(Path(layout.metadata_file).exists(), "Provider를 우회해 디스크에 썼다")
@@ -169,8 +170,9 @@ class AdaptersGoThroughTheProviderTests(unittest.TestCase):
         layout = PegasusAdapter().layout(self._collection(root, "pegasus"), "snes")
 
         from adapters.base import GameEntry
-        PegasusAdapter().write_index(layout, [GameEntry(filename="Zelda.sfc",
-                                                        fields={"name": "Zelda"})])
+        with self.assertRaises(OSError):
+            PegasusAdapter().write_index(layout, [GameEntry(filename="Zelda.sfc",
+                                                            fields={"name": "Zelda"})])
         self.assertTrue(provider.writes, "Provider를 아예 안 불렀다")
         self.assertFalse(Path(layout.metadata_file).exists(), "Provider를 우회해 디스크에 썼다")
 

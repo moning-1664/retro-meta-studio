@@ -20,6 +20,7 @@
       target: "android", os: "android", arch: "arm64", rootPath: "E:\\ES-DE", systemCount: 2 },
   ];
   let mockClipboardUids = [];
+  const mockOperations = new Map();
   const mockRows = [
     { romUid: 1, system: "ps2", file: "FFX.iso", title: "Final Fantasy X", size: 4400000000,
       storageId: "ext-1", hasMetadata: true, hasMedia: true, hasCover: true, present: true,
@@ -391,8 +392,8 @@
     archive_media_delete_system: () => ok({ removed: 0, linkedKept: 0, failures: [] }),
     archive_media_cleanup_preview: (system) => ok({ system, types: [] }),
     archive_media_delete_selected: () => ok({ removed: 0, linkedKept: 0, failures: [] }),
-    media_paste: () => ok({ added: 1, skipped: [], conflicts: 0 }),
-    import_media_image: () => ok({ added: 1, skipped: [], conflicts: 0 }),
+    media_paste: (id) => mock.operation_preview(id, "media", {}),
+    import_media_image: (target, id) => target === "archive" ? ok({}) : mock.operation_preview(id, "media", {}),
     archive_versions: () => ok({ romIdentityId: "", versions: [] }),
     archive_choose_version: () => ok({}),
     archive_systems: () => ok([]),
@@ -425,6 +426,7 @@
     }),
     collection_import_plan: () => ok({ planned: 1, conflicts: 0, skipped: [], requested: 1 }),
     plan_delete: () => ok({ deleted: 1 }),
+    delete_immediate: () => ok({ jobId: "mock-delete" }),
     plan_move_to_system: (id, romUids, system) =>
       ok({ moved: (romUids || []).length, target: system, conflicts: 0, skipped: [] }),
     open_storage_folder: () => ok({ path: "D:\ES-DE" }),
@@ -456,7 +458,52 @@
       mockClipboardUids = [...(uids || [])];
       return ok({ count: mockClipboardUids.length, bytes: 0 });
     },
-    paste: () => ok({ added: 1, skipped: [] }),
+    paste: () => window.__RMS_MOCK_IMMEDIATE_PASTE
+      ? ok({ operationId: "mock-paste", source: "원본 Collection", count: 1, undoable: true,
+        collisions: [{ key: "ps2|FFX.iso", system: "ps2", filename: "FFX.iso",
+          existingRomUid: 1, existingTitle: "기존 제목", incomingTitle: "복사할 제목",
+          existingDescription: "기존 설명", incomingDescription: "새 설명",
+          existingFields: {}, incomingFields: {} }], skipped: [] })
+      : ok({ operationId: "mock-paste", count: 1, undoable: true, collisions: [], skipped: [] }),
+    compare_operation_preview: (options) => mock.operation_preview(
+      options.direction === "toLeft" ? "c1" : "c2", "compare", options),
+    archive_release_edit_lock: () => ok({released: true}),
+    cut_selection: (id, uids) => mock.copy_selection(id, uids),
+    rename_game: (id, uid, name) => {
+      const row = mockRows.find(item => item.romUid === uid);
+      if (!row) return Promise.resolve({ok: false, error: "게임을 찾을 수 없습니다."});
+      row.file = name;
+      window.__RMS_MOCK_RENAMED = name;
+      return ok({jobId: "mock-rename"});
+    },
+    operation_state: () => ok({ undoOperationId: window.__RMS_MOCK_UNDO || null, clipboard: {} }),
+    operation_preview: async (id, action, options) => {
+      const operationId = `mock-operation-${mockOperations.size}`;
+      mockOperations.set(operationId, { id, action, options });
+      return ok({ operationId, action, count: 1, undoable: action !== "storage", collisions: [], skipped: [] });
+    },
+    paste_execute: async (id, decisions) => {
+      window.__RMS_MOCK_PASTE_DECISIONS = { id, decisions };
+      if (mockOperations.has(id)) {
+        const operation = mockOperations.get(id);
+        if (operation.action === "compare") {
+          for (const key of operation.options.keys || []) {
+            const row = mockCompareRows.find(item => item.key === key);
+            if (row) { row.status = "same"; row.changedFields = []; row.mediaDiff = false;
+              if (row.left && !row.right) row.right = {...row.left};
+              if (row.right && !row.left) row.left = {...row.right}; }
+          }
+        }
+        if (operation.action === "title") {
+          await mock.plan_title_edit(operation.id, operation.options.romUids, operation.options.system);
+          await mock.start_apply();
+        }
+        return ok({ jobId: "mock-operation" });
+      }
+      return ok({ jobId: null, skipped: 0 });
+    },
+    paste_preview_media: () => ok(null),
+    paste_undo: () => ok({ jobId: null }),
     clipboard_systems: () => ok({
       systems: [{ system: "ps2", count: 2, exists: true }],
       targetSystems: ["gba", "ps2", "snes"],
@@ -501,14 +548,17 @@
       return ok({ jobId: "mock-job" });
     },
     start_scan: () => ok({ jobId: "mock-job" }),
-    get_job_progress: (jobId) => ok({
+    get_job_progress: async (jobId) => ok({
       current: 1, total: 1, label: "완료", done: true, error: null,
       // Archive 수집/Apply는 결과의 개수를 화면이 그대로 읽는다. 빈 객체를 주면
       // 목업에서만 "undefined개 수집/적용"이 뜬다.
       result: String(jobId).startsWith("mock-folder:")
-        ? mock.inspect_collection_folder(decodeURIComponent(String(jobId).slice(12))).data
+        ? (await mock.inspect_collection_folder(decodeURIComponent(String(jobId).slice(12)))).data
         : jobId === "mock-archive-ingest" ? { ...mockLastIngest }
         : jobId === "mock-job" ? { ...mockLastApply }
+          : jobId === "mock-rename" ? {applied: 1, filename: window.__RMS_MOCK_RENAMED, undoOperationId: jobId}
+          : jobId === "mock-delete" || jobId === "mock-operation" ? { applied: 1, failed: 0, partial: 0, undoOperationId: jobId }
+          : jobId === "mock-dat-import" ? { name: "Sample DAT", system: "arcade", games: 10 }
           : jobId === "mock-scraper-account" ? { requestsToday: 12, requestsLimit: 100,
             requestsMinute: 1, requestsMinuteLimit: 20, maxThreads: 1, user: "mock" }
           : jobId === "mock-scrape-apply" ? { applied: ["1"], partial: [], failed: [] }
@@ -782,7 +832,7 @@
       unsupportedFields: 37, unsupportedFieldNames: ["region"],
       frontendSpecific: 112, systems: ["ps2", "snes"],
     }),
-    start_convert: () => ok({ added: 1284, conflicts: 0, skipped: [] }),
+    start_convert: (sourceId, targetId) => mock.operation_preview(targetId, "convert", {sourceId}),
 
     // Compare(§54-59). 목업은 상태를 들고 있다가 필터에 반응한다 - 필터 버튼이
     // 실제로 목록을 바꾸는지까지 GUI 테스트로 확인할 수 있어야 하기 때문이다.
@@ -938,6 +988,8 @@
       { name: "mastersystem", id: 2 }, { name: "windows", id: 138 },
       { name: "arcade", id: 75 },
     ]),
+    dat_sources: () => ok([]),
+    start_dat_import: () => ok({ jobId: "mock-dat-import" }),
     save_scraper_settings: (patch) => ok({ enabled: true, softName: patch.softName || "RetroMetaStudio",
       userId: patch.userId || "", devIdSet: true, devPasswordSet: true,
       userPasswordSet: !!patch.userPassword }),
@@ -1061,6 +1113,8 @@
     saveAppSettings: (patch) => call("save_app_settings", patch),
     scraperSettings: () => call("scraper_settings"),
     scraperSystems: () => call("scraper_systems"),
+    datSources: () => call("dat_sources"),
+    startDatImport: (path, system) => call("start_dat_import", path, system),
     saveScraperSettings: (patch) => call("save_scraper_settings", patch),
     startScraperAccountStatus: () => call("start_scraper_account_status"),
     createScrapeSession: (target, collectionId, itemIds) =>
@@ -1083,8 +1137,15 @@
     getArchiveMediaVideoUrl: (romIdentityId) => call("get_archive_media_video_url", romIdentityId),
     saveFields: (id, romUid, fields) => call("save_fields", id, romUid, fields),
 
+    operationState: (id) => call("operation_state", id),
+    compareOperationPreview: (options) => call("compare_operation_preview", options || {}),
+    cutSelection: (id, uids) => call("cut_selection", id, uids),
+    renameGame: (id, uid, name) => call("rename_game", id, uid, name),
+    operationPreview: (id, action, options) => call("operation_preview", id, action, options || {}),
     planState: (id) => call("plan_state", id),
     planDelete: (id, romUids, parts) => call("plan_delete", id, romUids, parts || null),
+    deleteImmediate: (id, romUids, parts, permanent) =>
+      call("delete_immediate", id, romUids, parts || null, !!permanent),
     planMoveToSystem: (id, romUids, system) => call("plan_move_to_system", id, romUids, system),
     planStorageChange: (id, system, storageId) => call("plan_storage_change", id, system, storageId),
     titleAffixPreview: (id, romUids, system) => call("title_affix_preview", id, romUids, system),
@@ -1097,8 +1158,14 @@
     planResolveAllConflicts: (id, resolution) => call("plan_resolve_all_conflicts", id, resolution),
     planClear: (id) => call("plan_clear", id),
     copySelection: (id, romUids) => call("copy_selection", id, romUids),
-    paste: (id, mode, systemMap, targetMap, fallbackTarget, newOnly) =>
-      call("paste", id, mode || null, systemMap || null, targetMap || null, fallbackTarget || null, !!newOnly),
+    paste: (id, mode, systemMap, targetMap, fallbackTarget, newOnly, immediate) =>
+      call("paste", id, mode || null, systemMap || null, targetMap || null, fallbackTarget || null,
+           !!newOnly, !!immediate),
+    pasteExecute: (operationId, decisions, acknowledge) =>
+      call("paste_execute", operationId, decisions || {}, !!acknowledge),
+    pasteUndo: (id) => call("paste_undo", id),
+    pastePreviewMedia: (operationId, key, mediaType) =>
+      call("paste_preview_media", operationId, key, mediaType),
     clipboardSystems: (id) => call("clipboard_systems", id),
     clipboardItems: () => call("clipboard_items"),
     clipboardSystemTarget: (id, system) => call("clipboard_system_target", id, system),
@@ -1124,9 +1191,9 @@
                              q.order || "title", !!q.descending),
     archiveCopySelection: (romIdentityIds) => call("archive_copy_selection", romIdentityIds || []),
     archiveClipboardSystemTarget: (system) => call("archive_clipboard_system_target", system),
-    archivePaste: (mode, targetRomIdentityId, targetSystem, newOnly) =>
+    archivePaste: (mode, targetRomIdentityId, targetSystem, newOnly, immediate) =>
       call("archive_paste", mode || null, targetRomIdentityId || null,
-           targetSystem || null, !!newOnly),
+           targetSystem || null, !!newOnly, !!immediate),
     archiveUids: (systems) => call("archive_uids", systems || null),
     archiveFindRowIndex: (query, prefix, after) =>
       call("archive_find_row_index", query || {}, prefix, after),
@@ -1167,9 +1234,10 @@
       call("archive_media_delete_selected", romIdentityIds || [], part),
     archiveMediaDeleteSystem: (system, mediaTypes) =>
       call("archive_media_delete_system", system, mediaTypes || null),
-    mediaPaste: (id, romUid, key, source) => call("media_paste", id, romUid, key, source),
+    mediaPaste: (id, romUid, key, source) => call("media_paste", id, romUid, key, source, true),
     importMediaImage: (target, collectionId, itemId, key, encoded) =>
-      call("import_media_image", target, collectionId, itemId, key, encoded),
+      call("import_media_image", target, collectionId, itemId, key, encoded, true),
+    archiveReleaseEditLock: (token, acknowledged) => call("archive_release_edit_lock", token, !!acknowledged),
     archiveConfig: () => call("archive_config"),
     saveArchiveConfig: (patch) => call("save_archive_config", patch),
     startArchiveApply: () => call("start_archive_apply"),
@@ -1196,7 +1264,7 @@
     generateMetadata: (id, systems) => call("generate_metadata", id, systems || null),
 
     convertPreview: (sourceId, targetId) => call("convert_preview", sourceId, targetId),
-    startConvert: (sourceId, targetId) => call("start_convert", sourceId, targetId),
+    startConvert: (sourceId, targetId) => call("start_convert", sourceId, targetId, true),
 
     startCompare: (baseId, otherId) => call("start_compare", baseId, otherId),
     compareState: () => call("compare_state"),
