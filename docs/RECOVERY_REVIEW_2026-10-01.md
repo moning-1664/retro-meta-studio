@@ -54,3 +54,19 @@
 Collection and Archive replacement previews now show ROM size and modification time on a compact line per side. Metadata-only, new-file and same-path operations omit the comparison. File contents are not read or hashed; unavailable source timestamps remain unknown.
 
 Validation: targeted Python tests 65 passed; conflict UI tests 3 passed; JavaScript syntax and whitespace checks passed. Actual NAS and MTP rendering were not verified.
+
+## Follow-up review: durable Archive events and recovery exits
+
+- Archive writes per-file capture, publication expectation, temporary path, rename and restoration changes to fsynced `events.jsonl`. Full atomic `operation.json` checkpoints remain at stage boundaries. Sequence numbers make replay idempotent if interruption occurs between checkpoint publication and log truncation. Torn final event is ignored; complete corrupt events or sequence gaps block restoration. Existing records without event logs remain readable.
+- Every file mutation still follows a durable recovery record. No file contents are hashed by the journal. Per-event fsync latency remains; the change removes growing whole-record serialization and index rewrites per file.
+- Archive imports compare full filenames with casefold, preserve the actual target filename, and fill a missing ROM for case-only differences. Language variants remain distinct unless a target was explicitly selected or linked.
+- Removed unused `_language_matches` and its obsolete helper tests. Normalization unit tests remain; import behavior is tested via `to_collection`.
+- Closed recovery records allow confirmed manual backup deletion but remain excluded from automatic cleanup.
+- With automatic cleanup disabled, total backups across both journal roots warn at 20 GiB. No deletion is enabled by default. Size estimates use the existing cached accounting.
+- Unknown process ownership offers confirmed manual recovery. Known living owners remain protected. Archive retains file checks and digest CAS. Collection refuses unverifiable destination/index/backup states; this restriction persists on subsequent retries. Other affected Collection locks are acquired before recovery.
+
+Validation: full Python suite at the initial follow-up snapshot: 1518 passed, 1 skipped, 1 xfailed, 42 subtests passed (263.98 s). Additional tests and the final focused run are recorded below. UI settings/history/copy-paste: 42 passed. One initial UI test incorrectly selected the primary button for a danger confirmation; corrected the test to select the confirmation by accessible name and reran all 42 successfully. No product button changes were needed.
+
+Local synthetic timing during concurrent regression runs: 500 records append 1.473 s / rewrite 3.212 s; 1000 append 2.867 s / rewrite 8.838 s; 2000 append 7.201 s / rewrite 29.745 s; 5000 append 7.180 s (rewrite not measured). Event bytes grew from 129172 (500) to 1306673 (5000). These include actual fsync but exclude ROM copying, NAS latency and power-loss validation. Scheduling and filesystem variability prevent treating these timings as an exact scaling model.
+
+Final focused Python suite after all follow-up changes: 86 passed (19.72 s). Includes interrupted copy restored from event replay without final checkpoint, persisted manual-recovery safeguards on retry, Archive manual-owner override rejecting changed live DB, rename replay and backup totals across Collections. JavaScript syntax and git diff whitespace checks passed. Actual NAS, elevated-PID reuse and abrupt power loss remain unverified.

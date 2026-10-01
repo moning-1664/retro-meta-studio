@@ -35,9 +35,15 @@ def owner():
     return {"pid": os.getpid(), "processStamp": process_stamp(os.getpid()), "heartbeat": time.time()}
 
 
-def alive(data):
+def status(data):
     saved = data.get("owner")
     if not saved:
-        return False
+        return "dead"
     current = process_stamp(int(saved["pid"]))
-    return current == "unknown" or current is not None and current == saved.get("processStamp")
+    if current == "unknown":
+        return "unknown"
+    return "alive" if current is not None and current == saved.get("processStamp") else "dead"
+
+
+def alive(data):
+    return status(data) != "dead"

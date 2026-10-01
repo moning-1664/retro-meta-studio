@@ -113,3 +113,25 @@ def test_invalid_limits_rejected(value):
 def test_both_unlimited_rejected_when_enabled():
     with pytest.raises(ValueError):
         policy({"enabled":True, "maxCount":0, "maxSizeGB":0})
+
+
+def test_disabled_cleanup_warns_above_20gb_without_deleting(context):
+    original = record(context, "old", 1)
+    with patch("app.plan.history._backup_bytes", return_value=21 * 1024 ** 3):
+        result = prune(context, "collection", None)
+    assert result["sizeWarning"] and result["discarded"] == 0
+    assert original.exists()
+
+
+def test_disabled_cleanup_is_quiet_below_20gb(context):
+    record(context, "old", 1)
+    assert not prune(context, "collection", None)["sizeWarning"]
+
+
+def test_capacity_warning_counts_other_collections(context):
+    directory = record(context, "other", 1)
+    data = context._paste_journal.details("other")
+    data["collectionId"] = "another-collection"
+    context._paste_journal._save(directory, data)
+    with patch("app.plan.history._backup_bytes", return_value=21 * 1024 ** 3):
+        assert prune(context, "collection", None)["sizeWarning"]

@@ -3157,7 +3157,7 @@ class Api:
             report = prune(self, scope, settings.get("backupRetention"))
             report["eventId"] = uuid.uuid4().hex
             self._backup_retention_report[scope] = report
-            if report.get("discarded") or report.get("limitExceeded") or report.get("errors"):
+            if report.get("discarded") or report.get("limitExceeded") or report.get("sizeWarning") or report.get("errors"):
                 log.info("Backup retention scope=%s report=%s", scope, report)
         except Exception as exc:
             log.exception("Backup retention failed; completed operation retained scope=%s", scope)

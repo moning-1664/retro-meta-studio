@@ -1,8 +1,7 @@
 """Opt-in retention. Recovery and the newest Undo/Redo remain protected."""
 import logging
-import json
 from pathlib import Path
-from app.plan import history
+from app.plan import history, journal_events
 
 log = logging.getLogger(__name__)
 
@@ -47,7 +46,9 @@ def safe_sidecars(data):
 def prune(api, scope, raw):
     limits = policy(raw)
     if not limits["enabled"]:
-        return {"discarded": 0, "enabled": False}
+        total = history.total_backup_bytes(api)
+        return {"discarded": 0, "enabled": False, "bytesRemaining": total,
+                "sizeWarning": total >= 20 * 1024 ** 3}
     rows = history.listing(api, scope)
     if any(row["status"] in {"running", "restoring", "redoing", "recovery_failed"} for row in rows):
         return {"discarded": 0, "blocked": True}
@@ -58,7 +59,7 @@ def prune(api, scope, raw):
             newest.add(latest)
     total, count, candidates = sum(row["bytes"] for row in rows), len(rows), []
     for row in rows:
-        if (row["id"] not in newest and row["canDiscard"] and not row.get("redoReady")
+        if (row["id"] not in newest and row["canDiscard"] and row["status"] != "closed" and not row.get("redoReady")
                 and not row.get("relatedCollections")):
             candidates.append(row)
     removed, errors = 0, []
@@ -70,7 +71,7 @@ def prune(api, scope, raw):
         try:
             root = api._archive_journal.root if row["kind"] == "archive" else api._paste_journal.root
             directory = root / row["id"]
-            data = json.loads((directory / "operation.json").read_text(encoding="utf-8"))
+            data = journal_events.load(directory)
             if (data.get("status") not in {"committed", "undone", "recovered"}
                     or data.get("redoReady") or data.get("relatedCollections") or not safe_sidecars(data)):
                 continue

@@ -39,6 +39,18 @@ class ArchiveUndoTests(TestCase):
         tx.commit(self.store)
         return tx
 
+    def test_interrupted_copy_restores_from_events_without_final_checkpoint(self):
+        tx = self.journal.begin("interrupted-events", self.store, self.cfg, ["ps2"])
+        checkpoint = (tx.directory / "operation.json").read_bytes()
+        with tx.tracking():
+            copy_complete(self.source, self.dest, replace=True, move_backup=True)
+        self.assertEqual((tx.directory / "operation.json").read_bytes(), checkpoint)
+        self.assertEqual(self.dest.read_bytes(), b"new image")
+        resumed = self.journal.load("interrupted-events")
+        resumed.restore(self.store)
+        self.assertEqual(self.dest.read_bytes(), b"old image")
+        self.assertEqual(resumed.data["status"], "undone")
+
     def games(self):
         return self.store._conn.execute("SELECT COUNT(*) FROM games").fetchone()[0]
 

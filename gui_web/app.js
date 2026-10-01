@@ -8016,7 +8016,9 @@
     const retention = S.plan?.retention;
     if (retention?.eventId && retention.eventId !== S.lastRetentionNotice) {
       S.lastRetentionNotice = retention.eventId;
-      if (retention.discarded || retention.limitExceeded || retention.errors?.length) {
+      if (retention.sizeWarning) {
+        showToast(`백업이 약 ${formatBytes(retention.bytesRemaining)}입니다. Settings > Advanced에서 백업을 정리할 수 있습니다.`, "warning");
+      } else if (retention.discarded || retention.limitExceeded || retention.errors?.length) {
         showToast(`오래된 백업 ${retention.discarded || 0}개 정리`
           + (retention.limitExceeded ? " · 보호된 백업으로 한도 초과" : "")
           + (retention.errors?.length ? " · 일부 백업은 유지했습니다" : ""),
@@ -8310,12 +8312,16 @@
       body.appendChild(h("div", {class: "field-row"}, [
         h("span", {class: "field-help"}, [`${new Date(row.createdAt * 1000).toLocaleString()} · ${actions[row.action] || "Archive 편집"} · ${labels[row.status] || row.status} · ${formatBytes(row.bytes)}`]),
         h("button", {class: "btn", disabled: !row.canDiscard, onClick: () => {
-          showConfirm("백업 삭제", "이 작업의 실행 취소·다시 실행이 불가능해집니다.", true, async () => {
+          showConfirm("백업 삭제", row.status === "closed" ? "남겨 둔 복구 백업을 영구 삭제합니다." : "이 작업의 실행 취소·다시 실행이 불가능해집니다.", true, async () => {
             const removed = await api.discardOperationHistory(id, [row.id], true);
             if (!removed.ok) { showToast(removed.error, "error"); return; }
             closeModal(); await refreshPlan(); await openOperationHistory();
           });
         }}, ["백업 삭제"]),
+        ...(row.canForceRecovery ? [
+          h("button", {class: "btn", onClick: () => showConfirm("소유자 확인 불가 · 수동 복구",
+            "다른 RetroMeta Studio 앱을 모두 종료했는지 확인하세요. 실행 중인 작업을 복구하면 파일이 되돌려질 수 있습니다. 파일·DB 변경 검사는 유지합니다.", true, () => recover("force"))}, ["수동 복구…"]),
+        ] : []),
         ...(row.status === "recovery_failed" ? [
           h("button", {class: "btn", onClick: () => recover("retry")}, ["다시 시도"]),
           h("button", {class: "btn", onClick: () => recover("open")}, ["백업 폴더 열기"]),

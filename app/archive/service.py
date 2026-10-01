@@ -240,21 +240,13 @@ def edit(archive, rom_identity_id, fields, frontend_raw=None) -> dict:
     return {"revision": revision, "changed": created}
 
 
-def _language_matches(index, system, filename, frontend=None):
-    """Compatibility helper: only identical full filenames are automatic targets."""
-    equivalent = lambda candidate: normalize_system(frontend, candidate) == normalize_system(frontend, system)
-    exact = [row for (candidate_system, candidate_filename), row in index.items()
-             if equivalent(candidate_system) and candidate_filename == filename]
-    return exact
-
-
 def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
                   media_resolver=None, explicit_target=None, progress=None) -> dict:
-    """Build Archive import items. Actual changes happen only when the Plan is applied."""
+    """Build Archive import items. Actual changes happen when the prepared operation is applied."""
     index = {(r["system"], r["filename"]): r for r in cache.query_rows()}
     exact_index = {}
     for (system, filename), row in index.items():
-        exact_index.setdefault((normalize_system(collection.frontend, system), filename), []).append(row)
+        exact_index.setdefault((normalize_system(collection.frontend, system), filename.casefold()), []).append(row)
     linked_targets = {}
     for key, linked_id in archive.match_links_of(collection.id).items():
         row = index.get(key)
@@ -279,7 +271,7 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
         # language_base deliberately keeps, yet still be the selected target.
         linked_matches = ([explicit_target] if explicit_target is not None
                           else linked_targets.get(rom_identity_id, []))
-        matches = linked_matches or exact_index.get((normalize_system(collection.frontend, system), filename), [])
+        matches = linked_matches or exact_index.get((normalize_system(collection.frontend, system), filename.casefold()), [])
         targets = [cache.get_row(r["rom_uid"]) for r in matches] or [None]
         available = [entry.system for entry in collection.systems]
         target_system = (system if system in available else next(
@@ -294,7 +286,7 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
             # 없는 상태(ES-DE에서 흔하다)라면, 메타데이터를 갱신하면서 동시에 빠진 ROM을
             # 가져와야 한다. "이미 있는 항목"으로 뭉뚱그리면 그 경우를 영영 못 채운다.
             # 언어 변종에는 ROM을 채우지 않는다 - 다른 언어판 ROM을 그 파일명으로 복사하면 안 된다.
-            need_rom = row is None or (target_name == filename and
+            need_rom = row is None or (target_name.casefold() == filename.casefold() and
                 normalize_system(collection.frontend, destination_system) == normalize_system(collection.frontend, system)
                 and not row["present"])
             rom = None

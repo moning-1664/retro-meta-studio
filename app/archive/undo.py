@@ -17,7 +17,7 @@ from adapters import get_adapter
 from app.archive import projection, shared_cache
 from app.plan.paste_journal import supports_local_undo
 from app.plan import process_owner
-from app.plan import journal_index
+from app.plan import journal_index, journal_events
 
 log = logging.getLogger(__name__)
 _active = ContextVar("archive_undo", default=None)
@@ -73,7 +73,8 @@ def track_temporary(destination, temporary):
     tx = current_transaction()
     if tx:
         tx.data.setdefault("temporaryFiles", {})[str(temporary)] = str(Path(destination).resolve().parent)
-        tx.save()
+        journal_events.append(tx.directory, tx.data, "temporaryFiles", str(temporary),
+                              tx.data["temporaryFiles"][str(temporary)])
 
 
 class ArchiveUndo:
@@ -125,8 +126,7 @@ class ArchiveUndo:
 
     def load(self, operation_id):
         directory = self.root / operation_id
-        return ArchiveTransaction(directory, json.loads(
-            (directory / "operation.json").read_text(encoding="utf-8")))
+        return ArchiveTransaction(directory, journal_events.load(directory))
 
     def recover(self, store, config):
         for data in self.pending(config):
@@ -146,6 +146,11 @@ class ArchiveTransaction:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(pending, self.directory / "operation.json")
+        # Checkpoint contains all events. Old events are safe to replay/skip
+        # even if interruption occurs before truncation.
+        with (self.directory / "events.jsonl").open("wb") as stream:
+            stream.flush()
+            os.fsync(stream.fileno())
         journal_index.update(self.directory.parent, self.directory, self.data)
 
     @contextmanager
@@ -155,6 +160,9 @@ class ArchiveTransaction:
             yield
         finally:
             _active.reset(token)
+
+    def record_file(self, path):
+        journal_events.append(self.directory, self.data, "files", path, self.data["files"][path])
 
     def capture(self, destination, index=False, moved=False):
         destination = Path(destination).absolute()
@@ -176,7 +184,7 @@ class ArchiveTransaction:
             "before": before, "after": before, "backup": str(backup) if before else None,
             "index": index, "resolved": str(resolved), "moved": moved,
         }
-        self.save()
+        self.record_file(path)
 
     def remove(self, path):
         path = Path(path).absolute()
@@ -185,7 +193,7 @@ class ArchiveTransaction:
         self.capture(path, moved=True)
         item = self.data["files"][str(path)]
         item["after"] = None
-        self.save()
+        self.record_file(str(path))
         if item["moved"]:
             os.replace(path, item["backup"])
         else:
@@ -199,14 +207,14 @@ class ArchiveTransaction:
             raise ValueError("소유 ROM 경로가 아니거나 대상 파일이 이미 있습니다.")
         pair = {"source": str(source), "destination": str(destination), "state": state(source)}
         self.data.setdefault("renames", []).append(pair)
-        self.save()
+        journal_events.append(self.directory, self.data, "renames", len(self.data["renames"]) - 1, pair)
         destination.parent.mkdir(parents=True, exist_ok=True)
         os.rename(source, destination)
 
     def expect_file(self, destination, expected):
         path = str(Path(destination).absolute())
         self.data["files"][path]["after"] = expected
-        self.save()
+        self.record_file(path)
 
     def prepare_publish(self, store):
         digest = shared_cache._store_snapshot_digest(store)
@@ -232,7 +240,7 @@ class ArchiveTransaction:
             if summary.get("config") != self.data["config"] or summary.get("status") != "undone":
                 continue
             record = self.directory.parent / summary["id"] / "operation.json"
-            previous = json.loads(record.read_text(encoding="utf-8"))
+            previous = journal_events.load(record.parent)
             if previous.get("config") == self.data["config"] and previous["status"] == "undone":
                 previous["redoReady"] = False
                 ArchiveTransaction(record.parent, previous).save()
@@ -335,29 +343,29 @@ class ArchiveTransaction:
             destination = Path(path)
             if item.get("moved") and item["backup"] and not Path(item["backup"]).exists() and state(path) == item["before"]:
                 item["after"] = state(path)
-                self.save()
+                self.record_file(path)
                 continue
             if self.data["redoReady"] and destination.is_file() and "redo" not in item:
                 redo = destination.with_name(destination.name + f".{self.data['id']}.rms-redo")
                 item["redo"] = str(redo)
-                self.save()
+                self.record_file(path)
                 os.replace(destination, redo)
             if item["backup"]:
                 temporary = destination.with_name(destination.name + f".{self.data['id']}.restore")
                 if Path(item["backup"]).exists():
                     if item.get("moved"):
                         item["restoreExpected"] = state(item["backup"])
-                        self.save()
+                        self.record_file(path)
                         os.replace(item["backup"], destination)
                     else:
                         shutil.copy2(item["backup"], temporary)
                         item["restoreExpected"] = state(temporary)
-                        self.save()
+                        self.record_file(path)
                         os.replace(temporary, destination)
             else:
                 destination.unlink(missing_ok=True)
             item["after"] = state(destination)
-            self.save()
+            self.record_file(path)
         with closing(sqlite3.connect(before_db.as_uri() + "?mode=ro", uri=True)) as incoming:
             if incoming.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                 raise ValueError("Archive DB 백업이 손상되었습니다.")
@@ -384,7 +392,7 @@ class ArchiveTransaction:
                 previous.append((data["createdAt"], self.directory.parent / data["id"]))
         if previous:
             _, directory = max(previous, key=lambda row: row[0])
-            data = json.loads((directory / "operation.json").read_text(encoding="utf-8"))
+            data = journal_events.load(directory)
             for path, item in self.data["files"].items():
                 older = data["files"].get(path)
                 if older and older["after"] == item["before"]:
@@ -427,7 +435,7 @@ class ArchiveTransaction:
                 os.replace(item["redo"], destination)
             item["after"] = state(destination)
             item.pop("redo", None)
-            self.save()
+            self.record_file(path)
         for pair in self.data.get("renames", []):
             os.rename(pair["source"], pair["destination"])
         with closing(sqlite3.connect(str(self.directory / "after.db"))) as db:

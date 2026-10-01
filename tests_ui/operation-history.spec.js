@@ -78,3 +78,36 @@ test('cancelled conflict does not execute or stage a paste', async ({page}) => {
   expect(await page.evaluate(() => window.__deletes)).toEqual([]);
   await expect(page.locator('.plan-apply-badge, .lno-mark')).toHaveCount(0);
 });
+
+
+test('disabled backup cleanup still announces capacity warning', async ({page}) => {
+  await openApp(page);
+  await page.evaluate(() => {
+    window.api.operationState = async () => ({ok:true,data:{retention:{eventId:'size-warning',
+      discarded:0, sizeWarning:true, bytesRemaining:21*1024**3}}});
+  });
+  await page.locator('.ctab.archive').click();
+  await expect(page.locator('#toast')).toContainText('백업이 약');
+  await expect(page.locator('#toast')).toContainText('21');
+});
+
+test('unknown ownership offers confirmed manual recovery and closed record deletion', async ({page}) => {
+  await openApp(page);
+  await page.evaluate(() => {
+    window.__manualRecovery = [];
+    window.api.operationHistory = async () => ({ok:true,data:{items:[
+      {id:'unknown',status:'running',createdAt:1,bytes:0,canDiscard:false,canForceRecovery:true},
+      {id:'closed',status:'closed',createdAt:2,bytes:2048,canDiscard:true}
+    ]}});
+    window.api.recoveryAction = async (...args) => {window.__manualRecovery.push(args); return {ok:true,data:{}};};
+  });
+  await page.locator('.settings-btn').click();
+  await page.locator('.stg-nav-item[data-section="advanced"]').click();
+  await page.getByRole('button',{name:'복구 기록 열기',exact:true}).click();
+  await expect(page.getByRole('button',{name:'백업 삭제',exact:true}).last()).toBeEnabled();
+  await page.getByRole('button',{name:'수동 복구…',exact:true}).click();
+  expect(await page.evaluate(() => window.__manualRecovery)).toEqual([]);
+  await page.locator('.modal-actions').getByRole('button',{name:'확인',exact:true}).click();
+  await expect.poll(() => page.evaluate(() => window.__manualRecovery.length)).toBe(1);
+  expect((await page.evaluate(() => window.__manualRecovery[0]))[2]).toBe('force');
+});

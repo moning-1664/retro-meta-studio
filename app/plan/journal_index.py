@@ -1,9 +1,10 @@
-"""Rebuildable local status index. operation.json remains authoritative."""
+"""Rebuildable status index; checkpoint plus durable events are authoritative."""
 import json
 import logging
 import sqlite3
 from contextlib import closing
 from pathlib import Path
+from app.plan import journal_events
 
 log = logging.getLogger(__name__)
 KEYS = ("id", "collectionId", "config", "relatedCollections", "status", "createdAt",
@@ -22,7 +23,12 @@ def connect(root):
 
 def stamp(path):
     stat = path.stat()
-    return f"{stat.st_mtime_ns}:{stat.st_size}:{stat.st_ino}"
+    signature = f"{stat.st_mtime_ns}:{stat.st_size}:{stat.st_ino}"
+    events = path.parent / "events.jsonl"
+    if events.exists():
+        info = events.stat()
+        signature += f":{info.st_mtime_ns}:{info.st_size}"
+    return signature
 
 
 def update(root, directory, data):
@@ -49,7 +55,7 @@ def records(root):
                 if entry and entry[1] == signature:
                     result.append(json.loads(entry[2]))
                     continue
-                data = json.loads(path.read_text(encoding="utf-8"))
+                data = journal_events.load(path.parent)
                 summary = {key: data[key] for key in KEYS if key in data}
                 conn.execute("INSERT OR REPLACE INTO records VALUES (?,?,?,NULL)",
                     (path.parent.name, signature, json.dumps(summary, ensure_ascii=False)))
@@ -59,7 +65,7 @@ def records(root):
             return result
     except (OSError, ValueError, sqlite3.Error):
         log.warning("Journal index read failed; reading authoritative records", exc_info=True)
-        return [json.loads(path.read_text(encoding="utf-8")) for path in root.glob("*/operation.json")]
+        return [journal_events.load(path.parent) for path in root.glob("*/operation.json")]
 
 
 def backup_bytes(root, operation_id, calculate):

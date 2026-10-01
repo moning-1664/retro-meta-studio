@@ -264,15 +264,33 @@ class PasteJournal:
     def details(self, operation_id):
         return json.loads((self.root / operation_id / "operation.json").read_text(encoding="utf-8"))
 
-    def retry_recovery(self, operation_id):
+    def retry_recovery(self, operation_id, *, force_unknown_owner=False):
         directory = self.root / operation_id
         data = self.details(operation_id)
-        if data.get("status") != "recovery_failed":
+        if force_unknown_owner:
+            if data.get("status") not in {"running", "redoing"} or process_owner.status(data) != "unknown":
+                raise ValueError("소유자 확인 불가 기록에만 수동 복구를 사용할 수 있습니다.")
+            data["manualOwnerRecovery"] = True
+        elif data.get("status") != "recovery_failed":
             raise ValueError("복구 실패 기록이 아닙니다.")
-        data["status"] = data.get("recoveryStatus", "running")
+        data["status"] = data.get("recoveryStatus", data["status"] if force_unknown_owner else "running")
         try:
+            if data.get("manualOwnerRecovery"):
+                for filename, details in data["files"].items():
+                    allowed = (data.get("preFiles", {}).get(filename), None)
+                    if data["status"] == "redoing":
+                        allowed = (data.get("undoFiles", {}).get(filename), data.get("postFiles", {}).get(filename), None)
+                    if _state(filename) not in allowed:
+                        raise ValueError("파일 상태를 확인할 수 없어 수동 복구를 중단했습니다. 백업을 보존했습니다.")
+                    backup = details.get("backup")
+                    if backup and Path(backup).exists() and _state(backup) != data.get("preFiles", {}).get(filename):
+                        raise ValueError("복구 백업이 바뀌었습니다. 백업을 보존했습니다.")
+                for filename in data["indexes"]:
+                    if _state(filename) != data.get("preIndexes", {}).get(filename):
+                        raise ValueError("메타데이터 파일 상태를 확인할 수 없습니다. 백업을 보존했습니다.")
             self._restore(directory, data)
         except (OSError, ValueError) as exc:
+            data["recoveryStatus"] = data["status"]
             data["status"] = "recovery_failed"
             data["recoveryError"] = str(exc)
             self._save(directory, data)
