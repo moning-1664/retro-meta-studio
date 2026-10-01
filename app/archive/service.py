@@ -241,34 +241,20 @@ def edit(archive, rom_identity_id, fields, frontend_raw=None) -> dict:
 
 
 def _language_matches(index, system, filename, frontend=None):
-    """대상에서 이 파일명과 **같은 게임의 언어 변종**인 행들. 정확히 같은 이름이 있으면 그것만이다.
-
-    `FF3.zip` <-> `FF3(KR).zip`처럼 인식된 언어 태그만 다른 경우를 잇는다. 양쪽이 서로 **다른** 태그를 달고
-    있으면((KR) 대 (JP)) 다른 판일 수 있어 잇지 않는다. 여러 개면 전부다 - 사용자가 정한 대로 언어가 맞는
-    대상 파일명마다 메타데이터를 쓴다.
-    """
+    """Compatibility helper: only identical full filenames are automatic targets."""
     equivalent = lambda candidate: normalize_system(frontend, candidate) == normalize_system(frontend, system)
     exact = [row for (candidate_system, candidate_filename), row in index.items()
              if equivalent(candidate_system) and candidate_filename == filename]
-    if exact:
-        return exact
-    base = title_affix.language_base(filename)
-    mine = set(title_affix.classify_regions(filename))
-    found = []
-    for (candidate_system, candidate_filename), row in index.items():
-        if not equivalent(candidate_system) or title_affix.language_base(candidate_filename) != base:
-            continue
-        theirs = set(title_affix.classify_regions(candidate_filename))
-        if mine and theirs and mine != theirs:
-            continue
-        found.append(row)
-    return sorted(found, key=lambda r: str(r["filename"]).casefold())
+    return exact
 
 
 def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
-                  media_resolver=None, explicit_target=None) -> dict:
+                  media_resolver=None, explicit_target=None, progress=None) -> dict:
     """Build Archive import items. Actual changes happen only when the Plan is applied."""
     index = {(r["system"], r["filename"]): r for r in cache.query_rows()}
+    exact_index = {}
+    for (system, filename), row in index.items():
+        exact_index.setdefault((normalize_system(collection.frontend, system), filename), []).append(row)
     linked_targets = {}
     for key, linked_id in archive.match_links_of(collection.id).items():
         row = index.get(key)
@@ -276,7 +262,9 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
             linked_targets.setdefault(linked_id, []).append(row)
 
     items, skipped = [], []
-    for rom_identity_id in rom_identity_ids:
+    for position, rom_identity_id in enumerate(rom_identity_ids):
+        if progress:
+            progress(position, len(rom_identity_ids), "Archive 가져오기 준비")
         identity = archive.get_identity(rom_identity_id)
         if identity is None:
             skipped.append({"filename": str(rom_identity_id),
@@ -291,7 +279,7 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
         # language_base deliberately keeps, yet still be the selected target.
         linked_matches = ([explicit_target] if explicit_target is not None
                           else linked_targets.get(rom_identity_id, []))
-        matches = linked_matches or _language_matches(index, system, filename, collection.frontend)
+        matches = linked_matches or exact_index.get((normalize_system(collection.frontend, system), filename), [])
         targets = [cache.get_row(r["rom_uid"]) for r in matches] or [None]
         available = [entry.system for entry in collection.systems]
         target_system = (system if system in available else next(
@@ -306,7 +294,9 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
             # 없는 상태(ES-DE에서 흔하다)라면, 메타데이터를 갱신하면서 동시에 빠진 ROM을
             # 가져와야 한다. "이미 있는 항목"으로 뭉뚱그리면 그 경우를 영영 못 채운다.
             # 언어 변종에는 ROM을 채우지 않는다 - 다른 언어판 ROM을 그 파일명으로 복사하면 안 된다.
-            need_rom = row is None or (target_name == filename and not row["present"])
+            need_rom = row is None or (target_name == filename and
+                normalize_system(collection.frontend, destination_system) == normalize_system(collection.frontend, system)
+                and not row["present"])
             rom = None
             if need_rom:
                 rom = next((s for s in archive.rom_sources(rom_identity_id)

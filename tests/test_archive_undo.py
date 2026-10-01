@@ -42,6 +42,53 @@ class ArchiveUndoTests(TestCase):
     def games(self):
         return self.store._conn.execute("SELECT COUNT(*) FROM games").fetchone()[0]
 
+    def test_new_commit_removes_only_invalidated_redo_file(self):
+        first = self.perform()
+        first.restore(self.store)
+        redo = Path(first.data["files"][str(self.dest.absolute())]["redo"])
+        assert redo.is_file()
+        before_db = first.directory / "before.db"
+        next_tx = self.journal.begin("next", self.store, self.cfg, ["ps2"])
+        with next_tx.tracking():
+            copy_complete(self.source, self.dest, replace=True)
+        next_tx.commit(self.store)
+        assert not redo.exists()
+        assert before_db.is_file()
+        assert not self.journal.load(first.data["id"]).data["redoReady"]
+
+    def test_archive_commit_notifies_retention_callback(self):
+        from unittest.mock import Mock
+        self.journal.on_commit = Mock()
+        tx = self.perform()
+        self.journal.on_commit.assert_called_once_with(tx.data)
+        self.assertEqual(tx.data["status"], "committed")
+
+    def test_modified_redo_is_preserved_when_invalidated(self):
+        first = self.perform()
+        first.restore(self.store)
+        redo = Path(first.data["files"][str(self.dest.absolute())]["redo"])
+        redo.write_bytes(b"externally changed redo")
+        next_tx = self.journal.begin("next", self.store, self.cfg, [])
+        next_tx.commit(self.store)
+        assert redo.read_bytes() == b"externally changed redo"
+        assert not self.journal.load(first.data["id"]).data["redoReady"]
+
+    def test_redo_cleanup_failure_does_not_fail_completed_operation(self):
+        first = self.perform()
+        first.restore(self.store)
+        redo = Path(first.data["files"][str(self.dest.absolute())]["redo"])
+        next_tx = self.journal.begin("next", self.store, self.cfg, [])
+        original_unlink = Path.unlink
+        def denied(path, *args, **kwargs):
+            if path == redo:
+                raise PermissionError("file in use")
+            return original_unlink(path, *args, **kwargs)
+        with patch.object(Path, "unlink", denied):
+            next_tx.commit(self.store)
+        assert self.journal.load("next").data["status"] == "committed"
+        assert redo.exists()
+        assert not self.journal.load(first.data["id"]).data["redoReady"]
+
     def test_undo_restores_files_and_database(self):
         tx = self.perform()
         self.assertEqual(self.games(), 1)
@@ -122,6 +169,7 @@ class ArchiveUndoTests(TestCase):
     def test_interruption_after_publish_can_recover_from_record(self):
         tx = self.perform(publish=True)
         tx.data["status"] = "running"
+        tx.data.pop("owner", None)  # Simulate a terminated owner.
         tx.save()
         self.journal.recover(self.store, self.cfg)
         self.assertEqual(self.dest.read_bytes(), b"old image")
@@ -130,6 +178,8 @@ class ArchiveUndoTests(TestCase):
     def test_untagged_db_change_after_interruption_is_kept(self):
         tx = self.journal.begin("op", self.store, self.cfg, ["ps2"])
         self.store.ensure_game("partial", "partial")
+        tx.data.pop("owner", None)
+        tx.save()
         with self.assertRaises(ValueError):
             self.journal.recover(self.store, self.cfg)
         self.assertTrue((tx.directory / "before.db").exists())
@@ -151,6 +201,27 @@ class ArchiveUndoTests(TestCase):
             tx.restore(self.store)
         self.assertEqual(self.dest.read_bytes(), b"new image")
         self.assertEqual(self.games(), 1)
+
+    def test_failed_archive_recovery_can_retry_through_history(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from app.plan.history import recovery_action
+        from app.plan.paste_journal import PasteJournal
+        tx = self.perform()
+        before = tx.directory / "before.db"
+        saved = before.read_bytes()
+        before.unlink()
+        with self.assertRaises(ValueError):
+            tx.restore(self.store)
+        assert self.journal.load(tx.data["id"]).data["status"] == "recovery_failed"
+        before.write_bytes(saved)
+        api = SimpleNamespace(_archive_journal=self.journal,
+            _paste_journal=PasteJournal(self.root / "collection-journal"),
+            _archive_config=lambda: self.cfg, archive=self.store,
+            registry=Mock(), _remember_archive_digest=Mock())
+        recovery_action(api, "__archive__", tx.data["id"], "retry")
+        self.assertEqual(self.dest.read_bytes(), b"old image")
+        self.assertIsNone(api._archive_recovery_error)
 
     def test_external_destination_is_not_owned_by_archive(self):
         tx = self.journal.begin("op", self.store, self.cfg, [])
@@ -286,6 +357,7 @@ class ArchiveUndoApiTests(TestCase):
         self.assertIsNone(result["error"], result)
         tx = self.api._archive_journal.load(result["result"]["undoOperationId"])
         tx.data["status"] = "running"
+        tx.data.pop("owner", None)  # Simulate a terminated owner.
         tx.save()
         self.api.close()
         restarted = Api(registry_path=self.root / "registry.db", cache_dir=self.root / "cache")

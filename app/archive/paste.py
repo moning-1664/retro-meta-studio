@@ -9,6 +9,7 @@ from pathlib import Path
 from app.archive import projection
 from app.model.constants import normalize_system, metadata_compatible
 from app.plan import transfer
+from app.plan.rom_preview import comparison as rom_comparison
 
 
 def file_state(path):
@@ -116,6 +117,8 @@ def prepare(store, config, source_items, mode, *, target_id=None, target_system=
             collisions.append({
                 "key": key, "system": system, "filename": filename,
                 "existingRomUid": state["rid"],
+                "romComparison": rom_comparison(out.get("rom"),
+                    Path(config.get("romDir") or config["archiveDir"]) / system / filename),
                 "existingFields": existing["fields"], "incomingFields": original_fields,
                 "existingTitle": existing["fields"].get("name") or filename,
                 "incomingTitle": original_fields.get("name") or filename,

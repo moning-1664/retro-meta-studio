@@ -140,6 +140,22 @@ class ImmediatePasteTests(unittest.TestCase):
         result = self.api.paste_execute(preview["operationId"], {})
         self.assertFalse(result["ok"])
 
+    def test_successful_paste_runs_opt_in_backup_retention(self):
+        saved = self.api.save_app_settings({"backupRetention": {"enabled":True, "maxCount":1, "maxSizeGB":0}})
+        self.assertTrue(saved["ok"], saved)
+        directory = self.api._paste_journal.root / "old-completed"
+        directory.mkdir()
+        self.api._paste_journal._save(directory, {"id":"old-completed", "collectionId":self.dst_id,
+            "createdAt":1, "status":"committed", "files":{}})
+        preview = self.api.paste(self.dst_id, "overwrite", immediate=True)["data"]
+        started = self.api.paste_execute(preview["operationId"], {c["key"]:"overwrite" for c in preview["collisions"]})
+        self.assertTrue(started["ok"], started)
+        wait_idle(self.api)
+        self.assertFalse(directory.exists())
+        state = self.api.operation_state(self.dst_id)["data"]
+        self.assertEqual(state["retention"]["discarded"], 1)
+        self.assertTrue(state["undoOperationId"])
+
     def test_single_explicit_row_wins_over_same_named_game(self):
         rows = self.api.list_rows(self.src_id)["data"]["rows"]
         source_id = next(row["romUid"] for row in rows if row["file"] == "Same.iso")
@@ -202,7 +218,8 @@ class ImmediatePasteTests(unittest.TestCase):
         os.replace(target_rom, str(target_rom) + suffix)
         target_rom.write_bytes(b"INCOMPLETE")
         index.write_bytes(b"BROKEN")
-        self.assertEqual(journal.recover_interrupted(), [operation_id])
+        with mock.patch("app.plan.process_owner.alive", return_value=False):
+            self.assertEqual(journal.recover_interrupted(), [operation_id])
         self.assertEqual(target_rom.read_bytes(), before)
         self.assertEqual(index.read_bytes(), before_index)
 

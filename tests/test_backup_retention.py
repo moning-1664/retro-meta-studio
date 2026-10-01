@@ -1,0 +1,115 @@
+from types import SimpleNamespace
+from unittest.mock import patch
+import pytest
+
+from app.plan.paste_journal import PasteJournal, _state
+from app.archive.undo import ArchiveUndo
+from app.archive.undo import ArchiveTransaction
+from app.plan.backup_retention import policy, prune
+
+
+@pytest.fixture
+def context(tmp_path):
+    journal = PasteJournal(tmp_path / "collection")
+    archive = ArchiveUndo(tmp_path / "archive")
+    return SimpleNamespace(_paste_journal=journal, _archive_journal=archive, _archive_config=lambda: {})
+
+
+def record(api, key, created, status="committed", **extra):
+    directory = api._paste_journal.root / key
+    directory.mkdir()
+    (directory / "index.bak").write_bytes(b"backup")
+    api._paste_journal._save(directory, {"id": key, "collectionId": "collection", "createdAt": created,
+        "status": status, "files": {}, **extra})
+    return directory
+
+
+def test_automatic_cleanup_is_disabled_by_default(context):
+    original = record(context, "old", 1)
+    assert prune(context, "collection", None)["discarded"] == 0
+    assert original.exists()
+
+
+def test_oldest_records_removed_and_latest_undo_preserved(context):
+    old = record(context, "old", 1)
+    middle = record(context, "middle", 2)
+    latest = record(context, "latest", 3)
+    result = prune(context, "collection", {"enabled": True, "maxCount": 1, "maxSizeGB": 0})
+    assert result["discarded"] == 2
+    assert not old.exists() and not middle.exists()
+    assert latest.exists()
+
+
+@pytest.mark.parametrize("status", ["running", "restoring", "redoing", "recovery_failed"])
+def test_pending_recovery_prevents_cleanup(context, status):
+    old = record(context, "old", 1)
+    pending = record(context, "pending", 2, status)
+    result = prune(context, "collection", {"enabled":True, "maxCount":1, "maxSizeGB":0})
+    assert result["blocked"]
+    assert old.exists() and pending.exists()
+
+
+def test_redo_closed_and_related_records_remain_even_above_limit(context):
+    redo = record(context, "redo", 1, "undone", redoReady=True)
+    closed = record(context, "closed", 2, "closed")
+    related = record(context, "related", 3, relatedCollections={"other":["ps2"]})
+    latest = record(context, "latest", 4)
+    result = prune(context, "collection", {"enabled":True, "maxCount":1, "maxSizeGB":0})
+    assert result["discarded"] == 0 and result["limitExceeded"]
+    assert all(path.exists() for path in (redo, closed, related, latest))
+
+
+def test_modified_external_sidecar_is_not_deleted(context, tmp_path):
+    sidecar = tmp_path / "game.rom.old.rms-backup"
+    sidecar.write_bytes(b"original ROM")
+    before = _state(sidecar)
+    old = record(context, "old", 1, files={str(tmp_path / "game.rom"): {"backup":str(sidecar)}},
+        preFiles={str(tmp_path / "game.rom"):before})
+    record(context, "latest", 2)
+    sidecar.write_bytes(b"externally changed ROM")
+    result = prune(context, "collection", {"enabled":True, "maxCount":1, "maxSizeGB":0})
+    assert result["discarded"] == 0 and result["limitExceeded"]
+    assert old.exists() and sidecar.read_bytes() == b"externally changed ROM"
+
+
+def test_size_limit_uses_oldest_first_and_retains_large_latest(context):
+    with patch("app.plan.history._backup_bytes", return_value=2 * 1024 ** 3):
+        old = record(context, "old", 1)
+        latest = record(context, "latest", 2)
+        result = prune(context, "collection", {"enabled":True, "maxCount":0, "maxSizeGB":1})
+    assert result["discarded"] == 1 and result["limitExceeded"]
+    assert not old.exists() and latest.exists()
+
+
+def test_permission_failure_is_reported_without_failing_cleanup(context):
+    old = record(context, "old", 1)
+    record(context, "latest", 2)
+    with patch("app.plan.history.discard", side_effect=PermissionError("file locked")):
+        result = prune(context, "collection", {"enabled":True, "maxCount":1, "maxSizeGB":0})
+    assert result["errors"] and result["limitExceeded"] and old.exists()
+
+
+def test_archive_retention_keeps_latest_undo(context, tmp_path):
+    config = {"frontend":"es-de", "archiveDir":str(tmp_path / "frontend"), "romDir":"", "mediaInternal":True}
+    context._archive_config = lambda: config
+    for number in (1, 2):
+        directory = context._archive_journal.root / f"archive-{number}"
+        directory.mkdir()
+        (directory / "before.db").write_bytes(b"backup remains owned")
+        ArchiveTransaction(directory, {"id":f"archive-{number}", "createdAt":number,
+            "config":config, "status":"committed", "files":{}}).save()
+    result = prune(context, "__archive__", {"enabled":True, "maxCount":1, "maxSizeGB":0})
+    assert result["discarded"] == 1
+    assert not (context._archive_journal.root / "archive-1").exists()
+    assert (context._archive_journal.root / "archive-2" / "before.db").exists()
+
+
+@pytest.mark.parametrize("value", [-1, 1.5, "20", True])
+def test_invalid_limits_rejected(value):
+    with pytest.raises(ValueError):
+        policy({"enabled":True, "maxCount":value})
+
+
+def test_both_unlimited_rejected_when_enabled():
+    with pytest.raises(ValueError):
+        policy({"enabled":True, "maxCount":0, "maxSizeGB":0})

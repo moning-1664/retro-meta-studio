@@ -2,41 +2,97 @@
 from pathlib import Path
 import json
 import shutil
+from app.plan import journal_index
+
+
+def _backup_bytes(directory):
+    data = json.loads((directory / "operation.json").read_text(encoding="utf-8"))
+    files = list(directory.rglob("*"))
+    for item in data.get("files", {}).values():
+        files.extend(Path(item[key]) for key in ("backup", "redo") if item.get(key))
+    seen, size = set(), 0
+    for path in files:
+        if str(path) in seen:
+            continue
+        seen.add(str(path))
+        try:
+            if path.is_file():
+                size += path.stat().st_size
+        except FileNotFoundError:
+            continue
+    return size
 
 
 def listing(api, collection_id):
     rows = []
     cfg = api._archive_config()
     for kind, root in (("collection", api._paste_journal.root), ("archive", api._archive_journal.root)):
-        for record in root.glob("*/operation.json"):
-            try:
-                data = json.loads(record.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
+        for data in journal_index.records(root):
             relevant = (data.get("collectionId") == collection_id or collection_id in data.get("relatedCollections", {}))
             if kind == "archive":
                 relevant = data.get("config") == cfg and (collection_id == "__archive__" or relevant)
             if not relevant:
                 continue
-            files = list(record.parent.rglob("*"))
-            for item in data.get("files", {}).values():
-                files.extend(Path(item[key]) for key in ("backup", "redo") if item.get(key))
-            seen = set()
-            size = 0
-            for path in files:
-                if str(path) in seen:
-                    continue
-                seen.add(str(path))
-                if path.is_file():
-                    size += path.stat().st_size
+            directory = root / data["id"]
+            size = journal_index.backup_bytes(root, data["id"], lambda: _backup_bytes(directory))
             rows.append({"id": data["id"], "kind": kind, "status": data["status"],
+                "recoveryError": data.get("recoveryError"),
+                "redoReady": bool(data.get("redoReady")), "relatedCollections": data.get("relatedCollections", {}),
                 "createdAt": data["createdAt"], "action": data.get("action", "file-operation"),
                 "bytes": size, "canDiscard": data["status"] in {"committed", "undone", "recovered"}})
     return sorted(rows, key=lambda row: row["createdAt"], reverse=True)
 
 
-def discard(api, collection_id, operation_ids):
-    permitted = {row["id"]: row for row in listing(api, collection_id)}
+def recovery_action(api, collection_id, operation_id, action):
+    row = next((row for row in listing(api, collection_id) if row["id"] == operation_id), None)
+    if not row or row["status"] != "recovery_failed":
+        raise ValueError("복구 실패 기록을 찾을 수 없습니다.")
+    journal = api._archive_journal if row["kind"] == "archive" else api._paste_journal
+    directory = journal.root / operation_id
+    if directory.is_symlink() or not directory.resolve().is_relative_to(journal.root.resolve()):
+        raise ValueError("안전하지 않은 기록 경로입니다.")
+    if action == "open":
+        import os
+        os.startfile(str(directory))
+    elif action == "retry":
+        if row["kind"] == "archive":
+            tx = journal.load(operation_id)
+            from app.archive.edit_lock import writing
+            held = []
+            try:
+                for cid in sorted(tx.data.get("relatedCollections", {})):
+                    if not api.registry.acquire_lock(f"apply:{cid}", kind="recovery"):
+                        raise ValueError("관련 Collection에 다른 작업이 진행 중입니다.")
+                    held.append(cid)
+                with writing(tx.data["config"]["archiveDir"]):
+                    tx.restore(api.archive)
+            finally:
+                for cid in held:
+                    api.registry.release_lock(f"apply:{cid}")
+            api._remember_archive_digest(api._archive_config())
+        else:
+            journal.retry_recovery(operation_id)
+    elif action == "close":
+        if row["kind"] == "archive":
+            tx = journal.load(operation_id)
+            tx.data["status"] = "closed"
+            tx.data["redoReady"] = False
+            tx.save()
+        else:
+            data = journal.details(operation_id)
+            data["status"] = "closed"
+            data["redoReady"] = False
+            journal._save(directory, data)
+    else:
+        raise ValueError("지원하지 않는 복구 작업입니다.")
+    if row["kind"] == "archive" and action != "open":
+        pending = journal.pending(api._archive_config())
+        api._archive_recovery_error = pending[0].get("recoveryError", "복구가 필요합니다.") if pending else None
+    return {"action": action}
+
+
+def discard(api, collection_id, operation_ids, *, _permitted=None):
+    permitted = _permitted if _permitted is not None else {row["id"]: row for row in listing(api, collection_id)}
     cleanup = []
     for operation_id in operation_ids:
         row = permitted.get(operation_id)
@@ -49,6 +105,8 @@ def discard(api, collection_id, operation_ids):
         if not directory.resolve().is_relative_to(root.resolve()) or directory.is_symlink():
             raise ValueError("안전하지 않은 기록 경로입니다.")
         data = json.loads((directory / "operation.json").read_text(encoding="utf-8"))
+        if data.get("status") not in {"committed", "undone", "recovered"}:
+            raise ValueError("기록 상태가 바뀌어 백업을 삭제할 수 없습니다.")
         sidecars = []
         for destination, item in data.get("files", {}).items():
             for key in ("backup", "redo"):

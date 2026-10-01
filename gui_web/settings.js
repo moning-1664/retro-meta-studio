@@ -348,6 +348,31 @@
           "처음 여는 Collection에서 미리보기를 켤지 정합니다. 이미 연 Collection은 마지막 상태를 따릅니다."));
       } else {
         add(...section("Advanced", "진단과 화면 설정을 관리합니다."));
+        const recovery = h("button", {class: "btn", onClick: () => ctx.openRecovery()}, ["복구 기록 열기"]);
+        add(row("advanced.recovery", "파일 작업 복구", recovery, "복구 실패를 다시 시도하거나 백업을 보존한 채 기록을 닫습니다."));
+        const retention = s.backupRetention || {enabled:false, maxCount:20, maxSizeGB:10};
+        add(row("backupRetention.enabled", "백업 자동 정리", toggle(retention.enabled,
+          value => { ctx.update("backupRetention", {enabled:value,
+            ...(value && !retention.maxCount && !retention.maxSizeGB ? {maxCount:20} : {})}); render(); }),
+          "작업 완료 후 오래된 백업부터 정리합니다. 최신 실행 취소·복구 기록은 보존합니다."));
+        const limitInput = (key, fallback, maximum) => {
+          const input = h("input", {class:"stg-control stg-text", type:"number", min:"0", max:String(maximum),
+            step:"1", value:String(retention[key] ?? fallback), disabled:!retention.enabled});
+          input.addEventListener("change", () => {
+            const current = ctx.get().backupRetention || retention;
+            const value = Number(input.value);
+            if (!Number.isInteger(value) || value < 0 || value > maximum || input.value === "") {
+              input.value = String(current[key] ?? fallback); return;
+            }
+            if (value === 0 && Number(current[key === "maxCount" ? "maxSizeGB" : "maxCount"]) === 0) {
+              input.value = String(current[key] ?? fallback); return;
+            }
+            ctx.update("backupRetention", {[key]:value});
+          });
+          return input;
+        };
+        add(row("backupRetention.maxCount", "보관할 작업 수", limitInput("maxCount", 20, 10000), "Collection / Archive별 한도. 0은 제한 없음입니다."));
+        add(row("backupRetention.maxSizeGB", "보관 용량 (GB)", limitInput("maxSizeGB", 10, 100000), "0은 제한 없음. 보호된 백업 때문에 한도를 초과할 수 있습니다."));
         add(row("advanced.logLevel", "Log level", soonSelect([["normal", "Normal"], ["verbose", "Verbose"], ["debug", "Debug"]]), null, true));
         const reset = h("button", { class: "stg-danger" }, ["화면 설정 초기화"]);
         reset.addEventListener("click", () => { ctx.reset(); render(); });

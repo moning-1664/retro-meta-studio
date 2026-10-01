@@ -16,6 +16,8 @@ import logging
 from adapters import get_adapter
 from app.archive import projection, shared_cache
 from app.plan.paste_journal import supports_local_undo
+from app.plan import process_owner
+from app.plan import journal_index
 
 log = logging.getLogger(__name__)
 _active = ContextVar("archive_undo", default=None)
@@ -81,8 +83,7 @@ class ArchiveUndo:
 
     def records(self, config):
         rows = []
-        for path in self.root.glob("*/operation.json"):
-            data = json.loads(path.read_text(encoding="utf-8"))
+        for data in journal_index.records(self.root):
             if data.get("config") == config:
                 rows.append(data)
         return sorted(rows, key=lambda row: row["createdAt"])
@@ -96,13 +97,13 @@ class ArchiveUndo:
         return max(rows, key=lambda row: row.get("undoneAt", 0))["id"] if rows else None
 
     def pending(self, config):
-        return [row for row in self.records(config) if row["status"] in {"running", "restoring", "redoing"}]
+        return [row for row in self.records(config) if row["status"] in {"running", "restoring", "redoing", "recovery_failed"}]
 
     def begin(self, operation_id, store, config, systems, *, allow_network=False, action="paste"):
         if not allow_network and not supports_local_undo([config["archiveDir"], config.get("romDir")]):
             raise ValueError("네트워크 Archive의 자동 실행 취소는 지원하지 않습니다.")
         if self.pending(config):
-            raise ValueError("중단된 Archive 복구가 남아 있습니다. 로그와 백업을 확인하세요.")
+            raise ValueError("Archive 작업이 진행 중이거나 복구가 필요합니다. Settings > Advanced > 파일 작업 복구를 확인하세요.")
         directory = self.root / operation_id
         directory.mkdir(exist_ok=False)
         store.backup_to(directory / "before.db")
@@ -110,7 +111,7 @@ class ArchiveUndo:
         digest = shared_cache.fingerprint(shared) if shared.is_file() else None
         tx = ArchiveTransaction(directory, {
             "id": operation_id, "config": config, "createdAt": time.time(),
-            "status": "running", "files": {}, "sharedBefore": digest, "action": action,
+            "status": "running", "owner": process_owner.owner(), "files": {}, "sharedBefore": digest, "action": action,
             "sharedExpected": digest, "databaseAfter": shared_cache._store_snapshot_digest(store),
         })
         tx.data["databaseBefore"] = tx.data["databaseAfter"]
@@ -119,6 +120,7 @@ class ArchiveUndo:
         collection = projection.collection_for(config)
         for system in set(systems):
             tx.capture(adapter.layout(collection, system).metadata_file, index=True)
+        tx.on_commit = getattr(self, "on_commit", None)
         return tx
 
     def load(self, operation_id):
@@ -128,6 +130,8 @@ class ArchiveUndo:
 
     def recover(self, store, config):
         for data in self.pending(config):
+            if data["status"] != "recovery_failed" and process_owner.alive(data):
+                continue
             self.load(data["id"]).restore(store)
 
 
@@ -142,6 +146,7 @@ class ArchiveTransaction:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(pending, self.directory / "operation.json")
+        journal_index.update(self.directory.parent, self.directory, self.data)
 
     @contextmanager
     def tracking(self):
@@ -223,11 +228,31 @@ class ArchiveTransaction:
             item["committedState"] = item["after"]
         self.data["status"] = "committed"
         self.save()
-        for record in self.directory.parent.glob("*/operation.json"):
+        for summary in journal_index.records(self.directory.parent):
+            if summary.get("config") != self.data["config"] or summary.get("status") != "undone":
+                continue
+            record = self.directory.parent / summary["id"] / "operation.json"
             previous = json.loads(record.read_text(encoding="utf-8"))
             if previous.get("config") == self.data["config"] and previous["status"] == "undone":
                 previous["redoReady"] = False
                 ArchiveTransaction(record.parent, previous).save()
+
+                for destination, item in previous.get("files", {}).items():
+                    raw = item.get("redo")
+                    expected = destination + f".{previous['id']}.rms-redo"
+                    try:
+                        if (raw == expected and not Path(raw).is_symlink()
+                                and str(Path(destination).resolve()) == item.get("resolved")
+                                and state(raw) == item.get("committedState")):
+                            Path(raw).unlink(missing_ok=True)
+                            item.pop("redo", None)
+                    except OSError:
+                        log.warning("Invalidated Archive Redo retained path=%s", raw, exc_info=True)
+                ArchiveTransaction(record.parent, previous).save()
+
+        callback = getattr(self, "on_commit", None)
+        if callback:
+            callback(self.data)
 
     def failed(self, store):
         # Called while the Archive connection lock and edit lease remain held.
@@ -240,6 +265,18 @@ class ArchiveTransaction:
         self.save()
 
     def restore(self, store):
+        if self.data.get("status") == "recovery_failed":
+            self.data["status"] = self.data.get("recoveryStatus", "running")
+        try:
+            return self._restore(store)
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            self.data["recoveryStatus"] = self.data["status"]
+            self.data["status"] = "recovery_failed"
+            self.data["recoveryError"] = str(exc)
+            self.save()
+            raise
+
+    def _restore(self, store):
         cfg = self.data["config"]
         shared = shared_cache.snapshot_path(cfg["archiveDir"])
         current = shared_cache.fingerprint(shared) if shared.is_file() else None
@@ -341,13 +378,13 @@ class ArchiveTransaction:
         self.data["undoneAt"] = time.time()
         self.save()
         previous = []
-        for record in self.directory.parent.glob("*/operation.json"):
-            data = json.loads(record.read_text(encoding="utf-8"))
+        for data in journal_index.records(self.directory.parent):
             if (data.get("status") == "committed" and data.get("config") == cfg
                     and data["createdAt"] < self.data["createdAt"]):
-                previous.append((data["createdAt"], record.parent, data))
+                previous.append((data["createdAt"], self.directory.parent / data["id"]))
         if previous:
-            _, directory, data = max(previous, key=lambda row: row[0])
+            _, directory = max(previous, key=lambda row: row[0])
+            data = json.loads((directory / "operation.json").read_text(encoding="utf-8"))
             for path, item in self.data["files"].items():
                 older = data["files"].get(path)
                 if older and older["after"] == item["before"]:

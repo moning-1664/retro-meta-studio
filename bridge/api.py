@@ -51,6 +51,7 @@ from app import title_affix
 from app.launch import retroarch
 from app.model.plan import OP_ADD, OP_DELETE, OP_ARCHIVE_INGEST, OP_METADATA_EDIT, OP_STORAGE_CHANGE, OP_TITLE_EDIT, RESOLVE_OVERWRITE, RESOLVE_SKIP, Plan, PlanEntry
 from app.plan import builder, clipboard, transfer
+from app.plan.rom_preview import comparison as rom_comparison
 from app.plan.paste_journal import PasteJournal, supports_local_undo
 from app.plan.applier import apply_plan, delete_destinations
 from app.plan.validator import check_capacity, validate
@@ -219,6 +220,9 @@ class Api:
         undo_root = (Path(cache_dir).parent / "paste_undo") if cache_dir else (paths.DB_DIR / "paste_undo")
         self._paste_journal = PasteJournal(undo_root)
         self._archive_journal = ArchiveUndo(undo_root.parent / "archive_undo")
+        self._paste_journal.on_commit = lambda data: self._retain_backups(data["collectionId"])
+        self._archive_journal.on_commit = lambda data: self._retain_backups("__archive__")
+        self._backup_retention_report = {}
         self._archive_recovery_error = None
         recovered = self._paste_journal.recover_interrupted()
         if recovered:
@@ -639,6 +643,9 @@ class Api:
                 merged[section] = {**merged[section], **value}
             else:
                 merged[section] = value
+        if "backupRetention" in patch:
+            from app.plan.backup_retention import policy
+            merged["backupRetention"] = policy(merged.get("backupRetention"))
         self.registry.set_setting(self.APP_SETTINGS_KEY, merged)
         return ok(merged)
 
@@ -1922,6 +1929,7 @@ class Api:
             pending = self._archive_journal.pending(cfg)
             return ok({"undoOperationId": pending[-1]["id"] if pending else self._archive_journal.latest(cfg),
                        "redoOperationId": self._archive_journal.latest_redo(cfg), "recoveryError": self._archive_recovery_error,
+                       "retention": self._backup_retention_report.get(collection_id),
                        "clipboard": clipboard.peek(self.registry)})
         self._plan_context(collection_id)
         local_id = self._paste_journal.latest_committed(collection_id)
@@ -1937,7 +1945,8 @@ class Api:
         archive_redo = latest_archive_redo["id"] if latest_archive_redo and latest_archive_redo.get("undoneAt", 0) > local_redo_time else None
         return ok({"undoOperationId": archive_id or local_id,
                    "redoOperationId": archive_redo or local_redo,
-                   "recoveryError": "중단된 파일 작업의 복구가 필요합니다. 앱을 다시 열고 로그를 확인하세요." if self._paste_journal.pending(collection_id) else None,
+                   "retention": self._backup_retention_report.get(collection_id),
+                   "recoveryError": "파일 작업이 진행 중이거나 복구가 필요합니다. Settings > Advanced > 파일 작업 복구를 확인하세요." if self._paste_journal.pending(collection_id) else None,
                    "clipboard": clipboard.peek(self.registry)})
 
     @guarded
@@ -2678,6 +2687,7 @@ class Api:
                     "key": key, "system": item["system"],
                     "filename": item["filename"],
                     "existingRomUid": existing["rom_uid"] if existing else None,
+                    "romComparison": rom_comparison(item.get("rom"), str(Path(get_adapter(collection.frontend).layout(collection, item["system"]).rom_dir) / item["filename"]), provider),
                     "existingFields": existing.get("fields") or {} if existing else {},
                     "incomingFields": item.get("fields") or {},
                     "existingTitle": ((existing.get("fields") or {}).get("name")
@@ -2758,6 +2768,23 @@ class Api:
             return result
         return self._register_operation(collection_id, action, operation, result)
 
+    @guarded
+    def start_archive_import_preview(self, collection_id, options=None):
+        options = options or {}
+        def run(progress):
+            operation = Plan(collection_id)
+            result = self.archive_to_collection(collection_id, options.get("ids") or [],
+                options.get("mode"), options.get("targetRomUid"), _operation=operation, _progress=progress)
+            if not result["ok"]:
+                raise ValueError(result["error"])
+            progress(1, 1, "Archive 가져오기 준비 완료")
+            registered = self._register_operation(collection_id, "archive-import", operation, result)
+            if not registered["ok"]:
+                raise ValueError(registered["error"])
+            return registered["data"]
+        return ok({"jobId": self.jobs.run_heavy(run, mutates_state=True,
+            target_ids=(collection_id, "archive"), kind="archive-import-preview")})
+
     def _register_operation(self, collection_id, action, operation, result):
         collection, cache, provider = self._plan_context(collection_id)
         adapter = get_adapter(collection.frontend)
@@ -2780,6 +2807,7 @@ class Api:
                 incoming = item.get("fields") or {}
                 collisions.append({"key": transfer.item_key(item), "system": entry.system,
                     "filename": entry.filename, "existingRomUid": (existing or {}).get("rom_uid"),
+                    "romComparison": rom_comparison(item.get("rom"), str(Path(adapter.layout(collection, entry.system).rom_dir) / entry.filename), provider),
                     "existingFields": fields, "incomingFields": incoming,
                     "existingTitle": fields.get("name") or entry.filename,
                     "incomingTitle": incoming.get("name") or entry.filename,
@@ -3119,7 +3147,35 @@ class Api:
     @guarded
     def operation_history(self, collection_id):
         from app.plan.history import listing
-        return ok({"items": listing(self, collection_id), "recoveryError": self._archive_recovery_error})
+        return ok({"items": listing(self, collection_id), "recoveryError": self._archive_recovery_error,
+            "retention": self._backup_retention_report.get(collection_id)})
+
+    def _retain_backups(self, scope):
+        from app.plan.backup_retention import prune
+        try:
+            settings = self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {}
+            report = prune(self, scope, settings.get("backupRetention"))
+            report["eventId"] = uuid.uuid4().hex
+            self._backup_retention_report[scope] = report
+            if report.get("discarded") or report.get("limitExceeded") or report.get("errors"):
+                log.info("Backup retention scope=%s report=%s", scope, report)
+        except Exception as exc:
+            log.exception("Backup retention failed; completed operation retained scope=%s", scope)
+            self._backup_retention_report[scope] = {"eventId":uuid.uuid4().hex, "discarded":0, "errors":[str(exc)]}
+
+    @guarded
+    def recovery_action(self, collection_id, operation_id, action):
+        if self.jobs.busy_targets(collection_id if collection_id != "__archive__" else "archive"):
+            return err("진행 중인 작업이 끝난 뒤 복구하세요.")
+        from app.plan.history import recovery_action
+        with self._archive_lifecycle_lock:
+            lock = f"apply:{collection_id}"
+            if not self.registry.acquire_lock(lock, kind="recovery"):
+                return err("다른 작업이 진행 중입니다.")
+            try:
+                return ok(recovery_action(self, collection_id, operation_id, action))
+            finally:
+                self.registry.release_lock(lock)
 
     @guarded
     def discard_operation_history(self, collection_id, operation_ids, acknowledged=False):
@@ -5156,7 +5212,7 @@ class Api:
 
     @guarded
     def archive_to_collection(self, collection_id, rom_identity_ids, mode=None,
-                              target_rom_uid=None, _operation=None):
+                              target_rom_uid=None, _operation=None, _progress=None):
         """Archive 항목의 메타데이터와 파일을 함께 Plan에 담는다."""
         collection, cache, provider = self._plan_context(collection_id)
         blocked = self._ensure_file_ops(collection)
@@ -5177,7 +5233,7 @@ class Api:
                                                    lambda rid, media_type, item:
                                                    self._archive_media_display_path(rid, media_type, item)
                                                ) if cfg["mediaInternal"] else None,
-                                               explicit_target=target_row)
+                                               explicit_target=target_row, progress=_progress)
         policy = self._transfer_policy()
         target_adapter = get_adapter(collection.frontend)
         items = [{**item,

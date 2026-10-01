@@ -28,15 +28,15 @@ class LanguageMatchTests(unittest.TestCase):
 
     def test_untagged_archive_file_finds_the_tagged_target(self):
         rows = _language_matches(_index("FF3(KR).zip"), "snes", "FF3.zip")
-        self.assertEqual([r["filename"] for r in rows], ["FF3(KR).zip"])
+        self.assertEqual(rows, [])
 
     def test_tagged_archive_file_finds_the_untagged_target(self):
         rows = _language_matches(_index("FF3.zip"), "snes", "FF3(KR).zip")
-        self.assertEqual([r["filename"] for r in rows], ["FF3.zip"])
+        self.assertEqual(rows, [])
 
     def test_every_language_variant_gets_the_metadata(self):
         rows = _language_matches(_index("FF3(KR).zip", "FF3(JP).zip"), "snes", "FF3.zip")
-        self.assertEqual([r["filename"] for r in rows], ["FF3(JP).zip", "FF3(KR).zip"])
+        self.assertEqual(rows, [])
 
     def test_different_tags_on_both_sides_are_not_the_same_game(self):
         self.assertEqual(_language_matches(_index("FF3(JP).zip"), "snes", "FF3(KR).zip"), [])

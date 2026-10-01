@@ -17,6 +17,8 @@ from pathlib import Path
 
 from adapters import get_adapter
 from app.plan.builder import add_destinations
+from app.plan import process_owner
+from app.plan import journal_index
 
 log = logging.getLogger(__name__)
 
@@ -53,12 +55,18 @@ class PasteJournal:
     def _save(self, directory, data):
         path = directory / "operation.json"
         pending = directory / "operation.json.tmp"
-        pending.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        if data.get("owner"):
+            data["owner"]["heartbeat"] = time.time()
+        with pending.open("w", encoding="utf-8") as stream:
+            json.dump(data, stream, ensure_ascii=False, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
         os.replace(pending, path)
+        journal_index.update(self.root, directory, data)
 
     def begin(self, operation_id, collection_id, collection, plan, *, extra_paths=()):
         if self.pending(collection_id):
-            raise ValueError("중단된 파일 작업 복구가 남아 있습니다. 앱을 다시 열어 복구한 뒤 시도하세요.")
+            raise ValueError("파일 작업이 진행 중이거나 복구가 필요합니다. Settings > Advanced > 파일 작업 복구를 확인하세요.")
         directory = self.root / operation_id
         directory.mkdir(parents=True, exist_ok=False)
         adapter = get_adapter(collection.frontend)
@@ -88,7 +96,7 @@ class PasteJournal:
         data = {"id": operation_id, "collectionId": collection_id,
                 "action": plan.entries[0].op if plan.entries else "paste",
                 "systems": sorted({entry.system for entry in plan.entries}),
-                "createdAt": time.time(), "status": "running", "files": files,
+                "createdAt": time.time(), "status": "running", "owner": process_owner.owner(), "files": files,
                 "indexes": indexes,
                 "preFiles": {path: _state(path) for path in files},
                 "preIndexes": {path: _state(path) for path in indexes}}
@@ -143,11 +151,28 @@ class PasteJournal:
                 data["indexes"][path]["afterCopy"] = str(saved)
         self._save(directory, data)
         log.info("File operation committed operation=%s backups=%d", operation_id, len(data["replaced"]))
-        for record in self.root.glob("*/operation.json"):
-            previous = json.loads(record.read_text(encoding="utf-8"))
+        for summary in journal_index.records(self.root):
+            if summary.get("status") != "undone" or summary.get("collectionId") != data["collectionId"]:
+                continue
+            record = self.root / summary["id"] / "operation.json"
+            previous = self.details(summary["id"])
             if previous.get("collectionId") == data["collectionId"] and previous.get("status") == "undone":
                 previous["redoReady"] = False
+                for destination, item in previous.get("files", {}).items():
+                    raw = item.get("redo")
+                    try:
+                        if (raw == destination + f".{previous['id']}.rms-backup.rms-redo"
+                                and not Path(raw).is_symlink()
+                                and _state(raw) == previous.get("postFiles", {}).get(destination)):
+                            Path(raw).unlink(missing_ok=True)
+                            item.pop("redo", None)
+                    except OSError:
+                        log.warning("Invalidated Collection Redo retained path=%s", raw, exc_info=True)
                 self._save(record.parent, previous)
+
+        callback = getattr(self, "on_commit", None)
+        if callback:
+            callback(data)
 
     def _restore(self, directory, data):
         keep_redo = data["status"] == "committed"
@@ -227,34 +252,49 @@ class PasteJournal:
         directory = self.root / operation_id
         data = json.loads((directory / "operation.json").read_text(encoding="utf-8"))
         if data["status"] == "running":
-            self._restore(directory, data)
+            try:
+                self._restore(directory, data)
+            except (OSError, ValueError) as exc:
+                data["recoveryStatus"] = data["status"]
+                data["status"] = "recovery_failed"
+                data["recoveryError"] = str(exc)
+                self._save(directory, data)
+                raise
 
     def details(self, operation_id):
         return json.loads((self.root / operation_id / "operation.json").read_text(encoding="utf-8"))
 
+    def retry_recovery(self, operation_id):
+        directory = self.root / operation_id
+        data = self.details(operation_id)
+        if data.get("status") != "recovery_failed":
+            raise ValueError("복구 실패 기록이 아닙니다.")
+        data["status"] = data.get("recoveryStatus", "running")
+        try:
+            self._restore(directory, data)
+        except (OSError, ValueError) as exc:
+            data["status"] = "recovery_failed"
+            data["recoveryError"] = str(exc)
+            self._save(directory, data)
+            raise
+
     def pending(self, collection_id):
         rows = []
-        for path in self.root.glob("*/operation.json"):
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if (data.get("collectionId") == collection_id or collection_id in data.get("relatedCollections", {})) and data.get("status") in {"running", "redoing"}:
+        for data in journal_index.records(self.root):
+            if (data.get("collectionId") == collection_id or collection_id in data.get("relatedCollections", {})) and data.get("status") in {"running", "redoing", "recovery_failed"}:
                 rows.append(data)
         return rows
 
     def latest_committed(self, collection_id):
         matches = []
-        for path in self.root.glob("*/operation.json"):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
+        for data in journal_index.records(self.root):
             if data.get("collectionId") == collection_id and data.get("status") == "committed":
                 matches.append((data.get("createdAt", 0), data["id"]))
         return max(matches)[1] if matches else None
 
     def latest_redo(self, collection_id):
         rows = []
-        for path in self.root.glob("*/operation.json"):
-            data = json.loads(path.read_text(encoding="utf-8"))
+        for data in journal_index.records(self.root):
             if data.get("collectionId") == collection_id and data.get("status") == "undone" and data.get("redoReady"):
                 rows.append((data.get("undoneAt", 0), data["id"]))
         return max(rows)[1] if rows else None
@@ -271,6 +311,7 @@ class PasteJournal:
             if item.get("redo") and _state(item["redo"]) != data["postFiles"][path]:
                 raise ValueError("다시 실행할 파일 백업이 바뀌었습니다.")
         data["status"] = "redoing"
+        data["owner"] = process_owner.owner()
         self._save(directory, data)
         if data.get("renames"):
             for pair in data["renames"]:
@@ -301,6 +342,8 @@ class PasteJournal:
         for path in self.root.glob("*/operation.json"):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
+                if data.get("status") in {"running", "redoing"} and process_owner.alive(data):
+                    continue
                 if data.get("status") == "redoing":
                     for filename in data["files"]:
                         current = _state(filename)
@@ -312,9 +355,17 @@ class PasteJournal:
                 elif data.get("status") == "running":
                     self._restore(path.parent, data)
                     recovered.append(data["id"])
-            except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
                 # 실패한 기록은 그대로 둔다. 다음 시작에서도 재시도할 수 있고,
                 # 작업자가 기록과 파일을 대조할 수 있다.
                 log.exception("Interrupted file operation recovery failed journal=%s", path)
+                try:
+                    failed = json.loads(path.read_text(encoding="utf-8"))
+                    failed["recoveryStatus"] = failed.get("recoveryStatus", failed.get("status"))
+                    failed["status"] = "recovery_failed"
+                    failed["recoveryError"] = str(exc)
+                    self._save(path.parent, failed)
+                except (OSError, ValueError):
+                    log.exception("Could not persist recovery failure journal=%s", path)
                 continue
         return recovered

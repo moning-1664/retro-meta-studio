@@ -292,3 +292,33 @@ test("F2 이름 변경은 확장자를 남기고 확인 후 독립 작업으로 
   await expect(page.locator("#toast")).toContainText("이름을 변경했습니다");
   await expect(page.locator(".lrow").filter({hasText: "Renamed.iso"})).toBeVisible();
 });
+
+for (const withRom of [false, true]) {
+  test(`충돌 ROM 비교 정보는 실제 교체에만 표시된다 (${withRom})`, async ({ page }) => {
+    await page.evaluate((enabled) => {
+      window.__RMS_MOCK_IMMEDIATE_PASTE = true;
+      const original = window.api.paste;
+      window.api.paste = async (...args) => {
+        const result = await original(...args);
+        if (enabled) for (const collision of result.data.collisions || []) {
+          collision.romComparison = {
+            existing: { size: 1234, modifiedAt: 1700000000000 },
+            incoming: { size: 5678, modifiedAt: 1710000000000 },
+          };
+        }
+        return result;
+      };
+    }, withRom);
+    await page.locator(".lrow").first().click();
+    await page.keyboard.press("Control+c");
+    await page.keyboard.press("Control+v");
+    const modal = page.locator(".paste-conflict-card");
+    await expect(modal).toBeVisible();
+    await expect(modal.locator(".paste-conflict-rom")).toHaveCount(withRom ? 2 : 0);
+    if (withRom) {
+      const lines = modal.locator(".paste-conflict-rom");
+      await expect(lines.first()).toContainText("ROM");
+      expect(await lines.first().evaluate(el => getComputedStyle(el).whiteSpace)).toBe("nowrap");
+    }
+  });
+}

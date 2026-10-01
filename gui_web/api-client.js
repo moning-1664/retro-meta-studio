@@ -477,6 +477,12 @@
       return ok({jobId: "mock-rename"});
     },
     operation_state: () => ok({ undoOperationId: window.__RMS_MOCK_UNDO || null, clipboard: {} }),
+    start_archive_import_preview: async (id, options) => {
+      const result = await window.api.operationPreview(id, "archive-import", options);
+      if (!result.ok) return result;
+      window.__RMS_MOCK_IMPORT_PREVIEW = result.data;
+      return ok({jobId: "mock-archive-import-preview"});
+    },
     operation_preview: async (id, action, options) => {
       const operationId = `mock-operation-${mockOperations.size}`;
       mockOperations.set(operationId, { id, action, options });
@@ -506,6 +512,7 @@
     paste_undo: () => ok({ jobId: null }),
     paste_redo: () => ok({ jobId: null }),
     operation_history: () => ok({ items: [], recoveryError: null }),
+    recovery_action: () => ({ok: false, error: "복구 실패 기록을 찾을 수 없습니다."}),
     discard_operation_history: () => ok({ discarded: 0 }),
     clipboard_systems: () => ok({
       systems: [{ system: "ps2", count: 2, exists: true }],
@@ -558,6 +565,7 @@
       result: String(jobId).startsWith("mock-folder:")
         ? (await mock.inspect_collection_folder(decodeURIComponent(String(jobId).slice(12)))).data
         : jobId === "mock-archive-ingest" ? { ...mockLastIngest }
+        : jobId === "mock-archive-import-preview" ? window.__RMS_MOCK_IMPORT_PREVIEW
         : jobId === "mock-job" ? { ...mockLastApply }
           : jobId === "mock-rename" ? {applied: 1, filename: window.__RMS_MOCK_RENAMED, undoOperationId: jobId}
           : jobId === "mock-delete" || jobId === "mock-operation" ? { applied: 1, failed: 0, partial: 0, undoOperationId: jobId }
@@ -1169,6 +1177,8 @@
     pasteUndo: (id) => call("paste_undo", id),
     pasteRedo: (id) => call("paste_redo", id),
     operationHistory: (id) => call("operation_history", id),
+    recoveryAction: (id, operationId, action) => call("recovery_action", id, operationId, action),
+    startArchiveImportPreview: (id, options) => call("start_archive_import_preview", id, options),
     discardOperationHistory: (id, ids, acknowledged) => call("discard_operation_history", id, ids, acknowledged),
     pastePreviewMedia: (operationId, key, mediaType) =>
       call("paste_preview_media", operationId, key, mediaType),

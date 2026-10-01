@@ -341,6 +341,7 @@
     navigation: { hideEmptySystems: false, defaultSortPriority: "none" },
     gamelist: { order: [], hidden: [] },
     collections: { order: [], restoreTabs: true, rememberSystem: true },
+    backupRetention: { enabled: false, maxCount: 20, maxSizeGB: 10 },
     //: 마지막으로 열어 둔 탭(앱을 다시 켜면 그대로 되살린다). 떼어 낸 창에서는 쓰지 않는다.
     session: { tabs: [], active: null },
     transfer: { pasteMode: "overwrite", includeRom: true, includeMedia: true, conflict: "ask",
@@ -694,6 +695,7 @@
       get: () => S.settings,
       update: updateSettings,
       reset: () => updateSettings("appearance", { ...DEFAULT_SETTINGS.appearance }),
+      openRecovery: () => { closeModal(); openOperationHistory(); },
       renderColumns: columnSettingsEditor,
       renderEmulator: emulatorSettingsEditor,
       renderScraper: scraperSettingsEditor,
@@ -8011,6 +8013,16 @@
     if (S.activeId !== collectionId) return;
     S.plan = r.ok ? r.data : null;
     S.lastPasteUndoId = S.plan?.undoOperationId || null;
+    const retention = S.plan?.retention;
+    if (retention?.eventId && retention.eventId !== S.lastRetentionNotice) {
+      S.lastRetentionNotice = retention.eventId;
+      if (retention.discarded || retention.limitExceeded || retention.errors?.length) {
+        showToast(`오래된 백업 ${retention.discarded || 0}개 정리`
+          + (retention.limitExceeded ? " · 보호된 백업으로 한도 초과" : "")
+          + (retention.errors?.length ? " · 일부 백업은 유지했습니다" : ""),
+          retention.limitExceeded || retention.errors?.length ? "warning" : "success");
+      }
+    }
     renderHeader();
     // Apply/Cancel이 목록 위 툴바에 있으므로 Plan이 바뀌면 툴바도 다시 그려야 한다.
     renderFilterBar();
@@ -8162,7 +8174,12 @@
   }
 
   async function runImmediateAction(action, options) {
-    const response = await api.operationPreview(S.activeId, action, options);
+    let response;
+    if (action === "archive-import") {
+      const started = await api.startArchiveImportPreview(S.activeId, options);
+      if (!started.ok) { showToast(started.error, "error"); return; }
+      response = await pollJob(started.data.jobId, "Archive 가져오기 준비");
+    } else response = await api.operationPreview(S.activeId, action, options);
     if (!response.ok) { showToast(response.error, "error"); return; }
     if (!response.data.count) { showToast(response.data.skipped?.[0]?.reason || "변경할 항목이 없습니다."); return; }
     if (response.data.collisions?.length) openPasteConflictDialog(response.data);
@@ -8279,12 +8296,17 @@
     const result = await api.operationHistory(id);
     if (!result.ok) { showToast(result.error, "error"); return; }
     const rows = result.data.items || [];
-    const labels = {committed: "완료", undone: "실행 취소", recovered: "복구됨", running: "복구 필요", restoring: "복구 필요", redoing: "복구 필요"};
+    const labels = {committed: "완료", undone: "실행 취소", recovered: "복구됨", recovery_failed: "복구 실패", closed: "닫힘 · 백업 유지", running: "복구 필요", restoring: "복구 필요", redoing: "복구 필요"};
     const actions = {paste: "붙여넣기", add: "붙여넣기", delete: "삭제", rename: "이름 변경", move: "이동", metadata_edit: "메타데이터 편집", "file-operation": "파일 작업", archive_edit: "메타데이터 편집", archive_rename: "이름 변경", archive_rom_delete: "ROM 삭제", archive_delete: "기록 삭제"};
     const body = h("div", {class: "modal-body"});
     if (result.data.recoveryError) body.appendChild(h("div", {class: "field-help"}, [result.data.recoveryError]));
-    body.appendChild(h("div", {class: "field-help"}, [`${rows.length}개 · 백업 ${formatBytes(rows.reduce((sum, row) => sum + row.bytes, 0))}`]));
+    body.appendChild(h("div", {class: "field-help"}, [`${rows.length}개 · 백업 약 ${formatBytes(rows.reduce((sum, row) => sum + row.bytes, 0))}`]));
     for (const row of rows) {
+      const recover = async (action) => {
+        const response = await api.recoveryAction(id, row.id, action);
+        if (!response.ok) { showToast(response.error, "error"); return; }
+        if (action !== "open") { closeModal(); await refreshPlan(); await reloadList(); await openOperationHistory(); }
+      };
       body.appendChild(h("div", {class: "field-row"}, [
         h("span", {class: "field-help"}, [`${new Date(row.createdAt * 1000).toLocaleString()} · ${actions[row.action] || "Archive 편집"} · ${labels[row.status] || row.status} · ${formatBytes(row.bytes)}`]),
         h("button", {class: "btn", disabled: !row.canDiscard, onClick: () => {
@@ -8294,7 +8316,14 @@
             closeModal(); await refreshPlan(); await openOperationHistory();
           });
         }}, ["백업 삭제"]),
+        ...(row.status === "recovery_failed" ? [
+          h("button", {class: "btn", onClick: () => recover("retry")}, ["다시 시도"]),
+          h("button", {class: "btn", onClick: () => recover("open")}, ["백업 폴더 열기"]),
+          h("button", {class: "btn", onClick: () => showConfirm("복구 기록 닫기",
+            "현재 파일을 유지하고 자동 복구를 종료합니다. 백업은 남습니다.", false, () => recover("close"))}, ["기록 닫기(백업 유지)"]),
+        ] : []),
       ]));
+      if (row.recoveryError) body.appendChild(h("div", {class: "field-help"}, [row.recoveryError]));
     }
     showModal("작업 기록", body, [h("button", {class: "btn", onClick: closeModal}, ["닫기"])]);
   }
@@ -8359,6 +8388,14 @@
           h("span", { class: "paste-conflict-side-title truncate" }, [title]),
           cover, screen, toggle, expanded,
         ]);
+        const romFacts = item.romComparison?.[incoming ? "incoming" : "existing"];
+        if (romFacts) {
+          const size = romFacts.size == null ? "크기 확인 불가" : formatBytes(romFacts.size);
+          const modified = romFacts.modifiedAt == null ? "수정일 확인 불가"
+            : new Date(romFacts.modifiedAt).toLocaleString();
+          const text = `ROM · ${size} · ${modified}`;
+          row.insertBefore(h("div", { class: "paste-conflict-rom truncate", title: text }, [text]), expanded);
+        }
         row.addEventListener("dblclick", (event) => {
           if (!event.target.closest("button")) choose(incoming ? "overwrite" : "skip");
         });

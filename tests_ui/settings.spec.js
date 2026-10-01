@@ -14,6 +14,30 @@ const openSettings = async (page, section = "appearance") => {
 };
 const row = (page, key) => page.locator(`.stg-row[data-key='${key}']`);
 
+test("백업 자동 정리는 기본 꺼짐이고 한도를 저장한다", async ({page}) => {
+  await openSettings(page, "advanced");
+  await expect(row(page, "backupRetention.enabled").locator('input')).not.toBeChecked();
+  await expect(row(page, "backupRetention.maxCount").locator('input')).toBeDisabled();
+  await row(page, "backupRetention.enabled").locator('.stg-switch').click();
+  await row(page, "backupRetention.maxCount").locator('input').fill('5');
+  await row(page, "backupRetention.maxCount").locator('input').blur();
+  await row(page, "backupRetention.maxSizeGB").locator('input').fill('2');
+  await row(page, "backupRetention.maxSizeGB").locator('input').blur();
+  await page.locator('.stg-confirm').click();
+  await expect.poll(() => page.evaluate(async () => (await window.api.getAppSettings()).data.backupRetention))
+    .toEqual({enabled:true, maxCount:5, maxSizeGB:2});
+});
+
+test("백업 한도를 모두 무제한으로 켤 수 없다", async ({page}) => {
+  await openSettings(page, "advanced");
+  await row(page, "backupRetention.enabled").locator('.stg-switch').click();
+  await row(page, "backupRetention.maxCount").locator('input').fill('0');
+  await row(page, "backupRetention.maxCount").locator('input').blur();
+  await row(page, "backupRetention.maxSizeGB").locator('input').fill('0');
+  await row(page, "backupRetention.maxSizeGB").locator('input').blur();
+  await expect(row(page, "backupRetention.maxSizeGB").locator('input')).toHaveValue('10');
+});
+
 test("Navigator의 Settings 버튼으로 열리고 Esc로 닫힌다", async ({ page }) => {
   await openSettings(page);
   await expect(page.locator(".stg-nav-item")).toHaveCount(9);

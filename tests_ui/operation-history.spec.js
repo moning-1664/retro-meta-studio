@@ -2,6 +2,43 @@
 const {test, expect} = require('@playwright/test');
 const {openApp} = require('./_helpers');
 
+test('automatic backup cleanup and protected limit overflow are announced', async ({page}) => {
+  await openApp(page);
+  await page.evaluate(() => {
+    window.api.operationState = async () => ({ok:true, data:{undoOperationId:null,
+      retention:{eventId:'retention-notice', discarded:2, limitExceeded:true}}});
+  });
+  await page.locator('.ctab.archive').click();
+  await expect(page.locator('#toast')).toContainText('오래된 백업 2개 정리');
+  await expect(page.locator('#toast')).toContainText('보호된 백업으로 한도 초과');
+});
+
+test('failed recovery is reachable in Settings and preserves backup when closed', async ({page}) => {
+  await openApp(page);
+  await page.evaluate(() => {
+    window.__recoveryActions = [];
+    window.api.operationHistory = async () => ({ok:true, data:{items:[{
+      id:'failed', status:window.__recoveryClosed ? 'closed' : 'recovery_failed', action:'paste',
+      createdAt:1, bytes:2048, canDiscard:false, recoveryError:'외부 파일 변경'
+    }]}});
+    window.api.recoveryAction = async (id, operationId, action) => {
+      window.__recoveryActions.push({id, operationId, action});
+      if (action === 'close') window.__recoveryClosed = true;
+      return {ok:true,data:{action}};
+    };
+  });
+  await page.locator('.settings-btn').click();
+  await page.locator('.stg-nav-item[data-section="advanced"]').click();
+  await page.getByRole('button', {name:'복구 기록 열기', exact:true}).click();
+  await expect(page.getByRole('button', {name:'다시 시도', exact:true})).toBeVisible();
+  await page.getByRole('button', {name:'백업 폴더 열기', exact:true}).click();
+  await expect.poll(() => page.evaluate(() => window.__recoveryActions.length)).toBe(1);
+  await page.getByRole('button', {name:'기록 닫기(백업 유지)', exact:true}).click();
+  await page.locator('.modal-actions .btn.primary').click();
+  await expect.poll(() => page.evaluate(() => window.__recoveryClosed)).toBe(true);
+  await expect(page.getByRole('button', {name:'다시 시도', exact:true})).toHaveCount(0);
+});
+
 test('completed operations use history instead of a staged Apply toolbar', async ({page}) => {
   await openApp(page);
   await expect(page.locator('#filter-bar .plan-actions, .plan-apply-badge, .lno-mark')).toHaveCount(0);

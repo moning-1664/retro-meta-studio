@@ -2134,3 +2134,5 @@ button.sb-badge { cursor: pointer; }
   -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 .paste-conflict-remaining { display: flex; align-items: center; gap: 7px;
   color: var(--muted); font-size: var(--fs-caption); padding-top: 4px; }
+
+.paste-conflict-rom { grid-column: 1 / -1; color: var(--muted); font-size: var(--fs-caption); min-width: 0; }
