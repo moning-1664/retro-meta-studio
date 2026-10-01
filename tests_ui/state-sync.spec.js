@@ -17,7 +17,9 @@ test("System을 바꾸면 이전 선택이 남지 않는다", async ({ page }) =
   await expect(page.locator("#status-bar")).toContainText("Selected 1");
   await page.locator(".nav-system", { hasText: "SNES" }).click();
   // 보이지도 않는 게임이 선택된 채로 남으면 Archive 수집이 그것을 대상으로 삼는다.
-  await expect(page.locator("#status-bar")).toContainText("Selected 0");
+  await expect(page.locator("#status-bar")).toContainText("Selected 1");
+  await expect(page.locator(".lrow.selected .lc-file")).toContainText("SMW.sfc");
+  await expect(page.locator(".detail-filename")).toContainText("SMW.sfc");
 });
 
 test.describe("Navigation ↔ Overview 헤더", () => {
@@ -25,7 +27,7 @@ test.describe("Navigation ↔ Overview 헤더", () => {
   // 있는지 알려면 다시 Navigator를 봐야 했다(레이아웃 재검토).
   test("System을 고르면 Overview가 'Collection (System)'과 개수를 보여준다", async ({ page }) => {
     await page.locator(".nav-system", { hasText: "PS2" }).click();
-    await expect(page.locator(".cheader-name")).toHaveText("Master Library (PS2)");
+    await expect(page.locator(".cheader-name")).toHaveText("PlayStation 2 · Master Library");
     // 숫자 앞에 작은 아이콘이 붙고, Metadata 개수도 함께 보여준다.
     await expect(page.locator(".cheader-stats")).toContainText("2 ROMs");
     await expect(page.locator(".cheader-stats")).toContainText("1 Metadata");
@@ -33,7 +35,7 @@ test.describe("Navigation ↔ Overview 헤더", () => {
 
   test("All로 돌아오면 Collection 이름으로 돌아온다", async ({ page }) => {
     await page.locator(".nav-system", { hasText: "PS2" }).click();
-    await expect(page.locator(".cheader-name")).toHaveText("Master Library (PS2)");
+    await expect(page.locator(".cheader-name")).toHaveText("PlayStation 2 · Master Library");
     await page.locator(".nav-all").click();
     await expect(page.locator(".cheader-name")).toHaveText("Master Library");
     await expect(page.locator(".cheader-stats")).toContainText("3 ROMs");

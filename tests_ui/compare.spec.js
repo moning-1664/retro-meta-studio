@@ -238,13 +238,14 @@ test.describe("연산자로 Plan에 올리기", () => {
 
   test("> 는 ROM+메타데이터를 오른쪽 Plan에 올린다", async ({ page }) => {
     await startCompare(page);
+    await page.keyboard.press("Escape");
     await spy(page);
     await page.locator(".lrow.s-only_a .cmp-op.one-side").click();
     await expect(page.locator("#toast")).toContainText("비교 결과 적용");
     expect(await page.evaluate(() => window.__copied))
       .toEqual([{ key: "ps2|OnlyBase.iso", direction: "toRight", metadataOnly: false }]);
-    // 눌러도 상세가 열리지 않는다.
-    await expect(page.locator("#detail-panel")).not.toHaveClass(/open/);
+    // 적용 뒤에도 기본 선택의 상세가 표시된다.
+    await expect(page.locator("#detail-panel")).toHaveClass(/open/);
   });
 
   test("< 는 왼쪽으로 보낸다", async ({ page }) => {
@@ -327,6 +328,7 @@ test.describe("선택과 키보드", () => {
 test.describe("고른 항목을 좌/우로 보내기", () => {
   test("고른 것이 없으면 눌리지 않는다", async ({ page }) => {
     await startCompare(page);
+    await page.locator(".lrow.selected").click({ modifiers: ["Control"] });
     await expect(page.locator(".cmp-send")).toHaveCount(2);
     await expect(page.locator(".cmp-send").first()).toBeDisabled();
     await expect(page.locator(".cmp-send").first()).toHaveAttribute("title", /먼저 고르세요/);

@@ -129,8 +129,8 @@ test("아케이드 단축명 후보에는 설명 없는 확인 필요 배지를 
 test("∨를 누르면 필드 비교와 미디어 선택을 펼친다", async ({ page }) => {
   await openForRows(page);
   await page.locator(".scrape-expand").first().click();
-  await expect(page.locator(".scrape-field", { hasText: "name" })).toBeVisible();
-  await expect(page.locator(".scrape-field", { hasText: "비어 있음" }).first()).toBeVisible();
+  await expect(page.locator(".candidate-detail-field", { hasText: "제목" })).toBeVisible();
+  await expect(page.locator(".candidate-detail-field", { hasText: "비어 있음" }).first()).toBeVisible();
   await expect(page.locator(".scrape-media-option", { hasText: "covers" })).toBeVisible();
   await expect(page.locator(".scrape-media-option input")).toBeChecked();
 });
@@ -167,7 +167,7 @@ test("후보는 cover와 screenshot만 미리 보고 다른 설정 미디어도 
 test("확장한 후보를 선택해도 확장 상태와 하단 적용 버튼이 유지된다", async ({ page }) => {
   await openForRows(page);
   await page.locator(".scrape-expand").first().click();
-  await page.locator(".scrape-field").first().click();
+  await page.locator(".candidate-detail-field").first().click();
   await expect(page.locator(".scrape-candidate.selected.expanded")).toBeVisible();
   const apply = page.getByRole("button", { name: "선택 적용" });
   await expect(apply).toBeEnabled();
@@ -222,7 +222,7 @@ test("후보가 없으면 선택 적용이 비활성화된다", async ({ page })
   await expect(page.locator(".scrape-candidates")).toContainText("후보가 없습니다");
   const apply = page.getByRole("button", { name: "선택 적용" });
   await expect(apply).toBeDisabled();
-  await expect(apply).toHaveCSS("opacity", "0.4");
+  await expect(apply).toHaveCSS("opacity", "0.5");
 });
 
 test("스크랩 진행률은 모달 안에 표시하고 스크랩 시작 버튼으로 중지한다", async ({ page }) => {
@@ -324,7 +324,7 @@ test("여러 게임은 적용 뒤 다음 항목을 자동으로 스크랩한다"
   await page.getByRole("button", { name: "다음 스크랩" }).click();
   await expect(page.locator(".scrape-title-count")).toHaveText("스크랩 결과 (2/2)");
   await expect(page.locator(".scrape-candidate")).toHaveCount(0);
-  await expect(apply).toBeEnabled();
+  await expect(apply).toBeDisabled();
   await page.getByRole("button", { name: "이전 스크랩" }).click();
   await expect(page.locator(".scrape-candidate.selected")).toBeVisible();
   await apply.click();

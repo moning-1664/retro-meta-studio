@@ -22,7 +22,7 @@ test.describe("탭을 오갈 때", () => {
     await expect(page.locator("#status-bar")).toContainText("Selected 2");
 
     await openSecondTab(page);
-    await expect(page.locator("#status-bar")).toContainText("Selected 0");
+    await expect(page.locator("#status-bar")).toContainText("Selected 1");
     await page.locator(".ctab", { hasText: "Master Library" }).click();
     await expect(page.locator("#status-bar")).toContainText("Selected 2");
   });

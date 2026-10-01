@@ -79,11 +79,10 @@ test.describe("Settings > Metadata & Media > Title Prefix/Postfix", () => {
     await input.fill("일본");
     await input.press("Tab");
 
-    await expect.poll(() => page.evaluate(() => window.__saved.length)).toBeGreaterThan(0);
-    const saved = await page.evaluate(() => window.__saved.reduce((acc, p) => ({ ...acc, ...p.titleAffix }), {}));
     // 세 번의 조작(켜기/방식/텍스트) 모두 그 구역의 완전한 모양으로 저장돼야 한다 -
     // 부분만 보내면 나머지가 지워진다(섹션 한 단계 깊이 병합).
-    expect(saved.jp).toEqual({ enabled: true, mode: "postfix", text: "일본" });
+    await expect.poll(() => page.evaluate(() => window.__saved.reduce((acc, p) =>
+      ({ ...acc, ...p.titleAffix }), {}).jp)).toEqual({ enabled: true, mode: "postfix", text: "일본" });
   });
 });
 

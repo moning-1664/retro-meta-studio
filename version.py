@@ -1,19 +1,64 @@
 """
 version.py
 ==========
-Retro Metadata Manager 버전 정보 (Semantic Versioning: MAJOR.MINOR.PATCH).
+RetroMeta Studio 버전 정보 (MAJOR.MINOR.PATCH).
 
-- 0.x.y: 초기 개발 단계. 1.0.0 전까지는 API/데이터 스키마가 언제든 바뀔 수 있음.
-- MAJOR: 1.0.0 도달 시 "완전한 최초 정식 버전"을 의미. 이후 MAJOR 증가는 호환성이
-         깨지는 큰 변경(예: DB 스키마 마이그레이션이 필요한 변경, 대규모 UX 개편)에만 사용.
-- MINOR: 새로운 기능 추가(예: 신규 Frontend 지원, 새 GUI 화면) - 기존 기능/데이터와 호환.
-- PATCH: 버그 수정, 내부 리팩토링 등 기능 변화 없는 수정.
-
-버전을 올릴 때는 CHANGELOG.md에도 동일한 버전으로 항목을 추가한다.
+- 시작 버전: 0.1.0.
+- build_web.bat 실행 시 패키징 직전에 PATCH를 증가한다. 실패한 빌드 번호도 재사용하지 않는다.
+- 사용자가 버전을 올리라고 요청하면 MINOR를 증가하고 PATCH를 0으로 초기화한다.
+- python version.py --bump minor: 사용자 요청에 따른 버전 증가.
+- python version.py --sync: 번호 증가 없이 UI 버전 파일 동기화.
 """
 
-__version__ = "0.4.1.6"
+__version__ = "0.1.0"
 
 
 def version_tuple():
     return tuple(int(x) for x in __version__.split("."))
+
+
+def update_version(bump=None):
+    """Synchronize the UI version; builds bump patch, releases bump minor."""
+    import json
+    import os
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent
+    path = root / "version.py"
+    source = path.read_text(encoding="utf-8")
+    match = re.search(r'^__version__ = "(\d+)\.(\d+)\.(\d+)"$', source, re.MULTILINE)
+    if match is None:
+        raise ValueError("Expected a three-part application version")
+    major, minor, patch = map(int, match.groups())
+    if bump == "patch":
+        patch += 1
+    elif bump == "minor":
+        minor, patch = minor + 1, 0
+    current = f"{major}.{minor}.{patch}"
+
+    def write_atomic(target, content):
+        temporary = target.with_name(target.name + ".tmp")
+        with temporary.open("w", encoding="utf-8", newline="\n") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+
+    write_atomic(root / "gui_web" / "version.js",
+                 "// Generated from version.py; do not edit separately.\n"
+                 + f"window.RMS_APP_VERSION = {json.dumps(current)};\n")
+    if bump:
+        source = source[:match.start()] + f'__version__ = "{current}"' + source[match.end():]
+        write_atomic(path, source)
+    return current
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Manage the application version")
+    parser.add_argument("--bump", choices=("patch", "minor"))
+    parser.add_argument("--sync", action="store_true")
+    args = parser.parse_args()
+    print(update_version(args.bump) if args.bump or args.sync else __version__)

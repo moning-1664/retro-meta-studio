@@ -36,7 +36,7 @@ test("System 표의 행을 누르면 그 System의 목록으로 간다", async (
   await openDashboard(page);
   await page.locator(".dsb-table tbody tr[data-system='snes']").click();
   await expect(page.locator("#list-wrap")).toBeVisible();
-  await expect(page.locator(".cheader-name")).toHaveText("Master Library (SNES)");
+  await expect(page.locator(".cheader-name")).toHaveText("Super Nintendo · Master Library");
 });
 
 test("System 표는 머리글로 정렬된다", async ({ page }) => {

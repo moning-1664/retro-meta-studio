@@ -14,12 +14,12 @@ test("열린 설정창 뒤의 목록에 붙여넣기·삭제 단축키가 전달
     window.api.paste = async () => { window.__backgroundWrites.push("paste"); return { ok: true, data: {} }; };
     window.api.deleteImmediate = async () => { window.__backgroundWrites.push("delete"); return { ok: true, data: {} }; };
   });
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "Settings", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "설정", exact: true })).toBeVisible();
   await page.keyboard.press("Control+v");
   await page.keyboard.press("Delete");
   expect(await page.evaluate(() => window.__backgroundWrites)).toEqual([]);
-  await expect(page.getByRole("dialog", { name: "Settings", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "설정", exact: true })).toBeVisible();
 });
 
 test("Ctrl+F는 목록 검색 입력을 선택한다", async ({ page }) => {
@@ -45,6 +45,7 @@ test.describe("복사/붙여넣기", () => {
   });
 
   test("선택 없이 Ctrl+C를 누르면 안내만 뜨고 호출되지 않는다", async ({ page }) => {
+    await page.locator(".lrow.selected").click({ modifiers: ["Control"] });
     const calls = [];
     await page.exposeFunction("__note", () => calls.push(1));
     await page.evaluate(() => {
@@ -105,8 +106,10 @@ test.describe("붙여넣기 명령", () => {
     await expect(labels.filter({ hasText: /^붙여넣기$|^채우기$|^교체하기$/ })).toHaveCount(0);
     await page.keyboard.press("Escape");
     await page.keyboard.press("Control+c");
+    await expect(page.locator("#toast")).toContainText("개 복사했습니다.");
     await page.locator(".lrow").first().click({ button: "right" });
-    await page.locator(".ctx-submenu-trigger").first().click();
+    await page.locator(".ctx-item").filter({ has: page.locator(".ctx-label", { hasText: /^붙여넣기$/ }) })
+      .locator(".ctx-submenu-trigger").click();
     await expect(page.locator(".ctx-menu .ctx-label").filter({ hasText: /^붙여넣기$|^채우기$|^교체하기$/ })).toHaveCount(3);
   });
 

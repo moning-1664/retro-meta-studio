@@ -104,5 +104,24 @@
     return `<svg class="system-icon-svg" width="${size}" height="${size}" viewBox="0 0 24 24" ${STROKE}>${inner}</svg>`;
   }
 
-  window.RMSystemIcons = { has, svg };
+  const NAMES = {
+    sfc: "Super Famicom", superfamicom: "Super Famicom", snes: "Super Nintendo",
+    fc: "Famicom", famicom: "Famicom", nes: "Nintendo Entertainment System",
+    n64: "Nintendo 64", gc: "GameCube", gamecube: "GameCube", wii: "Wii", wiiu: "Wii U",
+    switch: "Nintendo Switch", gb: "Game Boy", gbc: "Game Boy Color", gba: "Game Boy Advance",
+    nds: "Nintendo DS", n3ds: "Nintendo 3DS", md: "Mega Drive", megadrive: "Mega Drive",
+    genesis: "Genesis", mastersystem: "Master System", gamegear: "Game Gear",
+    saturn: "Sega Saturn", dreamcast: "Dreamcast", megacd: "Mega CD", segacd: "Sega CD",
+    psx: "PlayStation", ps1: "PlayStation", ps2: "PlayStation 2", ps3: "PlayStation 3",
+    ps4: "PlayStation 4", ps5: "PlayStation 5", psp: "PSP", vita: "PS Vita", psvita: "PS Vita",
+    arcade: "Arcade", mame: "Arcade · MAME", mame2003: "Arcade · MAME 2003",
+    fbneo: "Arcade · FBNeo", fba: "Arcade · FBA", cps1: "Capcom CPS-1", cps2: "Capcom CPS-2",
+    cps3: "Capcom CPS-3", neogeo: "Neo Geo", ngp: "Neo Geo Pocket", ngpc: "Neo Geo Pocket Color",
+    msx: "MSX", msx1: "MSX", msx2: "MSX2", msxturbor: "MSX turbo R",
+    pc88: "PC-88", pc98: "PC-98", pce: "PC Engine", pcengine: "PC Engine",
+    pcenginecd: "PC Engine CD", pcfx: "PC-FX", naomi: "Sega NAOMI", naomi2: "Sega NAOMI 2",
+    windows: "Windows", dos: "DOS", xbox: "Xbox", xbox360: "Xbox 360", xboxone: "Xbox One",
+  };
+  const displayName = (key) => NAMES[String(key || "").toLowerCase()] || String(key || "").toUpperCase();
+  window.RMSystemIcons = { has, svg, displayName };
 })();

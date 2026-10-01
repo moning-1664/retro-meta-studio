@@ -31,6 +31,7 @@ const sendIcon = (page) => page.locator("#collection-header .cheader-right .icon
 const ingestViaMenu = async (page) => { await sendIcon(page).click(); };
 
 test("아무것도 고르지 않았으면 Collection 전체다", async ({ page }) => {
+  await page.locator(".lrow.selected").click({ modifiers: ["Control"] });
   await ingestViaMenu(page);
   await expect.poll(() => page.__scopes.length).toBe(1);
   expect(page.__scopes[0]).toEqual({ kind: "all" });
@@ -38,6 +39,7 @@ test("아무것도 고르지 않았으면 Collection 전체다", async ({ page }
 
 test("Navigation에서 System을 고르면 그 System만 보낸다", async ({ page }) => {
   await page.locator(".nav-system", { hasText: "PS2" }).click();
+  await page.locator(".lrow.selected").click({ modifiers: ["Control"] });
   await ingestViaMenu(page);
   await expect.poll(() => page.__scopes.length).toBe(1);
   expect(page.__scopes[0]).toEqual({ kind: "system", system: "ps2" });

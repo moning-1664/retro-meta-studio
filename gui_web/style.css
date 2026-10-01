@@ -11,8 +11,8 @@
   /* [신규] 전체 앱에서 통일해서 쓰는 타이포그래피 스케일 (Metadata/Media/Settings가
      다른 화면보다 유독 크게 보이던 문제 - 전부 이 변수만 쓰도록 통일) */
   --fs-eyebrow: calc(8.5px * var(--font-scale));    /* 라벨/이런벌 캡션 */
-  --fs-caption: calc(9.5px * var(--font-scale));    /* 보조 텍스트 */
-  --fs-body: calc(10.5px * var(--font-scale));      /* 기본 본문/입력값 (게임리스트 텍스트와 동일 수준) */
+  --fs-caption: calc(10px * var(--font-scale));    /* 보조 텍스트 */
+  --fs-body: calc(11px * var(--font-scale));      /* 기본 본문/입력값 (게임리스트 텍스트와 동일 수준) */
   --fs-body-lg: calc(11.5px * var(--font-scale));   /* 강조 본문 */
   --fs-title: calc(12.5px * var(--font-scale));     /* 패널/모달 제목 */
 
@@ -208,8 +208,8 @@ html[data-theme="light"] .raster-icon-pair img.for-dark { display: none; }
   background: var(--card2); color: var(--text); transition: background-color .15s;
 }
 .btn:hover { background: var(--card3); }
-.btn.primary { background: var(--accent); color: #fff; }
-.btn.primary:hover { background: var(--accent-hover); }
+.btn.primary { background: var(--primary-bg); color: var(--primary-fg); }
+.btn.primary:hover { background: var(--primary-hover); }
 /* [버그 수정] 하드코딩된 밝은 회색(#F1F5F9/#334155)이라 다크 테마에서 튀는
    pill로 보였다 - 다른 버튼들처럼 테마 토큰을 쓰도록 교체. */
 .btn.light { background: var(--card3); color: var(--text); }
@@ -217,7 +217,7 @@ html[data-theme="light"] .raster-icon-pair img.for-dark { display: none; }
 .btn.danger-text { color: var(--danger); }
 .btn.danger-text:hover { background: color-mix(in srgb, var(--danger) 14%, var(--card3)); }
 .btn.compact { padding: 6px; }
-.btn.toggle-active { background: var(--accent); color: #fff; }
+.btn.toggle-active { background: var(--primary-bg); color: var(--primary-fg); }
 /* [신규] 미리보기 토글 버튼 - 눌린 상태(공간 확보 중)를 accent 배경으로 표시 */
 /* [수정] filter-bar 맨 우측 끝(실제 패널이 열릴 자리 바로 위)에 고정 - search box의
    flex:1이 남는 공간을 흡수해버려도 margin-left:auto가 그 뒤에서 한 번 더 오른쪽

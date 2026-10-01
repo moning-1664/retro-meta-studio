@@ -133,6 +133,7 @@ test.describe("즐겨찾기", () => {
   });
 
   test("별표를 눌러도 상세 패널이 열리지 않는다", async ({ page }) => {
+    await page.keyboard.press("Escape");
     await page.locator(".lrow").first().locator(".fav-btn").click();
     await expect(page.locator("#detail-panel")).not.toHaveClass(/open/);
   });

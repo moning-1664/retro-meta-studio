@@ -150,19 +150,42 @@ test("뱃지를 누르면 판단에 필요한 정보와 함께 버전이 나온�
   await openArchive(page);
   await page.locator(".match-badge").click();
   await expect(page.locator(".modal-title")).toHaveText("서로 다른 버전");
-  const options = page.locator(".match-option");
+  const options = page.locator(".ver-dialog-card .revision-row");
   await expect(options).toHaveCount(2);
   await expect(options.nth(0)).toContainText("Version one");
-  await expect(options.nth(0)).toContainText("Cover");
+  await expect(options.nth(0).locator(".revision-cover")).toBeVisible();
   await expect(options.nth(1)).toContainText("Version two");
-  await expect(page.locator("#detail-panel")).not.toHaveClass(/open/);
+  await expect(page.locator(".ver-dialog-card .revision-actions button")).toBeEnabled();
 });
 
 test("버전을 고르면 뱃지가 사라진다", async ({ page }) => {
   await openArchive(page);
   await page.locator(".match-badge").click();
-  await page.locator(".match-option").nth(1).locator(".revision-pick").click();
+  await page.locator(".ver-dialog-card .revision-row").nth(1).click();
+  await page.locator(".ver-dialog-card .revision-actions button").click();
   await expect(page.locator(".match-badge")).toHaveCount(0);
+});
+
+test("saved preferred revision is selected and an equal grouped revision does not enable apply", async ({ page }) => {
+  await openArchive(page);
+  await page.evaluate(() => {
+    const versions = window.api.archiveVersions;
+    window.api.archiveVersions = async (...args) => {
+      const result = await versions(...args);
+      result.data.preferredRecordId = 12;
+      result.data.versions[1].recordIds = [13, 12];
+      return result;
+    };
+  });
+  await page.locator('.match-badge').click();
+  const cards = page.locator('.ver-dialog-card .revision-row');
+  const apply = page.locator('.ver-dialog-card .revision-actions button');
+  await expect(cards.nth(1)).toHaveAttribute('aria-checked', 'true');
+  await expect(apply).toBeDisabled();
+  await cards.nth(1).click();
+  await expect(apply).toBeDisabled();
+  await cards.nth(0).click();
+  await expect(apply).toBeEnabled();
 });
 
 test("[P0] 버전을 고르면 Gamelist 줄도 같이 바뀐다", async ({ page }) => {
@@ -186,7 +209,8 @@ test("[P0] 버전을 고르면 Gamelist 줄도 같이 바뀐다", async ({ page 
 
   await expect(page.locator(".lrow", { hasText: "Metal Gear Solid 2" })).toBeVisible();
   await page.locator(".match-badge").click();
-  await page.locator(".match-option").nth(1).locator(".revision-pick").click();
+  await page.locator(".ver-dialog-card .revision-row").nth(1).click();
+  await page.locator(".ver-dialog-card .revision-actions button").click();
 
   await expect(page.locator(".lrow", { hasText: "고른 버전의 제목" })).toBeVisible();
   await expect(page.locator(".lrow", { hasText: "Metal Gear Solid 2" })).toHaveCount(0);
@@ -308,11 +332,11 @@ test.describe("Revision 탭 - 무엇이 다른지 보여준다", () => {
     const first = page.locator(".revision-row").first();
     await first.locator(".revision-expand").click();
     // Title은 판마다 달라서 강조된다.
-    await expect(first.locator(".revision-field.changed", { hasText: "Title" })).toBeVisible();
+    await expect(first.locator(".candidate-detail-field.changed", { hasText: "제목" })).toBeVisible();
     // Developer도 한쪽에만 있으니 다르다.
-    await expect(first.locator(".revision-field.changed", { hasText: "Developer" })).toBeVisible();
-    // Description은 둘이 같으므로 줄 자체를 만들지 않는다.
-    await expect(first.locator(".revision-field", { hasText: "Description" })).toBeVisible();
+    await expect(first.locator(".candidate-detail-field.changed", { hasText: "개발사" })).toBeVisible();
+    // 공통 설명도 표시하되 변경 강조는 하지 않는다.
+    await expect(first.locator(".candidate-detail-field:not(.changed)", { hasText: "설명" })).toBeVisible();
   });
 
   test("어느 출처의 언제 판인지 보여준다", async ({ page }) => {
@@ -453,7 +477,7 @@ test.describe("Archive System 우클릭", () => {
     await rightClickSystem(page, "PS2");
     await menuItem(page, "언어 태그 적용").click();
     await expect(page.locator(".modal-title")).toHaveText("Title Prefix/Postfix");
-    await expect(page.locator(".modal-text")).toContainText("Plan을 거치지 않고 바로 적용");
+    await expect(page.locator(".modal-text")).toContainText("확인하면 바로 적용");
     await page.locator(".modal-actions .btn.primary", { hasText: "적용" }).click();
     await expect.poll(() => page.evaluate(() => window.__applied)).toBe("ps2");
     await expect(page.locator("#toast")).toContainText("1개를 바꿨습니다");

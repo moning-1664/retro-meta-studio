@@ -126,6 +126,7 @@ test("상세 패널은 고정 컬럼이다 - 선택 전에도 자리를 지킨�
   const panel = page.locator("#detail-panel");
   const before = await panel.boundingBox();
   expect(before.width).toBe(297);
+  await page.keyboard.press("Escape");
   await expect(panel.locator(".panel-empty-state")).toBeVisible();
 
   await page.locator(".lrow").first().click();

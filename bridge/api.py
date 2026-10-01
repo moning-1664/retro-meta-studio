@@ -4384,7 +4384,9 @@ class Api:
         names = {c.id: c.name for c in self.registry.list_collections()}
         for v in versions:
             v["sourceNames"] = [names.get(s, s) for s in v["sources"]]
-        return ok({"romIdentityId": rom_identity_id, "versions": versions})
+        preferred = self.archive.get_preferred(rom_identity_id)
+        return ok({"romIdentityId": rom_identity_id, "versions": versions,
+                   "preferredRecordId": preferred["record_id"] if preferred else None})
 
     @guarded
     @archive_write

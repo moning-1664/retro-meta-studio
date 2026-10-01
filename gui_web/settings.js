@@ -15,22 +15,23 @@
   "use strict";
 
   const SECTIONS = [
-    ["general", "General", "프로그램의 기본 동작"],
-    ["collections", "Collections", "Collection 열기와 세션"],
-    ["metadata", "Metadata & Media", "목록과 메타데이터 표시"],
-    ["scraper", "Scraper", "외부 게임 정보 검색"],
-    ["transfer", "Import / Export", "가져오기와 내보내기"],
+    ["general", "일반", "프로그램의 기본 동작"],
+    ["collections", "컬렉션", "Collection 열기와 세션"],
+    ["metadata", "메타데이터와 미디어", "목록과 메타데이터 표시"],
+    ["scraper", "스크랩", "외부 게임 정보 검색"],
+    ["transfer", "복사와 가져오기", "가져오기와 내보내기"],
     ["archive", "Archive", "저장 형식과 위치"],
-    ["emulator", "Emulator", "RetroArch 연동"],
-    ["appearance", "Appearance", "테마와 화면 밀도"],
-    ["advanced", "Advanced", "진단과 초기화"],
+    ["emulator", "에뮬레이터", "RetroArch 연동"],
+    ["appearance", "화면", "테마와 화면 밀도"],
+    ["advanced", "고급", "진단과 초기화"],
   ];
 
   const THEMES = [
-    ["stitch", "Stitch / Original"],
-    ["sfc", "White / SFC"],
-    ["md", "Black / MD"],
-    ["nes", "NES / Family"],
+    ["slate", "Slate"],
+    ["sfc", "Pearl"],
+    ["md", "Carbon"],
+    ["nes", "Sand"],
+    ["stitch", "Aqua"],
   ];
 
   const SCALE = { min: 80, max: 130, step: 5 };
@@ -42,7 +43,7 @@
 
     while (root.firstChild) root.removeChild(root.firstChild);
     const overlay = h("div", { class: "modal-overlay stg-overlay" });
-    const panel = h("div", { class: "stg-panel", role: "dialog", "aria-label": "Settings" });
+    const panel = h("div", { class: "stg-panel", role: "dialog", "aria-label": "설정" });
     const close = () => {
       window.__rmsSettingsRerender = null;
       while (root.firstChild) root.removeChild(root.firstChild);
@@ -50,8 +51,8 @@
 
     const head = h("div", { class: "stg-head" }, [
       h("div", {}, [
-        h("div", { class: "stg-eyebrow" }, ["APPLICATION SETTINGS"]),
-        h("div", { class: "stg-title" }, ["Settings"]),
+        h("div", { class: "stg-eyebrow" }, ["앱 설정"]),
+        h("div", { class: "stg-title" }, ["설정"]),
       ]),
       h("button", { class: "stg-close", title: "닫기 (Esc)", onClick: close }, ["×"]),
     ]);
@@ -205,31 +206,28 @@
       const s = ctx.get();
 
       if (key === "general") {
-        add(...section("General", "RetroMeta Studio의 전역 동작을 설정합니다."));
+        add(...section("일반", "RetroMeta Studio의 전역 동작을 설정합니다."));
         const currentLanguage = (s.general && s.general.language) || "ko";
         // 언어 이름은 **그 나라 고유 표기**로 보여준다(사용자 결정, 메뉴 정리 §9) - "한국어"
         // 처럼 흔한 UI 문구와 겹치는 문자열은 i18n 번역표를 거치면 "Korean"처럼 옮겨져
         // 버렸다. h()의 문자열 자식은 모두 번역을 거치므로, 이미 만든 Text 노드를 건네
         // 그 통로를 피한다(h()는 노드를 그대로 붙이고 문자열만 옮긴다).
-        add(row("general.language", "Language",
+        add(row("general.language", "언어",
           select(currentLanguage,
             (window.RMSI18n ? window.RMSI18n.LANGS.map((code) => [code, window.RMSI18n.LABELS[code]])
               : [["ko", "한국어"], ["en", "English"], ["ja", "日本語"], ["es", "Español"], ["fr", "Français"]])
               .map(([code, label]) => [code, document.createTextNode(label)]),
             (v) => ctx.update("general", { language: v })), null));
-        add(row("general.startup", "Startup", soonSelect([["last", "마지막 상태 복원"], ["archive", "항상 Archive"]]), null, true));
-        add(row("general.autoSave", "Auto Save", soonToggle(false), "편집한 Metadata를 자동 저장합니다.", true));
-        add(row("general.confirmDelete", "Confirm before delete", soonToggle(true), null, true));
       } else if (key === "collections") {
-        add(...section("Collections", "Collection 자체의 경로가 아니라 열기/복원 동작을 설정합니다."));
+        add(...section("컬렉션", "Collection 자체의 경로가 아니라 열기/복원 동작을 설정합니다."));
         const coll = { restoreTabs: true, rememberSystem: true, ...(s.collections || {}) };
-        add(row("collections.restoreTabs", "Restore open tabs",
+        add(row("collections.restoreTabs", "열린 탭 복원",
           toggle(coll.restoreTabs !== false, (v) => ctx.update("collections", { restoreTabs: v })),
           "앱을 다시 켜면 마지막에 열어 둔 Collection 탭을 모두 되살립니다(끄면 첫 Collection만 엽니다)."));
-        add(row("collections.rememberSystem", "Remember last System",
+        add(row("collections.rememberSystem", "마지막 시스템 기억",
           toggle(coll.rememberSystem !== false, (v) => ctx.update("collections", { rememberSystem: v })),
           "Collection마다 마지막으로 고른 System/Storage에서 시작합니다."));
-        add(row("navigation.hideEmptySystems", "Hide empty systems",
+        add(row("navigation.hideEmptySystems", "빈 시스템 숨기기",
           toggle(s.navigation && s.navigation.hideEmptySystems,
             (v) => ctx.update("navigation", { hideEmptySystems: v })),
           "좌측 SYSTEMS 목록에서 게임이 없는 System을 숨깁니다. SYSTEMS 제목 옆 눈 아이콘으로도 바꿀 수 있습니다."));
@@ -237,7 +235,7 @@
         // 못했다. 그 자리를 "ROM/Metadata/Media가 있는 항목을 먼저 보여주는"
         // 1차 정렬로 바꾸면서, Collection을 새로 열 때 기본으로 쓸 값도 여기서
         // 정할 수 있게 했다 - Toolbar에서 그때그때 바꾼 값은 이 기본값과 별개다.
-        add(row("navigation.defaultSortPriority", "Default sort priority",
+        add(row("navigation.defaultSortPriority", "기본 우선 정렬",
           select(s.navigation && s.navigation.defaultSortPriority || "none", [
             ["none", "전체보기"], ["rom", "ROM 우선"],
             ["metadata", "메타데이터 우선"], ["media", "미디어 우선"],
@@ -245,13 +243,13 @@
           "Collection을 새로 열 때 목록의 기본 우선 정렬입니다. Toolbar에서 그때그때 바꿀 수 있습니다."));
         add(h("div", { class: "stg-info" }, ["ROM / Metadata / Media 경로는 Collection 탭의 우클릭 메뉴에서 관리합니다."]));
       } else if (key === "metadata") {
-        add(...section("Metadata & Media", "목록 표시와 Metadata/Media의 기본 처리 정책입니다."));
-        add(h("div", { class: "stg-subsection-title" }, ["GameList Columns"]));
+        add(...section("메타데이터와 미디어", "목록 표시와 Metadata/Media의 기본 처리 정책입니다."));
+        add(h("div", { class: "stg-subsection-title" }, ["게임 목록 열"]));
         add(ctx.renderColumns ? ctx.renderColumns() :
           h("div", { class: "stg-info" }, ["컬럼 순서/표시 설정은 준비 중입니다."]));
         const m = { videoMode: "auto", videoDelay: 3, videoSound: true, videoLoop: true,
                     videoVolume: 70, ...(s.media || {}) };
-        add(h("div", { class: "stg-subsection-title" }, ["Video"]));
+        add(h("div", { class: "stg-subsection-title" }, ["동영상"]));
         add(row("media.videoMode", "영상 재생",
           select(m.videoMode, [["auto", "자동 재생"], ["manual", "눌러서 재생"], ["off", "재생 안 함"]],
             (v) => ctx.update("media", { videoMode: v })),
@@ -265,8 +263,7 @@
             (v) => ctx.update("media", { videoVolume: v })),
           "소리를 켰을 때의 재생 음량입니다."));
         add(row("media.videoLoop", "반복 재생", toggle(m.videoLoop, (v) => ctx.update("media", { videoLoop: v }))));
-        add(row("media.overwrite", "Media overwrite", soonSelect([["ask", "Always ask"], ["replace", "Replace"], ["keep", "Keep existing"]]), null, true));
-        add(h("div", { class: "stg-subsection-title" }, ["Title Prefix/Postfix"]));
+        add(h("div", { class: "stg-subsection-title" }, ["제목 앞뒤 문구"]));
         add(h("div", { class: "stg-help" }, [
           "구역은 ROM 파일명의 지역 태그로 정합니다 - (KR), [Kor], _k, (USA), global 같은 표시입니다. "
           + "해당 구역이 켜져 있으면 제목 양 끝의 기존 장식을 떼고(디스크 표시는 보존) 아래 텍스트를 "
@@ -282,15 +279,15 @@
         add(h("div", { class: "stg-subsection-title" }, ["멀티디스크 태그"]));
         add(row("metadata.discTitles", "제목 뒤에 디스크 번호 태그 붙이기",
           toggle(!!(s.metadata || {}).discTitles, (v) => ctx.update("metadata", { discTitles: v })),
-          "Apply할 때 제목 뒤에만 붙입니다. 파일명은 건드리지 않고, 두 번 적용해도 늘어나지 않습니다. "
+          "적용할 때 제목 뒤에만 붙입니다. 파일명은 건드리지 않고, 두 번 적용해도 늘어나지 않습니다. "
           + "CD를 쓰는 System은 Disc, 플로피를 쓰는 System(MSX, PC-98 등)은 Disk로 적습니다."));
         add(discFormatRow(s));
       } else if (key === "scraper") {
-        add(...section("Scraper", "ScreenScraper 계정과 요청 사용량을 관리합니다."));
+        add(...section("스크랩", "ScreenScraper 계정과 요청 사용량을 관리합니다."));
         add(ctx.renderScraper ? ctx.renderScraper()
           : h("div", { class: "stg-info" }, ["Scraper 설정을 불러올 수 없습니다."]));
       } else if (key === "transfer") {
-        add(...section("Import / Export", "파일과 Metadata/Media를 옮길 때의 기본값입니다."));
+        add(...section("복사와 가져오기", "파일과 Metadata/Media를 옮길 때의 기본값입니다."));
         // 붙여넣기(bridge paste)가 이 값을 읽는다. 저장된 사용자 선택은 기본값보다 우선한다.
         // unmatchedRom*은 registry에 평평하게 저장한다(bridge/api.py TRANSFER_DEFAULTS 참고) -
         // "transfer" 섹션 patch는 한 단계 깊이까지만 병합되므로, 중첩 객체로 두면 필드 하나만
@@ -313,27 +310,26 @@
         add(row("transfer.includeRom", "ROM 파일 복사",
           toggle(t.includeRom, (v) => ctx.update("transfer", { includeRom: v })),
           "기존 ROM과 같은 이름이면 충돌 확인 뒤 교체할 수 있습니다. 로컬 작업은 원본을 보관해 되돌릴 수 있습니다."));
-        add(row("transfer.includeMedia", "Media 복사",
+        add(row("transfer.includeMedia", "미디어 복사",
           toggle(t.includeMedia, (v) => ctx.update("transfer", { includeMedia: v })),
           "끄면 커버·스크린샷·동영상을 옮기지 않습니다."));
-        add(row("transfer.backup", "Backup before overwrite", soonToggle(false), null, true));
       } else if (key === "archive") {
         add(...section("Archive", "Archive를 어디에 어떤 형식으로 저장할지 정합니다."));
         add(ctx.renderArchive ? ctx.renderArchive()
           : h("div", { class: "stg-info" }, ["Archive 설정은 준비 중입니다."]));
       } else if (key === "emulator") {
-        add(...section("Emulator", "외부 에뮬레이터 실행에 필요한 설정입니다."));
+        add(...section("에뮬레이터", "외부 에뮬레이터 실행에 필요한 설정입니다."));
         add(ctx.renderEmulator ? ctx.renderEmulator()
           : h("div", { class: "stg-info" }, ["RetroArch 설정은 준비 중입니다."]));
       } else if (key === "appearance") {
         const a = s.appearance;
-        add(...section("Appearance", "Stitch 기본 디자인과 콘솔 세대별 색상 테마를 선택합니다."));
-        add(row("appearance.theme", "Theme",
+        add(...section("화면", "테마와 화면 크기를 조절합니다."));
+        add(row("appearance.theme", "테마",
           select(a.theme, THEMES, (v) => ctx.update("appearance", { theme: v })),
-          "Stitch는 절제된 어두운 기본 팔레트입니다. SFC는 콘솔 버튼 4색, MD는 빨강+금색, NES는 베이지+빨강+금색을 씁니다."));
-        add(row("appearance.density", "UI Density",
-          select(a.density, [["compact", "Compact"], ["normal", "Normal"]], (v) => ctx.update("appearance", { density: v })),
-          "Normal은 목록 한 줄을 조금 더 높게 씁니다."));
+          "Slate · 청회색 / Pearl · 밝은 회색 / Carbon · 짙은 회색 / Sand · 모래색 / Aqua · 청록색"));
+        add(row("appearance.density", "목록 간격",
+          select(a.density, [["compact", "촘촘하게"], ["normal", "보통"]], (v) => ctx.update("appearance", { density: v })),
+          "보통은 목록 한 줄의 높이를 조금 늘립니다."));
 
         const value = h("span", { class: "stg-range-value" }, [`${a.scale}%`]);
         const range = h("input", { type: "range", min: SCALE.min, max: SCALE.max, step: SCALE.step, value: a.scale });
@@ -341,13 +337,13 @@
           value.textContent = `${range.value}%`;
           ctx.update("appearance", { scale: Number(range.value) });
         });
-        add(row("appearance.scale", "UI Scale", h("div", { class: "stg-range" }, [range, value]),
+        add(row("appearance.scale", "화면 배율", h("div", { class: "stg-range" }, [range, value]),
           "Ctrl + 마우스 휠로도 바로 바꿀 수 있습니다."));
-        add(row("appearance.previewDefault", "Preview by default",
+        add(row("appearance.previewDefault", "미리보기 기본 표시",
           toggle(a.previewDefault, (v) => ctx.update("appearance", { previewDefault: v })),
           "처음 여는 Collection에서 미리보기를 켤지 정합니다. 이미 연 Collection은 마지막 상태를 따릅니다."));
       } else {
-        add(...section("Advanced", "진단과 화면 설정을 관리합니다."));
+        add(...section("고급", "진단과 화면 설정을 관리합니다."));
         const recovery = h("button", {class: "btn", onClick: () => ctx.openRecovery()}, ["복구 기록 열기"]);
         add(row("advanced.recovery", "파일 작업 복구", recovery, "복구 실패를 다시 시도하거나 백업을 보존한 채 기록을 닫습니다."));
         const retention = s.backupRetention || {enabled:false, maxCount:20, maxSizeGB:10};
@@ -373,10 +369,9 @@
         };
         add(row("backupRetention.maxCount", "보관할 작업 수", limitInput("maxCount", 20, 10000), "Collection / Archive별 한도. 0은 제한 없음입니다."));
         add(row("backupRetention.maxSizeGB", "보관 용량 (GB)", limitInput("maxSizeGB", 10, 100000), "0은 제한 없음. 보호된 백업 때문에 한도를 초과할 수 있습니다."));
-        add(row("advanced.logLevel", "Log level", soonSelect([["normal", "Normal"], ["verbose", "Verbose"], ["debug", "Debug"]]), null, true));
         const reset = h("button", { class: "stg-danger" }, ["화면 설정 초기화"]);
         reset.addEventListener("click", () => { ctx.reset(); render(); });
-        add(row("advanced.reset", "Reset UI Settings", reset, "테마·밀도·크기를 기본값으로 되돌립니다."));
+        add(row("advanced.reset", "화면 설정 초기화", reset, "테마·밀도·크기를 기본값으로 되돌립니다."));
       }
       return c;
     }

@@ -56,7 +56,7 @@ test("Dashboard가 Navigator 최하단에 있다", async ({ page }) => {
 test("Settings를 누르면 Settings 화면이 열린다", async ({ page }) => {
   // 자세한 동작은 settings.spec.js에 있다.
   await page.locator(".settings-btn").click();
-  await expect(page.locator(".stg-title")).toHaveText("Settings");
+  await expect(page.locator(".stg-title")).toHaveText("설정");
 });
 
 // 실사용 피드백 §8 + 로고 개편(사용자 결정).
@@ -122,28 +122,15 @@ test.describe("App Title / Settings 자리와 크기", () => {
   // "제목이 여전히 크다, 높이/길이 각각 5% 줄이고 재배치"(가로 0.912, 세로 1.14 - 비율은
   // 유지한 채 둘 다 5%씩 준다). 부제는 처음부터 그대로 네 칸이고, 제목만
   // transform-origin: left로 가로가 줄어 오른쪽 빈 칸을 그만큼 덜 먹는다.
-  test("가로 6등분 - 왼쪽 한 칸 아이콘, 가운데 네 칸(x0.912) 제목, 부제는 네 칸", async ({ page }) => {
-    const [nav, icon, title, sub] = await Promise.all([
-      page.locator(".nav-app-title").boundingBox(),
-      page.locator(".nav-app-icon").boundingBox(),
-      page.locator(".nav-app-title-name").boundingBox(),
-      page.locator(".nav-app-subtitle").boundingBox(),
+  test("brand title and version fit beside the icon", async ({ page }) => {
+    const [nav, icon, title, version] = await Promise.all([
+      page.locator(".nav-app-title").boundingBox(), page.locator(".nav-app-icon").boundingBox(),
+      page.locator(".nav-app-title-name").boundingBox(), page.locator(".nav-app-version").boundingBox(),
     ]);
-    const cell = nav.width / 6;
-    // 제목은 가운데 네 칸(약 66%)에서 가로만 0.912배, 부제는 원래 네 칸 그대로다.
-    expect(title.width).toBeCloseTo(cell * 4 * 0.912, 0);
-    expect(sub.width).toBeCloseTo(cell * 4, 0);
-    // 왼쪽 시작 위치는 그대로다(transform-origin: left - 배율은 오른쪽으로만 적용된다).
-    expect(title.x - nav.x).toBeCloseTo(cell, 0);
-    // 오른쪽 한 칸이었던 여백은 제목의 가로 배율만큼 달라진다(0.912배라 조금 더 남는다).
-    expect(nav.x + nav.width - (title.x + title.width)).toBeCloseTo(cell * 1.352, 0);
-    // 아이콘은 왼쪽 한 칸 안의 정사각형이다(칸의 약 70%).
-    expect(icon.width).toBeLessThan(cell);
-    expect(icon.width).toBeGreaterThan(cell * 0.6);
     expect(icon.height).toBeCloseTo(icon.width, 0);
-    // **칸 가운데가 아니라 조금 왼쪽**이다(사용자 결정) - 창 왼쪽 끝과 제목 시작 위치의 한가운데.
-    const navBox = await page.locator("#nav").boundingBox();
-    expect(icon.x + icon.width / 2).toBeCloseTo((navBox.x + title.x) / 2, 0);
+    expect(title.x).toBeGreaterThan(icon.x + icon.width);
+    expect(version.x).toBeGreaterThanOrEqual(title.x + title.width - 1);
+    expect(version.x + version.width).toBeLessThanOrEqual(nav.x + nav.width + 1);
   });
 
   test("제목은 한 줄이고 그 칸을 넘지 않는다", async ({ page }) => {

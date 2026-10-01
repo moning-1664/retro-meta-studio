@@ -81,6 +81,14 @@ if not errorlevel 1 (
     exit /b 1
 )
 
+REM Each packaging attempt allocates a new patch version.
+echo Updating application version...
+python version.py --bump patch
+if errorlevel 1 (
+    echo [ERROR] Could not update the application version.
+    pause
+    exit /b 1
+)
 if exist build rmdir /s /q build
 
 REM dist\db, dist\clipboard, dist\logs are USER DATA. Only the exe is rebuilt.

@@ -23,7 +23,7 @@ test.describe("빈 System 숨기기", () => {
   });
 
   test("SYSTEMS 띠가 맨 위에 있다", async ({ page }) => {
-    await expect(page.locator(".nav-eyebrow-label")).toHaveText("SYSTEMS");
+    await expect(page.locator(".nav-eyebrow-label")).toHaveText("시스템");
   });
 
   test("값을 Settings에 저장한다", async ({ page }) => {
@@ -33,9 +33,10 @@ test.describe("빈 System 숨기기", () => {
       window.api.saveAppSettings = (patch) => { window.__saved.push(patch); return original(patch); };
     });
     await hideToggle(page).click();
-    await expect.poll(() => page.evaluate(() => window.__saved.length)).toBeGreaterThan(0);
-    const saved = await page.evaluate(() => window.__saved.at(-1));
-    expect(saved.navigation).toEqual({ hideEmptySystems: true });
+    // Session restoration can persist independently; wait for this setting's
+    // own write rather than assuming the last arbitrary patch contains it.
+    await expect.poll(() => page.evaluate(() => window.__saved
+      .some(patch => patch.navigation?.hideEmptySystems === true))).toBe(true);
   });
 
   test("지금 보고 있는 System은 비어 있어도 남긴다", async ({ page }) => {

@@ -1298,4 +1298,255 @@
     P(String.raw`^(.+) · (\d[\d,]*)개 · (.+)\n(.+)$`,
       '$1 · $2 · $3\n$4', '$1 · $2件 · $3\n$4', '$1 · $2 · $3\n$4', '$1 · $2 · $3\n$4'),
   ]);
+  // Shared appearance and candidate UI copy.
+  i18n.addTable({
+  "일반": {
+    "en": "General",
+    "ja": "一般",
+    "es": "General",
+    "fr": "Général"
+  },
+  "컬렉션": {
+    "en": "Collections",
+    "ja": "コレクション",
+    "es": "Colecciones",
+    "fr": "Collections"
+  },
+  "메타데이터와 미디어": {
+    "en": "Metadata and media",
+    "ja": "メタデータとメディア",
+    "es": "Metadatos y medios",
+    "fr": "Métadonnées et médias"
+  },
+  "복사와 가져오기": {
+    "en": "Copy and import",
+    "ja": "コピーと取り込み",
+    "es": "Copiar e importar",
+    "fr": "Copie et importation"
+  },
+  "에뮬레이터": {
+    "en": "Emulator",
+    "ja": "エミュレーター",
+    "es": "Emulador",
+    "fr": "Émulateur"
+  },
+  "화면": {
+    "en": "Appearance",
+    "ja": "表示",
+    "es": "Apariencia",
+    "fr": "Apparence"
+  },
+  "고급": {
+    "en": "Advanced",
+    "ja": "詳細設定",
+    "es": "Avanzado",
+    "fr": "Avancé"
+  },
+  "앱 설정": {
+    "en": "Application settings",
+    "ja": "アプリ設定",
+    "es": "Ajustes de la aplicación",
+    "fr": "Paramètres de l’application"
+  },
+  "목록 간격": {
+    "en": "List spacing",
+    "ja": "一覧の間隔",
+    "es": "Espaciado de la lista",
+    "fr": "Espacement de la liste"
+  },
+  "촘촘하게": {
+    "en": "Compact",
+    "ja": "コンパクト",
+    "es": "Compacto",
+    "fr": "Compact"
+  },
+  "보통": {
+    "en": "Normal",
+    "ja": "標準",
+    "es": "Normal",
+    "fr": "Normal"
+  },
+  "화면 배율": {
+    "en": "Interface scale",
+    "ja": "表示倍率",
+    "es": "Escala de la interfaz",
+    "fr": "Échelle de l’interface"
+  },
+  "미리보기 기본 표시": {
+    "en": "Show preview by default",
+    "ja": "プレビューを既定で表示",
+    "es": "Mostrar vista previa por defecto",
+    "fr": "Afficher l’aperçu par défaut"
+  },
+  "열린 탭 복원": {
+    "en": "Restore open tabs",
+    "ja": "開いていたタブを復元",
+    "es": "Restaurar pestañas abiertas",
+    "fr": "Restaurer les onglets ouverts"
+  },
+  "마지막 시스템 기억": {
+    "en": "Remember last system",
+    "ja": "最後のシステムを記憶",
+    "es": "Recordar el último sistema",
+    "fr": "Mémoriser le dernier système"
+  },
+  "빈 시스템 숨기기": {
+    "en": "Hide empty systems",
+    "ja": "空のシステムを非表示",
+    "es": "Ocultar sistemas vacíos",
+    "fr": "Masquer les systèmes vides"
+  },
+  "기본 우선 정렬": {
+    "en": "Default sorting priority",
+    "ja": "既定の優先並べ替え",
+    "es": "Prioridad de ordenación predeterminada",
+    "fr": "Priorité de tri par défaut"
+  },
+  "게임 목록 열": {
+    "en": "Game list columns",
+    "ja": "ゲーム一覧の列",
+    "es": "Columnas de la lista de juegos",
+    "fr": "Colonnes de la liste des jeux"
+  },
+  "제목 앞뒤 문구": {
+    "en": "Title prefix and suffix",
+    "ja": "タイトルの接頭辞・接尾辞",
+    "es": "Prefijo y sufijo del título",
+    "fr": "Préfixe et suffixe du titre"
+  },
+  "현재 사용": {
+    "en": "In use",
+    "ja": "使用中",
+    "es": "En uso",
+    "fr": "Utilisée"
+  },
+  "미지정": {
+    "en": "Not set",
+    "ja": "未設定",
+    "es": "Sin definir",
+    "fr": "Non défini"
+  },
+  "개발사": {
+    "en": "Developer",
+    "ja": "開発元",
+    "es": "Desarrollador",
+    "fr": "Développeur"
+  },
+  "배급사": {
+    "en": "Publisher",
+    "ja": "発売元",
+    "es": "Editor",
+    "fr": "Éditeur"
+  },
+  "출시일": {
+    "en": "Release date",
+    "ja": "発売日",
+    "es": "Fecha de lanzamiento",
+    "fr": "Date de sortie"
+  },
+  "플레이어": {
+    "en": "Players",
+    "ja": "プレイヤー数",
+    "es": "Jugadores",
+    "fr": "Joueurs"
+  },
+  "없음": {
+    "en": "None",
+    "ja": "なし",
+    "es": "Ninguno",
+    "fr": "Aucun"
+  },
+  "미디어가 하나 이상 있는 항목 수": {
+    "en": "Items with at least one media file",
+    "ja": "メディアがある項目数",
+    "es": "Elementos con al menos un archivo multimedia",
+    "fr": "Éléments contenant au moins un fichier média"
+  },
+  "테마와 화면 크기를 조절합니다.": {
+    "en": "Adjust the theme and interface size.",
+    "ja": "テーマと表示サイズを調整します。",
+    "es": "Ajusta el tema y el tamaño de la interfaz.",
+    "fr": "Réglez le thème et la taille de l’interface."
+  },
+  "Slate · 청회색 / Pearl · 밝은 회색 / Carbon · 짙은 회색 / Sand · 모래색 / Aqua · 청록색": {
+    "en": "Slate · blue gray / Pearl · light gray / Carbon · dark gray / Sand · beige / Aqua · cyan",
+    "ja": "Slate · 青灰色 / Pearl · 明るい灰色 / Carbon · 濃い灰色 / Sand · ベージュ / Aqua · 青緑",
+    "es": "Slate · gris azulado / Pearl · gris claro / Carbon · gris oscuro / Sand · beige / Aqua · cian",
+    "fr": "Slate · gris bleu / Pearl · gris clair / Carbon · gris foncé / Sand · beige / Aqua · cyan"
+  },
+  "Archive에는 변경 이력이 남지만 파일 전체 되돌리기는 아직 보장하지 못합니다. 계속할까요?": {
+    "en": "Archive keeps revision history, but a complete file rollback cannot be guaranteed. Continue?",
+    "ja": "Archiveに履歴は残りますが、すべてのファイルを元に戻せるとは限りません。続けますか？",
+    "es": "Archive conserva el historial, pero no se garantiza restaurar todos los archivos. ¿Continuar?",
+    "fr": "Archive conserve l’historique, mais la restauration de tous les fichiers n’est pas garantie. Continuer ?"
+  },
+  "저장하지 않은 편집": {
+    "en": "Unsaved edit",
+    "ja": "未保存の編集",
+    "es": "Edición sin guardar",
+    "fr": "Modification non enregistrée"
+  },
+  "선택한 메타데이터와 미디어를 왼쪽으로 복사합니다": {
+    "en": "Copy selected metadata and media to the left",
+    "ja": "選択した情報とメディアを左へコピー",
+    "es": "Copiar los metadatos y medios seleccionados a la izquierda",
+    "fr": "Copier les métadonnées et médias sélectionnés vers la gauche"
+  },
+  "선택한 메타데이터와 미디어를 오른쪽으로 복사합니다": {
+    "en": "Copy selected metadata and media to the right",
+    "ja": "選択した情報とメディアを右へコピー",
+    "es": "Copiar los metadatos y medios seleccionados a la derecha",
+    "fr": "Copier les métadonnées et médias sélectionnés vers la droite"
+  },
+  "오른쪽 내용을 왼쪽으로 복사합니다": {
+    "en": "Copy right to left",
+    "ja": "右から左へコピー",
+    "es": "Copiar de derecha a izquierda",
+    "fr": "Copier de droite à gauche"
+  },
+  "왼쪽 내용을 오른쪽으로 복사합니다": {
+    "en": "Copy left to right",
+    "ja": "左から右へコピー",
+    "es": "Copiar de izquierda a derecha",
+    "fr": "Copier de gauche à droite"
+  }
+});
+  i18n.addTable({
+  "전체 게임": {
+    "en": "All games",
+    "ja": "すべてのゲーム",
+    "es": "Todos los juegos",
+    "fr": "Tous les jeux"
+  },
+  "게임 검색…": {
+    "en": "Search games…",
+    "ja": "ゲームを検索…",
+    "es": "Buscar juegos…",
+    "fr": "Rechercher des jeux…"
+  },
+  "가져올 게임": {
+    "en": "Game to import",
+    "ja": "取り込むゲーム",
+    "es": "Juego a importar",
+    "fr": "Jeu à importer"
+  },
+  "보통은 목록 한 줄의 높이를 조금 늘립니다.": {
+    "en": "Normal spacing makes each list row slightly taller.",
+    "ja": "標準では一覧の行を少し高くします。",
+    "es": "El espaciado normal aumenta ligeramente la altura de cada fila.",
+    "fr": "L’espacement normal augmente légèrement la hauteur des lignes."
+  },
+  "확인하면 바로 적용됩니다.": {
+    "en": "Applied immediately after confirmation.",
+    "ja": "確認するとすぐに適用されます。",
+    "es": "Se aplica inmediatamente después de confirmar.",
+    "fr": "Appliqué immédiatement après confirmation."
+  },
+  "복사하면 디스크 용량을 넘습니다.": {
+    "en": "Copying will exceed disk capacity.",
+    "ja": "コピーするとディスク容量を超えます。",
+    "es": "La copia superará la capacidad del disco.",
+    "fr": "La copie dépassera la capacité du disque."
+  }
+});
 })();

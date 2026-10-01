@@ -158,6 +158,7 @@ test.describe("Collection 경계", () => {
     await expect(page.locator("#status-bar")).toContainText("Selected 1");
 
     await page.locator(".ctab", { hasText: "Master Library" }).click();
-    await expect(page.locator("#status-bar")).toContainText("Selected 0");
+    await expect(page.locator("#status-bar")).toContainText("Selected 1");
+    await expect(page.locator(".detail-filename")).toContainText("FFX.iso");
   });
 });

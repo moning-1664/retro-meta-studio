@@ -14,9 +14,9 @@ test("TopBar에 Archive 탭과 Collection 탭이 그려진다", async ({ page })
 test("좌측 내비가 관점(All/Favorites)과 SYSTEMS 목록을 나눠 보여준다", async ({ page }) => {
   // SYSTEMS 띠 하나로 전체를 가리킨다(실사용 피드백) - 그 아래 스크롤 안에
   // 같은 뜻의 머리를 또 두지 않는다.
-  await expect(page.locator(".nav-eyebrow-label")).toHaveText("SYSTEMS");
-  await expect(page.locator("#nav .nav-lens .nav-all")).toContainText("All Games");
-  await expect(page.locator("#nav .nav-lens .nav-favorites")).toContainText("Favorites");
+  await expect(page.locator(".nav-eyebrow-label")).toHaveText("시스템");
+  await expect(page.locator("#nav .nav-lens .nav-all")).toContainText("전체 게임");
+  await expect(page.locator("#nav .nav-lens .nav-favorites")).toContainText("즐겨찾기");
 });
 
 test("Gamelist가 목업 3행을 렌더하고 총 개수를 알린다", async ({ page }) => {
@@ -26,7 +26,7 @@ test("Gamelist가 목업 3행을 렌더하고 총 개수를 알린다", async ({
 });
 
 test("상태바가 선택 개수와 Storage 용량을 보여준다", async ({ page }) => {
-  await expect(page.locator(".sb-left")).toContainText("Selected 0");
+  await expect(page.locator(".sb-left")).toContainText("Selected 1");
   await expect(page.locator(".sb-storage")).toHaveCount(2);
 });
 

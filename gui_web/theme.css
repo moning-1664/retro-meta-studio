@@ -6,8 +6,8 @@
    따라온다. ui/stitch-v2-redesign 브랜치는 테마를 `!important`로 나중에 덮어써서
    곳곳에 옛 색이 남았다(실사용 피드백 "곳곳에 덜 적용된다") - 그 방식을 버렸다.
 
-   팔레트 값 자체는 그 브랜치의 Stitch / SFC / MD / NES를 그대로 쓴다.
-   기본(`:root`)이 Stitch이고, `data-theme`는 Settings가 <html>에 붙인다.
+   기본은 Slate다. 이전 테마 ID는 저장된 설정과의 호환을 위해 유지한다.
+   `data-theme`는 Settings가 <html>에 붙인다.
    ========================================================================== */
 
 :root {
@@ -20,8 +20,8 @@
   --border: #293342;
   --text: #e7edf5;
   --muted: #8d9aaa;
-  --accent: #35c9e8;
-  --accent-hover: #58d7ef;
+  --accent: #4b8ce8;
+  --accent-hover: #3678d6;
   --success: #43d19a;
   --warning: #e6b84b;
   --danger: #ef6b78;
@@ -46,7 +46,7 @@
      그대로 물려받는다. SFC/NES(밝은 테마)만 따로 밝은 회색을 쓴다(아래) - 실사용
      피드백: "어두운 테마에서는 잘 보이는데 밝은 테마에서는 잘 안 보인다". */
   --list-faint: var(--list-muted);
-  --list-selected: #172b35;
+  --list-selected: #182c47;
 
   --media-bg: #0b1017;
   --icon-bg: #18232d;
@@ -58,13 +58,13 @@
   --chrome-sub: #131924;
   --panel: var(--card);           /* Detail 패널, 상태 바, 모달 */
 
-  --primary-bg: var(--accent);
+  --primary-bg: #2868c4;
   --primary-fg: #ffffff;
-  --primary-hover: var(--accent-hover);
+  --primary-hover: #205bad;
 
   --tab-active-fg: var(--accent-red);   /* Detail의 Metadata/Media/ROM 탭 */
   --ctab-bar: var(--accent);            /* 활성 Collection 탭 위 강조선 */
-  --nav-active-bar: var(--accent-gold); /* Navigator 활성 System 왼쪽 막대 */
+  --nav-active-bar: var(--accent); /* Selected scope, independent of console colors. */
   --row-focus-bar: var(--accent);       /* Gamelist 포커스 행 왼쪽 막대 */
   --cheader-icon-fg: var(--accent);
   --app-title-fg: var(--accent);
@@ -101,19 +101,26 @@
   --nav-row-h: 29px;
 }
 
-/* ------------------------------------------------------------------ MD */
+/* Aqua preserves the previously saved original palette. */
+:root[data-theme="stitch"] {
+  --accent: #35c9e8; --accent-hover: #58d7ef;
+  --primary-bg: var(--accent); --primary-hover: var(--accent-hover); --primary-fg: #082b35;
+  --list-selected: #172b35;
+}
+
+/* Carbon. Historical IDs remain valid in saved preferences. */
 :root[data-theme="md"] {
-  --bg: #0b0b0a; --card: #151513; --card2: #1e1d19; --card3: #2a2821; --border: #403d34;
-  --text: #eeeae0; --muted: #a19d91;
-  --accent: #cf3b32; --accent-hover: #e05046;
+  --bg: #111214; --card: #191b1f; --card2: #21242a; --card3: #2c3037; --border: #3b414b;
+  --text: #eef0f4; --muted: #a5afbd;
+  --accent: #9bb8df; --accent-hover: #b5ccea;
+  --primary-bg: #9bb8df; --primary-hover: #b5ccea; --primary-fg: #142237;
   --success: #78b84a; --warning: #d4a72c; --danger: #cf3b32; --info: #d4a72c;
   --accent-red: #cf3b32; --accent-gold: #d4a72c; --accent-blue: #55748a; --accent-green: #78b84a;
-  --list-bg: #0f0f0d; --list-head: #1c1b17; --list-border: #3b3931; --list-row-border: #282720;
-  --list-text: #ebe7dc; --list-muted: #a19c90; --list-selected: #351917;
-  --media-bg: #090908; --icon-bg: #25231d;
-  --chrome-sub: #181713;
-  --ctab-bar: var(--accent-gold);
-  --row-focus-bar: var(--accent-gold);
+  --list-bg: #14161a; --list-head: #20242a; --list-border: #363c46; --list-row-border: #272c33;
+  --list-text: #eef0f4; --list-muted: #a5afbd; --list-selected: #263445;
+  --media-bg: #101215; --icon-bg: #252c35;
+  --chrome-sub: #1b1f25;
+  --ctab-bar: var(--accent); --row-focus-bar: var(--accent);
 }
 
 /* ------------------------------------------------------------------ SFC */
@@ -121,7 +128,8 @@
   color-scheme: light;
   --bg: #eeeeec; --card: #ffffff; --card2: #e2e2df; --card3: #d0d0cc; --border: #a9aaa7;
   --text: #242424; --muted: #555652;
-  --accent: #d13a35; --accent-hover: #e24f49;
+  --accent: #2868c4; --accent-hover: #205bad;
+  --primary-bg: var(--accent); --primary-hover: var(--accent-hover);
   --success: #2d8b4b; --warning: #d39a18; --danger: #c93636; --info: #2864c7;
   --accent-red: #d13a35; --accent-gold: #d39a18; --accent-blue: #2864c7; --accent-green: #2d8b4b;
   --list-bg: #ffffff; --list-head: #e7e7e4; --list-border: #b5b5b1; --list-row-border: #ddddda;
@@ -141,7 +149,8 @@
   color-scheme: light;
   --bg: #e4dfd2; --card: #f3eee2; --card2: #d9d2c4; --card3: #c9c1b1; --border: #989083;
   --text: #292722; --muted: #5e594f;
-  --accent: #b72e2b; --accent-hover: #cc3c38;
+  --accent: #836137; --accent-hover: #6b4d2c;
+  --primary-bg: var(--accent); --primary-hover: var(--accent-hover);
   --success: #687d39; --warning: #b28722; --danger: #a62523; --info: #9b741d;
   --accent-red: #b72e2b; --accent-gold: #b28722; --accent-blue: #6d7782; --accent-green: #687d39;
   --list-bg: #ffffff; --list-head: #e9e3d7; --list-border: #aaa396; --list-row-border: #d9d2c5;
@@ -150,9 +159,8 @@
   --list-faint: #a19a89;
   --media-bg: #e5ded0; --icon-bg: #eee8dc;
   --chrome-sub: #ccc4b5;
-  --primary-fg: var(--accent-gold);
-  --ctab-bar: var(--accent-gold);
-  --row-focus-bar: var(--accent-gold);
+  --primary-fg: #ffffff;
+  --ctab-bar: var(--accent); --row-focus-bar: var(--accent);
   --overlay: rgba(40, 36, 30, .35);
   --shadow: rgba(0, 0, 0, .18);
 }
@@ -161,19 +169,6 @@
    테마별 변형 - 토큰 교체만으로 표현할 수 없는 것들.
    id가 들어간 선택자라 컴포넌트 규칙보다 우선하므로 `!important`가 필요 없다.
    ========================================================================== */
-
-/* SFC: 명령 버튼에 콘솔 버튼 4색(빨강·노랑·파랑·초록)을 입힌다. */
-:root[data-theme="sfc"] #filter-bar .view-mode-seg .seg-btn:nth-child(1) { background: var(--accent-red); color: #fff; }
-:root[data-theme="sfc"] #filter-bar .view-mode-seg .seg-btn:nth-child(2) { background: var(--accent-gold); color: #fff; }
-:root[data-theme="sfc"] #filter-bar .plan-actions .seg-btn:first-child { background: var(--accent-green); color: #fff; }
-:root[data-theme="sfc"] #filter-bar .plan-actions .seg-btn:last-child { background: var(--accent-blue); color: #fff; }
-/* SFC의 콘솔 4색은 이제 제목 옆 포인트 바가 맡는다. 도구 버튼까지 빨강·노랑·
-   파랑·초록으로 칠하니 네 버튼이 서로 다른 기능처럼 보이고 제목보다 먼저
-   눈에 들어왔다(사용자 피드백) - 버튼은 모든 테마에서 조용한 회색이다. */
-:root[data-theme="sfc"] #tabs-bar .ctab:nth-child(4n+1).active { box-shadow: inset 0 2px 0 var(--accent-red); }
-:root[data-theme="sfc"] #tabs-bar .ctab:nth-child(4n+2).active { box-shadow: inset 0 2px 0 var(--accent-gold); }
-:root[data-theme="sfc"] #tabs-bar .ctab:nth-child(4n+3).active { box-shadow: inset 0 2px 0 var(--accent-blue); }
-:root[data-theme="sfc"] #tabs-bar .ctab:nth-child(4n).active { box-shadow: inset 0 2px 0 var(--accent-green); }
 
 /* SFC / NES: Detail 상단의 Archive 이동 버튼에 살짝 색을 준다.
    예전에는 primary 색을 통째로 칠해서, 옆 Chromium의 조용한 도구 버튼들과 나란히
@@ -190,7 +185,7 @@
 }
 
 /* MD: Detail 탭 막대 아래 선을 금색으로. */
-:root[data-theme="md"] .detail-tabs { border-bottom-color: var(--accent-gold); }
+:root { --tab-active-fg: var(--accent); }
 
 /* ==========================================================================
    차트 색 (Dashboard). 테마의 강조색과 따로 둔다 - 강조색은 테마마다 1~2가지라
