@@ -348,6 +348,59 @@ class ImmediatePasteTests(unittest.TestCase):
         row = next(row for row in self.api.list_rows(self.dst_id)["data"]["rows"] if row["file"] == "Same.iso")
         self.assertEqual(row["title"], "기존 제목")
 
+    def test_local_metadata_redo_restores_edit(self):
+        uid = self.api.workspace.open(self.dst_id).get_row_by_filename("ps2", "Same.iso")["rom_uid"]
+        self.api.save_fields(self.dst_id, uid, {"name": "Redo title"})
+        self.api.paste_undo(self.dst_id)
+        wait_idle(self.api)
+        redo = self.api.paste_redo(self.dst_id)
+        self.assertTrue(redo["ok"], redo)
+        wait_idle(self.api)
+        job = self.api.get_job_progress(redo["data"]["jobId"])["data"]
+        self.assertIsNone(job["error"], job)
+        row = self.api.workspace.open(self.dst_id).get_row_by_filename("ps2", "Same.iso")
+        self.assertEqual(row["fields"]["name"], "Redo title")
+
+    def test_local_rename_redo_moves_rom_without_copy(self):
+        uid = self.api.workspace.open(self.dst_id).get_row_by_filename("ps2", "Same.iso")["rom_uid"]
+        self.api.rename_game(self.dst_id, uid, "Again.iso")
+        wait_idle(self.api)
+        self.api.paste_undo(self.dst_id)
+        wait_idle(self.api)
+        redo = self.api.paste_redo(self.dst_id)
+        wait_idle(self.api)
+        job = self.api.get_job_progress(redo["data"]["jobId"])["data"]
+        self.assertIsNone(job["error"], job)
+        self.assertTrue((self.target / "ps2" / "Again.iso").exists())
+        self.assertFalse((self.target / "ps2" / "Same.iso").exists())
+
+    def test_history_discard_requires_confirmation(self):
+        uid = self.api.workspace.open(self.dst_id).get_row_by_filename("ps2", "Same.iso")["rom_uid"]
+        saved = self.api.save_fields(self.dst_id, uid, {"name": "history"})
+        operation_id = saved["data"]["undoOperationId"]
+        history = self.api.operation_history(self.dst_id)
+        self.assertTrue(history["ok"], history)
+        self.assertIn(operation_id, [row["id"] for row in history["data"]["items"]])
+        self.assertFalse(self.api.discard_operation_history(self.dst_id, [operation_id])["ok"])
+        result = self.api.discard_operation_history(self.dst_id, [operation_id], True)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(self.api.operation_history(self.dst_id)["data"]["items"], [])
+        self.assertEqual(self.api.workspace.open(self.dst_id).get_row_by_filename("ps2", "Same.iso")["fields"]["name"], "history")
+
+    def test_interrupted_redo_blocks_new_writes_and_backup_discard(self):
+        uid = self.api.workspace.open(self.dst_id).get_row_by_filename("ps2", "Same.iso")["rom_uid"]
+        saved = self.api.save_fields(self.dst_id, uid, {"name":"first"})
+        operation_id = saved["data"]["undoOperationId"]
+        directory = self.api._paste_journal.root / operation_id
+        data = self.api._paste_journal.details(operation_id)
+        data["status"] = "redoing"
+        self.api._paste_journal._save(directory, data)
+        rejected = self.api.save_fields(self.dst_id, uid, {"name":"second"})
+        self.assertFalse(rejected["ok"], rejected)
+        self.assertEqual(self.api.workspace.open(self.dst_id).get_row_by_filename("ps2", "Same.iso")["fields"]["name"], "first")
+        self.assertTrue(self.api.operation_state(self.dst_id)["data"]["recoveryError"])
+        self.assertFalse(self.api.discard_operation_history(self.dst_id, [operation_id], True)["ok"])
+
     def test_delete_index_failure_restores_rom(self):
         uid = next(row["romUid"] for row in self.api.list_rows(self.dst_id)["data"]["rows"]
                    if row["file"] == "Same.iso")
@@ -361,6 +414,21 @@ class ImmediatePasteTests(unittest.TestCase):
         job = self.api.get_job_progress(started["data"]["jobId"])["data"]
         self.assertTrue(job["result"]["rolledBack"])
         self.assertEqual(rom.read_bytes(), before)
+
+    def test_delete_redo_removes_restored_rom(self):
+        uid = self.api.workspace.open(self.dst_id).get_row_by_filename("ps2", "Same.iso")["rom_uid"]
+        self.api.delete_immediate(self.dst_id, [uid])
+        wait_idle(self.api)
+        self.api.paste_undo(self.dst_id)
+        wait_idle(self.api)
+        self.assertTrue((self.target / "ps2" / "Same.iso").exists())
+        redo = self.api.paste_redo(self.dst_id)
+        wait_idle(self.api)
+        job = self.api.get_job_progress(redo["data"]["jobId"])["data"]
+        self.assertIsNone(job["error"], job)
+        self.assertFalse((self.target / "ps2" / "Same.iso").exists())
+        files = [row["file"] for row in self.api.list_rows(self.dst_id)["data"]["rows"]]
+        self.assertFalse(any(name.endswith((".rms-backup", ".rms-redo", ".rms-part")) for name in files), files)
 
 
 if __name__ == "__main__":

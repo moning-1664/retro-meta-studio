@@ -63,6 +63,7 @@ from app.archive import shared_cache as archive_shared_cache
 from app.archive import service as archive_service
 from app.archive import paste as archive_paste_service
 from app.archive.file_copy import copy_complete as archive_copy_complete
+from app.archive.undo import ArchiveUndo, before_shared_publish, delete_file as archive_delete_file, current_transaction
 from app.compare import engine as compare_engine
 from app.convert import service as convert_service
 from app.match import service as match_service
@@ -217,6 +218,8 @@ class Api:
         self._paste_ops: dict[str, dict] = {}
         undo_root = (Path(cache_dir).parent / "paste_undo") if cache_dir else (paths.DB_DIR / "paste_undo")
         self._paste_journal = PasteJournal(undo_root)
+        self._archive_journal = ArchiveUndo(undo_root.parent / "archive_undo")
+        self._archive_recovery_error = None
         recovered = self._paste_journal.recover_interrupted()
         if recovered:
             log.warning("Recovered %d interrupted paste operation(s): %s",
@@ -231,7 +234,14 @@ class Api:
         self._archive_lifecycle_lock = threading.RLock()
         configured_archive = archive_projection.normalize_config(
             self.registry.get_setting("archive.config", {}))["archiveDir"]
-        if configured_archive:
+        startup_cfg = archive_projection.normalize_config(self.registry.get_setting("archive.config", {}))
+        try:
+            has_pending_archive = bool(self._archive_journal.pending(startup_cfg))
+        except (OSError, ValueError) as exc:
+            has_pending_archive = True
+            self._archive_recovery_error = str(exc)
+            log.exception("Archive recovery record unreadable; automatic seed disabled")
+        if configured_archive and not has_pending_archive:
             try:
                 known = self.registry.get_setting("archive.shared_snapshot_hashes", {}) or {}
                 digest = archive_shared_cache.seed_if_clean(
@@ -243,6 +253,20 @@ class Api:
             except (OSError, RuntimeError, sqlite3.DatabaseError) as exc:
                 log.warning("Could not load portable Archive snapshot: %s", exc)
         self.archive = ArchiveStore(archive_path)
+        if has_pending_archive:
+            try:
+                with archive_writing(configured_archive), self.archive._conn.lock:
+                    related = {}
+                    for record in self._archive_journal.pending(startup_cfg):
+                        for cid, systems in record.get("relatedCollections", {}).items():
+                            related.setdefault(cid, set()).update(systems)
+                    self._archive_journal.recover(self.archive, startup_cfg)
+                    self._remember_archive_digest(startup_cfg)
+                    for cid, systems in related.items():
+                        self.workspace.scan(cid, force=True, systems=sorted(systems))
+            except Exception as exc:
+                self._archive_recovery_error = str(exc)
+                log.exception("Archive interrupted operation recovery blocked; backups retained")
         clipboard.prune(self._clipboard_dir)
         # 파일 복사 엔진 선택. 기본은 Robocopy다 - 서명 없는 자체 워커는 백신 행동
         # 기반 탐지에 걸린다는 실사용 보고가 있다(file_ops.py 참고).
@@ -1872,8 +1896,27 @@ class Api:
 
     @guarded
     def operation_state(self, collection_id):
+        if collection_id == "__archive__":
+            cfg = self._archive_config()
+            pending = self._archive_journal.pending(cfg)
+            return ok({"undoOperationId": pending[-1]["id"] if pending else self._archive_journal.latest(cfg),
+                       "redoOperationId": self._archive_journal.latest_redo(cfg), "recoveryError": self._archive_recovery_error,
+                       "clipboard": clipboard.peek(self.registry)})
         self._plan_context(collection_id)
-        return ok({"undoOperationId": self._paste_journal.latest_committed(collection_id),
+        local_id = self._paste_journal.latest_committed(collection_id)
+        local_time = self._paste_journal.details(local_id)["createdAt"] if local_id else 0
+        moves = [row for row in self._archive_journal.records(self._archive_config())
+                 if collection_id in row.get("relatedCollections", {}) and row["status"] == "committed"]
+        archive_id = moves[-1]["id"] if moves and moves[-1]["createdAt"] > local_time else None
+        redos = [row for row in self._archive_journal.records(self._archive_config())
+                 if collection_id in row.get("relatedCollections", {}) and row["status"] == "undone" and row.get("redoReady")]
+        local_redo = self._paste_journal.latest_redo(collection_id)
+        local_redo_time = self._paste_journal.details(local_redo).get("undoneAt", 0) if local_redo else 0
+        latest_archive_redo = max(redos, key=lambda row: row.get("undoneAt", 0)) if redos else None
+        archive_redo = latest_archive_redo["id"] if latest_archive_redo and latest_archive_redo.get("undoneAt", 0) > local_redo_time else None
+        return ok({"undoOperationId": archive_id or local_id,
+                   "redoOperationId": archive_redo or local_redo,
+                   "recoveryError": "중단된 파일 작업의 복구가 필요합니다. 앱을 다시 열고 로그를 확인하세요." if self._paste_journal.pending(collection_id) else None,
                    "clipboard": clipboard.peek(self.registry)})
 
     @guarded
@@ -2046,6 +2089,14 @@ class Api:
     @guarded
     def rename_game(self, collection_id, rom_uid, new_name):
         """Rename local ROM and its own media with one recoverable transaction."""
+        if collection_id == "__archive__":
+            def rename_archive(progress):
+                result = self.archive_rename(str(rom_uid), new_name)
+                if not result["ok"]:
+                    raise ValueError(result["error"])
+                return result["data"]
+            return ok({"jobId": self.jobs.run_heavy(rename_archive, mutates_state=True,
+                        target_ids=("archive",), kind="archive-rename")})
         from adapters.base import GameEntry
         collection, cache, provider = self._plan_context(collection_id)
         row = cache.get_row(int(rom_uid))
@@ -2302,6 +2353,20 @@ class Api:
 
     @guarded
     def cut_selection(self, collection_id, rom_uids):
+        if collection_id == "__archive__":
+            preview = self.archive_delete_owned_preview(rom_uids)
+            if not preview["ok"] or preview["data"]["blocked"]:
+                return err("외부 원본 연결이 있는 게임은 이동할 수 없습니다. 복사를 사용하세요.")
+            result = self.archive_copy_selection(rom_uids)
+            if result["ok"]:
+                descriptor = clipboard.peek(self.registry)
+                descriptor["cut"] = True
+                descriptor["archiveIds"] = [str(rid) for rid in rom_uids]
+                descriptor["archiveConfig"] = self._archive_config()
+                descriptor["archiveStates"] = {str(rid): archive_paste_service.state_of(
+                    self.archive, self.archive.get_identity(str(rid)))["signature"] for rid in rom_uids}
+                self.registry.set_setting(clipboard.CLIPBOARD_KEY, descriptor)
+            return result
         result = self.copy_selection(collection_id, rom_uids)
         if not result["ok"]:
             return result
@@ -2403,6 +2468,11 @@ class Api:
         if not items:
             return err("붙여넣을 항목이 없습니다.")
         cut = bool(descriptor.get("cut"))
+        if cut and descriptor.get("sourceCollectionId") == "__archive__":
+            if not immediate or target_map or fallback_target or (mode and transfer.normalize_mode(mode) != transfer.MODE_OVERWRITE):
+                return err("잘라낸 게임은 대상 System에 붙여넣으세요.")
+            from app.archive import move as archive_move
+            return ok(archive_move.prepare(self, collection_id, descriptor, items, system_map))
         if cut:
             if not immediate or target_map or fallback_target:
                 return err("잘라낸 게임은 대상 System의 빈 공간에 붙여넣으세요.")
@@ -2695,6 +2765,11 @@ class Api:
         op = self._paste_ops.get(str(operation_id))
         if op is None:
             return err("복사 미리보기가 만료되었습니다. 다시 붙여넣으세요.")
+        if op.get("target") == "archive-move":
+            from app.archive import move as archive_move
+            result = archive_move.execute(self, str(operation_id), op, decisions or {})
+            self._paste_ops.pop(str(operation_id), None)
+            return ok(result)
         if op.get("target") == "archive":
             return self._execute_archive_paste_operation(
                 str(operation_id), op, decisions or {}, acknowledge_non_undoable)
@@ -2853,8 +2928,55 @@ class Api:
         return ok(self._encode_image(media.get("path"), THUMBNAIL_MAX) if media else None)
 
     @guarded
-    def paste_undo(self, collection_id):
+    def paste_undo(self, collection_id, archive_operation_id=None):
         """마지막 로컬 작업을 되돌린다. 이후 파일 변경이 있으면 거절한다."""
+        if collection_id != "__archive__" and not archive_operation_id:
+            state_result = self.operation_state(collection_id)
+            candidate = state_result.get("data", {}).get("undoOperationId")
+            if candidate and (self._archive_journal.root / candidate / "operation.json").exists():
+                return self.paste_undo("__archive__", candidate)
+        if collection_id == "__archive__":
+            cfg = self._archive_config()
+            pending = self._archive_journal.pending(cfg)
+            operation_id = archive_operation_id or (pending[-1]["id"] if pending else self._archive_journal.latest(cfg))
+            if not operation_id:
+                return err("되돌릴 수 있는 Archive 작업이 없습니다.")
+            def undo_archive(progress):
+                with archive_writing(cfg["archiveDir"]), self._archive_lifecycle_lock, self.archive._conn.lock:
+                    if cfg != self._archive_config():
+                        raise ValueError("Archive 설정이 바뀌었습니다.")
+                    progress(0, 1, "Archive 복구 상태 확인 중")
+                    tx = self._archive_journal.load(operation_id)
+                    if tx.data["config"] != cfg:
+                        raise ValueError("이 작업은 현재 Archive의 기록이 아닙니다.")
+                    related = tx.data.get("relatedCollections", {})
+                    held = []
+                    try:
+                        for cid in sorted(related):
+                            if not self.registry.acquire_lock(f"apply:{cid}", kind="undo"):
+                                raise ValueError("Collection에 다른 작업이 진행 중입니다.")
+                            held.append(cid)
+                        tx.restore(self.archive)
+                    except Exception as exc:
+                        if tx.data["status"] == "restoring":
+                            self._archive_recovery_error = str(exc)
+                            log.exception("Archive Undo interrupted; further edits blocked")
+                        raise
+                    finally:
+                        for cid in held:
+                            self.registry.release_lock(f"apply:{cid}")
+                    for cid, systems in related.items():
+                        self.workspace.scan(cid, force=True, systems=systems)
+                    self._remember_archive_digest(cfg)
+                    self._archive_recovery_error = None
+                    self._thumb_cache.clear()
+                    try:
+                        progress(1, 1, "Archive 실행 취소 완료")
+                    except JobCancelled:
+                        log.info("Archive Undo completed before cancellation operation=%s", operation_id)
+                    return {"operationId": operation_id}
+            return ok({"jobId": self.jobs.run_heavy(undo_archive, mutates_state=True,
+                       target_ids=("archive",), kind="archive-undo")})
         operation_id = self._paste_journal.latest_committed(collection_id)
         if not operation_id:
             return err("되돌릴 수 있는 로컬 작업이 없습니다.")
@@ -2900,6 +3022,88 @@ class Api:
                 self.registry.release_lock(held)
             raise
         return ok({"jobId": job_id})
+
+    @guarded
+    def paste_redo(self, collection_id, archive_operation_id=None):
+        cfg = self._archive_config()
+        if collection_id != "__archive__":
+            archive_rows = [row for row in self._archive_journal.records(cfg) if collection_id in row.get("relatedCollections", {}) and row.get("redoReady") and row["status"] == "undone"]
+            local_id = self._paste_journal.latest_redo(collection_id)
+            local_time = self._paste_journal.details(local_id).get("undoneAt", 0) if local_id else 0
+            if archive_rows:
+                chosen = max(archive_rows, key=lambda row: row.get("undoneAt", 0))
+                if chosen.get("undoneAt", 0) > local_time:
+                    return self.paste_redo("__archive__", chosen["id"])
+            if not local_id:
+                return err("다시 실행할 작업이 없습니다.")
+            def redo_collection(progress):
+                details = self._paste_journal.details(local_id)
+                held = []
+                try:
+                    for cid in sorted({collection_id, *details.get("relatedCollections", {})}):
+                        if not self.registry.acquire_lock(f"apply:{cid}", kind="redo"):
+                            raise ValueError("다른 Collection 작업이 진행 중입니다.")
+                        held.append(cid)
+                    restored = self._paste_journal.redo(local_id)
+                    self.workspace.scan(collection_id, force=True, systems=restored["systems"])
+                    for cid, systems in restored.get("relatedCollections", {}).items():
+                        self.workspace.scan(cid, force=True, systems=systems)
+                    return {"operationId": local_id}
+                finally:
+                    for cid in held:
+                        self.registry.release_lock(f"apply:{cid}")
+            return ok({"jobId": self.jobs.run_heavy(redo_collection, mutates_state=True,
+                        target_ids=(collection_id,), kind="redo")})
+        operation_id = archive_operation_id or self._archive_journal.latest_redo(cfg)
+        if not operation_id:
+            return err("다시 실행할 작업이 없습니다.")
+        def run(progress):
+            with archive_writing(cfg["archiveDir"]), self._archive_lifecycle_lock, self.archive._conn.lock:
+                tx = self._archive_journal.load(operation_id)
+                if tx.data.get("config") != cfg or not tx.data.get("redoReady"):
+                    raise ValueError("다시 실행할 Archive 작업이 현재 설정과 일치하지 않습니다.")
+                held = []
+                try:
+                    for cid in sorted(tx.data.get("relatedCollections", {})):
+                        if not self.registry.acquire_lock(f"apply:{cid}", kind="redo"):
+                            raise ValueError("다른 Collection 작업이 진행 중입니다.")
+                        held.append(cid)
+                    tx.redo(self.archive)
+                    self._remember_archive_digest(cfg)
+                    for cid, systems in tx.data.get("relatedCollections", {}).items():
+                        self.workspace.scan(cid, force=True, systems=systems)
+                    self._thumb_cache.clear()
+                    return {"operationId": operation_id}
+                except Exception as exc:
+                    if tx.data["status"] == "redoing":
+                        self._archive_recovery_error = str(exc)
+                    raise
+                finally:
+                    for cid in held:
+                        self.registry.release_lock(f"apply:{cid}")
+        return ok({"jobId": self.jobs.run_heavy(run, mutates_state=True, target_ids=("archive",), kind="archive-redo")})
+
+    @guarded
+    def operation_history(self, collection_id):
+        from app.plan.history import listing
+        return ok({"items": listing(self, collection_id), "recoveryError": self._archive_recovery_error})
+
+    @guarded
+    def discard_operation_history(self, collection_id, operation_ids, acknowledged=False):
+        if not acknowledged:
+            return err("백업을 삭제하면 실행 취소·다시 실행이 불가능합니다. 확인이 필요합니다.")
+        if self.jobs.busy_targets(collection_id if collection_id != "__archive__" else "archive"):
+            return err("진행 중인 작업이 끝난 뒤 백업을 정리하세요.")
+        from app.plan.history import discard
+        with self._archive_lifecycle_lock:
+            lock = f"apply:{collection_id}"
+            if collection_id != "__archive__" and not self.registry.acquire_lock(lock, kind="history"):
+                return err("다른 Collection 작업이 진행 중입니다.")
+            try:
+                return ok(discard(self, collection_id, operation_ids or []))
+            finally:
+                if collection_id != "__archive__":
+                    self.registry.release_lock(lock)
 
     def _disc_title_option(self) -> dict:
         """여러 장짜리 게임의 제목 뒤에 장 번호를 붙일지(사용자 결정 - 기본은 끔).
@@ -3136,20 +3340,24 @@ class Api:
 
         def run(cb):
             with archive_writing(self._archive_config()["archiveDir"]):
-                result = archive_service.ingest_collection(
-                    self.archive, collection, cache, uids, progress_cb=cb)
+                result = self._archive_ingest_job(collection, cache, uids, cb)["data"]
                 log.info("archive ingest done: scope=%s requested=%d ingested=%d",
                          kind, len(uids), len(result["ingestedRomUids"]))
                 # **cb를 여기도 넘긴다.** 안 넘기면 DB 수집이 끝나 진행률이 100%를 찍은 뒤에도
                 # gamelist.xml/media 쓰기가 조용히 이어져서(전송량이 큰 Archive는 이 단계가
                 # 더 오래 걸린다), 막대는 100%에서 멈춘 것처럼 보이고 취소도 다음 progress_cb
                 # 호출까지 반영되지 않아 안 먹는 것처럼 보였다(실사용 버그 리포트).
-                projection = self._project_archive(result, result["romIdentityIds"], progress_cb=cb)
-                return {**result, "scope": kind, "projection": projection}
+                return {**result, "scope": kind}
 
         job_id = self.jobs.run_heavy(run, mutates_state=True, target_ids=(collection_id,),
                                      kind="archive-ingest")
         return ok({"jobId": job_id, "count": len(uids), "scope": kind})
+
+    @archive_write
+    def _archive_ingest_job(self, collection, cache, uids, progress):
+        result = archive_service.ingest_collection(self.archive, collection, cache, uids, progress_cb=progress)
+        projected = self._project_archive(result, result["romIdentityIds"], progress_cb=progress)
+        return ok({**result, "projection": projected})
 
     @guarded
     def archive_rows(self, search=None, systems=None, limit=200, offset=0, conflicts_only=False,
@@ -3380,6 +3588,12 @@ class Api:
         descriptor, source_items = clipboard.read_items(self.registry)
         if not source_items:
             return err("붙여넣을 항목이 없습니다.")
+        if descriptor.get("cut"):
+            if not immediate or target_rom_identity_id or (mode and transfer.normalize_mode(mode) != transfer.MODE_OVERWRITE):
+                return err("잘라낸 게임은 대상 System에 붙여넣으세요.")
+            from app.archive import move as archive_move
+            mapping = {item["system"]: target_system for item in source_items} if target_system else None
+            return ok(archive_move.prepare(self, "__archive__", descriptor, source_items, mapping))
         if immediate:
             preview = archive_paste_service.prepare(
                 self.archive, cfg, source_items, mode,
@@ -3392,10 +3606,10 @@ class Api:
                 self._paste_ops.pop(next(iter(self._paste_ops)))
             self._paste_ops[operation_id] = {
                 **preview, "target": "archive", "config": dict(cfg),
-                "collectionId": "__archive__", "undoable": False}
+                "collectionId": "__archive__", "undoable": True}
             return ok({"operationId": operation_id, "target": "archive",
                        "source": descriptor.get("sourceName"),
-                       "count": len(preview["prepared"]), "undoable": False,
+                       "count": len(preview["prepared"]), "undoable": self._paste_ops[operation_id]["undoable"],
                        "collisions": preview["collisions"], "skipped": preview["skipped"]})
         return self._archive_paste_items(
             cfg, source_items, mode, target_rom_identity_id, target_system, new_only)
@@ -3475,6 +3689,7 @@ class Api:
                 }
             prepared, reason = transfer.decide(
                 item, existing, normalized_mode,
+                allow_rom_replace=bool(current_transaction()) and normalized_mode == transfer.MODE_REPLACE,
                 force_media=normalized_mode == transfer.MODE_REPLACE)
             if prepared is None:
                 skipped.append({"filename": filename, "reason": reason})
@@ -3499,8 +3714,13 @@ class Api:
                     skipped.append({"filename": filename, "reason": "Archive ROM 경로 밖으로 복사할 수 없습니다."})
                     continue
                 if destination.exists() and Path(rom["path"]).resolve() != destination.resolve():
-                    conflicts.append({"filename": filename, "path": str(destination),
-                                      "reason": "Archive ROM 파일이 이미 있어 덮어쓰지 않았습니다."})
+                    if normalized_mode == transfer.MODE_REPLACE and current_transaction():
+                        archive_copy_complete(rom["path"], destination, replace=True, move_backup=True)
+                        copied_roms += 1
+                        self.archive.put_rom_source(rid, archive_directory.DIRECTORY_SOURCE, destination, destination.stat().st_size)
+                    else:
+                        conflicts.append({"filename": filename, "path": str(destination),
+                                          "reason": "Archive ROM 파일이 이미 있어 덮어쓰지 않았습니다."})
                 else:
                     if not destination.exists():
                         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -3549,7 +3769,7 @@ class Api:
                    "skipped": skipped, "conflicts": conflicts, "projection": projection})
 
     def _execute_archive_paste_operation(self, operation_id, op, decisions, acknowledged):
-        if not acknowledged:
+        if not op["undoable"] and not acknowledged:
             return err("마스터 붙여넣기의 파일 복원은 아직 보장하지 못합니다. 실행 전 확인이 필요합니다.")
         if op["config"] != self._archive_config():
             return err("마스터 디렉토리 설정이 바뀌었습니다. 다시 붙여넣으세요.")
@@ -3565,21 +3785,50 @@ class Api:
             return ok({"jobId": None, "skipped": len(expected)})
         def run(progress):
             with archive_writing(self._archive_config()["archiveDir"]):
-                with self._archive_lifecycle_lock:
+                with self._archive_lifecycle_lock, self.archive._conn.lock:
+                    if self._archive_recovery_error:
+                        raise ValueError(self._archive_recovery_error)
+                    if op["config"] != self._archive_config():
+                        raise ValueError("Archive 설정이 바뀌었습니다. 다시 붙여넣으세요.")
+                    cfg = op["config"]
+                    shared = archive_shared_cache.snapshot_path(cfg["archiveDir"])
+                    known = self.registry.get_setting("archive.shared_snapshot_hashes", {}) or {}
+                    current = archive_shared_cache.fingerprint(shared) if shared.is_file() else None
+                    if current != known.get(cfg["archiveDir"]):
+                        raise ValueError("다른 PC에서 Archive가 바뀌었습니다. 새로고침 후 다시 붙여넣으세요.")
                     if not archive_paste_service.unchanged(self.archive, op):
                         raise ValueError("마스터의 대상 게임이 바뀌었습니다. 다시 붙여넣으세요.")
-                    result = self._archive_paste_items(
-                        op["config"], selected, op["mode"], progress_cb=progress)
-                    if not result["ok"]:
-                        raise ValueError(result["error"])
-                    data = result["data"]
-                    projection = data.get("projection") or {}
-                    incomplete = (projection.get("error") or
-                                  (projection.get("sharedSnapshot") or {}).get("status")
-                                  in {"error", "conflict"})
-                    return {"applied": data["pasted"], "failed": 0,
-                            "partial": data["pasted"] if incomplete else 0,
-                            "archive": data}
+                    tx = self._archive_journal.begin(operation_id, self.archive, op["config"],
+                        [item["system"] for item in selected], allow_network=True) if op["undoable"] else None
+                    from contextlib import nullcontext
+                    try:
+                        with tx.tracking() if tx else nullcontext():
+                            result = self._archive_paste_items(
+                                op["config"], selected, op["mode"], progress_cb=progress)
+                        if not result["ok"]:
+                            raise ValueError(result["error"])
+                        data = result["data"]
+                        projected = data.get("projection") or {}
+                        incomplete = (projected.get("error") or projected.get("mediaMissing") or
+                                      (projected.get("sharedSnapshot") or {}).get("status")
+                                      in {"error", "conflict"})
+                        if tx and incomplete:
+                            raise ValueError("Archive 파일 또는 공유 DB를 모두 반영하지 못했습니다.")
+                        if tx:
+                            tx.commit(self.archive)
+                        return {"applied": data["pasted"], "failed": 0,
+                                "partial": data["pasted"] if incomplete else 0,
+                                "undoOperationId": operation_id if tx else None, "archive": data}
+                    except BaseException:
+                        if tx:
+                            try:
+                                tx.failed(self.archive)
+                                tx.restore(self.archive)
+                                self._remember_archive_digest(op["config"])
+                            except Exception as exc:
+                                self._archive_recovery_error = str(exc)
+                                log.exception("Archive paste rollback blocked operation=%s; backups retained", operation_id)
+                        raise
         self._paste_ops.pop(operation_id, None)
         job_id = self.jobs.run_heavy(run, mutates_state=True,
                                      target_ids=("archive",), kind="archive-paste")
@@ -3821,7 +4070,18 @@ class Api:
 
     ARCHIVE_CONFIG_KEY = "archive.config"
 
+    def _remember_archive_digest(self, cfg):
+        directory = cfg["archiveDir"]
+        shared = archive_shared_cache.snapshot_path(directory)
+        known = self.registry.get_setting("archive.shared_snapshot_hashes", {}) or {}
+        if shared.is_file():
+            known[directory] = archive_shared_cache.fingerprint(shared)
+        else:
+            known.pop(directory, None)
+        self.registry.set_setting("archive.shared_snapshot_hashes", known)
+
     def _publish_archive_snapshot(self, cfg, *, legacy_digest=None):
+        before_shared_publish(self.archive)
         directory = cfg["archiveDir"]
         known = self.registry.get_setting("archive.shared_snapshot_hashes", {}) or {}
         try:
@@ -4000,6 +4260,9 @@ class Api:
                                                     overwrite_media=overwrite_media,
                                                     progress_cb=progress_cb)
             projected["sharedSnapshot"] = self._publish_archive_snapshot(cfg)
+            if current_transaction() and (projected.get("mediaMissing") or
+                    projected["sharedSnapshot"]["status"] != "published"):
+                raise ValueError("Archive 파일과 공유 DB를 모두 반영하지 못했습니다.")
             return projected
         except JobCancelled:
             # job의 progress_cb가 던진다(bridge/jobs.py) - 그대로 올려보내야
@@ -4008,6 +4271,8 @@ class Api:
             raise
         except Exception:  # noqa: BLE001 - 수집 자체는 성공했으므로 실패는 알리기만 한다
             log.exception("Archive 디렉토리에 쓰지 못했습니다")
+            if current_transaction():
+                raise
             return {"error": "Archive 디렉토리에 쓰지 못했습니다. 로그를 확인하세요."}
 
     @guarded
@@ -4228,7 +4493,7 @@ class Api:
                 if dest_path == Path(current["abs_path"]).resolve():
                     continue
                 if dest_path.is_file():
-                    dest_path.unlink()
+                    archive_delete_file(dest_path)
 
         fields, raw = self.archive.resolve_fields(rid)
         media = self._archive_edit_media_state(rid)
@@ -4343,6 +4608,45 @@ class Api:
         result = archive_service.edit(self.archive, rom_identity_id, fields)
         self._project_archive(result, [rom_identity_id])
         return ok(result)
+
+    @guarded
+    @archive_write
+    def archive_rename(self, rom_identity_id, new_name):
+        identity = self.archive.get_identity(str(rom_identity_id))
+        if not identity:
+            return err("게임을 찾을 수 없습니다.")
+        name = str(new_name or "").strip()
+        if (not name or name in (".", "..") or name[-1:] in (".", " ")
+                or any(ord(c) < 32 or c in '<>:"/\\|?*' for c in name)
+                or name.split(".")[0].upper() in {"CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1,10)], *[f"LPT{i}" for i in range(1,10)]}):
+            return err("Windows에서 사용할 수 없는 파일명입니다.")
+        old = identity["filename"]
+        if Path(name).suffix.lower() != Path(old).suffix.lower():
+            return err("ROM 확장자는 유지해주세요.")
+        if name.casefold() == old.casefold() or self.archive.find_rom_identity(identity["system"], name):
+            return err("같은 파일명의 게임이 이미 있습니다.")
+        ownership = self._archive_rom_ownership(str(rom_identity_id))
+        if ownership["linkedCount"]:
+            return err("외부 원본 ROM은 이름을 변경할 수 없습니다.")
+        tx = current_transaction()
+        for item in ownership["items"]:
+            source = Path(item["path"])
+            if source.is_file():
+                destination = source.with_name(name)
+                tx.rename(source, destination)
+                self.archive._conn.execute("UPDATE archive_rom_sources SET abs_path=? WHERE rom_identity_id=? AND abs_path=?",
+                    (str(destination), str(rom_identity_id), str(source)))
+        from app.store.archive import rom_key_of
+        self.archive._conn.execute("UPDATE rom_identities SET filename=?,filename_norm=?,rom_key=? WHERE rom_identity_id=?",
+            (name, normalize_title(Path(name).stem), rom_key_of(name), str(rom_identity_id)))
+        cfg = self._archive_config()
+        adapter = get_adapter(cfg["frontend"])
+        layout = adapter.layout(archive_projection.collection_for(cfg), identity["system"])
+        adapter.remove_entries(layout, [old])
+        projected = self._project_archive({}, [str(rom_identity_id)])
+        if (projected or {}).get("error"):
+            raise ValueError(projected["error"])
+        return ok({"filename": name, "romIdentityId": str(rom_identity_id)})
 
     @guarded
     @archive_write
@@ -4531,7 +4835,7 @@ class Api:
             for path in media_paths:
                 if _path_within(path, archive_root) and path.is_file():
                     try:
-                        path.unlink()
+                        archive_delete_file(path)
                     except OSError as exc:
                         failures.append({"romIdentityId": rid, "reason": str(exc)})
             for record_id in record_ids:
@@ -4539,10 +4843,12 @@ class Api:
                 if not _path_within(folder, archive_root) or not folder.is_dir():
                     continue
                 try:
-                    for child in folder.iterdir():
-                        if child.is_file():
-                            child.unlink()
-                    folder.rmdir()
+                    for child in list(folder.iterdir()):
+                        if child.is_file() and not child.name.endswith((".rms-backup", ".rms-redo", ".rms-part")):
+                            archive_delete_file(child)
+                    # Recovery sidecars remain here until history is discarded.
+                    if not any(folder.iterdir()):
+                        folder.rmdir()
                 except OSError as exc:
                     failures.append({"romIdentityId": rid, "reason": str(exc)})
         return ok({"deleted": deleted, "failures": failures})
@@ -4695,7 +5001,7 @@ class Api:
                 try:
                     target = Path(path)
                     if target.is_file():
-                        target.unlink()
+                        archive_delete_file(target)
                         deleted_files += 1
                     elif target.exists():
                         failures.append({"romIdentityId": rid, "path": path,

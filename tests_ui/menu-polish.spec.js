@@ -47,14 +47,15 @@ test.describe("System 우클릭 메뉴", () => {
     await item.click();
     await expect.poll(() => calls.length).toBe(1);
     expect(calls[0][2]).toEqual({ snes: "ps2" });
-    expect(calls[0][5]).toBe(true);
+    expect(calls[0][5]).toBe(false);
+    expect(calls[0][6]).toBe(true);
   });
 
-  test("대상 System에 같은 게임이 있으면 신규 복사를 막는다", async ({ page }) => {
+  test("같은 게임도 붙여넣기를 허용하고 충돌 미리보기로 처리한다", async ({ page }) => {
     await page.locator(".lrow", { hasText: "Final Fantasy X" }).click();
     await page.keyboard.press("Control+c");
     await rightClickSystem(page, "PS2");
-    await expect(menuItem(page, "여기에 붙여넣기 (1개)")).toBeDisabled();
+    await expect(menuItem(page, "여기에 붙여넣기 (1개)")).toBeEnabled();
   });
 
   test("여러 게임을 복사하면 hover 설명에 대상 목록을 보여준다", async ({ page }) => {

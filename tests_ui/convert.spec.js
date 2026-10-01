@@ -90,16 +90,14 @@ test("미리보기 단계에서는 아직 아무것도 하지 않는다", async 
   await openConvertPreview(page);
   await modalButton(page, "취소").click();
   await expect(page.locator(".modal-title")).toHaveCount(0);
-  // Plan은 그대로다 - 툴바의 Apply가 여전히 비활성.
-  await expect(page.locator("#filter-bar .plan-actions .seg-btn", { hasText: "Apply" })).toBeDisabled();
+  await expect(page.locator("#filter-bar .plan-actions")).toHaveCount(0);
 });
 
-test("Plan에 올리면 대상 Collection으로 데려가고 Apply가 남았음을 알린다", async ({ page }) => {
+test("변환하기는 독립 미리보기로 진행하고 Plan 버튼을 만들지 않는다", async ({ page }) => {
   await openConvertPreview(page);
-  await modalButton(page, "Plan에 올리기").click();
+  await modalButton(page, "변환하기").click();
 
-  await expect(page.locator("#toast")).toContainText("Plan에 올렸습니다");
-  await expect(page.locator("#toast")).toContainText("Apply");
+  await expect(page.locator("#filter-bar .plan-actions")).toHaveCount(0);
   // 변환 결과가 올라간 곳으로 이동해야 사용자가 다음 행동을 할 수 있다.
   await expect(page.locator(".ctab.active")).toContainText("Android ES-DE");
 });

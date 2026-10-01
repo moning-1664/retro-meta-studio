@@ -92,7 +92,8 @@ def prepare(store, config, source_items, mode, *, target_id=None, target_system=
             continue
         state = state_of(store, identity)
         existing = state["row"] if state else None
-        out, reason = transfer.decide(item, existing, mode, force_media=mode == transfer.MODE_REPLACE)
+        out, reason = transfer.decide(item, existing, mode, allow_rom_replace=mode == transfer.MODE_REPLACE,
+                                     force_media=mode == transfer.MODE_REPLACE)
         if out is None:
             skipped.append({"filename": filename, "reason": reason})
             continue

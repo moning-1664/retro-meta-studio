@@ -97,7 +97,7 @@ test.describe("앱을 다시 켤 때", () => {
 });
 
 test.describe("Collection 기본 이름", () => {
-  test("이름을 안 적으면 선택한 Frontend 이름이 된다", async ({ page }) => {
+  test("이름을 안 적으면 감지된 저장 형식 이름이 된다", async ({ page }) => {
     await openApp(page);
     await page.evaluate(() => {
       window.__created = [];
@@ -105,7 +105,7 @@ test.describe("Collection 기본 이름", () => {
       window.api.createCollection = (...args) => { window.__created.push(args); return original(...args); };
     });
     await page.locator(".ctab-add").click();
-    await expect(page.locator(".add-name-hint")).toContainText("ES-DE");
+    await expect(page.locator(".add-name-hint")).toContainText("저장 형식");
     await page.locator("#add-frontend").selectOption("pegasus");
     await expect(page.locator(".add-name-hint")).toContainText("Pegasus");
     // 이름 칸은 비워 둔 채 폴더만 고른다(목업의 "찾아보기"는 경로를 채워 준다).
@@ -113,8 +113,8 @@ test.describe("Collection 기본 이름", () => {
     await page.locator(".modal-actions .btn", { hasText: "Add" }).click();
     await expect.poll(() => page.evaluate(() => window.__created.length)).toBe(1);
     const [name, frontend] = await page.evaluate(() => window.__created[0]);
-    expect(frontend).toBe("pegasus");
-    expect(name).not.toBe("Roms");
-    expect(name).toMatch(/pegasus/i);
+    // The selected mock folder contains ES-DE metadata; detection takes precedence.
+    expect(frontend).toBe("es-de");
+    expect(name).toBe("ES-DE");
   });
 });

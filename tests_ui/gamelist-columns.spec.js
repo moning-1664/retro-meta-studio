@@ -143,11 +143,10 @@ test.describe("즐겨찾기", () => {
 });
 
 test.describe("툴바", () => {
-  test("Plan 조작이 목록 위에 있다", async ({ page }) => {
+  test("대기 Plan Apply/Cancel 조작은 목록에서 제거됐다", async ({ page }) => {
     // 하단 상태바에 있으면 고른 항목과 멀어 보인다. Apply/Cancel은 한 그룹이다
     // (Auto Plan 토글은 실사용 시나리오가 확인되기 전까지 화면에서 뺐다).
-    await expect(page.locator("#filter-bar .plan-actions .seg-btn", { hasText: "Apply" })).toBeVisible();
-    await expect(page.locator("#filter-bar .plan-actions .seg-btn", { hasText: "Cancel" })).toBeVisible();
+    await expect(page.locator("#filter-bar .plan-actions")).toHaveCount(0);
   });
 
   test("목록/카드 전환이 있다", async ({ page }) => {

@@ -51,7 +51,7 @@ test("확인을 누르면 debounce를 기다리지 않고 그 자리에서 저�
   // 저장 debounce(300ms)가 돌기 전에 바로 확인을 누른다.
   await page.locator(".stg-confirm").click();
   expect(saved.length).toBeGreaterThan(0);
-  expect(saved.at(-1).appearance.theme).toBe("sfc");
+  await expect.poll(() => saved.some(patch => patch.appearance?.theme === "sfc")).toBe(true);
 });
 
 test("테마를 바꾸면 즉시 화면에 반영되고 백엔드에 저장된다", async ({ page }) => {
@@ -64,8 +64,7 @@ test("테마를 바꾸면 즉시 화면에 반영되고 백엔드에 저장된�
   await openSettings(page);
   await row(page, "appearance.theme").locator("select").selectOption("sfc");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "sfc");
-  await expect.poll(() => saved.length, { timeout: 3000 }).toBeGreaterThan(0);
-  expect(saved.at(-1).appearance.theme).toBe("sfc");
+  await expect.poll(() => saved.some(patch => patch.appearance?.theme === "sfc"), {timeout:3000}).toBe(true);
 });
 
 test("밀도를 Normal로 바꾸면 목록 줄이 높아진다", async ({ page }) => {

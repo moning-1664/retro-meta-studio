@@ -19,8 +19,8 @@ test.beforeEach(async ({ page }) => {
   await page.exposeFunction("__ingest", (scope) => { page.__scopes.push(scope); });
   page.__scopes = [];
   await page.evaluate(() => {
-    const original = window.api.planArchiveIngest;
-    window.api.planArchiveIngest = (id, scope) => {
+    const original = window.api.startArchiveIngest;
+    window.api.startArchiveIngest = (id, scope) => {
       window.__ingest(scope);
       return original(id, scope);
     };
@@ -73,7 +73,7 @@ test.describe("Archive로 보내기 아이콘", () => {
   });
 });
 
-test("Plan 적용 중에는 Archive 수집 진행 상황이 보인다", async ({ page }) => {
+test("Archive 수집은 즉시 job 진행 상황을 조회한다", async ({ page }) => {
   let sawProgress = false;
   await page.exposeFunction("__sawProgress", () => { sawProgress = true; });
   await page.evaluate(() => {
@@ -81,8 +81,5 @@ test("Plan 적용 중에는 Archive 수집 진행 상황이 보인다", async ({
     window.api.jobProgress = (jobId) => { window.__sawProgress(); return original(jobId); };
   });
   await ingestViaMenu(page);
-  await page.locator(".modal-actions .btn", { hasText: "닫기" }).click();
-  await page.locator(".plan-actions .seg-btn", { hasText: "Apply" }).click();
-  await page.locator(".modal-actions .btn.primary", { hasText: "적용" }).click();
   await expect.poll(() => sawProgress).toBe(true);
 });

@@ -504,6 +504,9 @@
     },
     paste_preview_media: () => ok(null),
     paste_undo: () => ok({ jobId: null }),
+    paste_redo: () => ok({ jobId: null }),
+    operation_history: () => ok({ items: [], recoveryError: null }),
+    discard_operation_history: () => ok({ discarded: 0 }),
     clipboard_systems: () => ok({
       systems: [{ system: "ps2", count: 2, exists: true }],
       targetSystems: ["gba", "ps2", "snes"],
@@ -1164,6 +1167,9 @@
     pasteExecute: (operationId, decisions, acknowledge) =>
       call("paste_execute", operationId, decisions || {}, !!acknowledge),
     pasteUndo: (id) => call("paste_undo", id),
+    pasteRedo: (id) => call("paste_redo", id),
+    operationHistory: (id) => call("operation_history", id),
+    discardOperationHistory: (id, ids, acknowledged) => call("discard_operation_history", id, ids, acknowledged),
     pastePreviewMedia: (operationId, key, mediaType) =>
       call("paste_preview_media", operationId, key, mediaType),
     clipboardSystems: (id) => call("clipboard_systems", id),

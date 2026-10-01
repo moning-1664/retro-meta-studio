@@ -57,6 +57,8 @@ class PasteJournal:
         os.replace(pending, path)
 
     def begin(self, operation_id, collection_id, collection, plan, *, extra_paths=()):
+        if self.pending(collection_id):
+            raise ValueError("중단된 파일 작업 복구가 남아 있습니다. 앱을 다시 열어 복구한 뒤 시도하세요.")
         directory = self.root / operation_id
         directory.mkdir(parents=True, exist_ok=False)
         adapter = get_adapter(collection.frontend)
@@ -84,6 +86,7 @@ class PasteJournal:
                 "backup": str(destination) + suffix,
             }
         data = {"id": operation_id, "collectionId": collection_id,
+                "action": plan.entries[0].op if plan.entries else "paste",
                 "systems": sorted({entry.system for entry in plan.entries}),
                 "createdAt": time.time(), "status": "running", "files": files,
                 "indexes": indexes,
@@ -98,6 +101,7 @@ class PasteJournal:
         data = json.loads((directory / "operation.json").read_text(encoding="utf-8"))
         data["renames"] = [{"source": str(source), "destination": str(destination),
                             "before": _state(source)} for source, destination in pairs]
+        data["action"] = "rename"
         self._save(directory, data)
 
     def include_source(self, operation_id, collection, plan, paths):
@@ -120,6 +124,7 @@ class PasteJournal:
                                        "backup": path + f".{operation_id}.rms-backup"}
                 data["preFiles"][path] = _state(path)
         data["relatedCollections"] = {collection.id: sorted({e.system for e in plan.entries})}
+        data["action"] = "move"
         self._save(directory, data)
 
     def commit(self, operation_id):
@@ -130,10 +135,22 @@ class PasteJournal:
         data["replaced"] = [path for path, details in data["files"].items()
                             if Path(details["backup"]).exists()]
         data["status"] = "committed"
+        data["redoReady"] = False
+        for index, path in enumerate(data["indexes"]):
+            if Path(path).is_file():
+                saved = directory / f"index-after-{index}.bak"
+                shutil.copy2(path, saved)
+                data["indexes"][path]["afterCopy"] = str(saved)
         self._save(directory, data)
         log.info("File operation committed operation=%s backups=%d", operation_id, len(data["replaced"]))
+        for record in self.root.glob("*/operation.json"):
+            previous = json.loads(record.read_text(encoding="utf-8"))
+            if previous.get("collectionId") == data["collectionId"] and previous.get("status") == "undone":
+                previous["redoReady"] = False
+                self._save(record.parent, previous)
 
     def _restore(self, directory, data):
+        keep_redo = data["status"] == "committed"
         for item in reversed(data.get("renames", [])):
             source, destination = Path(item["source"]), Path(item["destination"])
             if destination.exists() and not source.exists():
@@ -144,6 +161,11 @@ class PasteJournal:
                 raise ValueError(f"원래 이름의 파일이 다시 생겨 복원할 수 없습니다: {source}")
         for path, details in data["files"].items():
             destination, backup = Path(path), Path(details["backup"])
+            if keep_redo and not data.get("renames") and destination.is_file() and (backup.exists() or not details["existed"]):
+                redo = Path(str(backup) + ".rms-redo")
+                details["redo"] = str(redo)
+                self._save(directory, data)
+                os.replace(destination, redo)
             staging = Path(str(backup) + ".rms-part")
             if staging.exists():
                 staging.unlink()
@@ -162,6 +184,10 @@ class PasteJournal:
             elif destination.exists():
                 destination.unlink()
         data["status"] = "recovered" if data["status"] == "running" else "undone"
+        data["redoReady"] = keep_redo
+        data["undoneAt"] = time.time()
+        data["undoFiles"] = {path: _state(path) for path in data["files"]}
+        data["undoIndexes"] = {path: _state(path) for path in data["indexes"]}
         self._save(directory, data)
         log.info("File operation restored operation=%s status=%s", data["id"], data["status"])
         self._refresh_predecessor(data)
@@ -206,6 +232,14 @@ class PasteJournal:
     def details(self, operation_id):
         return json.loads((self.root / operation_id / "operation.json").read_text(encoding="utf-8"))
 
+    def pending(self, collection_id):
+        rows = []
+        for path in self.root.glob("*/operation.json"):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if (data.get("collectionId") == collection_id or collection_id in data.get("relatedCollections", {})) and data.get("status") in {"running", "redoing"}:
+                rows.append(data)
+        return rows
+
     def latest_committed(self, collection_id):
         matches = []
         for path in self.root.glob("*/operation.json"):
@@ -217,12 +251,65 @@ class PasteJournal:
                 matches.append((data.get("createdAt", 0), data["id"]))
         return max(matches)[1] if matches else None
 
+    def latest_redo(self, collection_id):
+        rows = []
+        for path in self.root.glob("*/operation.json"):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data.get("collectionId") == collection_id and data.get("status") == "undone" and data.get("redoReady"):
+                rows.append((data.get("undoneAt", 0), data["id"]))
+        return max(rows)[1] if rows else None
+
+    def redo(self, operation_id):
+        directory = self.root / operation_id
+        data = self.details(operation_id)
+        if data["status"] != "undone" or not data.get("redoReady"):
+            raise ValueError("다시 실행할 작업이 없습니다.")
+        for states in (data["undoFiles"], data["undoIndexes"]):
+            if any(_state(path) != saved for path, saved in states.items()):
+                raise ValueError("실행 취소 후 파일이 바뀌어 다시 실행할 수 없습니다.")
+        for path, item in data["files"].items():
+            if item.get("redo") and _state(item["redo"]) != data["postFiles"][path]:
+                raise ValueError("다시 실행할 파일 백업이 바뀌었습니다.")
+        data["status"] = "redoing"
+        self._save(directory, data)
+        if data.get("renames"):
+            for pair in data["renames"]:
+                os.rename(pair["source"], pair["destination"])
+        else:
+            for path, item in data["files"].items():
+                if not item.get("redo") and data["postFiles"].get(path) == data["undoFiles"].get(path):
+                    continue
+                destination = Path(path)
+                if destination.exists():
+                    os.replace(destination, item["backup"])
+                if item.get("redo"):
+                    os.replace(item["redo"], destination)
+        for path, item in data["indexes"].items():
+            if item.get("afterCopy"):
+                shutil.copy2(item["afterCopy"], path)
+            else:
+                Path(path).unlink(missing_ok=True)
+        data["postFiles"] = {path: _state(path) for path in data["files"]}
+        data["postIndexes"] = {path: _state(path) for path in data["indexes"]}
+        data["status"] = "committed"
+        data["redoReady"] = False
+        self._save(directory, data)
+        return data
+
     def recover_interrupted(self):
         recovered = []
         for path in self.root.glob("*/operation.json"):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-                if data.get("status") == "running":
+                if data.get("status") == "redoing":
+                    for filename in data["files"]:
+                        current = _state(filename)
+                        allowed = (data.get("undoFiles", {}).get(filename), data.get("postFiles", {}).get(filename), None)
+                        if current not in allowed:
+                            raise ValueError("중단된 Redo 파일이 외부에서 바뀌었습니다.")
+                    self._restore(path.parent, data)
+                    recovered.append(data["id"])
+                elif data.get("status") == "running":
                     self._restore(path.parent, data)
                     recovered.append(data["id"])
             except (OSError, ValueError, KeyError, json.JSONDecodeError):

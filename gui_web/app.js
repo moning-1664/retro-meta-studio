@@ -436,11 +436,8 @@
     matchCounts: {},
     focused: null,       // 선택된 romUid (상세 패널 대상)
     detailState: null,
-    // Plan은 세션 한정이다(결정 D2). 백엔드 메모리에만 있고 여기서는 요약만 들고 있다.
+    // 작업 잠금·Undo/Redo 상태. 기존 브릿지 호환을 위해 필드명은 유지한다.
     plan: null,
-    // Auto Plan이 켜져 있으면 복사/삭제/이동이 Plan으로 들어간다(스펙 §26).
-    // 끄면 같은 동작이 확인 후 즉시 실행된다.
-    autoPlan: true,
     // Compare Mode(§54-59). compare가 있으면 Gamelist가 비교 목록으로 바뀐다.
     // compareBase는 "기준으로 지정"만 해두고 아직 상대를 안 고른 중간 상태다.
     // 이 Collection의 Frontend가 제공하는 고유 기능(§22).
@@ -448,8 +445,6 @@
     compare: null,
     compareBase: null,
     compareFilter: "all",
-    //: 이미 Plan에 올린 행(`key|direction`) - 같은 것을 두 번 누르지 않게 화면에만 표시한다.
-    comparePlanned: new Set(),
     //: 좌/우 Detail이 함께 쓰는 탭(Metadata/Media/ROM) - 한쪽을 바꾸면 반대쪽도 바뀐다.
     compareTab: "metadata",
     //: Compare 미디어 탭에서 체크한 미디어 종류(소문자 키). 있으면 상단 < >는 이 종류만 보낸다.
@@ -2217,7 +2212,7 @@
     // 밑에 미리 보여준다(실사용 피드백: "드래그해도 그 자리에 그대로 있어서
     // 옮겨진 게 안 보인다"). 실제 파일은 아직 그대로지만, 어느 그룹에
     // 나타나는지는 사용자의 마지막 결정(Plan)을 따른다.
-    const pendingMoves = (S.plan && S.plan.pendingMoves) || {};
+    const pendingMoves = {};
     const displayStorageId = (sys) => pendingMoves[sys.system] || sys.storageId;
 
     // 빈 System 숨기기(Settings와 SYSTEMS 제목 옆 버튼이 같은 값을 바꾼다). 지금 보고 있는
@@ -2428,7 +2423,7 @@
 
   async function moveSystemToStorage(system, storageId) {
     if (blockedInCompare("System을 이동")) return;
-    // 실제 파일은 아직 움직이지 않는다. Plan에 올려두고 확정할 때 옮긴다(스펙 §10, §28).
+    // 독립 미리보기에서 충돌을 결정한 뒤 바로 실행한다.
     await runImmediateAction("storage", { system, storageId });
   }
 
@@ -4333,16 +4328,11 @@
    * 가상 스크롤 목록에 높이가 변하는 행을 만들면 예전에 행 레이아웃이 깨졌던 문제가 되돌아온다)
    * 그것을 누르면 메타데이터만 보낸다. 실제 파일은 Plan에서 Apply해야 바뀐다. */
   function compareMark(row) {
-    const planned = [...S.comparePlanned].some((k) => k.startsWith(`${row.key}|`));
-    if (planned) {
-      return h("div", { class: "cmp-op planned", title: "Plan에 올렸습니다 - Apply하면 반영됩니다" },
-               [icon("check", IC.sm)]);
-    }
     if (row.status === "only_a" || row.status === "only_b") {
       const toRight = row.status === "only_a";
       const cell = h("button", {
         class: "cmp-op one-side",
-        title: toRight ? "오른쪽으로 ROM+메타데이터를 보냅니다(Plan)" : "왼쪽으로 ROM+메타데이터를 보냅니다(Plan)",
+        title: toRight ? "오른쪽으로 ROM+메타데이터를 보냅니다" : "왼쪽으로 ROM+메타데이터를 보냅니다",
       }, [toRight ? ">" : "<"]);
       cell.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -5053,10 +5043,10 @@
           disabled: !single || !!launchBlockReason(row), title: single ? launchBlockReason(row) : null,
           onSelect: () => launchGame(row) },
         "separator",
-        ...(!isArchive() ? [{ label: "이름 변경", icon: "edit", hint: "F2",
-          disabled: locked || !single, onSelect: () => renameSelectedGame(row) }] : []),
-        ...(!isArchive() ? [{label: "잘라내기", icon: "scissors", hint: "Ctrl+X",
-          disabled: locked, onSelect: cutSelectedRows}] : []),
+        { label: "이름 변경", icon: "edit", hint: "F2",
+          disabled: locked || !single, onSelect: () => renameSelectedGame(row) },
+        {label: "잘라내기", icon: "scissors", hint: "Ctrl+X",
+          disabled: locked, onSelect: cutSelectedRows},
         { label: "게임 복사", icon: "copy", hint: "Ctrl+C", disabled: locked, onSelect: copySelectedRows },
         { label: "붙여넣기", icon: "upload", hint: "Ctrl+V", disabled: locked,
           title: "같은 System과 ROM 파일명에 붙여넣습니다. 이 행을 선택했다면 이 게임에 붙여넣습니다.",
@@ -5067,9 +5057,12 @@
         { label: "교체하기", icon: "upload", disabled: locked,
           title: "메타데이터를 복사한 게임의 값으로 교체합니다.",
           onSelect: () => pasteClipboard(single ? row : null, null, null, "replace") },
-        ...(!isArchive() && S.lastPasteUndoId ? [{ label: "실행 취소",
+        ...(S.lastPasteUndoId ? [{ label: "실행 취소",
           icon: "cornerUpLeft", hint: "Ctrl+Z", disabled: locked,
           onSelect: undoLastPaste }] : []),
+        ...(S.plan?.redoOperationId ? [{label: "다시 실행", icon: "cornerUpRight", hint: "Ctrl+Y",
+          disabled: locked, onSelect: redoLastOperation}] : []),
+        {label: "작업 기록…", icon: "history", disabled: locked, onSelect: openOperationHistory},
         "separator",
         { label: single ? "게임 정보 스크랩…" : `게임 정보 스크랩… (${formatCount(count)}개)`,
           icon: "sparkles", disabled: locked,
@@ -7924,9 +7917,9 @@
   // Plan
   // ------------------------------------------------------------------
   async function refreshPlan() {
-    if (!S.activeId || isArchive()) { S.plan = null; renderStatusBar(); return; }
+    if (!S.activeId) { S.plan = null; S.lastPasteUndoId = null; renderStatusBar(); return; }
     const collectionId = S.activeId;
-    const r = await api.operationState(collectionId);
+    const r = await api.operationState(isArchive() ? "__archive__" : collectionId);
     // 늦게 온 이전 Collection의 Plan은 버린다. 이게 없으면 A -> B로 빠르게 옮겼을 때
     // A의 응답이 나중에 도착해 S.plan이 A의 것이 되고, 툴바는 A의 건수를 보여주면서
     // Apply는 B에 걸린다 - 사용자가 보는 숫자와 눌렀을 때 벌어지는 일이 달라진다.
@@ -7954,17 +7947,18 @@
   // media만 채워진다(파일이 없는 조각만 옮겨진다는 뜻과 같다). 그래서 여기서는
   // 새 로직을 만들지 않고 Apply 흐름과 같은 충돌 다이얼로그를 그대로 쓴다.
   function renameSelectedGame(row) {
-    if (!row || isArchive() || isCompare()) return;
+    if (!row || isCompare()) return;
     const input = h("input", { class: "input", value: row.file });
     const apply = async () => {
-      const started = await api.renameGame(S.activeId, row.romUid, input.value);
+      const started = await api.renameGame(isArchive() ? "__archive__" : S.activeId, row.romUid, input.value);
       if (!started.ok) { showToast(started.error, "error"); return; }
       closeModal();
       const result = await pollJob(started.data.jobId, "이름 변경 중");
       if (!result.ok) { showToast(result.error, "error"); return; }
       S.lastPasteUndoId = result.data.undoOperationId;
       resetList(); await reloadList(); await refreshPlan();
-      const rows = await api.listRows(S.activeId, {systems: [row.system], search: result.data.filename, limit: 100});
+      const query = {systems: [row.system], search: result.data.filename, limit: 100};
+      const rows = isArchive() ? await api.archiveRows(query) : await api.listRows(S.activeId, query);
       const renamed = rows.ok && rows.data.rows.find(item => item.file === result.data.filename);
       if (renamed) { S.selected = new Set([renamed.romUid]); await openDetail(renamed); }
       showToast("이름을 변경했습니다.", "success");
@@ -7978,8 +7972,8 @@
   }
 
   async function cutSelectedRows() {
-    if (isArchive() || isCompare() || !S.selected.size) return;
-    const result = await api.cutSelection(S.activeId, [...S.selected]);
+    if (isCompare() || !S.selected.size) return;
+    const result = await api.cutSelection(isArchive() ? "__archive__" : S.activeId, [...S.selected]);
     if (!result.ok) { showToast(result.error, "error"); return; }
     showToast(`${formatCount(result.data.count)}개 잘라냈습니다. 대상 System에서 붙여넣으세요.`);
   }
@@ -8143,9 +8137,11 @@
   }
 
   async function undoLastPaste() {
-    if (isArchive() || !S.activeId) return;
+    if (!S.activeId) return;
     const collectionId = S.activeId;
-    const started = await api.pasteUndo(collectionId);
+    const focused = S.focused == null ? null : rowByUid(S.focused);
+    const focusedKey = focused ? {system: focused.system, file: focused.file} : null;
+    const started = await api.pasteUndo(isArchive() ? "__archive__" : collectionId);
     if (!started.ok) { showToast(started.error, "warning"); return; }
     const result = await pollJob(started.data.jobId, "작업 되돌리는 중");
     if (!result.ok) { showToast(result.error, "error"); return; }
@@ -8153,9 +8149,69 @@
     if (S.activeId === collectionId) {
       resetList();
       await reloadList();
+      if (focusedKey) {
+        const query = {systems: [focusedKey.system], search: focusedKey.file, limit: 100, offset: 0};
+        const found = collectionId === ARCHIVE_ID
+          ? await api.archiveRows(query) : await api.listRows(collectionId, query);
+        const row = found.ok && (found.data.rows || []).find((item) =>
+          item.system === focusedKey.system && item.file === focusedKey.file);
+        if (row && S.activeId === collectionId) {
+          S.selected = new Set([row.romUid]);
+          S.selectAnchor = row.romUid;
+          await openDetail(row);
+        }
+      }
     }
     showToast("직전 작업을 되돌렸습니다.", "success");
     await refreshPlan();
+  }
+
+  async function redoLastOperation() {
+    const activeId = S.activeId;
+    const focused = S.focused == null ? null : rowByUid(S.focused);
+    const key = focused ? {system: focused.system, file: focused.file} : null;
+    const id = isArchive() ? "__archive__" : S.activeId;
+    const started = await api.pasteRedo(id);
+    if (!started.ok) { showToast(started.error, "warning"); return; }
+    const result = await pollJob(started.data.jobId, "다시 실행 중");
+    if (!result.ok) { showToast(result.error, "error"); return; }
+    if (S.activeId !== activeId) return;
+    resetList(); await reloadList(); await refreshPlan();
+    if (key) {
+      const query = {systems:[key.system], search:key.file, limit:100, offset:0};
+      const found = id === "__archive__" ? await api.archiveRows(query) : await api.listRows(id, query);
+      const row = found.ok && (found.data.rows || []).find(item => item.system === key.system && item.file === key.file);
+      if (row && S.activeId === activeId) {
+        S.selected = new Set([row.romUid]); S.selectAnchor = row.romUid;
+        await openDetail(row);
+      }
+    }
+    showToast("작업을 다시 실행했습니다.", "success");
+  }
+
+  async function openOperationHistory() {
+    const id = isArchive() ? "__archive__" : S.activeId;
+    const result = await api.operationHistory(id);
+    if (!result.ok) { showToast(result.error, "error"); return; }
+    const rows = result.data.items || [];
+    const labels = {committed: "완료", undone: "실행 취소", recovered: "복구됨", running: "복구 필요", restoring: "복구 필요", redoing: "복구 필요"};
+    const actions = {paste: "붙여넣기", add: "붙여넣기", delete: "삭제", rename: "이름 변경", move: "이동", metadata_edit: "메타데이터 편집", "file-operation": "파일 작업", archive_edit: "메타데이터 편집", archive_rename: "이름 변경", archive_rom_delete: "ROM 삭제", archive_delete: "기록 삭제"};
+    const body = h("div", {class: "modal-body"});
+    if (result.data.recoveryError) body.appendChild(h("div", {class: "field-help"}, [result.data.recoveryError]));
+    body.appendChild(h("div", {class: "field-help"}, [`${rows.length}개 · 백업 ${formatBytes(rows.reduce((sum, row) => sum + row.bytes, 0))}`]));
+    for (const row of rows) {
+      body.appendChild(h("div", {class: "field-row"}, [
+        h("span", {class: "field-help"}, [`${new Date(row.createdAt * 1000).toLocaleString()} · ${actions[row.action] || "Archive 편집"} · ${labels[row.status] || row.status} · ${formatBytes(row.bytes)}`]),
+        h("button", {class: "btn", disabled: !row.canDiscard, onClick: () => {
+          showConfirm("백업 삭제", "이 작업의 실행 취소·다시 실행이 불가능해집니다.", true, async () => {
+            const removed = await api.discardOperationHistory(id, [row.id], true);
+            if (!removed.ok) { showToast(removed.error, "error"); return; }
+            closeModal(); await refreshPlan(); await openOperationHistory();
+          });
+        }}, ["백업 삭제"]),
+      ]));
+    }
+    showModal("작업 기록", body, [h("button", {class: "btn", onClick: closeModal}, ["닫기"])]);
   }
 
   function openPasteConflictDialog(preview) {
@@ -8485,10 +8541,7 @@
 
 
 
-  // Auto Plan을 껐다 켰다 하는 UI는 없앴다(레이아웃 재검토 결론) - 실사용
-  // 시나리오가 확인되기 전까지는 화면에서 감춘다. `S.autoPlan`은 기본 ON으로
-  // 고정이고, 이 값을 읽는 곳들(§ moveSystemToStorage, deleteSelection 등)은
-  // 그대로 둔다 - 언젠가 토글을 되살릴 때 그 로직까지 다시 짤 필요는 없다.
+  // 파일 변경은 독립 미리보기와 작업 기록을 사용한다.
 
   // ------------------------------------------------------------------
   // Archive (스펙 §37-44)
@@ -8953,6 +9006,9 @@
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z"
           && !e.target.closest("input,textarea,[contenteditable=true]")) {
         e.preventDefault(); undoLastPaste();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault(); redoLastOperation();
       }
     });
   }

@@ -99,9 +99,14 @@ def release_orphan(root, observed_token, acknowledged=False):
 def archive_write(method):
     @wraps(method)
     def wrapped(self, *args, **kwargs):
+        if getattr(self, "_archive_recovery_error", None):
+            raise ValueError("중단된 Archive 복구가 필요합니다: " + self._archive_recovery_error)
         root = self._archive_config().get("archiveDir")
         if not root:
             return method(self, *args, **kwargs)
         with writing(root):
+            from app.archive.actions import ACTIONS, execute
+            if method.__name__ in ACTIONS:
+                return execute(self, method, args, kwargs)
             return method(self, *args, **kwargs)
     return wrapped

@@ -26,7 +26,8 @@ from utils import normalize_title
 #: 스캔 결과 구조가 바뀌면 올린다. 캐시에 기록된 값과 다르면 전부 다시 스캔한다.
 #: 2 - 비ROM 확장자 목록을 넓혔다(adapters.base.NON_ROM_EXTENSIONS). 예전 캐시에 남은
 #:     세이브/설정 파일 행을 지우려면 한 번 전부 다시 스캔해야 한다.
-SCAN_VERSION = 2
+#: 3 - 복구 sidecar를 ROM으로 읽은 기존 캐시를 다시 색인한다.
+SCAN_VERSION = 3
 
 
 def _sig_covers(cached_types, wanted_types) -> bool:

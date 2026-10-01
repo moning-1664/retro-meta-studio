@@ -84,9 +84,9 @@ test.describe("Storage 이동은 System 우클릭 메뉴로", () => {
     const moved = [];
     await page.exposeFunction("__moved", (s, t) => moved.push([s, t]));
     await page.evaluate(() => {
-      const original = window.api.planStorageChange;
-      window.api.planStorageChange = (id, system, storageId) => {
-        window.__moved(system, storageId); return original(id, system, storageId);
+      const original = window.api.operationPreview;
+      window.api.operationPreview = (id, action, options) => {
+        window.__moved(options.system, options.storageId); return original(id, action, options);
       };
     });
 
@@ -109,9 +109,9 @@ test.describe("Storage 이동은 드래그로도 된다", () => {
     const moved = [];
     await page.exposeFunction("__moved", (s, t) => moved.push([s, t]));
     await page.evaluate(() => {
-      const original = window.api.planStorageChange;
-      window.api.planStorageChange = (id, system, storageId) => {
-        window.__moved(system, storageId); return original(id, system, storageId);
+      const original = window.api.operationPreview;
+      window.api.operationPreview = (id, action, options) => {
+        window.__moved(options.system, options.storageId); return original(id, action, options);
       };
     });
 

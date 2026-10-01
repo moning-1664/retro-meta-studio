@@ -34,6 +34,37 @@ async function openArchive(page, conflicts = { rid1: 2 }) {
   await expect(page.locator(".lrow").first()).toBeVisible();
 }
 
+test("Archive Ctrl+Z uses Archive undo and refreshes its operation state", async ({ page }) => {
+  await openArchive(page);
+  await page.evaluate(() => {
+    window.__archiveUndoCalls = [];
+    window.api.operationState = async (id) => ({ok: true, data: {
+      undoOperationId: id === "__archive__" ? "archive-undo-op" : null,
+    }});
+    window.api.pasteUndo = async (id) => {
+      window.__archiveUndoCalls.push(id);
+      return {ok: true, data: {jobId: "archive-undo-job"}};
+    };
+    window.api.getJobProgress = async () => ({ok: true, data: {done: true, error: null,
+      current: 1, total: 1, result: {operationId: "archive-undo-op"}}});
+  });
+  await page.locator(".lrow").first().click();
+  await page.keyboard.press("Control+z");
+  await expect.poll(() => page.evaluate(() => window.__archiveUndoCalls)).toEqual(["__archive__"]);
+  await expect(page.locator(".lrow").first()).toBeVisible();
+});
+
+test("Archive Ctrl+Y dispatches Archive redo", async ({ page }) => {
+  await openArchive(page);
+  await page.evaluate(() => {
+    window.__redoCalls=[];
+    window.api.pasteRedo=async id => {window.__redoCalls.push(id);return {ok:true,data:{jobId:null}};};
+  });
+  await page.locator(".lrow").first().click();
+  await page.keyboard.press("Control+y");
+  await expect.poll(() => page.evaluate(() => window.__redoCalls)).toEqual(["__archive__"]);
+});
+
 test("Collection 목록에는 [n] 뱃지가 없다", async ({ page }) => {
   await openApp(page);
   await expect(page.locator(".match-badge")).toHaveCount(0);

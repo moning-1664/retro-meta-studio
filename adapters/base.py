@@ -47,6 +47,7 @@ NON_ROM_EXTENSIONS = frozenset({
     ".ini", ".cfg", ".conf", ".json", ".log", ".db", ".db3", ".sqlite", ".sqlite3",
     # 백업 / 임시 / 받는 중
     ".bak", ".tmp", ".temp", ".part", ".crdownload",
+    ".rms-backup", ".rms-redo", ".rms-part", ".restore",
     # 개발 / 스크립트 파일
     ".java", ".class", ".py", ".js",
 })

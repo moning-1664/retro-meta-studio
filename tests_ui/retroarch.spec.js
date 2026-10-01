@@ -46,10 +46,9 @@ test.describe("Settings > Emulator", () => {
 });
 
 test.describe("실행", () => {
-  test("검증 안 된 System(PS2)은 Detail 실행 버튼이 꺼져 있다", async ({ page }) => {
+  test("검증 안 된 System도 ROM이 있으면 실행 버튼을 제공한다", async ({ page }) => {
     await row(page, "FFX.iso").locator(".lc-file").click();
-    await expect(page.locator(".detail-launch")).toBeDisabled();
-    await expect(page.locator(".detail-launch")).toHaveAttribute("title", /검증되지 않았습니다/);
+    await expect(page.locator(".detail-launch")).toBeEnabled();
   });
 
   test("RetroArch 경로가 없으면 안내하고 Settings를 연다", async ({ page }) => {
@@ -94,12 +93,12 @@ test.describe("실행", () => {
     expect(s.gameCores["snes/SMW.sfc"]).toBeUndefined();
   });
 
-  test("실행할 수 없는 System은 ROM 탭에 이유만 보여준다", async ({ page }) => {
+  test("검증 안 된 System도 Core를 선택할 수 있고 경고를 남긴다", async ({ page }) => {
     await configure(page);
     await row(page, "FFX.iso").locator(".lc-file").click();
     await page.locator(".detail-tab", { hasText: "ROM" }).click();
     await expect(page.locator(".rom-core")).toContainText("검증되지 않았습니다");
-    await expect(page.locator(".rom-core .core-select")).toHaveCount(0);
+    await expect(page.locator(".rom-core .core-select")).toBeVisible();
   });
 
   test("행을 더블클릭하면 실행한다", async ({ page }) => {
@@ -111,11 +110,11 @@ test.describe("실행", () => {
     expect(await page.evaluate(() => window.__launched)).toEqual([3]);
   });
 
-  test("검증 안 된 System 행은 더블클릭해도 실행하지 않고 이유를 알린다", async ({ page }) => {
+  test("검증 안 된 System도 실행을 요청하고 설정 누락을 알린다", async ({ page }) => {
     await spyLaunch(page);
     await row(page, "FFX.iso").locator(".lc-file").dblclick();
-    await expect(page.locator(".toast-msg")).toContainText("검증되지 않았습니다");
-    expect(await page.evaluate(() => window.__launched)).toEqual([]);
+    await expect(page.locator(".toast-msg")).toContainText("RetroArch 경로를 지정");
+    expect(await page.evaluate(() => window.__launched)).toEqual([1]);
   });
 
   test("행 우클릭 메뉴에는 실행만 남기고 Core 선택은 제거했다", async ({ page }) => {
@@ -124,6 +123,6 @@ test.describe("실행", () => {
     await expect(page.locator(".ctx-menu .ctx-item", { hasText: "RetroArch Core 선택" })).toHaveCount(0);
     await page.keyboard.press("Escape");
     await row(page, "FFX.iso").click({ button: "right" });
-    await expect(page.locator(".ctx-menu .ctx-item", { hasText: "RetroArch로 실행" })).toBeDisabled();
+    await expect(page.locator(".ctx-menu .ctx-item", { hasText: "RetroArch로 실행" })).toBeEnabled();
   });
 });

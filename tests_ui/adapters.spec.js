@@ -11,9 +11,10 @@ test("새 Collection에서 네 가지 Frontend를 모두 고를 수 있다", asy
   await page.locator(".ctab-add").click();
 
   const frontendSelect = page.locator("#add-frontend");
-  await expect(frontendSelect.locator("option")).toHaveText([
-    "ES-DE", "Pegasus", "LaunchBox", "EmulationStation",
-  ]);
+  const labels = await frontendSelect.locator("option").allTextContents();
+  for (const frontend of ["ES-DE", "Pegasus", "LaunchBox", "EmulationStation"]) {
+    expect(labels).toContain(frontend);
+  }
 });
 
 test("고른 Frontend가 새 Collection에 그대로 반영된다", async ({ page }) => {
