@@ -39,7 +39,7 @@ from adapters import get_adapter
 from adapters.base import MediaFile
 from app import paths
 from app.model.collection import FRONTENDS, STORAGE_INTERNAL
-from app.model.constants import MEDIA_TYPES, VIDEO_MEDIA_TYPE, normalize_system
+from app.model.constants import MEDIA_TYPES, VIDEO_MEDIA_TYPE, normalize_system, metadata_compatible
 from app import dashboard
 from app.folder_detection import inspect_folder
 from app import collection_import
@@ -232,6 +232,8 @@ class Api:
         archive_path = (Path(cache_dir).parent / "archive.db") if cache_dir else paths.ARCHIVE_DB
         self._archive_path = Path(archive_path)
         self._archive_lifecycle_lock = threading.RLock()
+        self._scrape_apply_lock = threading.Lock()
+        self._scrape_apply_jobs = {}
         configured_archive = archive_projection.normalize_config(
             self.registry.get_setting("archive.config", {}))["archiveDir"]
         startup_cfg = archive_projection.normalize_config(self.registry.get_setting("archive.config", {}))
@@ -294,6 +296,13 @@ class Api:
         self._media_server.stop()
         if not self.jobs.shutdown(timeout=5.0):
             return
+        cache_root = self._scrape_cache_dir.resolve()
+        for temporary in cache_root.glob("*/*/*/*.part"):
+            try:
+                if temporary.resolve().is_relative_to(cache_root) and not temporary.is_symlink():
+                    temporary.unlink(missing_ok=True)
+            except OSError:
+                log.warning("Could not remove incomplete scrape download %s", temporary)
         self.workspace.close()
         self.archive.close()
         self.registry.close()
@@ -816,6 +825,17 @@ class Api:
 
     @guarded
     def start_apply_scrape_session(self, session_id):
+        with self._scrape_apply_lock:
+            current = self._scrape_apply_jobs.get(str(session_id))
+            job = self.jobs.get(current) if current else None
+            if job and not job.get("done"):
+                return ok({"jobId": current})
+            result = self._start_apply_scrape_session(session_id)
+            if result.get("ok"):
+                self._scrape_apply_jobs[str(session_id)] = result["data"]["jobId"]
+            return result
+
+    def _start_apply_scrape_session(self, session_id):
         session = self.scrape.sessions.get(str(session_id))
         log.info("Scraper apply requested session=%s target=%s selected=%d total=%d",
                  session_id, session["target"],
@@ -1799,13 +1819,14 @@ class Api:
                     buffer = io.BytesIO()
                     # WebP는 같은 화질에서 JPEG보다 작다. 브릿지로 넘어가는 base64
                     # 문자열이 그만큼 짧아지므로 카드가 많을수록 차이가 커진다.
-                    image.convert("RGB").save(buffer, format="WEBP", quality=82, method=4)
+                    image.convert("RGBA").save(buffer, format="WEBP", quality=82, method=4)
                     payload, mime = buffer.getvalue(), "image/webp"
             else:
                 payload = data
                 mime = {"png": "image/png", "webp": "image/webp"}.get(suffix.lstrip("."), "image/jpeg")
         except Exception:
             # 깨진 이미지 하나가 상세 패널 전체를 막으면 안 된다.
+            log.warning("Could not decode media image path=%s thumbnail=%s", path, max_size, exc_info=True)
             return None
         return f"data:{mime};base64,{base64.b64encode(payload).decode('ascii')}"
 
@@ -2493,13 +2514,13 @@ class Api:
                 target_system = str(explicit_target).partition("|")[0] if explicit_target else ""
                 fallback_system = (str(fallback_target).partition("|")[0]
                                    if fallback_target and len(items) == 1 else "")
-                if (mapped_system != source_system
-                        or target_system and target_system != source_system
-                        or fallback_system and fallback_system != source_system):
+                destinations = [value for value in (mapped_system, target_system, fallback_system) if value and value != source_system]
+                if destinations and (cut or any(not metadata_compatible(source_system, value) for value in destinations)):
                     return err("이 Collection에서는 다른 System으로 붙여넣을 수 없습니다. "
                                "다른 System으로 이동도 지원하지 않습니다.")
         if remap:
-            items = [{**item, "system": remap.get(item["system"], item["system"])} for item in items]
+            items = [{**item, "pasteSourceSystem": item["system"],
+                      "system": remap.get(item["system"], item["system"])} for item in items]
         blocked = self._ensure_file_ops(collection) or self._ensure_writable(
             collection, [item.get("system") for item in items])
         if blocked:
@@ -2570,6 +2591,16 @@ class Api:
                 targets[key] = fallback_row
             if existing is None:
                 existing, how = index.find(item, exact_only=True)
+            source_system = item.get("pasteSourceSystem", item["system"])
+            destination_system = existing["system"] if existing is not None else item["system"]
+            if source_system != destination_system:
+                if cut or not metadata_compatible(source_system, destination_system):
+                    extra_skipped.append({"filename": item["filename"], "reason": "메타데이터 계열이 다른 System입니다."})
+                    continue
+                if existing is None:
+                    extra_skipped.append({"filename": item["filename"], "reason": "대상 System에 같은 파일명의 게임이 없습니다."})
+                    continue
+                item = {**item, "rom": None}
             if item.get("rom") or existing is not None:
                 # ROM이 있거나, 대상 Game이 이미 있거나, 비슷한 후보가 있다. 대상이 있으면 이건
                 # 그냥 평범한 Metadata/Media 갱신이다 - ROM 유무와 무관하게 모드(Patch/Overwrite/
@@ -2640,7 +2671,8 @@ class Api:
             for item in prepared:
                 existing = target_cache.get_row_by_filename(item["system"], item["filename"])
                 key = transfer.item_key(item)
-                if existing is None and key not in file_conflicts:
+                if key not in file_conflicts and not transfer.fields_conflict(
+                        (existing or {}).get("fields"), item.get("fields"), mode):
                     continue
                 collisions.append({
                     "key": key, "system": item["system"],
@@ -2742,7 +2774,8 @@ class Api:
             item = {**entry.source, "system": entry.system, "filename": entry.filename}
             prepared.append(item)
             existing = cache.get_row_by_filename(entry.system, entry.filename)
-            if existing or entry.conflicts:
+            if entry.conflicts or transfer.fields_conflict(
+                    (existing or {}).get("fields"), item.get("fields"), "overwrite"):
                 fields = (existing or {}).get("fields") or {}
                 incoming = item.get("fields") or {}
                 collisions.append({"key": transfer.item_key(item), "system": entry.system,
@@ -5938,6 +5971,7 @@ class Api:
                 window.maximize()
             self._maximized = not self._maximized
         elif action == "close":
+            window._rms_close_confirmed = True
             window.destroy()
         return ok(True)
 

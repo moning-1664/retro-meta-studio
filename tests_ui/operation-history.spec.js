@@ -12,11 +12,7 @@ test('completed operations use history instead of a staged Apply toolbar', async
     ]}});
   });
   await page.locator('.lrow').first().click({button:'right'});
-  await page.locator('.ctx-item', {hasText:'작업 기록…'}).click();
-  await expect(page.locator('.modal-title')).toHaveText('작업 기록');
-  const buttons = page.locator('.modal-body button', {hasText:'백업 삭제'});
-  await expect(buttons.first()).toBeEnabled();
-  await expect(buttons.last()).toBeDisabled();
+  await expect(page.locator('.ctx-item', {hasText:'작업 기록…'})).toHaveCount(0);
 });
 
 test('redo shortcut dispatches only the active Collection', async ({page}) => {

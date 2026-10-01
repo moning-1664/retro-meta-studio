@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from app.archive import projection
-from app.model.constants import normalize_system
+from app.model.constants import normalize_system, metadata_compatible
 from app.plan import transfer
 
 
@@ -82,6 +82,12 @@ def prepare(store, config, source_items, mode, *, target_id=None, target_system=
             item["system"] = normalize_system(
                 config["frontend"], target_system or item.get("system") or "")
             identity = store.find_rom_identity(item["system"], item.get("filename") or "")
+        source_system = normalize_system(config["frontend"], source.get("system") or "")
+        if source_system != item["system"]:
+            if not metadata_compatible(source_system, item["system"]) or identity is None:
+                skipped.append({"filename": item.get("filename"), "reason": "같은 메타데이터 계열의 기존 게임에만 붙여넣을 수 있습니다."})
+                continue
+            item["rom"] = None
         filename, system = str(item.get("filename") or ""), str(item.get("system") or "")
         if (not filename or Path(filename).name != filename or not system
                 or Path(system).name != system or system in {".", ".."}):
@@ -100,7 +106,13 @@ def prepare(store, config, source_items, mode, *, target_id=None, target_system=
         key = transfer.item_key(out)
         prepared.append(out)
         snapshots[key] = state["signature"] if state else None
-        if state:
+        existing_media = {media["media_type"]: media for media in (existing or {}).get("media", [])}
+        media_conflict = any(
+            (media.get("type") or media.get("media_type")) in existing_media
+            for media in out.get("media") or [])
+        rom_conflict = bool(out.get("rom") and (existing or {}).get("present"))
+        if state and (media_conflict or rom_conflict or transfer.fields_conflict(
+                existing["fields"], original_fields, mode)):
             collisions.append({
                 "key": key, "system": system, "filename": filename,
                 "existingRomUid": state["rid"],

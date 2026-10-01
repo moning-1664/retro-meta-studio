@@ -100,8 +100,8 @@ test.describe("버튼 크기", () => {
     const send = page.locator("#collection-header .cheader-right .icon-btn[title*='Archive로 보내기']");
     await expect(send).toHaveAttribute("title", /Archive로/);
     expect((await send.boundingBox()).height).toBeLessThanOrEqual(24);
-    const receive = page.locator("#collection-header .cheader-right .icon-btn[title*='에서 가져오기']");
-    await expect(receive).toHaveAttribute("title", "다른 Collection 또는 Archive에서 가져오기");
+    const receive = page.locator("#collection-header .cheader-right .icon-btn[title='메타데이터 가져오기']");
+    await expect(receive).toHaveAttribute("title", "메타데이터 가져오기");
     expect((await receive.boundingBox()).height).toBeLessThanOrEqual(24);
   });
 

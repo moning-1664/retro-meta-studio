@@ -99,10 +99,15 @@ test.describe("붙여넣기 명령", () => {
     await expect(page.locator("#filter-bar .paste-mode")).toHaveCount(0);
   });
 
-  test("우클릭에 세 명령이 직접 나온다", async ({ page }) => {
+  test("복사 전에는 붙여넣기가 숨겨지고 옵션은 하위 메뉴에 나온다", async ({ page }) => {
     await page.locator(".lrow").first().click({ button: "right" });
     const labels = page.locator(".ctx-menu .ctx-label");
-    await expect(labels.filter({ hasText: /^붙여넣기$|^채우기$|^교체하기$/ })).toHaveCount(3);
+    await expect(labels.filter({ hasText: /^붙여넣기$|^채우기$|^교체하기$/ })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Control+c");
+    await page.locator(".lrow").first().click({ button: "right" });
+    await page.locator(".ctx-submenu-trigger").first().click();
+    await expect(page.locator(".ctx-menu .ctx-label").filter({ hasText: /^붙여넣기$|^채우기$|^교체하기$/ })).toHaveCount(3);
   });
 
   test("채우기는 patch를 보내고 기본 붙여넣기는 overwrite를 보낸다", async ({ page }) => {
@@ -115,6 +120,7 @@ test.describe("붙여넣기 명령", () => {
     await page.keyboard.press("Control+c");
     await page.keyboard.press("Control+v");
     await page.locator(".lrow").first().click({ button: "right" });
+    await page.locator(".ctx-submenu-trigger").first().click();
     await page.locator(".ctx-menu .ctx-label", { hasText: /^채우기$/ }).click();
     await expect.poll(() => page.evaluate(() => window.__modes)).toEqual(["overwrite", "patch"]);
   });

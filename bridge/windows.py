@@ -163,6 +163,31 @@ class WindowManager:
             self._bridges[bridge._window_id] = bridge
         window_id = bridge._window_id
         window.events.closed += lambda *args: self._closed(window_id)
+        closing = getattr(window.events, "closing", None)
+        if closing is not None:
+            def request_close(*args):
+                if getattr(window, "_rms_close_confirmed", False):
+                    return True
+                if getattr(window, "_rms_close_request_pending", False):
+                    return False
+                window._rms_close_request_pending = True
+                def ask():
+                    try:
+                        uninitialized = window.evaluate_js(
+                            "typeof window.__RMS_REQUEST_CLOSE !== 'function' || "
+                            "(window.__RMS_REQUEST_CLOSE(), false)")
+                        if uninitialized is True:
+                            window._rms_close_confirmed = True
+                            window.destroy()
+                    except Exception:
+                        log.exception("Could not request close confirmation")
+                        window._rms_close_confirmed = True
+                        window.destroy()
+                    finally:
+                        window._rms_close_request_pending = False
+                threading.Thread(target=ask, daemon=True).start()
+                return False
+            window.events.closing += request_close
 
     def bridge(self, window_id):
         return self._bridges.get(window_id)
@@ -216,6 +241,7 @@ class WindowManager:
         if main is not None:
             self._call(main, "__rmsAdoptCollection", collection_id)
         log.info("WINDOW_MERGE collection=%s window=%s", collection_id, window_id)
+        bridge._window._rms_close_confirmed = True
         bridge._window.destroy()
 
     # --- 알림 -----------------------------------------------------------
@@ -242,6 +268,7 @@ class WindowManager:
         if window_id == MAIN_WINDOW:
             for bridge in others:   # 메인 창이 닫히면 앱이 끝난다
                 try:
+                    bridge._window._rms_close_confirmed = True
                     bridge._window.destroy()
                 except Exception:  # noqa: BLE001
                     pass

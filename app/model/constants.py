@@ -43,6 +43,22 @@ ESDE_SYSTEM_ALIASES = {
 # ES-DE가 만들지만 게임 시스템이 아닌 폴더
 ESDE_IGNORED_SYSTEMS = {"cleanup"}
 
+METADATA_SYSTEM_GROUPS = (
+    frozenset({"pc88", "pc8801", "pc98", "pc9801"}),
+    frozenset({"msx", "msx1", "msx2", "msx2+", "msx2plus", "msxturbo", "msxturbor"}),
+    frozenset({"arcade", "mame", "mame2000", "mame2003", "mame2003+", "mame2003plus", "mame2010", "mame2015", "mame2016", "fbneo", "fba", "fbalpha", "fbalegacy", "cps1", "cps2", "cps3"}),
+    frozenset({"pcengine", "pce", "pcenginecd", "pcecd", "turbografx16", "turbografxcd", "supergrafx"}),
+)
+
+
+def metadata_systems(system):
+    key = str(system or "").lower().replace("-", "").replace("_", "").replace(" ", "")
+    return next((group for group in METADATA_SYSTEM_GROUPS if key in group), frozenset({key}))
+
+
+def metadata_compatible(left, right):
+    return bool(metadata_systems(left) & metadata_systems(right))
+
 
 def normalize_system(frontend, raw_system, overrides=None) -> str:
     """매칭에 쓸 정규화된 System 이름. 사용자가 지정한 override가 항상 우선한다."""

@@ -179,9 +179,8 @@ test.describe("게임 한 개 단위 폴더 열기", () => {
     await rightClick(page, "Super Mario World");
     await menuItem(page, "폴더 열기").hover();
     await expect(menuItem(page, "ROM 디렉터리")).toBeEnabled();
-    await expect(menuItem(page, "메타데이터 디렉터리")).toBeDisabled();
-    await expect(menuItem(page, "메타데이터 디렉터리")).toHaveAttribute("title", "Metadata가 없습니다.");
-    await expect(menuItem(page, "미디어 디렉터리")).toBeDisabled();
+    await expect(menuItem(page, "메타데이터 디렉터리")).toHaveCount(0);
+    await expect(menuItem(page, "미디어 디렉터리")).toHaveCount(0);
   });
 
   test("Archive 탭에는 이 메뉴가 없다(파일 배치 자체가 다르다)", async ({ page }) => {

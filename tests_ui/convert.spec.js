@@ -21,8 +21,7 @@ async function openConvertFromTab(page) {
 async function openConvertPreview(page) {
   await openConvertFromTab(page);
   await expect(page.locator(".modal-title")).toHaveText("Convert");
-  await page.locator(".modal-body .seg-btn", { hasText: "이미 있는 Collection으로" }).click();
-  await page.locator(".convert-existing-block select").selectOption({ index: 0 });
+  await page.locator(".convert-new-block input.field-input").fill("D:\\Converted");
   await modalButton(page, "다음").click();
   await expect(page.locator(".modal-title")).toHaveText("Convert 미리보기");
 }
@@ -35,18 +34,14 @@ test("Collection 정보에서 Convert를 시작한다", async ({ page }) => {
 
 test("기본은 '새 Collection으로'이고, Frontend/폴더를 고르게 한다", async ({ page }) => {
   await openConvertFromTab(page);
-  await expect(page.locator(".modal-body .seg-btn.on")).toHaveText("새 Collection으로");
+  await expect(page.locator(".modal-body .seg-btn")).toHaveCount(0);
   await expect(page.locator(".convert-new-block select")).toBeVisible();
   await expect(page.locator(".convert-new-block input.field-input")).toBeVisible();
 });
 
-test("'이미 있는 Collection으로'는 자기 자신을 빼고 원본 보존을 알린다", async ({ page }) => {
+test("변환은 새 폴더만 선택하며 원본 보존을 알린다", async ({ page }) => {
   await openConvertFromTab(page);
-  await page.locator(".modal-body .seg-btn", { hasText: "이미 있는 Collection으로" }).click();
-
-  const options = page.locator(".convert-existing-block select option");
-  await expect(options).toHaveCount(1);
-  await expect(options).toContainText("Android ES-DE");
+  await expect(page.locator(".convert-existing-block, .modal-body .seg-btn")).toHaveCount(0);
   await expect(page.locator(".modal-hint").last()).toContainText("원본은 그대로");
 });
 
@@ -99,5 +94,5 @@ test("변환하기는 독립 미리보기로 진행하고 Plan 버튼을 만들�
 
   await expect(page.locator("#filter-bar .plan-actions")).toHaveCount(0);
   // 변환 결과가 올라간 곳으로 이동해야 사용자가 다음 행동을 할 수 있다.
-  await expect(page.locator(".ctab.active")).toContainText("Android ES-DE");
+  await expect(page.locator(".ctab.active")).not.toContainText("Master Library");
 });

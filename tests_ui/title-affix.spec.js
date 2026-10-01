@@ -91,8 +91,7 @@ test.describe("Gamelist 우클릭 - 선택한 게임에 적용", () => {
   test("바뀔 게 없으면 메뉴 항목 자체가 흐리게 나온다 - 눌러도 아무 일도 없다", async ({ page }) => {
     await rightClickRow(page, "Final Fantasy X");   // FFX (K).iso, 아무 구역도 안 켜짐
     const item = menuItem(page, "제목 앞·뒤 태그 적용…");
-    await expect(item).toBeDisabled();
-    await expect(item).toHaveAttribute("title", /바뀔 제목이 없습니다/);
+    await expect(item).toHaveCount(0);
   });
 
   test("미리보기에 예전/새 제목을 보여주고, 확인해야 Plan에 올라간다", async ({ page }) => {
@@ -168,7 +167,7 @@ test.describe("태그가 없는 파일 - 미분류(사용자 결정)", () => {
   test("파일명에 지역 태그가 없으면 모든 구역을 켜도 대상이 아니다", async ({ page }) => {
     await configureRegion(page, "global", { mode: "postfix", text: "WORLD" });
     await rightClickRow(page, "Super Mario World");   // SMW.sfc - 태그 없음
-    await expect(menuItem(page, "제목 앞·뒤 태그 적용…")).toBeDisabled();
+    await expect(menuItem(page, "제목 앞·뒤 태그 적용…")).toHaveCount(0);
   });
 });
 

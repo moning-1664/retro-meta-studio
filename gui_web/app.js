@@ -789,12 +789,12 @@
         inspectJobId = null;
         if (!result.ok) { folderInfo.textContent = result.error; return; }
         folderResult = result.data;
+        if (folderResult.selectedPath && folderResult.path) dirInput.value = folderResult.path;
         if (apply) apply.disabled = false;
         const detected = folderResult.findings.map((f) => f.frontend.toUpperCase()).join(", ");
         folderInfo.textContent = (folderResult.archive || folderResult.legacyArchive)
-          ? `기존 Archive DB를 찾았습니다.${detected ? ` 저장 형식 후보: ${detected}` : " 저장 형식은 직접 확인하세요."}`
-          : (detected ? `기존 Frontend 파일 감지: ${detected}. Archive로 사용할 경우 이 폴더에 파일을 쓸 수 있습니다.`
-            : "기존 Archive DB가 없습니다. 새 Archive의 저장 형식을 선택하세요.");
+          ? `Archive DB 감지${detected ? ` · ${detected}` : ""}`
+          : (detected ? `감지: ${detected}` : "새 Archive · 저장 형식을 선택하세요.");
         if (folderResult.suggestedFrontend && !cfg.configured) frontendSel.value = folderResult.suggestedFrontend;
       }
       dirInput.addEventListener("change", () => { inspectPromise = inspectArchiveFolder(); });
@@ -815,8 +815,8 @@
       wrap.appendChild(rowOf("archive.frontend", "저장 형식",
         "Archive를 어떤 Frontend의 형식으로 둘지 정합니다. 바꾸면 그 형식으로 다시 배치합니다(이전 형식의 파일은 지우지 않습니다).",
         frontendSel));
-      wrap.appendChild(rowOf("archive.archiveDir", "Archive 디렉토리",
-        "메타데이터(gamelist)와 미디어가 저장될 폴더입니다. 이전에 만든 Archive 폴더를 고르면 그 내용을 읽어 옵니다.",
+      wrap.appendChild(rowOf("archive.archiveDir", "메타데이터 폴더",
+        "메타데이터와 미디어 폴더입니다. 이 폴더에 Archive DB도 저장됩니다.",
         h("div", { class: "stg-path" }, [dirInput, browse(dirInput, "Archive 디렉토리")])));
       wrap.appendChild(folderInfo);
       inspectPromise = inspectArchiveFolder();
@@ -1214,6 +1214,17 @@
    * index.html) - Archive/Collection 탭과 이 버튼들은 클릭 영역이라
    * 드래그 영역이 아니다.
    */
+  function requestWindowClose() {
+    if (S.detailState?.tab === "metadata") captureDraft();
+    const close = async () => { await flushPendingUiState(); api.windowControl("close"); };
+    const edited = Object.keys(S.detailState?.draft || {}).length > 0;
+    if (jobRows.size || edited) {
+      showConfirm("종료", jobRows.size ? "진행 중인 작업이 있습니다. 중지하고 종료할까요?"
+        : "저장하지 않은 변경이 있습니다. 종료할까요?", false, close);
+    } else close();
+  }
+  window.__RMS_REQUEST_CLOSE = requestWindowClose;
+
   function renderWindowControls() {
     const bar = $("window-controls");
     clear(bar);
@@ -1226,7 +1237,7 @@
         // 닫기 전에 아직 안 나간 UI 상태 저장(컬럼 폭 등)을 먼저 내보낸다 -
         // debounce 타이머가 돌기 전에 창이 닫히면 방금 바꾼 값이 사라진다.
         onClick: async () => {
-          if (action === "close") await flushPendingUiState();
+          if (action === "close") { requestWindowClose(); return; }
           api.windowControl(action);
         },
       }, [glyph]));
@@ -1250,8 +1261,7 @@
         const close = h("button", { class: "ctab-close", title: "창 닫기" }, [icon("x", IC.xs)]);
         close.addEventListener("click", async (e) => {
           e.stopPropagation();
-          await flushPendingUiState();
-          api.windowControl("close");
+          requestWindowClose();
         });
         tab.appendChild(close);
         tab.addEventListener("contextmenu", (e) => { e.preventDefault(); openTabMenu(collection, e); });
@@ -1509,6 +1519,7 @@
     S.tabState[id] = {
       view: S.view, selected: [...S.selected], anchor: S.selectAnchor, focused: S.focused,
       scrollTop: scroll ? scroll.scrollTop : 0,
+      detailTab: S.detailState?.tab || "metadata",
     };
   }
 
@@ -1528,7 +1539,7 @@
       // resetList()가 이전 탭의 상세를 비우므로, 선택 표시뿐 아니라 마지막으로
       // 포커스한 게임의 상세도 되살린다. 조회는 백그라운드에서 하고 늦은 응답은
       // openDetail()의 activeId/focused 검사로 버린다.
-      openDetail({ romUid: saved.focused, romIdentityId: saved.focused });
+      openDetail({ romUid: saved.focused, romIdentityId: saved.focused }, saved.detailTab);
     }
   }
 
@@ -1703,13 +1714,11 @@
     let detectionJobId = null;
     function showDetectedFolder(data) {
       const findings = data.findings.map((f) =>
-        `${(frontends.find((item) => item.id === f.frontend) || {}).label || f.frontend} (${f.evidence}${f.systems.length ? `, 확인된 폴더 ${f.systems.length}개` : ""})`);
-      const pathSummary = frontendSel.value === "es-de"
-        ? "선택한 폴더: 메타데이터·미디어 기준 경로 · ROM은 아래에서 별도 선택 가능"
-        : "선택한 폴더: 저장 형식의 기준 경로";
+        (frontends.find((item) => item.id === f.frontend) || {}).label || f.frontend);
       detectionInfo.textContent = findings.length
-        ? `감지: ${findings.join(" · ")}${data.suggestedFrontend ? "" : " · 형식을 확인해 선택하세요."} · ${pathSummary}`
-        : `저장 형식을 판별할 파일이 없습니다. ROM 전용 폴더라면 형식을 직접 선택하세요. · ${pathSummary}`;
+        ? `감지: ${findings.join(" · ")}${data.suggestedFrontend ? "" : " · 형식을 선택하세요."}`
+        : "형식을 확인할 수 없습니다. 직접 선택하세요.";
+      detectionInfo.title = data.findings.map((finding) => finding.evidence).join(" · ");
     }
     async function inspectSelectedFolder() {
       const run = ++detectionRun;
@@ -1739,13 +1748,15 @@
       if (!result.ok) { detectionInfo.textContent = result.error; return; }
       const data = result.data;
       lastDetection = data;
+      if (data.selectedPath && data.path) pathInput.value = data.path;
+      if (data.suggestedRomDir && !romInput.value.trim()) romInput.value = data.suggestedRomDir;
       if (data.suggestedFrontend) frontendSel.value = data.suggestedFrontend;
       syncFrontend();
       showDetectedFolder(data);
     }
     pathInput.addEventListener("change", inspectSelectedFolder);
 
-    const pathLabel = h("div", { class: "field-label" }, ["ROM 디렉토리"]);
+    const pathLabel = h("div", { class: "field-label" }, ["FrontEnd 디렉토리"]);
     const romLabel = h("div", { class: "field-label" }, ["ROM 디렉토리"]);
     const extRomInput = h("input", { class: "field-input", id: "add-ext-rom-path",
                                      placeholder: "폴더를 선택하세요 (선택)" });
@@ -1808,6 +1819,9 @@
     const browserList = h("div", { class: "picker-list mtp-list", id: "mtp-browser" });
     const browserHead = h("div", { class: "mtp-browser-head" }, [upBtn, breadcrumb]);
     const browserBox = h("div", { class: "field-block", hidden: true }, [browserHead, browserList]);
+    browserBox.classList.add("folder-picker");
+    upBtn.className = "mtp-up-btn btn compact";
+    let browserRequest = 0;
     let browseTarget = null, browsePath = null;
 
     function rowButton(name, sub, iconName, onClick) {
@@ -1838,11 +1852,13 @@
     }
 
     async function renderBrowser() {
+      const request = ++browserRequest;
+      const requestedPath = browsePath;
       browserList.replaceChildren();
       browserList.appendChild(h("div", { class: "empty-msg mtp-loading" }, ["불러오는 중…"]));
       upBtn.disabled = true;
       const r = await api.mtpBrowse(browsePath);
-      if (browsePath === null) return;   // 그 사이에 창이 닫혔다.
+      if (browsePath === null || request !== browserRequest || browsePath !== requestedPath) return;
       browserList.replaceChildren();
       if (!r.ok) { browserList.appendChild(h("div", { class: "empty-msg" }, [r.error])); return; }
       const data = r.data;
@@ -1856,7 +1872,11 @@
       }
       entries.forEach((entry) => browserList.appendChild(
         rowButton(entry.name, entry.path, "folderOpen", () => { browsePath = entry.path; renderBrowser(); })));
-      browserList.appendChild(h("button", { class: "btn primary", id: "mtp-pick-here",
+      const selectedPath = h("div", { class: "field-hint folder-picker-path", title: data.path }, [data.path]);
+      browserList.appendChild(selectedPath);
+      browserList.appendChild(h("div", { class: "folder-picker-actions" }, [
+      h("button", { class: "btn", onClick: () => { browserBox.hidden = true; browsePath = null; browserRequest++; } }, ["취소"]),
+      h("button", { class: "btn primary", id: "mtp-pick-here",
         onClick: () => {
           browseTarget.value = browsePath;
           if (browseTarget === pathInput && !nameInput.value.trim()) {
@@ -1864,7 +1884,8 @@
             nameInput.value = device ? device.name : "";
           }
           browserBox.hidden = true;
-        } }, ["이 폴더 선택"]));
+          browseTarget.dispatchEvent(new Event("change"));
+      } }, ["이 폴더 선택"])]));
     }
 
     async function autoFindEsde() {
@@ -1941,7 +1962,7 @@
     function syncFrontend() {
       syncNamePlaceholder();
       const isEs = ES_STYLE_FRONTEND_IDS.has(frontendSel.value);
-      pathLabel.textContent = isEs ? "Metadata 디렉토리" : "ROM 디렉토리";
+      pathLabel.textContent = "FrontEnd 디렉토리";
       pathLabel.title = isEs
         ? "ES-DE의 gamelists와 downloaded_media가 포함된 디렉토리입니다."
         : "ROM(과 메타데이터)이 들어 있는 디렉토리입니다.";
@@ -1962,10 +1983,7 @@
     const advancedBody = h("div", {}, [
       h("div", { class: "field-label" }, ["Target"]), targetSel,
     ]);
-    const advanced = h("details", { class: "add-collection-advanced" }, [
-      h("summary", {}, ["고급"]),
-      advancedBody,
-    ]);
+    const advanced = advancedBody;
 
     // History는 기본적으로 접혀 있다 - 방금 연 화면이 다시 예전 목록으로 보이면
     // "+"를 누른 의미가 없다. 필요할 때만 펼쳐서 예전 Collection을 고른다.
@@ -3666,7 +3684,7 @@
       send.addEventListener("click", ingestToArchive);
       right.appendChild(send);
 
-      const importBtn = h("button", { class: "icon-btn", title: "다른 Collection 또는 Archive에서 가져오기" },
+      const importBtn = h("button", { class: "icon-btn", title: "메타데이터 가져오기" },
         [icon("download", IC.md)]);
       importBtn.addEventListener("click", () => openImportSourceChooser());
       right.appendChild(importBtn);
@@ -3936,7 +3954,7 @@
       const btn = h("button", {
         class: "seg-btn" + (S.viewMode === mode ? " on" : ""), title: label + " 보기",
       }, [icon(mode === "list" ? "layoutList" : "layoutGrid", 12)]);
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", (event) => {
         if (S.viewMode === mode) return;
         S.viewMode = mode;
         // 보기 방식은 UI 상태다 - 다시 열었을 때 그대로여야 한다. 데이터는 그대로이니
@@ -4516,7 +4534,8 @@
       win.style.height = scroll.clientHeight + "px";
       win.appendChild(h("div", { class: "archive-empty" }, [
         activeDetail() ? "조건에 맞는 게임이 없습니다."
-                       : "등록된 Collection이 없습니다. 상단의 \"+\"를 눌러 추가하세요.",
+                       : "Collection은 ROM·메타데이터·미디어 폴더를 함께 관리하는 작업 공간입니다.",
+        !activeDetail() ? h("button", { class: "btn primary", onClick: openAddCollection }, ["폴더 열기"]) : null,
         !activeDetail() && !S.archiveConfigured
           ? h("button", { class: "btn compact", onClick: openArchiveSettings },
             ["Archive는 Settings에서 선택해 사용할 수 있습니다."])
@@ -4864,6 +4883,22 @@
    * items: `{label, icon?, hint?, title?, danger?, disabled?, onSelect}`,
    * `{section: "제목"}`, 또는 `"separator"`. Esc·바깥 클릭·창 크기 변경으로 닫히고
    * ↑↓로 항목을 옮겨 Enter로 고른다. */
+  function availableMenuItems(items) {
+    const result = [];
+    for (const item of items) {
+      if (item === "separator") {
+        if (result.length && result[result.length - 1] !== "separator") result.push(item);
+        continue;
+      }
+      if (item.disabled) continue;
+      const entry = item.children ? { ...item, children: availableMenuItems(item.children) } : item;
+      if (entry.children && !entry.children.length && !entry.onSelect) continue;
+      result.push(entry);
+    }
+    if (result[result.length - 1] === "separator") result.pop();
+    return result;
+  }
+
   function showContextMenu(point, title, subtitle, items, headTip, titleIcon) {
     closeContextMenu();
     const menu = h("div", { class: "ctx-menu", role: "menu" });
@@ -4882,6 +4917,7 @@
     items.forEach((item) => {
       if (item === "separator") { menu.appendChild(h("div", { class: "ctx-sep", role: "separator" })); return; }
       if (item.section) { menu.appendChild(h("div", { class: "ctx-section" }, [item.section])); return; }
+      if (item.hideWhenDisabled && item.disabled) return;
       const btn = h("button", {
         class: "ctx-item" + (item.danger ? " danger" : ""), role: "menuitem",
         disabled: !!item.disabled, title: item.title || null,
@@ -4889,7 +4925,7 @@
         item.icon ? icon(item.icon, 12) : h("span", { class: "ctx-icon-gap" }),
         h("span", { class: "ctx-label" }, [item.label]),
         item.hint ? h("span", { class: "ctx-hint" }, [item.hint]) : null,
-        item.children ? h("span", { class: "ctx-hint" }, ["›"]) : null,
+        item.children ? h("span", { class: "ctx-hint ctx-submenu-trigger", role: "button", title: "다른 명령" }, ["›"]) : null,
       ]);
       const openSubmenu = () => {
         closeSubmenu();
@@ -4910,9 +4946,9 @@
         subMenu.style.left = `${rect.right + subWidth < window.innerWidth ? rect.right : rect.left - subWidth}px`;
         subMenu.style.top = `${Math.max(4, Math.min(rect.top, window.innerHeight - subMenu.offsetHeight - 4))}px`;
       };
-      if (item.children) btn.addEventListener("mouseenter", openSubmenu);
-      btn.addEventListener("click", () => {
-        if (item.children) { openSubmenu(); subMenu?.querySelector(".ctx-item:not(:disabled)")?.focus(); }
+      if (item.children) btn.addEventListener("mouseenter", () => { if (!item.onSelect) openSubmenu(); });
+      btn.addEventListener("click", (event) => {
+        if (item.children && (!item.onSelect || event.target.closest(".ctx-submenu-trigger"))) { openSubmenu(); subMenu?.querySelector(".ctx-item:not(:disabled)")?.focus(); }
         else { closeContextMenu(); item.onSelect(); }
       });
       if (!item.children) btn.addEventListener("mouseenter", closeSubmenu);
@@ -5034,45 +5070,53 @@
       titleAffixDisabled = !preview.ok || !preview.data.items.some((i) => i.changed);
     }
     const hasImportSource = S.archiveConfigured || S.tabs.some((id) => id !== S.activeId);
+    const clipboard = await api.clipboardItems();
+    const canPaste = !locked && clipboard.ok && (clipboard.data.items || []).length > 0;
+    const importSources = S.tabs.filter((id) => id !== S.activeId)
+      .map((id) => S.collections.find((collection) => collection.id === id)).filter(Boolean)
+      .map((collection) => ({ label: collection.name, icon: "gamepad",
+        onSelect: () => openMatchDialog(row, true, collection.id) }));
+    if (S.archiveConfigured) importSources.push({ label: "Archive", icon: "database",
+      onSelect: () => openMatchDialog(row, true) });
 
     showContextMenu(menuPoint(event), single ? (row.title || row.file) : `${formatCount(count)}개 선택됨`,
-      single ? row.file : null, [
+      single ? row.file : null, availableMenuItems([
         { label: row.favorite ? "즐겨찾기 해제" : "즐겨찾기에 추가", icon: "star",
           disabled: !single || !star || locked, onSelect: () => toggleFavorite(row, star) },
+        { label: "이름 변경", icon: "edit", hint: "F2", hideWhenDisabled: true,
+          disabled: locked || !single, onSelect: () => renameSelectedGame(row) },
         { label: "RetroArch로 실행", icon: "play", hint: "더블클릭",
           disabled: !single || !!launchBlockReason(row), title: single ? launchBlockReason(row) : null,
           onSelect: () => launchGame(row) },
         "separator",
-        { label: "이름 변경", icon: "edit", hint: "F2",
-          disabled: locked || !single, onSelect: () => renameSelectedGame(row) },
         {label: "잘라내기", icon: "scissors", hint: "Ctrl+X",
           disabled: locked, onSelect: cutSelectedRows},
         { label: "게임 복사", icon: "copy", hint: "Ctrl+C", disabled: locked, onSelect: copySelectedRows },
-        { label: "붙여넣기", icon: "upload", hint: "Ctrl+V", disabled: locked,
+        { label: "붙여넣기", icon: "upload", hint: "Ctrl+V", disabled: !canPaste, hideWhenDisabled: true,
           title: "같은 System과 ROM 파일명에 붙여넣습니다. 이 행을 선택했다면 이 게임에 붙여넣습니다.",
-          onSelect: () => pasteClipboard(single ? row : null) },
-        { label: "채우기", icon: "upload", disabled: locked,
+          onSelect: () => pasteClipboard(single ? row : null), children: [
+        { label: "채우기", icon: "upload", disabled: !canPaste,
           title: "비어 있는 메타데이터와 없는 미디어만 채웁니다.",
           onSelect: () => pasteClipboard(single ? row : null, null, null, "patch") },
-        { label: "교체하기", icon: "upload", disabled: locked,
+        { label: "교체하기", icon: "upload", disabled: !canPaste,
           title: "메타데이터를 복사한 게임의 값으로 교체합니다.",
-          onSelect: () => pasteClipboard(single ? row : null, null, null, "replace") },
+          onSelect: () => pasteClipboard(single ? row : null, null, null, "replace") }] },
         ...(S.lastPasteUndoId ? [{ label: "실행 취소",
           icon: "cornerUpLeft", hint: "Ctrl+Z", disabled: locked,
           onSelect: undoLastPaste }] : []),
         ...(S.plan?.redoOperationId ? [{label: "다시 실행", icon: "cornerUpRight", hint: "Ctrl+Y",
           disabled: locked, onSelect: redoLastOperation}] : []),
-        {label: "작업 기록…", icon: "history", disabled: locked, onSelect: openOperationHistory},
         "separator",
         { label: single ? "게임 정보 스크랩…" : `게임 정보 스크랩… (${formatCount(count)}개)`,
           icon: "sparkles", disabled: locked,
           title: "선택한 게임을 순서대로 검토합니다.",
           onSelect: () => openScrapeContext([...S.selected]) },
-        ...(!isArchive() ? [{ label: "다른 Collection·Archive에서 가져오기…", icon: "download",
+        ...(!isArchive() ? [{ label: "메타데이터 가져오기", icon: "download", children: importSources,
+          hideWhenDisabled: true,
           disabled: !single || !hasImportSource || locked,
           title: hasImportSource ? "열어 둔 Collection이나 Archive에서 출처를 고릅니다."
             : "다른 Collection을 열거나 Archive를 설정하세요.",
-          onSelect: () => openImportSourceChooser(row) }] : []),
+          }] : []),
         { label: single ? "제목 앞·뒤 태그 적용…" : `제목 앞·뒤 태그 적용… (${formatCount(count)}개)`,
           icon: "tag", disabled: titleAffixDisabled,
           title: titleAffixDisabled && !isArchive() && !locked
@@ -5117,7 +5161,7 @@
                 ] },
             ]),
         ...rowFolderItems(row, single),
-      ]);
+      ]));
   }
 
   /** System 우클릭의 "폴더 열기"(System 전체)를 게임 한 개 단위로도 지원한다
@@ -5444,19 +5488,9 @@
    * 골라졌는데, 그 준비 단계가 안 보여서 "왜 대상이 다른 Collection이냐"는 혼란이
    * 있었다 - 이제 이 창 안에서 바로 만든다. */
   async function openConvert(source) {
-    const existing = S.collections.filter((c) => c.id !== source.id);
     const frontendsR = await api.frontends();
     const frontends = frontendsR.ok ? frontendsR.data : [{ id: "es-de", label: "ES-DE" }];
 
-    let mode = "new";
-    const modeSeg = h("div", { class: "seg" });
-    const modeBtn = (value, label) => {
-      const btn = h("button", { class: "seg-btn", "data-mode": value }, [label]);
-      btn.addEventListener("click", () => { mode = value; sync(); });
-      return btn;
-    };
-    modeSeg.appendChild(modeBtn("new", "새 Collection으로"));
-    modeSeg.appendChild(modeBtn("existing", "이미 있는 Collection으로"));
 
     const frontendSel = h("select", { class: "field-input" },
       frontends.map((f) => h("option", { value: f.id }, [f.label])));
@@ -5473,28 +5507,10 @@
       h("div", { class: "modal-hint" }, ["비어 있는(또는 아직 없는) 폴더를 고르세요 - 그 자리에 새 Collection을 만듭니다."]),
     ]);
 
-    const existingSel = h("select", { class: "field-input" },
-      existing.map((c) => h("option", { value: c.id }, [`${c.name} (${c.frontendLabel})`])));
-    const existingBlock = h("div", { class: "convert-existing-block" }, [
-      h("div", { class: "field-label" }, ["대상 Collection"]), existingSel,
-    ]);
-    if (!existing.length) {
-      existingBlock.appendChild(h("div", { class: "modal-hint" }, ["변환해 넣을 다른 Collection이 아직 없습니다."]));
-    }
-
-    function sync() {
-      modeSeg.querySelectorAll(".seg-btn").forEach((btn) =>
-        btn.classList.toggle("on", btn.dataset.mode === mode));
-      newBlock.hidden = mode !== "new";
-      existingBlock.hidden = mode !== "existing";
-    }
-    sync();
 
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "modal-text" }, [`${source.name}의 내용을 다른 Frontend 형식으로 변환합니다.`]),
-      modeSeg,
       newBlock,
-      existingBlock,
       h("div", { class: "modal-hint" },
         ["원본은 그대로 둡니다. 변환할 항목을 확인한 뒤 대상에 적용합니다."]),
     ]);
@@ -5502,13 +5518,6 @@
     showModal("Convert", body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       h("button", { class: "btn primary", onClick: async () => {
-        if (mode === "existing") {
-          if (!existingSel.value) { showToast("대상 Collection을 고르세요.", "warning"); return; }
-          const targetId = existingSel.value;
-          closeModal();
-          showConvertPreview(source.id, targetId);
-          return;
-        }
         const folder = folderInput.value.trim();
         if (!folder) { showToast("폴더를 고르세요.", "warning"); return; }
         const label = (frontends.find((f) => f.id === frontendSel.value) || {}).label || frontendSel.value;
@@ -6170,14 +6179,14 @@
   }
 
   let detailRequestToken = 0;
-  async function openDetail(row) {
+  async function openDetail(row, rememberedTab = null) {
     const requestToken = ++detailRequestToken;
     stopMediaVideo();
     S.focused = row.romUid;
     updateSelectionVisual();
     // 미리보기를 꺼 둔 상태에서는 고르기만 하고 패널을 열지 않는다(탐색기와 같다).
     if (!S.previewOn) return;
-    const tab = (S.detailState && S.detailState.tab) || "metadata";
+    const tab = rememberedTab || (S.detailState && S.detailState.tab) || "metadata";
 
     // **늦게 온 응답은 버린다.** 고른 줄은 위에서 이미 S.focused에 적었으니, 응답이
     // 돌아왔을 때 그 값이 아니면 그 사이 사용자가 다른 줄로 옮겨 간 것이다. 이 검사가
@@ -6353,6 +6362,24 @@
         "비밀번호는 Windows 보안 저장소에 암호화해 저장합니다."),
     ]);
     const card = showModal("ScreenScraper 연결", body, [
+      h("button", { class: "btn", onClick: async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        const patch = { enabled: true, softName: softName.value.trim(), userId: userId.value.trim() };
+        if (devId.value) patch.devId = devId.value;
+        if (devPassword.value) patch.devPassword = devPassword.value;
+        if (userPassword.value) patch.userPassword = userPassword.value;
+        try {
+          const saved = await api.saveScraperSettings(patch);
+          if (!saved.ok) { connectionResult.textContent = `연결 실패 · ${saved.error}`; return; }
+          const started = await api.startScraperAccountStatus();
+          if (!started.ok) { connectionResult.textContent = `연결 실패 · ${started.error}`; return; }
+          const host = h("div", { class: "stg-progress" });
+          body.appendChild(host);
+          const checked = await pollJob(started.data.jobId, "연결 확인", host);
+          connectionResult.textContent = checked.ok ? `연결 성공 · ${scrapeQuotaText(checked.data)}` : `연결 실패 · ${checked.error}`;
+        } finally { button.disabled = false; }
+      } }, ["연결 테스트"]),
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       h("button", { class: "btn primary", onClick: async () => {
         const patch = { enabled: true, softName: softName.value.trim(), userId: userId.value.trim() };
@@ -6366,6 +6393,8 @@
       } }, ["저장"]),
     ]);
     card.classList.add("scrape-setup-card");
+    const connectionResult = h("div", { class: "scrape-connection-result", role: "status" });
+    card.querySelector(".modal-actions").prepend(connectionResult);
   }
 
   function scrapeQuotaText(quota) {
@@ -6501,6 +6530,9 @@
         const thumb = cover
           ? h("img", { class: "scrape-thumb", src: cover.url, alt: candidate.title, referrerpolicy: "no-referrer" })
           : h("div", { class: "scrape-thumb empty" }, [icon("image", IC.md)]);
+        if (cover) thumb.addEventListener("error", () => {
+          thumb.replaceWith(h("div", { class: "scrape-thumb empty", title: "이미지를 불러올 수 없습니다." }, [icon("image", IC.md)]));
+        }, { once: true });
         const toggle = h("button", { class: "icon-btn scrape-expand", title: expanded ? "접기" : "자세히" },
           [icon(expanded ? "chevronUp" : "chevronDown", IC.sm)]);
         toggle.addEventListener("click", () => {
@@ -6589,7 +6621,20 @@
       return session.items.some((item) => item.status === "selected" && item.selectedCandidateId);
     }
 
+    let applying = false;
     async function finish() {
+      if (applying || searching || !hasSelection()) return;
+      applying = true;
+      body.querySelectorAll("button, input, select").forEach((control) => { control.disabled = true; });
+      try {
+        await applySelection();
+      } finally {
+        applying = false;
+        if (!closed) draw();
+      }
+    }
+
+    async function applySelection() {
       const started = await api.startApplyScrapeSession(session.id);
       if (!started.ok) { showToast(started.error, "error"); return; }
       const applied = await pollJob(started.data.jobId, "스크랩 결과 적용",
@@ -6658,6 +6703,22 @@
         S.selected = new Set([row.romUid]);
         S.selectAnchor = row.romUid;
         await openDetail(row);
+        let after = -1;
+        const visited = new Set();
+        while (true) {
+          const result = isArchive()
+            ? await api.archiveFindRowIndex(currentQuery(), reviewed.filename, after)
+            : await api.findRowIndex(S.activeId, currentQuery(), reviewed.filename, after);
+          const position = result.ok ? result.data : -1;
+          if (position < 0 || visited.has(position)) break;
+          visited.add(position);
+          const found = await rowAtIndex(position);
+          if (found?.system === reviewed.system && found?.file === reviewed.filename) {
+            scrollToIndex(position, rowKey(found));
+            break;
+          }
+          after = position;
+        }
       } else {
         S.focused = null;
         renderDetailPanel();
@@ -7640,6 +7701,15 @@
    * 헷갈렸다). 별표는 게임 자체의 즐겨찾기고, 여기서 고르는 것은 "이 게임의 값을
    * 어느 판에서 가져올지"다. 그래서 별표를 쓰지 않고 PREFERRED 배지와 글자 버튼으로
    * 표시한다. */
+  async function loadRevisionImage(state, version, label, thumbnail) {
+    for (const [index, recordId] of (version.recordIds || []).entries()) {
+      const result = await api.getArchiveVersionMediaImage(state.romIdentityId,
+        (version.sources || [])[index], label, thumbnail, recordId);
+      if (result.ok && result.data) return result;
+    }
+    return { ok: true, data: null };
+  }
+
   function renderSourcesTab(body) {
     const state = S.detailState;
     const versions = state.versions || [];
@@ -7680,13 +7750,17 @@
       box.addEventListener("click", (event) => {
         if (!event.target.closest("button")) selectPreview(recordId);
       });
+      box.addEventListener("dblclick", (event) => {
+        if (!event.target.closest("button") && recordId !== preferredId) {
+          selectPreview(recordId);
+          togglePreferredRevision({ recordId }, false);
+        }
+      });
       const fields = version.fields || {};
-      const source = (version.sources || []).map(sourceName).join(", ") || `버전 ${index + 1}`;
+      const source = (version.sources || []).filter((id) => id !== "__archive_dir__").map(sourceName).join(", ") || "Archive";
       const cover = h("div", { class: "scrape-thumb empty revision-cover" }, [icon("imageOff", IC.md)]);
-      if ((version.media || {}).covers) {
-        const sourceId = (version.sources || [])[0];
-        api.getArchiveVersionMediaImage(state.romIdentityId, sourceId, "Covers", true,
-          (version.recordIds || [])[0]).then((result) => {
+      if ((version.media || {}).covers != null || (version.media || {}).Covers != null) {
+        loadRevisionImage(state, version, "Covers", true).then((result) => {
           if (result.ok && result.data && cover.isConnected) {
             clear(cover);
             cover.classList.remove("empty");
@@ -7698,10 +7772,21 @@
       const fact = (label, value) => h("span", { class: "scrape-fact",
         title: `${label}: ${value || "없음"}` }, [String(value || "")]);
       const expanded = h("div", { class: "revision-expanded", hidden: true });
+      const screenshot = h("img", { class: "candidate-screenshot", alt: "스크린샷", hidden: true });
+      let screenshotLoaded = false;
       const toggle = h("button", { class: "icon-btn scrape-expand revision-expand", title: "자세히" },
         [icon("chevronDown", IC.sm)]);
       toggle.addEventListener("click", () => {
         expanded.hidden = !expanded.hidden;
+        if (!expanded.hidden && !screenshotLoaded) {
+          screenshotLoaded = true;
+          loadRevisionImage(state, version, "Screenshots", false).then((result) => {
+            if (result.ok && result.data && screenshot.isConnected) {
+              screenshot.src = result.data;
+              screenshot.hidden = false;
+            }
+          });
+        }
         clear(toggle);
         toggle.appendChild(icon(expanded.hidden ? "chevronDown" : "chevronUp", IC.sm));
         toggle.title = expanded.hidden ? "자세히" : "접기";
@@ -7720,20 +7805,19 @@
           h("div", { class: "scrape-candidate-facts" }, [
             h("div", { class: "scrape-fact-row" }, [
               fact("연도", year), fact("개발", fields.developer),
-              fact("장르", fields.genre), toggle,
+              fact("장르", fields.genre), fact("배급", fields.publisher),
+              fact("지역", fields.region), toggle,
             ]),
           ]),
         ]),
       ]));
       box.appendChild(h("div", { class: "revision-foot" }, [
         h("span", { class: "revision-source truncate", title: source }, [source]),
-        h("span", { class: "revision-when" }, [revisionWhen(version.updatedAt)]),
       ]));
 
       // 제목은 늘 보여준다(무엇에 대한 판인지 알아야 한다). 나머지는 갈리는 것만.
       const rows = h("div", { class: "revision-fields" });
       REVISION_FIELDS.forEach(([key, label]) => {
-        if (key !== "name" && !differing.has(key)) return;
         const value = String(fields[key] || "").trim();
         rows.appendChild(h("div", { class: "revision-field" + (differing.has(key) ? " changed" : "") }, [
           h("span", { class: "revision-field-label" }, [label]),
@@ -7741,6 +7825,7 @@
         ]));
       });
       expanded.appendChild(rows);
+      expanded.appendChild(screenshot);
 
       if (mediaTypes.length) {
         const chips = h("div", { class: "revision-media" });
@@ -8252,6 +8337,17 @@
             ]),
           ]),
         ]);
+        const fieldRows = h("div", { class: "revision-fields" });
+        REVISION_FIELDS.forEach(([key, caption]) => {
+          if (fields?.[key] == null || fields[key] === "") return;
+          fieldRows.appendChild(h("div", { class: "revision-field" }, [
+            h("span", { class: "revision-field-label" }, [caption]),
+            h("span", { class: "revision-field-value" }, [String(fields[key])]),
+          ]));
+        });
+        expanded.appendChild(fieldRows);
+        const detailScreen = h("img", { class: "candidate-screenshot", alt: "스크린샷", hidden: true });
+        expanded.appendChild(detailScreen);
         const toggle = h("button", { class: "btn compact paste-conflict-expand",
           title: "자세히 보기", "aria-expanded": "false" }, [icon("chevronDown", IC.sm)]);
         toggle.addEventListener("click", () => {
@@ -8263,6 +8359,9 @@
           h("span", { class: "paste-conflict-side-title truncate" }, [title]),
           cover, screen, toggle, expanded,
         ]);
+        row.addEventListener("dblclick", (event) => {
+          if (!event.target.closest("button")) choose(incoming ? "overwrite" : "skip");
+        });
         for (const [type, image] of [["covers", cover], ["screenshots", screen]]) {
           const request = incoming
             ? api.pastePreviewMedia(preview.operationId, item.key, type)
@@ -8279,6 +8378,7 @@
                 detailCover.src = result.data;
                 detailCover.style.visibility = "visible";
               }
+              if (type === "screenshots") { detailScreen.src = result.data; detailScreen.hidden = false; }
             }
             else image.classList.add("empty");
           });

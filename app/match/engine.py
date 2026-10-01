@@ -38,9 +38,11 @@ Collection의 한 ROM이 Archive의 어느 ROM Identity와 같은 것인지 판�
 from __future__ import annotations
 
 from pathlib import Path
+from difflib import SequenceMatcher
 
 from similar_rom import DEFAULT_WEIGHTS, compute_pair_score
 from utils import normalize_title
+from app.model.constants import metadata_compatible
 
 TIER_EXACT = "exact"
 TIER_NORMALIZED = "normalized"
@@ -217,6 +219,16 @@ def _metadata_match(a: dict, b: dict) -> tuple[str | None, float, list[str]]:
     publisher = _same(a.get("publisher"), b.get("publisher"))
     if not (developer and release):
         return None, 0.0, []
+    title_left = a.get("title_norm") or normalize_title(a.get("title") or "")
+    title_right = b.get("title_norm") or normalize_title(b.get("title") or "")
+    filename_left = a.get("filename_norm") or normalize_title(Path(a.get("filename") or "").stem)
+    filename_right = b.get("filename_norm") or normalize_title(Path(b.get("filename") or "").stem)
+    resemblance = max(SequenceMatcher(None, title_left, title_right).ratio()
+                      if title_left and title_right else 0,
+                      SequenceMatcher(None, filename_left, filename_right).ratio()
+                      if filename_left and filename_right else 0)
+    if resemblance < 0.5:
+        return None, 0.0, []
 
     evidence = ["개발사 일치", "출시일 일치"]
     score = METADATA_THRESHOLD
@@ -299,14 +311,21 @@ def deep_candidates(archive, source: dict, *, exclude_collection=None,
     점수에 반영한다. 안 주면 Identity에 들어 있는 정보만으로 계산한다.
     """
     found = []
-    for identity in archive.identities_in_system(source["system"],
-                                                 exclude_collection=exclude_collection):
-        fields = (fields_of(identity["rom_identity_id"]) if fields_of else {}) or {}
-        other = subject_of_identity(identity, fields)
-        tier, score, evidence = classify_pair(source, other)
-        if tier:
-            found.append({**_identity_view(identity), "tier": tier,
-                          "score": score, "evidence": evidence})
+    systems = [source["system"]] + [row["system"] for row in archive.systems()
+        if row["system"] != source["system"] and metadata_compatible(source["system"], row["system"])]
+    for system in systems:
+        if system != source["system"] and any(candidate["system"] == source["system"] for candidate in found):
+            break
+        for identity in archive.identities_in_system(system, exclude_collection=exclude_collection):
+            fields = (fields_of(identity["rom_identity_id"]) if fields_of else {}) or {}
+            other = subject_of_identity(identity, fields)
+            tier, score, evidence = classify_pair(source, {**other, "system": source["system"]})
+            if tier:
+                if system != source["system"]:
+                    tier = TIER_NORMALIZED if tier == TIER_EXACT else tier
+                    evidence.append(f"같은 메타데이터 계열: {system}")
+                found.append({**_identity_view(identity), "tier": tier,
+                              "score": score, "evidence": evidence})
     return _rank(found, limit)
 
 

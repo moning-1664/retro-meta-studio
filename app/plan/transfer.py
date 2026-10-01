@@ -53,6 +53,16 @@ def _filled(value) -> bool:
     return value is not None and str(value).strip() != ""
 
 
+def fields_conflict(existing, incoming, mode=DEFAULT_MODE):
+    if mode == MODE_PATCH:
+        return False
+    existing, incoming = existing or {}, incoming or {}
+    return any(_filled(value) and (
+        (_filled(incoming.get(key)) and incoming[key] != value)
+        or (mode == MODE_REPLACE and not _filled(incoming.get(key)))
+    ) for key, value in existing.items())
+
+
 def _merge_fields(existing, incoming, mode) -> dict:
     """대상 값과 원본 값을 모드에 맞게 합친다."""
     existing, incoming = dict(existing or {}), dict(incoming or {})

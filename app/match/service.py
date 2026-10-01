@@ -116,7 +116,8 @@ def apply_match(archive, collection_id, row, rom_identity_id, *, manual=False) -
     identity = archive.get_identity(rom_identity_id)
     if identity is None:
         raise KeyError("Archive 항목을 찾을 수 없습니다.")
-    if identity["system"] != row["system"]:
+    from app.model.constants import metadata_compatible
+    if not metadata_compatible(identity["system"], row["system"]):
         raise ValueError("System이 다른 항목끼리는 Match할 수 없습니다.")
 
     chosen = next((c for c in candidates_for(archive, collection_id, row)["candidates"]

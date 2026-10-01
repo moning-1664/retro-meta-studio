@@ -210,15 +210,15 @@ class PasteIntoAnotherSystemTests(unittest.TestCase):
         self.assertEqual(entry["count"], 1)
         self.assertIn("ps2", data["targetSystems"])
 
-    def test_pasting_with_a_map_puts_the_rom_in_the_chosen_system(self):
+    def test_pasting_with_a_map_does_not_copy_rom_to_unrelated_system(self):
         self._copy_1941()
         result = self.api.paste(self.dst, "patch", {"fbneo act": "ps2"})
         self.assertTrue(result["ok"], result.get("error"))
         self._apply()
-        self.assertTrue((self.dst_root / "ps2" / "1941.zip").exists())
+        self.assertFalse((self.dst_root / "ps2" / "1941.zip").exists())
         self.assertFalse((self.dst_root / "fbneo act").exists())
         rows = {r["file"]: r for r in self.api.list_rows(self.dst, limit=99)["data"]["rows"]}
-        self.assertEqual(rows["1941.zip"]["system"], "ps2")
+        self.assertNotIn("1941.zip", rows)
 
     def test_system_target_preview_and_new_only_paste(self):
         self._copy_1941()
@@ -229,9 +229,9 @@ class PasteIntoAnotherSystemTests(unittest.TestCase):
         self.assertEqual(preview["data"]["items"][0]["system"], "fbneo act")
         result = self.api.paste(self.dst, "patch", {"fbneo act": "ps2"}, None, None, True)
         self.assertTrue(result["ok"], result.get("error"))
-        self.assertEqual(result["data"]["added"], 1)
+        self.assertEqual(result["data"]["added"], 0)
         self._apply()
-        self.assertTrue((self.dst_root / "ps2" / "1941.zip").exists())
+        self.assertFalse((self.dst_root / "ps2" / "1941.zip").exists())
 
     def test_system_new_only_allows_a_different_extension(self):
         # 같은 stem이라도 확장자를 포함한 ROM 이름이 다르면 별도 항목이다.
@@ -242,7 +242,7 @@ class PasteIntoAnotherSystemTests(unittest.TestCase):
         self.assertEqual(preview["data"]["duplicates"], [])
         result = self.api.paste(self.dst, "overwrite", {"fbneo act": "ps2"}, None, None, True)
         self.assertTrue(result["ok"], result.get("error"))
-        self.assertEqual(self.api.plan_state(self.dst)["data"]["total"], 1)
+        self.assertEqual(self.api.plan_state(self.dst)["data"]["total"], 0)
 
     def test_system_target_requires_clipboard_and_existing_system(self):
         empty = self.api.clipboard_system_target(self.dst, "ps2")
