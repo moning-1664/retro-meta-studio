@@ -55,7 +55,7 @@ AREA_HINTS = {
     "title-affix": ("titleAffix", "openTitleAffixDialog"),
 }
 
-FILES = ["app.js", "settings.js", "dashboard.js"]
+FILES = ["app.js", "scraper-ui.js", "transfer-ui.js", "archive-settings-ui.js", "collection-setup-ui.js", "settings.js", "dashboard.js"]
 
 
 def _extract_json_object(src: str, marker: str) -> dict:

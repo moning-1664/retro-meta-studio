@@ -817,7 +817,7 @@ class ApplyBoundaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             api = self.make_api()
             api._scrape_cache_dir = Path(temporary)
-            with mock.patch("bridge.api.requests.get", return_value=Download()):
+            with mock.patch("bridge.scraper.requests.get", return_value=Download()):
                 path = api._download_scrape_media(
                     "https://www.screenscraper.fr/image.php?gameid=42", "s", "i", "covers")
             self.assertEqual(Path(path).suffix, ".png")
@@ -849,7 +849,7 @@ class ApplyBoundaryTests(unittest.TestCase):
                     "covers", "https://www.screenscraper.fr/image.php?gameid=42"),)).to_dict()]
                 session = api.scrape.sessions.create("collection", cid, [item])
                 api.scrape.select(session["id"], item["id"], "screenscraper:42", [], [0])
-                with mock.patch("bridge.api.requests.get", return_value=Download()):
+                with mock.patch("bridge.scraper.requests.get", return_value=Download()):
                     result = api._apply_scrape_session(session["id"], lambda *args: None)
                 self.assertEqual(result["failed"], [])
                 self.assertEqual(result["partial"], [])
@@ -873,7 +873,7 @@ class ApplyBoundaryTests(unittest.TestCase):
                 downloaded.write_bytes(b"new scraper cover")
                 old_cover = collection_root / "downloaded_media" / "ps2" / "covers" / "FFX.png"
                 original = old_cover.read_bytes()
-                with mock.patch("bridge.api.validate", return_value={"ok": False, "blocked": False,
+                with mock.patch("bridge.scraper.validate", return_value={"ok": False, "blocked": False,
                          "entries": [{"error": "대상 파일이 바뀌었습니다"}]}):
                     with self.assertRaisesRegex(ValueError, "대상 파일이 바뀌었습니다"):
                         api._apply_scraped_collection_media(cid, row["romUid"],
