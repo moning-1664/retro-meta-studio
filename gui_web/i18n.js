@@ -29,10 +29,19 @@
 
   let current = "ko";
   let extraPatterns = [];
+  let backendMessages = [];
 
   function lookup(value, lang) {
     const hit = TABLE[value];
     if (hit && hit[lang]) return hit[lang];
+    if (/[가-힣]/.test(value)) {
+      for (const rule of backendMessages) {
+        const match = rule.pattern.exec(value);
+        if (!match) continue;
+        const params = Object.fromEntries(rule.names.map((name, index) => [name, match[index + 1]]));
+        return t(rule.key, params) + (rule.prefix ? t(params.detail) : "");
+      }
+    }
     for (const p of PATTERNS.concat(extraPatterns)) {
       const m = value.match(p.re);
       if (m && p.forms[lang]) return p.forms[lang].replace(/\$(\d)/g, (_, i) => m[+i] ?? "");
@@ -141,10 +150,30 @@
         if (!/\{\w+\}/.test(forms.ko)) {
           TABLE[forms.ko] = { ...TABLE[forms.ko], ...merged };
           TABLE[forms.en] = { ...TABLE[forms.en], ...merged };
+          for (const source of [forms.ko, forms.en]) {
+            if (source !== source.trim()) {
+              TABLE[source.trim()] = {...TABLE[source.trim()],
+                ...Object.fromEntries(Object.entries(merged).map(([lang, text]) => [lang, text.trim()]))};
+            }
+          }
         }
       });
     },
     getMessages: () => ({ ...MESSAGES }),
+    addBackendMessages: (rules) => {
+      const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      backendMessages = rules.map(rule => {
+        const names = [], parts = [];
+        let offset = 0;
+        for (const match of rule.template.matchAll(/\{(\w+)\}/g)) {
+          parts.push(escape(rule.template.slice(offset, match.index)), "([\\s\\S]*?)");
+          names.push(match[1]); offset = match.index + match[0].length;
+        }
+        parts.push(escape(rule.template.slice(offset)));
+        return {...rule, names, specificity: rule.template.replace(/\{\w+\}/g, "").length,
+          pattern: new RegExp("^" + parts.join("") + "$")};
+      }).sort((a, b) => b.specificity - a.specificity);
+    },
     isRawText: (node) => textOriginal.get(node)?.i18nRaw !== undefined,
     isRawAttribute: (node, attr) => attrOriginal.get(node)?.[attr]?.i18nRaw !== undefined,
     getLanguage: () => current,

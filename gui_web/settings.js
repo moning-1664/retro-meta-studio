@@ -274,13 +274,13 @@
         add(h("div", { class: "stg-subsection-title" }, ["멀티디스크 태그"]));
         add(row("metadata.discTitles", "제목 뒤에 디스크 번호 태그 붙이기",
           toggle(!!(s.metadata || {}).discTitles, (v) => ctx.update("metadata", { discTitles: v })),
-          "적용할 때 제목 뒤에만 붙입니다. 파일명은 건드리지 않고, 두 번 적용해도 늘어나지 않습니다. "
-          + "CD를 쓰는 System은 Disc, 플로피를 쓰는 System(MSX, PC-98 등)은 Disk로 적습니다."));
+          (window.RMSI18n.t("ui.legacy.e47c2599fa") + " ")
+          + window.RMSI18n.t("ui.legacy.fdec9c6fb9")));
         add(discFormatRow(s));
       } else if (key === "scraper") {
         add(...section("스크랩", "ScreenScraper 계정과 요청 사용량을 관리합니다."));
         add(ctx.renderScraper ? ctx.renderScraper()
-          : h("div", { class: "stg-info" }, ["Scraper 설정을 불러올 수 없습니다."]));
+          : h("div", { class: "stg-info" }, [window.RMSI18n.t("ui.legacy.9ad2a4ee8d")]));
       } else if (key === "transfer") {
         add(...section("복사와 가져오기", "파일과 Metadata/Media를 옮길 때의 기본값입니다."));
         // 붙여넣기(bridge paste)가 이 값을 읽는다. 저장된 사용자 선택은 기본값보다 우선한다.

@@ -148,7 +148,7 @@ test.describe("Media 확대가 창에 맞는다", () => {
     await page.setViewportSize({ width: 820, height: 520 });
     await openFirstGame(page);
     await page.locator(".detail-tab", { hasText: "미디어" }).click();
-    await page.locator(".media-tile[title='Cover']").click();
+    await page.locator(".media-tile[title='커버']").click();
     const img = page.locator(".lightbox-img");
     await expect(img).toBeVisible();
     for (const box of [await img.boundingBox(), await page.locator(".lightbox-card").boundingBox()]) {

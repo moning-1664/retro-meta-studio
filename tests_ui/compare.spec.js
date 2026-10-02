@@ -449,7 +449,7 @@ test.describe("좌/우 Detail", () => {
     await openDetail(page, "Media Only");
     await page.locator("#compare-left .detail-tab", { hasText: "미디어" }).click();
     await expect(page.locator("#compare-left .cmp-tile.changed")).toHaveCount(1);
-    await expect(page.locator("#compare-left .cmp-tile.changed")).toContainText("Cover");
+    await expect(page.locator("#compare-left .cmp-tile.changed")).toContainText("커버");
   });
 
   test("한쪽에 ROM이 없으면 그 쪽 Detail이 그 사실을 알려 준다", async ({ page }) => {

@@ -469,7 +469,7 @@
   };
 
   const OWNERSHIP_LABEL = {
-    internal: "Archive 보관", linked: "원본 연결", mixed: "혼합", none: "파일 없음",
+    internal: window.RMSI18n.t("ui.legacy.7a1b667cfc"), linked: window.RMSI18n.t("ui.legacy.e5125c56e9"), mixed: window.RMSI18n.t("ui.legacy.b47802e84e"), none: window.RMSI18n.t("ui.legacy.dad41c54ce"),
   };
 
   function ownershipBadge(mode, compact) {
@@ -478,9 +478,9 @@
       : value === "linked" ? "link" : value === "mixed" ? "arrowLeftRight" : "xCircle";
     return h("span", {
       class: `ownership-badge ${value}` + (compact ? " compact" : ""),
-      title: value === "internal" ? "Archive 관리 폴더 안의 파일"
-        : value === "linked" ? "외부 Collection의 원본 파일을 연결해서 사용"
-          : value === "mixed" ? "Archive 보관 파일과 외부 원본 연결이 함께 있음" : "연결된 파일 없음",
+      title: value === "internal" ? window.RMSI18n.t("ui.legacy.67579056bf")
+        : value === "linked" ? window.RMSI18n.t("ui.legacy.43d0f7c716")
+          : value === "mixed" ? window.RMSI18n.t("ui.legacy.4241368b1e") : window.RMSI18n.t("ui.legacy.454ff827d0"),
     }, [icon(glyph, IC.xs), OWNERSHIP_LABEL[value]]);
   }
 
@@ -642,7 +642,7 @@
   window.__rmsAdoptCollection = async (id) => {
     await loadCollections();
     await openTab(id);
-    showToast("떼어 낸 창의 Collection을 다시 붙였습니다.");
+    showToast(window.RMSI18n.t("ui.legacy.94b2f06d05"));
   };
 
   async function loadAppSettings() {
@@ -758,9 +758,9 @@
       const media = h("input", { type: "checkbox", class: "archive-media-internal" });
       media.checked = !!cfg.mediaInternal;
       const mode = h("select", { class: "stg-control archive-mode" }, [
-        h("option", { value: "new" }, ["새 Archive 만들기"]),
-        h("option", { value: "existing" }, ["기존 Archive 연결"]),
-        h("option", { value: "convert" }, ["기존 Frontend 폴더를 Archive로 사용"]),
+        h("option", { value: "new" }, [window.RMSI18n.t("ui.legacy.55fe125c87")]),
+        h("option", { value: "existing" }, [window.RMSI18n.t("ui.legacy.581670987b")]),
+        h("option", { value: "convert" }, [window.RMSI18n.t("ui.legacy.da319f4d4f")]),
       ]);
       if (cfg.configured) mode.value = "existing";
       const folderInfo = h("div", { class: "folder-detection", role: "status" });
@@ -783,7 +783,7 @@
             if (inspectJobId) api.cancelJob(inspectJobId);
             folderInfo.textContent = window.RMSI18n.t("ui.archive.folderStopped");
           },
-        }, ["중지"]));
+        }, [window.RMSI18n.t("ui.legacy.ddb7af8ef7")]));
         const result = await inspectFolderInBackground(path, (jobId) => {
           if (run !== inspectRun) api.cancelJob(jobId);
           else inspectJobId = jobId;
@@ -813,8 +813,8 @@
 
       wrap.appendChild(h("div", { class: "stg-help" },
         ["Archive는 선택한 게임의 메타데이터·미디어와 변경 이력을 보관합니다. 현재 Collection과 자동 동기화하지 않습니다."]));
-      if (!cfg.configured) wrap.appendChild(rowOf("archive.mode", "시작 방법",
-        "새 폴더에 만들거나, 기존 Archive DB가 있는 폴더를 연결합니다.", mode));
+      if (!cfg.configured) wrap.appendChild(rowOf("archive.mode", window.RMSI18n.t("ui.legacy.b43dc959bb"),
+        window.RMSI18n.t("ui.legacy.5ff094de1f"), mode));
       wrap.appendChild(rowOf("archive.frontend", "저장 형식",
         "Archive를 어떤 Frontend의 형식으로 둘지 정합니다. 바꾸면 그 형식으로 다시 배치합니다(이전 형식의 파일은 지우지 않습니다).",
         frontendSel));
@@ -844,24 +844,24 @@
           busy.value = false;
           if (!result.ok) { showToast(result.error, "error"); return; }
           if (result.data.status === "conflict") {
-            showToast("공유 Archive가 다시 바뀌었습니다. 충돌 내용을 다시 확인하세요.", "warning");
+            showToast(msg("ui.archive.changedAgain"), "warning");
             closeModal();
             return;
           }
           closeModal();
           const backups = result.data.backups || [];
-          showToast(`선택한 Archive DB를 적용했습니다. 두 버전의 백업: ${backups.join(" · ")}`, "success");
+          showToast(msg("ui.archive.resolved", {paths: backups.join(" · ")}), "success");
           if (isArchive()) { resetList(); await reloadList(); renderAll(); }
         };
-        showModal("Archive 공유 DB 충돌", h("div", { class: "modal-body" }, [
+        showModal(msg("ui.archive.sharedTitle"), h("div", { class: "modal-body" }, [
           h("div", { class: "modal-text" }, [
-            "이 PC와 공유 폴더의 Archive가 각각 바뀌었습니다. 선택 전에 두 DB를 백업합니다."]),
+            msg("ui.archive.sharedHelp")]),
           h("div", { class: "modal-hint" }, [
-            "이 PC 내용 사용은 공유 폴더를 갱신하고, 공유 내용 사용은 이 PC의 DB를 교체합니다."]),
+            msg("ui.archive.sharedChoiceHelp")]),
         ]), [
           h("button", { class: "btn", onClick: closeModal }, ["나중에"]),
-          h("button", { class: "btn", onClick: () => resolve("shared") }, ["공유 내용 사용"]),
-          h("button", { class: "btn primary", onClick: () => resolve("local") }, ["이 PC 내용 사용"]),
+          h("button", { class: "btn", onClick: () => resolve("shared") }, [msg("ui.archive.useShared")]),
+          h("button", { class: "btn primary", onClick: () => resolve("local") }, [msg("ui.archive.useLocal")]),
         ]);
       }
       apply = h("button", { class: "btn primary archive-apply" }, ["저장하고 적용"]);
@@ -869,24 +869,24 @@
       apply.addEventListener("click", async () => {
         if (inspectPromise) await inspectPromise;
         if (!dirInput.value.trim()) { showToast("Archive 디렉토리를 정하세요.", "warning"); return; }
-        if (!frontendSel.value) { showToast("Archive 저장 형식을 선택하세요.", "warning"); return; }
+        if (!frontendSel.value) { showToast(window.RMSI18n.t("ui.legacy.46a15198dc"), "warning"); return; }
         if (!folderResult || folderResult.path !== dirInput.value.trim()) {
-          showToast("Archive 폴더 확인이 끝난 뒤 적용하세요.", "warning"); return;
+          showToast(window.RMSI18n.t("ui.legacy.89b07c3519"), "warning"); return;
         }
         if (!cfg.configured && mode.value === "existing"
             && !folderResult.archive && !folderResult.legacyArchive) {
-          showToast("이 폴더에서 기존 Archive DB를 찾지 못했습니다.", "warning"); return;
+          showToast(window.RMSI18n.t("ui.legacy.69acf3f7c1"), "warning"); return;
         }
         if (!cfg.configured && mode.value === "new"
             && (folderResult.archive || folderResult.legacyArchive)) {
-          showToast("기존 Archive DB가 있습니다. '기존 Archive 연결'을 선택하세요.", "warning"); return;
+          showToast(window.RMSI18n.t("ui.legacy.438cb53640"), "warning"); return;
         }
         if (!cfg.configured && mode.value === "new" && folderResult.findings.length) {
-          showToast("기존 Frontend 파일이 있습니다. 폴더 구조를 확인하고 '기존 Frontend 폴더를 Archive로 사용'을 선택하세요.", "warning"); return;
+          showToast(window.RMSI18n.t("ui.legacy.52864898f7"), "warning"); return;
         }
         if (!cfg.configured && mode.value === "convert"
             && (folderResult.archive || folderResult.legacyArchive || !folderResult.findings.length)) {
-          showToast("기존 Frontend 파일이 있는 폴더를 선택하세요.", "warning"); return;
+          showToast(window.RMSI18n.t("ui.legacy.1e2becebbe"), "warning"); return;
         }
         const saved = await api.saveArchiveConfig({
           frontend: frontendSel.value, archiveDir: dirInput.value.trim(),
@@ -905,13 +905,13 @@
         const timing = d.timings || {};
         const scan = d.synced?.timings || {};
         const write = p.timings || {};
-        lastDiagnostics = `읽기 ${timing.scanSeconds ?? "?"}초 (메타 ${scan.metadataSeconds ?? "?"}, 미디어 ${scan.mediaSeconds ?? "?"}, ROM ${scan.romSeconds ?? "?"}, DB ${scan.databaseSeconds ?? "?"}) · Frontend ${timing.projectionSeconds ?? "?"}초 (미디어 ${write.mediaSeconds ?? "?"}, gamelist ${write.writeIndexSeconds ?? "?"}) · 공유 DB ${timing.sharedSeconds ?? "?"}초`;
-        showToast(`Archive에 ${formatCount(p.entries || 0)}개를 ${formatCount(p.systems || 0)}개 System으로 정리했습니다. (${timing.scanSeconds ?? "?"}초 읽기, ${timing.projectionSeconds ?? "?"}초 쓰기)`
-          + (d.imported && d.imported.identities ? ` (이전 Archive ${formatCount(d.imported.identities)}개 가져옴)` : ""));
+        lastDiagnostics = window.RMSI18n.t("ui.legacy.746fd58997", {value0: (timing.scanSeconds ?? "?"), value1: (scan.metadataSeconds ?? "?"), value2: (scan.mediaSeconds ?? "?"), value3: (scan.romSeconds ?? "?"), value4: (scan.databaseSeconds ?? "?"), value5: (timing.projectionSeconds ?? "?"), value6: (write.mediaSeconds ?? "?"), value7: (write.writeIndexSeconds ?? "?"), value8: (timing.sharedSeconds ?? "?")});
+        showToast(window.RMSI18n.t("ui.legacy.fbedff50ac", {value0: (formatCount(p.entries || 0)), value1: (formatCount(p.systems || 0)), value2: (timing.scanSeconds ?? "?"), value3: (timing.projectionSeconds ?? "?")})
+          + (d.imported && d.imported.identities ? window.RMSI18n.t("ui.legacy.c3c0033d78", {value0: (formatCount(d.imported.identities))}) : ""));
         if (d.sharedSnapshot?.status === "conflict")
           await showSharedConflict();
         else if (d.sharedSnapshot?.status === "error")
-          showToast(`Archive 공유 DB 저장 실패: ${d.sharedSnapshot.error}`, "warning");
+          showToast(window.RMSI18n.t("ui.legacy.2966c5ffc5", {value0: (d.sharedSnapshot.error)}), "warning");
         if (onApplied) await onApplied();
         draw();
       });
@@ -920,16 +920,16 @@
       rescan.addEventListener("click", async () => {
         const started = await api.startArchiveRefresh();
         if (!started.ok) { showToast(started.error, "error"); return; }
-        const done = await pollJob(started.data.jobId, "Archive 디렉터리 읽기", progressHost);
+        const done = await pollJob(started.data.jobId, window.RMSI18n.t("ui.legacy.3e6cf405ea"), progressHost);
         if (!done.ok) {
           if (String(done.error || "").includes("자동으로 합칠 수 없습니다")) await showSharedConflict();
           else if (!done.cancelled) showToast(done.error, "error");
           return;
         }
         const scan = done.data?.timings || {};
-        lastDiagnostics = `읽기 ${done.data?.scanSeconds ?? "?"}초 (메타 ${scan.metadataSeconds ?? "?"}, 미디어 ${scan.mediaSeconds ?? "?"}, ROM ${scan.romSeconds ?? "?"}, DB ${scan.databaseSeconds ?? "?"})`;
+        lastDiagnostics = window.RMSI18n.t("ui.legacy.3bc47ee5a2", {value0: (done.data?.scanSeconds ?? "?"), value1: (scan.metadataSeconds ?? "?"), value2: (scan.mediaSeconds ?? "?"), value3: (scan.romSeconds ?? "?"), value4: (scan.databaseSeconds ?? "?")});
         status.textContent = lastDiagnostics;
-        showToast(`Archive 디렉터리 읽기 완료 (${done.data?.scanSeconds ?? "?"}초)`);
+        showToast(window.RMSI18n.t("ui.legacy.b4f74b78a3", {value0: (done.data?.scanSeconds ?? "?")}));
         if (done.data?.sharedSnapshot?.status === "conflict")
           await showSharedConflict();
         if (onApplied) await onApplied();
@@ -939,16 +939,16 @@
       if (lastDiagnostics) status.textContent = lastDiagnostics;
       if (cfg.editLock) {
         const lockInfo = h("div", {class: "stg-help"}, [
-          `읽기 전용 · ${cfg.editLock.host || "다른 PC"}에서 Archive 편집 중`,
+          window.RMSI18n.t("ui.legacy.fc8cda2a63", {value0: (cfg.editLock.host || window.RMSI18n.t("ui.legacy.ab6df16281"))}),
         ]);
         const release = h("button", {class: "btn compact", disabled: !cfg.editLock.token,
-          onClick: () => showConfirm("편집 잠금 인계",
-            "기존 PC의 편집 앱이 종료되었는지 확인하세요. 실행 중인 편집의 잠금을 해제하면 데이터가 충돌할 수 있습니다.",
+          onClick: () => showConfirm(window.RMSI18n.t("ui.legacy.ad06417203"),
+            window.RMSI18n.t("ui.legacy.d189eb993b"),
             true, async () => {
               const result = await api.archiveReleaseEditLock(cfg.editLock.token, true);
               if (!result.ok) { showToast(result.error, "error"); return; }
-              cfg.editLock = null; draw(); showToast("중단된 편집 잠금을 해제했습니다.");
-            })}, ["중단된 잠금 해제"]);
+              cfg.editLock = null; draw(); showToast(window.RMSI18n.t("ui.legacy.d6953dc944"));
+            })}, [window.RMSI18n.t("ui.legacy.bba8797185")]);
         wrap.appendChild(h("div", {class: "archive-config-actions"}, [lockInfo, release]));
       }
       wrap.appendChild(progressHost);
@@ -1002,7 +1002,7 @@
         const rowEl = h("div", { class: "stg-column-row" + (hidden.has(id) ? " off" : ""), "data-column": id }, [
           grip,
           h("label", { class: "stg-column-name" }, [check, h("span", {}, [columnName(col)])]),
-          locked ? h("span", { class: "stg-column-note" }, ["마지막 컬럼"]) : null,
+          locked ? h("span", { class: "stg-column-note" }, [window.RMSI18n.t("ui.legacy.968ad34d54")]) : null,
         ]);
         grip.addEventListener("keydown", (e) => {
           if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
@@ -1223,8 +1223,8 @@
     const close = async () => { await flushPendingUiState(); api.windowControl("close"); };
     const edited = Object.keys(S.detailState?.draft || {}).length > 0;
     if (jobRows.size || edited) {
-      showConfirm("종료", jobRows.size ? "진행 중인 작업이 있습니다. 중지하고 종료할까요?"
-        : "저장하지 않은 변경이 있습니다. 종료할까요?", false, close);
+      showConfirm(window.RMSI18n.t("ui.legacy.597dd4f9fe"), jobRows.size ? window.RMSI18n.t("ui.legacy.7084cc385d")
+        : window.RMSI18n.t("ui.legacy.7753cbfc6b"), false, close);
     } else close();
   }
   window.__RMS_REQUEST_CLOSE = requestWindowClose;
@@ -1385,7 +1385,7 @@
 
   /** Collection 탭 우클릭 - 다른 우클릭과 같은 플로팅 메뉴다(사용자 결정 - 예전의 버튼 대화상자 대신). */
   function openTabMenu(collection, event) {
-    const items = [{ label: "Collection 정보…", icon: "info", onSelect: () => openCollectionInfo(collection) }];
+    const items = [{ label: window.RMSI18n.t("ui.legacy.124f017e99"), icon: "info", onSelect: () => openCollectionInfo(collection) }];
     if (isDetached()) {
       items.push({ label: "메인 창으로 합치기", icon: "layoutList", onSelect: mergeIntoMain });
       showContextMenu(menuPoint(event), collection.name, collection.rootPath, items, collection.rootPath);
@@ -1398,23 +1398,23 @@
     // 리포트) - 기준이 남아 있는 동안은 어느 탭을 우클릭하든 "기준 해제"를 같이 보여준다.
     if (S.compareBase && S.compareBase !== collection.id) {
       const baseName = (S.collections.find((c) => c.id === S.compareBase) || {}).name || "기준";
-      items.push({ label: `${baseName}와 비교`, icon: "scale", onSelect: () => runCompare(S.compareBase, collection.id) });
+      items.push({ label: window.RMSI18n.t("ui.legacy.0f77b922dd", {value0: (baseName)}), icon: "scale", onSelect: () => runCompare(S.compareBase, collection.id) });
     } else if (!S.compareBase) {
       items.push({ label: "Compare 기준으로 지정", icon: "scale", onSelect: () => {
         S.compareBase = collection.id;
-        showToast("비교 기준으로 지정했습니다. 다른 Collection 탭을 우클릭해 비교를 시작하세요.");
+        showToast(window.RMSI18n.t("ui.legacy.65d8e3f56d"));
       } });
     }
     if (S.compareBase) {
       const baseName = (S.collections.find((c) => c.id === S.compareBase) || {}).name || "기준";
-      items.push({ label: `Compare 기준 해제 (${baseName})`, icon: "x", onSelect: () => {
+      items.push({ label: window.RMSI18n.t("ui.legacy.7d1c4de1c8", {value0: (baseName)}), icon: "x", onSelect: () => {
         S.compareBase = null;
         showToast("비교 기준을 해제했습니다.");
       } });
     }
     items.push("separator");
     items.push({ label: "제거…", icon: "trash", danger: true, title: "등록 목록에서만 제거합니다. 실제 파일은 그대로입니다.",
-      onSelect: () => showConfirm("Collection 제거", "등록 목록에서 제거합니다. 실제 파일은 삭제되지 않습니다.", true,
+      onSelect: () => showConfirm("Collection 제거", window.RMSI18n.t("ui.legacy.62d05d3d89"), true,
         async () => { await api.deleteCollection(collection.id); closeTab(collection.id); await loadCollections(); renderAll(); }) });
     showContextMenu(menuPoint(event), collection.name, collection.rootPath, items, collection.rootPath);
   }
@@ -1433,7 +1433,7 @@
 
     const nameInput = h("input", { class: "field-input", value: collection.name });
     const targetSel = h("select", { class: "field-input" }, [
-      h("option", { value: "" }, ["자동"]),
+      h("option", { value: "" }, [msg("ui.collection.auto")]),
       h("option", { value: "windows" }, ["Windows"]),
       h("option", { value: "android" }, ["Android"]),
       h("option", { value: "linux" }, ["Linux"]),
@@ -1442,7 +1442,7 @@
 
     const metaInput = h("input", { class: "field-input", value: collection.rootPath || "",
                                    disabled: isDevice });
-    const romInput = h("input", { class: "field-input", placeholder: "비워두면 Metadata와 같은 폴더",
+    const romInput = h("input", { class: "field-input", placeholder: window.RMSI18n.t("ui.legacy.14e0341641"),
                                   disabled: isDevice });
     const browse = (input, title) => {
       const btn = h("button", { class: "btn", disabled: isDevice }, [icon("folderOpen", IC.sm), h("span", {}, ["찾아보기"])]);
@@ -1453,14 +1453,14 @@
       return btn;
     };
     const pathNote = isDevice
-      ? h("div", { class: "modal-hint" }, ["기기(MTP) Collection의 폴더는 여기서 바꿀 수 없습니다."])
+      ? h("div", { class: "modal-hint" }, [window.RMSI18n.t("ui.legacy.d7abddabee")])
       : h("div", { class: "modal-hint" }, [
-          "폴더를 바꾸면 이 Collection을 처음부터 다시 스캔합니다 - System별로 따로 지정해 둔 " +
-          "ROM 위치(External Storage 등)는 그대로 둡니다."]);
+          (window.RMSI18n.t("ui.legacy.e99779ffe3") + " ") +
+          window.RMSI18n.t("ui.legacy.731c6b1d9c")]);
 
     const size = formatBytes((detail.totalRomBytes || 0) + (detail.totalMediaBytes || 0));
     const statsRow = h("div", { class: "modal-hint" }, [
-      `롬 개수: ${formatCount(detail.totalGames || 0)}개 · 총 용량: ${size} · Frontend: ${collection.frontendLabel || collection.frontend}`,
+      window.RMSI18n.t("ui.legacy.e77f484774", {value0: (formatCount(detail.totalGames || 0)), value1: (size), value2: (collection.frontendLabel || collection.frontend)}),
     ]);
 
     const convertBtn = h("button", { class: "btn" }, [icon("arrowLeftRight", IC.sm), h("span", {}, ["Convert…"])]);
@@ -1475,10 +1475,10 @@
       h("div", { class: "field-label" }, ["ROM 디렉토리 ", h("span", { class: "field-optional" }, ["(선택)"])]),
       h("div", { class: "field-row" }, [romInput, browse(romInput, "ROM 폴더 선택")]),
       pathNote,
-      h("div", { class: "field-label" }, ["다른 Frontend로"]), convertBtn,
+      h("div", { class: "field-label" }, [window.RMSI18n.t("ui.legacy.c053107ab7")]), convertBtn,
     ]);
 
-    showModal("Collection 정보", body, [
+    showModal(window.RMSI18n.t("ui.legacy.6999610771"), body, [
       h("button", { class: "btn", onClick: closeModal }, ["닫기"]),
       h("button", { class: "btn primary", onClick: async () => {
         const name = nameInput.value.trim();
@@ -1498,7 +1498,7 @@
           renderAll();
           return;
         }
-        showConfirm("폴더 변경", "폴더를 바꾸면 이 Collection을 처음부터 다시 스캔합니다. 계속할까요?",
+        showConfirm(window.RMSI18n.t("ui.legacy.b41c49cc84"), window.RMSI18n.t("ui.legacy.cf3d7beb88"),
           false, async () => {
             closeModal();
             await applyRest();
@@ -1608,7 +1608,7 @@
       return;
     }
     if (S.tabs.length >= MAX_TABS) {
-      showToast(`동시에 열 수 있는 Collection은 ${MAX_TABS}개까지입니다.`, "warning");
+      showToast(window.RMSI18n.t("ui.legacy.f831fab4f9", {value0: (MAX_TABS)}), "warning");
       return;
     }
     const r = await api.openCollection(id);
@@ -1687,9 +1687,9 @@
     //
     // **둘 다 선택 사항이다.** 유효하지 않은 것은 둘 다 비었을 때뿐이다.
     const pathInput = h("input", { class: "field-input", id: "add-metadata-path",
-                                   placeholder: "폴더를 선택하세요 (선택)" });
+                                   placeholder: msg("ui.collection.optionalFolder") });
     const romInput = h("input", { class: "field-input", id: "add-rom-path",
-                                  placeholder: "폴더를 선택하세요 (선택)" });
+                                  placeholder: msg("ui.collection.optionalFolder") });
     // **Architecture는 묻지 않는다.** ES-DE Adapter를 포함해 어떤 Frontend도 이
     // 값으로 동작을 바꾸지 않는다(esde_platform()이 쓰는 것은 target/os뿐이다) -
     // 사용자가 기기 아키텍처를 몰라서 "Unknown"으로 넘겨도 되는데, 넘기는 값이
@@ -1701,17 +1701,17 @@
     // esde_platform() 참고) - 화면에 그 사실이 보이지 않는 게 혼란의 원인이었다
     // (실사용 피드백). 이름과 툴팁으로 실제 동작을 밝힌다.
     const targetSel = h("select", { class: "field-input" }, [
-      h("option", { value: "" }, ["자동"]),
+      h("option", { value: "" }, [msg("ui.collection.auto")]),
       h("option", { value: "windows" }, ["Windows"]),
       h("option", { value: "android" }, ["Android"]),
       h("option", { value: "linux" }, ["Linux"]),
     ]);
-    targetSel.title = "정하지 않으면 Windows로 만듭니다(단, 기기 경로가 있는 Storage를 붙이면 Android로 바뀝니다).";
+    targetSel.title = window.RMSI18n.t("ui.collection.targetHelp");
     const frontendSel = h("select", { class: "field-input", id: "add-frontend" },
       [h("option", { value: "" }, ["저장 형식 선택"]),
         ...frontends.map((f) => h("option", { value: f.id }, [f.label]))]);
     const detectionInfo = h("div", { class: "folder-detection", role: "status" },
-      ["폴더를 고르면 저장 형식을 확인합니다."]);
+      [window.RMSI18n.t("ui.collection.detectHelp")]);
     let detectionPath = "";
     let lastDetection = null;
     let detectionRun = 0;
@@ -1720,8 +1720,8 @@
       const findings = data.findings.map((f) =>
         (frontends.find((item) => item.id === f.frontend) || {}).label || f.frontend);
       detectionInfo.textContent = findings.length
-        ? `감지: ${findings.join(" · ")}${data.suggestedFrontend ? "" : " · 형식을 선택하세요."}`
-        : "형식을 확인할 수 없습니다. 직접 선택하세요.";
+        ? window.RMSI18n.t("ui.legacy.031fa070a8", {value0: (findings.join(" · ")), value1: (data.suggestedFrontend ? "" : (" " + window.RMSI18n.t("ui.legacy.538c2b801e")))})
+        : window.RMSI18n.t("ui.legacy.d6ef408284");
       detectionInfo.title = data.findings.map((finding) => finding.evidence).join(" · ");
     }
     async function inspectSelectedFolder() {
@@ -1732,16 +1732,16 @@
       detectionPath = path;
       lastDetection = null;
       if (source !== "local" || !path) {
-        detectionInfo.textContent = path ? "기기 경로는 직접 저장 형식을 선택하세요." : "폴더를 고르면 저장 형식을 확인합니다.";
+        detectionInfo.textContent = path ? window.RMSI18n.t("ui.legacy.f9b2e36056") : window.RMSI18n.t("ui.collection.detectHelp");
         return;
       }
-      detectionInfo.replaceChildren("폴더 구조 확인 중… ", h("button", {
+      detectionInfo.replaceChildren((window.RMSI18n.t("ui.legacy.f640ae798a") + " "), h("button", {
         class: "btn compact", onClick: () => {
           detectionRun++;
           if (detectionJobId) api.cancelJob(detectionJobId);
           detectionInfo.textContent = "폴더 확인을 중지했습니다.";
         },
-      }, ["중지"]));
+      }, [window.RMSI18n.t("ui.legacy.ddb7af8ef7")]));
       const result = await inspectFolderInBackground(path, (jobId) => {
         if (run !== detectionRun) api.cancelJob(jobId);
         else detectionJobId = jobId;
@@ -1760,10 +1760,10 @@
     }
     pathInput.addEventListener("change", inspectSelectedFolder);
 
-    const pathLabel = h("div", { class: "field-label" }, ["FrontEnd 디렉토리"]);
+    const pathLabel = h("div", { class: "field-label" }, [window.RMSI18n.t("ui.collection.frontend")]);
     const romLabel = h("div", { class: "field-label" }, ["ROM 디렉토리"]);
     const extRomInput = h("input", { class: "field-input", id: "add-ext-rom-path",
-                                     placeholder: "폴더를 선택하세요 (선택)" });
+                                     placeholder: msg("ui.collection.optionalFolder") });
     const extRomLabel = h("div", { class: "field-label" }, [
       "External ROM 디렉토리 ", h("span", { class: "field-optional" }, ["(선택)"]),
     ]);
@@ -1819,7 +1819,7 @@
     // 지금은 지나온 경로 전체를 조각(breadcrumb)으로 보여줘서 아무 조상 폴더나 한 번에
     // 누를 수 있고, 현재 폴더 목록도 폴더 먼저 - 파일 - 이름 순으로 정렬해 익숙하게 만든다.
     const breadcrumb = h("div", { class: "mtp-breadcrumb" });
-    const upBtn = h("button", { class: "mtp-up-btn", title: "위 폴더로" }, [icon("cornerUpLeft", 14)]);
+    const upBtn = h("button", { class: "mtp-up-btn", title: window.RMSI18n.t("ui.legacy.01e6d2c2ec") }, [icon("cornerUpLeft", 14)]);
     const browserList = h("div", { class: "picker-list mtp-list", id: "mtp-browser" });
     const browserHead = h("div", { class: "mtp-browser-head" }, [upBtn, breadcrumb]);
     const browserBox = h("div", { class: "field-block", hidden: true }, [browserHead, browserList]);
@@ -1829,9 +1829,9 @@
     let browseTarget = null, browsePath = null;
 
     function rowButton(name, sub, iconName, onClick) {
-      const row = h("button", { class: "picker-row", title: sub });
+      const row = h("button", { class: "picker-row", title: window.RMSI18n.raw(sub) });
       row.appendChild(icon(iconName, 14));
-      row.appendChild(h("div", { class: "picker-main" }, [h("div", { class: "picker-name" }, [name])]));
+      row.appendChild(h("div", { class: "picker-main" }, [h("div", { class: "picker-name" }, [window.RMSI18n.raw(name)])]));
       row.addEventListener("click", onClick);
       return row;
     }
@@ -1848,7 +1848,7 @@
         if (i > 0) { acc += "/" + parts[i]; }
         const target = acc;
         const isLast = i === labels.length - 1;
-        const seg = h("button", { class: "mtp-crumb" + (isLast ? " current" : ""), disabled: isLast }, [label]);
+        const seg = h("button", { class: "mtp-crumb" + (isLast ? " current" : ""), disabled: isLast }, [window.RMSI18n.raw(label)]);
         if (!isLast) seg.addEventListener("click", () => { browsePath = target; renderBrowser(); });
         breadcrumb.appendChild(seg);
         if (!isLast) breadcrumb.appendChild(h("span", { class: "mtp-crumb-sep" }, [icon("chevronRight", 11)]));
@@ -1941,7 +1941,7 @@
       inspectSelectedFolder();
       romInput.placeholder = device
         ? "ROM 폴더 (선택 - 넣으면 ROM 파일도 확인합니다)"
-        : "폴더를 선택하세요 (선택)";
+        : msg("ui.collection.optionalFolder");
       // External Storage는 로컬 파일시스템 개념이다 - MTP 경로를 여기 섞으면
       // add_external_storage가 거절한다(종류가 다른 저장소, bridge/api.py).
       extRomLabel.hidden = extRomRow.hidden = device;
@@ -1959,19 +1959,19 @@
     function syncNamePlaceholder() {
       const label = (frontends.find((f) => f.id === frontendSel.value) || {}).label;
       nameHint.textContent = label
-        ? `비워 두면 "${defaultCollectionName(label)}"(으)로 만듭니다.`
-        : "저장 형식을 고르면 기본 이름을 제안합니다.";
+        ? window.RMSI18n.t("ui.legacy.fe9e8d3409", {value0: (defaultCollectionName(label))})
+        : window.RMSI18n.t("ui.collection.nameHelp");
     }
 
     function syncFrontend() {
       syncNamePlaceholder();
       const isEs = ES_STYLE_FRONTEND_IDS.has(frontendSel.value);
-      pathLabel.textContent = "FrontEnd 디렉토리";
+      pathLabel.textContent = window.RMSI18n.t("ui.collection.frontend");
       pathLabel.title = isEs
-        ? "ES-DE의 gamelists와 downloaded_media가 포함된 디렉토리입니다."
-        : "ROM(과 메타데이터)이 들어 있는 디렉토리입니다.";
+        ? window.RMSI18n.t("ES-DE의 gamelists와 downloaded_media가 포함된 디렉토리입니다.")
+        : window.RMSI18n.t("ui.collection.frontendHelp");
       pathInput.title = pathLabel.title;
-      romLabel.title = "ROM이 System별 폴더로 들어 있는 디렉토리입니다.";
+      romLabel.title = window.RMSI18n.t("ui.collection.romHelp");
       romInput.title = romLabel.title;
       // ES 계열이 아니면 경로가 하나뿐이다 - 그 Frontend는 메타데이터를 ROM 옆에 둔다.
       romLabel.hidden = !isEs;
@@ -2039,7 +2039,7 @@
           showToast("Metadata 디렉토리와 ROM 디렉토리 중 하나는 선택하세요.", "warning");
           return;
         }
-        if (!frontendSel.value) { showToast("저장 형식을 선택하세요.", "warning"); return; }
+        if (!frontendSel.value) { showToast(window.RMSI18n.t("ui.legacy.8714e99d3b"), "warning"); return; }
         // 이름을 안 적었으면 **선택한 Frontend 이름**이 기본이다(사용자 결정 - Pegasus처럼 ROM 폴더만 고르면
         // 폴더 이름("Roms")이 이름이 되어 무엇인지 알 수 없었다). 같은 이름이 이미 있으면 번호를 붙인다.
         const name = nameInput.value.trim() || defaultCollectionName(
@@ -2062,7 +2062,7 @@
           // Storage 설정에서 언제든 바꿀 수 있다.
           const ext = await api.addExternalStorage(r.data.id, "External", extRomPath);
           if (ext.ok) await api.attachStorageSystems(r.data.id, ext.data);
-          else showToast(`External ROM 디렉토리는 추가하지 못했습니다: ${ext.error}`, "warning");
+          else showToast(window.RMSI18n.t("ui.legacy.47d210de80", {value0: (ext.error)}), "warning");
         }
         // 메타데이터가 없다는 이유로 여기서 gamelist 생성 여부를 묻지 않는다.
         //
@@ -2249,7 +2249,7 @@
     const hiddenCount = (detail.systems || []).filter((sys) => !visibleSystem(sys)).length;
     const hideToggle = h("button", {
       class: "icon-btn nav-hide-empty" + (hideEmpty ? " on" : ""),
-      title: hideEmpty ? `빈 System 보이기 (숨김 ${formatCount(hiddenCount)}개)` : "빈 System 숨기기",
+      title: hideEmpty ? window.RMSI18n.t("ui.legacy.d533ff5d13", {value0: (formatCount(hiddenCount))}) : "빈 System 숨기기",
       "aria-pressed": hideEmpty ? "true" : "false",
     }, [icon(hideEmpty ? "eyeOff" : "eye", 12)]);
     hideToggle.addEventListener("click", () => updateSettings("navigation", { hideEmptySystems: !hideEmpty }));
@@ -2268,7 +2268,7 @@
         const where = sys.conflict.map((c) => `${c.label}: ${c.path}`).join("\n");
         row.insertBefore(h("span", {
           class: "nav-conflict",
-          title: `같은 System 폴더가 여러 Storage에 있어 쓰기가 막혔습니다.\n${where}\n우클릭에서 한쪽 폴더를 지우거나 이름을 바꾸세요.`,
+          title: window.RMSI18n.t("ui.legacy.be2f735200", {value0: (where)}),
         }, ["!"]), row.lastChild);
       }
       const storage = storageById[sys.storageId];
@@ -2276,7 +2276,7 @@
       if (pendingTo) {
         row.classList.add("pending-move");
         const target = storageById[pendingTo];
-        row.title = `${sys.system} · ${formatCount(sys.count)}개\n이동 예정: ${storage ? storage.label : sys.storageId} → ${target ? target.label : pendingTo}(Apply로 확정)`;
+        row.title = window.RMSI18n.t("ui.legacy.309478b25f", {value0: (sys.system), value1: (formatCount(sys.count)), value2: (storage ? storage.label : sys.storageId), value3: (target ? target.label : pendingTo)});
       } else if (storage) {
         row.title = window.RMSI18n.t(msg("ui.storage.row", {system: sys.system, count: formatCount(sys.count), storage: storage.label, path: storage.rootPath}));
       }
@@ -2339,14 +2339,14 @@
         // Android 경로를 받는다 - PC 경로만 External에서만 뜻이 있다(Internal의
         // PC 경로는 Collection 경로 자체라 여기서 바꿀 자리가 아니다).
         if (!isCompare()) {
-          const gear = h("button", { class: "icon-btn storage-settings-btn", title: `${storage.label} 설정` },
+          const gear = h("button", { class: "icon-btn storage-settings-btn", title: window.RMSI18n.t("ui.legacy.abfca05c3a", {value0: (storage.label)}) },
                          [icon("settings", IC.sm)]);
           gear.addEventListener("click", (e) => { e.stopPropagation(); openStorageSettings(storage); });
           head.appendChild(gear);
         }
         // External을 지우면 그 System들을 Internal로 되돌린다(사용자 결정).
         if (storage.kind === "external" && !isCompare()) {
-          const remove = h("button", { class: "icon-btn storage-remove-btn", title: `${storage.label} 제거` },
+          const remove = h("button", { class: "icon-btn storage-remove-btn", title: window.RMSI18n.t("ui.legacy.ffa77b6975", {value0: (storage.label)}) },
                            [icon("trash", IC.sm)]);
           remove.addEventListener("click", (e) => { e.stopPropagation(); confirmRemoveExternalStorage(storage); });
           head.appendChild(remove);
@@ -2459,7 +2459,7 @@
     // 카드가 아닌 외장 HDD/USB로 붙이는 경우가 흔해서 "SD"를 기본값으로 못박아
     // 두면 오히려 고쳐야 할 이름이 된다.
     const labelInput = h("input", { class: "field-input", value: "External" });
-    const pathInput = h("input", { class: "field-input", placeholder: "예: E:\\ROMs" });
+    const pathInput = h("input", { class: "field-input", placeholder: window.RMSI18n.t("ui.legacy.217b190357") });
     const browse = h("button", { class: "btn", onClick: async () => {
       const r = await api.pickFolder("External Storage 폴더");
       if (r.ok && r.data) pathInput.value = r.data;
@@ -2484,11 +2484,11 @@
         if (!attached.ok) { showToast(attached.error, "error"); return; }
         const a = attached.data;
         const parts = [];
-        if (a.added.length) parts.push(`새 System ${formatCount(a.added.length)}개`);
-        if (a.moved.length) parts.push(`External로 옮김 ${formatCount(a.moved.length)}개`);
-        if (a.conflicts.length) parts.push(`충돌 ${formatCount(a.conflicts.length)}개 (${a.conflicts.join(", ")})`);
-        showToast(parts.length ? `External Storage를 추가했습니다 - ${parts.join(" · ")}`
-          : "External Storage를 추가했습니다 - 그 폴더에서 ROM이 든 System 폴더를 찾지 못했습니다.",
+        if (a.added.length) parts.push(window.RMSI18n.t("ui.legacy.af5649c953", {value0: (formatCount(a.added.length))}));
+        if (a.moved.length) parts.push(window.RMSI18n.t("ui.legacy.90037279c4", {value0: (formatCount(a.moved.length))}));
+        if (a.conflicts.length) parts.push(window.RMSI18n.t("ui.legacy.97f3ec7c57", {value0: (formatCount(a.conflicts.length)), value1: (a.conflicts.join(", "))}));
+        showToast(parts.length ? window.RMSI18n.t("ui.legacy.1ccd828fe6", {value0: (parts.join(" · "))})
+          : window.RMSI18n.t("ui.legacy.4aad59a97e"),
           a.conflicts.length ? "warning" : "info");
         if (a.added.length || a.moved.length) await runScan(S.activeId);
       } }, ["추가"]),
@@ -2511,10 +2511,10 @@
     const detail = activeDetail();
     const systems = (detail.systems || []).filter((sys) => sys.storageId === storage.id);
     const message = systems.length
-      ? `"${storage.label}"을 제거합니다. 이 안의 System ${formatCount(systems.length)}개`
-        + `(${systems.map((s) => s.system.toUpperCase()).join(", ")})를 Internal로 합칩니다.`
-        + ` 실제 파일은 지금 있는 자리에 그대로 남고, 목록에서의 표시만 바뀝니다.`
-      : `"${storage.label}"을 제거합니다. 이 안에는 System이 없습니다.`;
+      ? window.RMSI18n.t("ui.legacy.348ca4854f", {value0: (storage.label), value1: (formatCount(systems.length))})
+        + window.RMSI18n.t("ui.legacy.eb250c5439", {value0: (systems.map((s) => s.system.toUpperCase()).join(", "))})
+        + window.RMSI18n.t("ui.legacy.0d80514564")
+      : window.RMSI18n.t("ui.legacy.eb5b555815", {value0: (storage.label)});
     showConfirm("External Storage 제거", message, true, async () => {
       for (const sys of systems) {
         const r = await api.reassignSystemStorage(S.activeId, sys.system, STORAGE_INTERNAL);
@@ -2526,7 +2526,7 @@
       await runScan(S.activeId);
       resetList();
       renderAll();
-      showToast(`"${storage.label}"을 제거했습니다.`);
+      showToast(window.RMSI18n.t("ui.legacy.5f3d888ff8", {value0: (storage.label)}));
     });
   }
 
@@ -2553,44 +2553,44 @@
     const duplicate = pastePreview.ok ? pastePreview.data.duplicates || [] : [];
     const totalCopied = copied.length + duplicate.length;
     const items = [
-      ...[["overwrite", "붙여넣기"], ["patch", "채우기"], ["replace", "교체하기"]].map(([mode, label]) => ({
-        label: totalCopied ? "여기에 " + label + " (" + formatCount(totalCopied) + "개)" : "여기에 " + label,
+      ...[["overwrite", "붙여넣기"], ["patch", window.RMSI18n.t("ui.legacy.38053c9133")], ["replace", window.RMSI18n.t("ui.legacy.3965df88a5")]].map(([mode, label]) => ({
+        label: totalCopied ? (window.RMSI18n.t("ui.legacy.b7e1241dfe") + " ") + window.RMSI18n.t(label) + " (" + formatCount(totalCopied) + window.RMSI18n.t("ui.legacy.b1abc6d0ae") : (window.RMSI18n.t("ui.legacy.b7e1241dfe") + " ") + label,
         icon: "upload", disabled: !totalCopied,
-        title: duplicate.length ? "같은 이름의 게임은 충돌창에서 결정합니다." : "복사한 게임을 이 System으로 가져옵니다.",
+        title: duplicate.length ? window.RMSI18n.t("ui.legacy.fff3e9b316") : window.RMSI18n.t("ui.legacy.db7cb8fe29"),
         onSelect: () => pasteClipboard(null, sys.system, pastePreview.data, mode),
       })),
       "separator",
       { label: "게임 정보 스크랩…", icon: "sparkles", disabled: !sys.count,
-        title: "이 System의 Archive 항목을 순서대로 검토합니다.",
+        title: window.RMSI18n.t("ui.legacy.6fd7774b4a"),
         onSelect: async () => {
           const ids = await api.archiveUids([sys.system]);
           if (!ids.ok) { showToast(ids.error, "error"); return; }
           openScrapeContext(ids.data);
         } },
-      { label: "언어 태그 적용…", icon: "tag",
-        title: "이 System 전체 제목에서 기존 장식을 떼고, Settings에 설정한 지역별 표시를 다시 붙입니다. 바로 적용됩니다.",
+      { label: window.RMSI18n.t("ui.legacy.f260aa52ce"), icon: "tag",
+        title: window.RMSI18n.t("ui.legacy.ba84252d01"),
         onSelect: () => openTitleAffixDialog({ system: sys.system, label: sys.system.toUpperCase() }) },
-      { label: "멀티 디스크 태그 적용…", icon: "copy",
-        title: "여러 장짜리 게임의 제목 뒤에 붙은 장 번호 표시를 지우고, Settings에 고른 형식으로 다시 붙입니다. 바로 적용됩니다.",
+      { label: window.RMSI18n.t("ui.legacy.46330090bc"), icon: "copy",
+        title: window.RMSI18n.t("ui.legacy.b7fab0717e"),
         onSelect: () => openDiscRetagDialog(sys.system, sys.system.toUpperCase()) },
       "separator",
       { label: "ROM 없는 항목 정리", icon: "eraser",
-        title: "ROM 위치가 한 번도 기록되지 않은 항목(메타데이터만 남은 것)을 Archive에서 지웁니다. "
-          + "실제 파일은 건드리지 않습니다.",
+        title: (window.RMSI18n.t("ui.legacy.e2ebee4755") + " ")
+          + window.RMSI18n.t("ui.legacy.2e33da93e5"),
         onSelect: () => confirmArchiveOrphanCleanup(sys) },
-      { label: "보관 ROM 파일 전체 삭제…", icon: "gamepad", danger: true,
-        title: "이 System에서 Archive ROM 디렉토리 안의 파일만 삭제합니다. 외부 원본 연결은 유지합니다.",
+      { label: window.RMSI18n.t("ui.legacy.ef4f8227d9"), icon: "gamepad", danger: true,
+        title: window.RMSI18n.t("ui.legacy.992887eb32"),
         onSelect: () => confirmArchiveSystemRomDelete(sys) },
-      { label: "보관 미디어 정리…", icon: "image",
-        title: "종류를 골라 Archive 보관 Media 복사본만 삭제합니다. 외부 원본 연결은 유지합니다.",
+      { label: window.RMSI18n.t("ui.legacy.5bb584d891"), icon: "image",
+        title: window.RMSI18n.t("ui.legacy.25963fe74e"),
         onSelect: () => confirmArchiveSystemMediaDelete(sys) },
-      { label: "시스템 기록 제거…", icon: "trash", danger: true,
-        title: "이 System의 Archive 기록을 전부 지웁니다 - 실제 ROM/Media 파일은 그대로입니다.",
+      { label: window.RMSI18n.t("ui.legacy.4c504727be"), icon: "trash", danger: true,
+        title: window.RMSI18n.t("ui.legacy.05aed156cd"),
         onSelect: () => confirmRemoveArchiveSystem(sys) },
     ];
-    const folders = [["rom", "ROM 폴더", "설정한 Archive ROM 경로의 이 System 폴더를 엽니다."],
-      ["metadata", "Metadata 폴더", "Archive frontend 형식으로 저장한 이 System의 Metadata 폴더를 엽니다."],
-      ["media", "Media 폴더", "mediaInternal 설정에 따라 Archive 복사본 또는 원본 Media 폴더를 엽니다."]]
+    const folders = [["rom", "ROM 폴더", window.RMSI18n.t("ui.legacy.82fe5b108a")],
+      ["metadata", "Metadata 폴더", window.RMSI18n.t("ui.legacy.d1a98beec1")],
+      ["media", "Media 폴더", window.RMSI18n.t("ui.legacy.b733e834ad")]]
       .map(([kind, label, title]) => ({ label, icon: "folderOpen", title,
         onSelect: async () => {
           const r = await api.archiveSystemFolder(sys.system, kind);
@@ -2598,7 +2598,7 @@
         } }));
     items.splice(2, 0, { section: "폴더 열기" }, ...folders, "separator");
     showContextMenu(menuPoint(event), sys.system.toUpperCase(),
-      `게임 ${formatCount(sys.count)}`, items, null, systemIcon(sys.system, 15));
+      window.RMSI18n.t("ui.legacy.14bfabc14b", {value0: (formatCount(sys.count))}), items, null, systemIcon(sys.system, 15));
   }
 
   /** Archive의 "ROM 없는 항목 정리" - Collection 쪽과 뜻은 같지만 여기서는
@@ -2607,7 +2607,7 @@
     const preview = await api.archiveOrphanPreview(sys.system);
     if (!preview.ok) { showToast(preview.error, "error"); return; }
     const items = preview.data.items || [];
-    if (!items.length) { showToast(`${sys.system.toUpperCase()}에 정리할 항목이 없습니다.`); return; }
+    if (!items.length) { showToast(window.RMSI18n.t("ui.legacy.14777e17f2", {value0: (sys.system.toUpperCase())})); return; }
 
     const LIMIT = 50;
     const list = h("div", { class: "sysdel-list" });
@@ -2616,16 +2616,16 @@
       h("span", { class: "sysdel-count" }, [item.filename]),
     ])));
     if (items.length > LIMIT) {
-      list.appendChild(h("div", { class: "sysdel-file" }, [`… 외 ${formatCount(items.length - LIMIT)}개`]));
+      list.appendChild(h("div", { class: "sysdel-file" }, [window.RMSI18n.t("ui.legacy.4687efa194", {value0: (formatCount(items.length - LIMIT))})]));
     }
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "modal-text" }, [
-        `ROM 위치가 기록되지 않은 항목 ${formatCount(items.length)}개를 Archive에서 지웁니다. `
-        + "실제 ROM/Media 파일은 지워지지 않습니다.",
+        window.RMSI18n.t("ui.legacy.9e649ea5d5", {value0: (formatCount(items.length))})
+        + window.RMSI18n.t("ui.legacy.fc80b061e8"),
       ]),
       list,
     ]);
-    showModal(`${sys.system.toUpperCase()} - ROM 없는 항목 정리`, body, [
+    showModal(window.RMSI18n.t("ui.legacy.dd61ea8498", {value0: (sys.system.toUpperCase())}), body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       h("button", { class: "btn danger", onClick: async () => {
         closeModal();
@@ -2634,21 +2634,21 @@
         resetList();
         renderAll();
         await reloadList();
-        showToast(`${formatCount(r.data.deleted)}개를 Archive에서 지웠습니다.`);
-      } }, ["정리"]),
+        showToast(window.RMSI18n.t("ui.legacy.128ee7c1a0", {value0: (formatCount(r.data.deleted))}));
+      } }, [window.RMSI18n.t("ui.legacy.36eb097f1d")]),
     ]);
   }
 
   async function confirmRemoveArchiveSystem(sys) {
-    showConfirm(`${sys.system.toUpperCase()} 전체 Archive에서 지우기`,
-      `이 System의 Archive 항목 ${formatCount(sys.count)}개를 지웁니다. 실제 ROM/Media 파일은 지워지지 `
-      + "않습니다 - 필요하면 해당 Collection에서 다시 수집할 수 있습니다.", true, async () => {
+    showConfirm(window.RMSI18n.t("ui.legacy.66ddb1bceb", {value0: (sys.system.toUpperCase())}),
+      window.RMSI18n.t("ui.legacy.1d5eb69f61", {value0: (formatCount(sys.count))})
+      + window.RMSI18n.t("ui.legacy.faa39fff65"), true, async () => {
         const r = await api.archiveDeleteSystem(sys.system);
         if (!r.ok) { showToast(r.error, "error"); return; }
         resetList();
         renderAll();
         await reloadList();
-        showToast(`${formatCount(r.data.deleted)}개를 Archive에서 지웠습니다.`);
+        showToast(window.RMSI18n.t("ui.legacy.128ee7c1a0", {value0: (formatCount(r.data.deleted))}));
       });
   }
 
@@ -2665,20 +2665,20 @@
     const copied = pastePreview?.items || [];
     const duplicate = pastePreview?.duplicates || [];
     const copiedLabel = copied.length
-      ? `여기에 붙여넣기 (${formatCount(copied.length)}개)` : "여기에 붙여넣기";
-    [["overwrite", copiedLabel], ["patch", "여기에 채우기"], ["replace", "여기에 교체하기"]].forEach(([mode, label]) => items.push({ label, icon: "upload",
+      ? window.RMSI18n.t("ui.legacy.2433ba2b2e", {value0: (formatCount(copied.length))}) : window.RMSI18n.t("ui.legacy.020d5d1d54");
+    [["overwrite", copiedLabel], ["patch", window.RMSI18n.t("ui.legacy.baa9b08cf9")], ["replace", window.RMSI18n.t("ui.legacy.9155f4c495")]].forEach(([mode, label]) => items.push({ label, icon: "upload",
       disabled: deviceOnly || !copied.length,
       title: deviceOnly ? deviceTip : !clipboardTarget.ok ? clipboardTarget.error : duplicate.length
-        ? `같은 게임이 이미 있습니다: ${duplicate.map((d) => d.filename).join(", ")}`
+        ? window.RMSI18n.t("ui.legacy.e637d2e64d", {value0: (duplicate.map((d) => d.filename).join(", "))})
         : copied.length ? copied.map((item) => `${item.system} / ${item.title} (${item.filename})`).join("\n")
-          : "복사한 게임이 없습니다.",
+          : window.RMSI18n.t("ui.legacy.2a199088e6"),
       onSelect: () => pasteClipboard(null, sys.system, pastePreview, mode) }));
     items.push("separator", { section: "폴더 열기" });
     [["rom", "ROM 폴더"], ["metadata", "Metadata 폴더"], ["media", "Media 폴더"]].forEach(([kind, label]) =>
       items.push({ label, icon: "folderOpen", onSelect: () => openSystemFolder(sys.system, kind) }));
     items.push("separator");
     items.push({ label: "게임 정보 스크랩…", icon: "sparkles", disabled: !sys.count,
-      title: sys.count ? "이 System의 게임을 순서대로 검토합니다." : "스크랩할 게임이 없습니다.",
+      title: sys.count ? window.RMSI18n.t("ui.legacy.e786700594") : window.RMSI18n.t("ui.legacy.832f400c37"),
       onSelect: async () => {
         const ids = await api.listUids(S.activeId, { systems: [sys.system] });
         if (!ids.ok) { showToast(ids.error, "error"); return; }
@@ -2708,32 +2708,32 @@
       disabled: deviceOnly || !!(sys.conflict && sys.conflict.length),
       title: "ROM·gamelist·media 폴더 이름을 함께 바꿉니다.",
       onSelect: () => openRenameSystemFolder(sys, { storageId: sys.storageId, label: current ? current.label : sys.storageId, path: null }) });
-    items.push({ label: "언어 태그 적용…", icon: "tag", disabled: titleAffixDisabled,
+    items.push({ label: window.RMSI18n.t("ui.legacy.f260aa52ce"), icon: "tag", disabled: titleAffixDisabled,
       title: titleAffixDisabled
         ? "지금 설정으로는 이 System에서 바뀔 제목이 없습니다. Settings > Metadata & Media에서 규칙을 확인하세요."
         : "이 System 전체 제목에서 기존 장식을 떼고, Settings에 설정한 지역별 표시를 다시 붙입니다.",
       onSelect: () => openTitleAffixDialog({ system: sys.system, label: sys.system.toUpperCase() }) });
-    items.push({ label: "멀티 디스크 태그 적용…", icon: "copy", disabled: deviceOnly,
+    items.push({ label: window.RMSI18n.t("ui.legacy.46330090bc"), icon: "copy", disabled: deviceOnly,
       title: deviceOnly ? deviceTip
-        : "여러 장짜리 게임의 제목 뒤에 붙은 장 번호 표시를 지우고, Settings에 고른 형식으로 다시 붙입니다.",
+        : window.RMSI18n.t("ui.legacy.071871f448"),
       onSelect: () => openDiscRetagDialog(sys.system, sys.system.toUpperCase()) });
     items.push("separator", {
       label: "ROM 없는 항목 정리", icon: "eraser", disabled: deviceOnly,
       title: deviceOnly ? deviceTip : "Metadata/Media는 있는데 ROM 파일이 없는 항목을 찾아 지웁니다.",
       onSelect: () => confirmOrphanCleanup(sys),
     }, {
-      label: "미디어 정리…", icon: "imageOff", disabled: deviceOnly,
+      label: window.RMSI18n.t("ui.legacy.46114b3f24"), icon: "imageOff", disabled: deviceOnly,
       title: deviceOnly ? deviceTip : "Cover/Screenshot/Video 등 media 종류를 골라 이 System 전체에서 지웁니다.",
       onSelect: () => confirmMediaCleanup(sys),
     });
     // 메뉴 최하단, 빨간색(사용자 결정). 누르면 경고 + "확인하였습니다" 체크 + 확인으로 한 번 더 묻는다.
     items.push("separator", {
-      label: "시스템과 파일 삭제…", icon: "trash", danger: true, disabled: deviceOnly,
+      label: window.RMSI18n.t("ui.legacy.c6151ab11e"), icon: "trash", danger: true, disabled: deviceOnly,
       title: deviceOnly ? deviceTip : "이 System의 ROM·Metadata·Media를 디스크에서 지우고 목록에서 뺍니다.",
       onSelect: () => confirmRemoveSystem(sys),
     });
     showContextMenu(menuPoint(event), sys.system.toUpperCase(),
-      `게임 ${formatCount(sys.count)} · ${current ? current.label : sys.storageId}`, items,
+      window.RMSI18n.t("ui.legacy.e92d9c940b", {value0: (formatCount(sys.count)), value1: (current ? current.label : sys.storageId)}), items,
       current ? current.rootPath : null, systemIcon(sys.system, 15));
   }
 
@@ -2761,7 +2761,7 @@
     const failed = previews.find((p) => !p.ok);
     if (failed) { showToast(failed.error, "error"); return; }
     const items = previews.flatMap((p) => p.data.items);
-    if (!items.length) { showToast(`${name}에 정리할 항목이 없습니다.`); return; }
+    if (!items.length) { showToast(window.RMSI18n.t("ui.legacy.14777e17f2", {value0: (name)})); return; }
 
     const list = h("div", { class: "sysdel-list" });
     const LIMIT = 50;
@@ -2770,17 +2770,17 @@
       h("span", { class: "sysdel-count" }, [item.filename]),
     ])));
     if (items.length > LIMIT) {
-      list.appendChild(h("div", { class: "sysdel-file" }, [`… 외 ${formatCount(items.length - LIMIT)}개`]));
+      list.appendChild(h("div", { class: "sysdel-file" }, [window.RMSI18n.t("ui.legacy.4687efa194", {value0: (formatCount(items.length - LIMIT))})]));
     }
 
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "modal-text" }, [
-        `${name}에서 ROM 파일이 없는 항목 ${formatCount(items.length)}개를 찾았습니다. `
-        + "Metadata와 Media를 지우고 목록에서 뺍니다. 되돌릴 수 없습니다.",
+        window.RMSI18n.t("ui.legacy.3b39e0f62e", {value0: (name), value1: (formatCount(items.length))})
+        + window.RMSI18n.t("ui.legacy.dae6595791"),
       ]),
       list,
     ]);
-    showModal(`${name} - ROM 없는 항목 정리`, body, [
+    showModal(window.RMSI18n.t("ui.legacy.dd61ea8498", {value0: (name)}), body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       h("button", { class: "btn danger", onClick: async () => {
         closeModal();
@@ -2791,7 +2791,7 @@
           r = await api.deleteImmediate(collectionId, uids, ["metadata", "media", "video"], true);
           if (!r.ok) { showToast(r.error, "error"); return; }
         }
-        const done = await pollJob(r.data.jobId, "항목 정리 중");
+        const done = await pollJob(r.data.jobId, window.RMSI18n.t("ui.legacy.84ff712c2e"));
         if (!done.ok) { showToast(done.error, "error"); return; }
         resetList();
         await reloadList();
@@ -2799,7 +2799,7 @@
         // Auto Plan이 켜져 있으면(기본값) 아직 파일이 지워지지 않는다 - deleteSelection과
         // 같은 규칙이다. 꺼져 있으면 applyPlan()이 용량 확인 모달을 띄운 뒤 실제로 적용하고
         // 목록도 그 안에서 새로고침한다.
-        showToast(`${formatCount(uids.length)}개를 정리했습니다.`);
+        showToast(window.RMSI18n.t("ui.legacy.3b918ac905", {value0: (formatCount(uids.length))}));
       } }, ["삭제"]),
     ]);
   }
@@ -2824,14 +2824,14 @@
       merged.set(t.type, cur);
     }));
     const types = [...merged.values()];
-    if (!types.length) { showToast(`${name}에 정리할 media가 없습니다.`); return; }
+    if (!types.length) { showToast(window.RMSI18n.t("ui.legacy.772bef2a17", {value0: (name)})); return; }
 
     const checks = types.map((t) => {
       const input = h("input", { type: "checkbox" });
       const row = h("label", { class: "media-clean-row" }, [
         input,
         h("span", { class: "media-clean-name" }, [t.label]),
-        h("span", { class: "media-clean-count" }, [`${formatCount(t.count)}개 · ${formatBytes(t.bytes)}`]),
+        h("span", { class: "media-clean-count" }, [window.RMSI18n.t("ui.legacy.cd51b3ddff", {value0: (formatCount(t.count)), value1: (formatBytes(t.bytes))})]),
       ]);
       return { type: t.type, input, row };
     });
@@ -2859,16 +2859,16 @@
         renderAll();
         await reloadList();
       }
-      showToast(`${name}에서 media ${formatCount(removed)}개를 지웠습니다.`
-        + (failedFiles.length ? ` (${formatCount(failedFiles.length)}개 실패)` : ""),
+      showToast(window.RMSI18n.t("ui.legacy.e6a56c0006", {value0: (name), value1: (formatCount(removed))})
+        + (failedFiles.length ? window.RMSI18n.t("ui.legacy.5accf83674", {value0: (formatCount(failedFiles.length))}) : ""),
         failedFiles.length ? "warning" : "info");
     });
 
     const body = h("div", { class: "modal-body" }, [
-      h("div", { class: "modal-text" }, [`${name}에서 지울 media 종류를 고르세요. ROM과 Metadata는 지우지 않습니다.`]),
+      h("div", { class: "modal-text" }, [window.RMSI18n.t("ui.legacy.2b9dac6bd9", {value0: (name)})]),
       h("div", { class: "media-clean-list" }, checks.map((c) => c.row)),
     ]);
-    showModal(`${name} - 미디어 선택 삭제`, body, [
+    showModal(window.RMSI18n.t("ui.legacy.2b87ac0b51", {value0: (name)}), body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       confirmBtn,
     ]);
@@ -2890,7 +2890,7 @@
     const items = preview.data.items;
     const changed = items.filter((i) => i.changed);
     if (!changed.length) {
-      showToast("바뀔 제목이 없습니다 - Settings > Metadata & Media에서 Title Prefix/Postfix 설정을 확인하세요.",
+      showToast(window.RMSI18n.t("ui.legacy.6204c505d3"),
         "warning");
       return;
     }
@@ -2903,14 +2903,14 @@
       h("span", { class: "title-affix-new", title: item.newTitle }, [item.newTitle]),
     ])));
     if (changed.length > LIMIT) {
-      list.appendChild(h("div", { class: "sysdel-file" }, [`… 외 ${formatCount(changed.length - LIMIT)}개`]));
+      list.appendChild(h("div", { class: "sysdel-file" }, [window.RMSI18n.t("ui.legacy.4687efa194", {value0: (formatCount(changed.length - LIMIT))})]));
     }
 
     const unchanged = items.length - changed.length;
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "modal-text" }, [
-        `${target.label} - 제목 ${formatCount(changed.length)}개가 바뀝니다`
-        + (unchanged ? ` (변경 없음 ${formatCount(unchanged)}개 제외)` : "") + ". "
+        window.RMSI18n.t("ui.legacy.27dc3a4026", {value0: (target.label), value1: (formatCount(changed.length))})
+        + (unchanged ? window.RMSI18n.t("ui.legacy.1ecbeb1a22", {value0: (formatCount(unchanged))}) : "") + ". "
         + (archive ? "확인하면 바로 적용됩니다."
           : "확인하면 바로 적용됩니다."),
       ]),
@@ -2925,7 +2925,7 @@
           if (!r.ok) { showToast(r.error, "error"); return; }
           resetList();
           await reloadList();
-          showToast(`제목 ${formatCount(r.data.applied)}개를 바꿨습니다.`);
+          showToast(window.RMSI18n.t("ui.legacy.fd0d47cc0f", {value0: (formatCount(r.data.applied))}));
           return;
         }
         await runImmediateAction("title", { romUids: target.romUids || null, system: target.system || null });
@@ -2945,7 +2945,7 @@
     const items = preview.data.items;
     const changed = items.filter((i) => i.changed);
     if (!changed.length) {
-      showToast("이 System에 여러 장짜리 게임이 없거나, 이미 지금 형식으로 붙어 있습니다.", "warning");
+      showToast(window.RMSI18n.t("ui.legacy.98a0537ede"), "warning");
       return;
     }
 
@@ -2957,18 +2957,18 @@
       h("span", { class: "title-affix-new", title: item.newTitle }, [item.newTitle]),
     ])));
     if (changed.length > LIMIT) {
-      list.appendChild(h("div", { class: "sysdel-file" }, [`… 외 ${formatCount(changed.length - LIMIT)}개`]));
+      list.appendChild(h("div", { class: "sysdel-file" }, [window.RMSI18n.t("ui.legacy.4687efa194", {value0: (formatCount(changed.length - LIMIT))})]));
     }
 
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "modal-text" }, [
-        `${label} - 제목 ${formatCount(changed.length)}개가 바뀝니다. `
+        window.RMSI18n.t("ui.legacy.abe7c93346", {value0: (label), value1: (formatCount(changed.length))})
         + (archive ? "확인하면 바로 적용됩니다."
           : "확인하면 바로 적용됩니다."),
       ]),
       list,
     ]);
-    showModal("멀티 디스크 태그 적용", body, [
+    showModal(window.RMSI18n.t("ui.legacy.6bb4cba7f6"), body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       h("button", { class: "btn primary", onClick: async () => {
         closeModal();
@@ -2977,7 +2977,7 @@
           if (!r.ok) { showToast(r.error, "error"); return; }
           resetList();
           await reloadList();
-          showToast(`제목 ${formatCount(r.data.applied)}개를 바꿨습니다.`);
+          showToast(window.RMSI18n.t("ui.legacy.fd0d47cc0f", {value0: (formatCount(r.data.applied))}));
           return;
         }
         await runImmediateAction("disc", { system });
@@ -3000,7 +3000,7 @@
     const KIND = { rom: "ROM", metadata: "Metadata", media: "Media" };
 
     if (p.blockers.length) {
-      showModal(`${name} System을 삭제할 수 없습니다`, h("div", { class: "modal-body" },
+      showModal(window.RMSI18n.t("ui.legacy.5eb87f3cf9", {value0: (name)}), h("div", { class: "modal-body" },
         p.blockers.map((text) => h("div", { class: "modal-text sysdel-blocker" }, [text]))),
         [h("button", { class: "btn primary", onClick: closeModal }, ["닫기"])]);
       return;
@@ -3010,18 +3010,18 @@
     p.targets.forEach((t) => {
       list.appendChild(h("div", { class: "sysdel-target" }, [
         h("span", { class: "sysdel-kind" }, [KIND[t.kind] || t.kind]),
-        h("span", { class: "sysdel-path", title: t.path }, [t.filesOnly ? `${t.path} 안의 파일` : t.path]),
-        h("span", { class: "sysdel-count" }, [t.fileCount ? `파일 ${formatCount(t.fileCount)}개` : "비어 있음"]),
+        h("span", { class: "sysdel-path", title: t.path }, [t.filesOnly ? window.RMSI18n.t("ui.legacy.e8edfa00bd", {value0: (t.path)}) : t.path]),
+        h("span", { class: "sysdel-count" }, [t.fileCount ? window.RMSI18n.t("ui.legacy.16e62bcd40", {value0: (formatCount(t.fileCount))}) : "비어 있음"]),
       ]));
       t.files.forEach((file) => list.appendChild(h("div", { class: "sysdel-file", title: file }, [file])));
       if (t.fileCount > t.files.length) {
-        list.appendChild(h("div", { class: "sysdel-file" }, [`… 외 ${formatCount(t.fileCount - t.files.length)}개`]));
+        list.appendChild(h("div", { class: "sysdel-file" }, [window.RMSI18n.t("ui.legacy.4687efa194", {value0: (formatCount(t.fileCount - t.files.length))})]));
       }
     });
 
-    const summary = !p.targets.length ? "디스크에서 지울 파일이 없습니다. 목록에서만 뺍니다."
-      : p.games ? `게임 ${formatCount(p.games)}개를 포함해 아래 파일 ${formatCount(p.totalFiles)}개(${formatBytes(p.totalBytes)})를 디스크에서 영구히 지우고 목록에서 뺍니다.`
-      : `게임이 없는 System입니다. 아래 파일 ${formatCount(p.totalFiles)}개를 지우고 목록에서 뺍니다.`;
+    const summary = !p.targets.length ? window.RMSI18n.t("ui.legacy.2de1f308c9")
+      : p.games ? window.RMSI18n.t("ui.legacy.620b0d45fa", {value0: (formatCount(p.games)), value1: (formatCount(p.totalFiles)), value2: (formatBytes(p.totalBytes))})
+      : window.RMSI18n.t("ui.legacy.2309916ada", {value0: (formatCount(p.totalFiles))});
     const check = h("input", { type: "checkbox", class: "sysdel-ack-input" });
     const confirmBtn = h("button", { class: "btn danger sysdel-confirm" }, ["확인"]);
     confirmBtn.disabled = true;
@@ -3042,7 +3042,7 @@
         await reloadList();
       }
       await refreshPlan();
-      showToast(`${name} System을 삭제했습니다.`);
+      showToast(window.RMSI18n.t("ui.legacy.3a7a3c70f7", {value0: (name)}));
     });
 
     const body = h("div", { class: "modal-body" }, [
@@ -3052,10 +3052,10 @@
       ]),
       p.targets.length ? list : null,
       p.kept.length ? h("div", { class: "modal-text sysdel-kept" },
-        [`Collection/Storage 최상위 폴더와 다른 System과 함께 쓰는 폴더는 남깁니다: ${p.kept.map((k) => k.path).join(", ")}`]) : null,
+        [window.RMSI18n.t("ui.legacy.64b0feeab4", {value0: (p.kept.map((k) => k.path).join(", "))})]) : null,
       h("label", { class: "sysdel-ack" }, [check, h("span", {}, ["확인하였습니다"])]),
     ]);
-    showModal(`${name} 전체 삭제`, body, [
+    showModal(window.RMSI18n.t("ui.legacy.f59806f1c3", {value0: (name)}), body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       confirmBtn,
     ]);
@@ -3089,13 +3089,13 @@
     if (blocked) { showToast(blocked, "warning"); return; }
     const r = await api.launchGame(launchTargetId(), target.romUid);
     // ok는 "바로 죽지 않았다"는 뜻일 뿐이다 - 게임 화면까지 떴다고 단정하지 않는다.
-    if (r.ok) { showToast("RetroArch 실행을 요청했습니다."); return; }
+    if (r.ok) { showToast(window.RMSI18n.t("ui.legacy.69e71814af")); return; }
     if (r.errorKind === "core_unset" || r.errorKind === "core_missing") {
       openCoreDialog(target, { reason: r.error, relaunch: true });
       return;
     }
     if (r.errorKind === "retroarch_missing") {
-      showToast(`${r.error} - Settings > Emulator에서 RetroArch 경로를 지정하세요.`, "error");
+      showToast(window.RMSI18n.t("ui.legacy.aa0b8d3939", {value0: (r.error)}), "error");
       openSettings("emulator");
       return;
     }
@@ -3109,7 +3109,7 @@
     if (!info.ok) { showToast(info.error, "error"); return; }
     const d = info.data;
     if (!d.cores.length) {
-      showToast("Core 폴더가 없거나 비어 있습니다 - Settings > Emulator에서 Core 폴더를 지정하세요.", "warning");
+      showToast(window.RMSI18n.t("ui.legacy.80bd8cceb0"), "warning");
       openSettings("emulator");
       return;
     }
@@ -3128,12 +3128,12 @@
     const body = h("div", { class: "modal-body core-dialog" }, [
       opts.reason ? h("div", { class: "modal-text core-reason" }, [opts.reason]) : null,
       h("div", { class: "core-now" }, [
-        h("div", {}, [`${system} 기본값: `, h("b", {}, [d.systemCore ? coreLabel(d.systemCore) : "없음"])]),
-        h("div", {}, ["이 게임 지정: ", h("b", {}, [d.gameCore ? coreLabel(d.gameCore) : "없음 (System 기본값 사용)"])]),
+        h("div", {}, [window.RMSI18n.t("ui.legacy.779b676cc9", {value0: (system)}), h("b", {}, [d.systemCore ? coreLabel(d.systemCore) : "없음"])]),
+        h("div", {}, [(window.RMSI18n.t("ui.legacy.dab8a99c41") + " "), h("b", {}, [d.gameCore ? coreLabel(d.gameCore) : window.RMSI18n.t("ui.legacy.348b595613")])]),
       ]),
       h("div", { class: "field-label" }, ["Core"]), select,
-      h("label", { class: "core-scope" }, [sysRadio, h("span", {}, [`${system} 전체의 기본값으로 저장`])]),
-      h("label", { class: "core-scope" }, [gameRadio, h("span", {}, [`이 게임에만 지정 (${d.file})`])]),
+      h("label", { class: "core-scope" }, [sysRadio, h("span", {}, [window.RMSI18n.t("ui.legacy.0c5170db99", {value0: (system)})])]),
+      h("label", { class: "core-scope" }, [gameRadio, h("span", {}, [window.RMSI18n.t("ui.legacy.731711bbf5", {value0: (d.file)})])]),
     ]);
     const save = h("button", { class: "btn primary core-save" }, [opts.relaunch ? "저장 후 실행" : "저장"]);
     save.addEventListener("click", async () => {
@@ -3144,7 +3144,7 @@
       if (!r.ok) { showToast(r.error, "error"); return; }
       closeModal();
       if (opts.relaunch && collectionId === S.activeId) launchGame(target);
-      else showToast(gameRadio.checked ? "이 게임의 Core를 지정했습니다." : `${system} 기본 Core를 저장했습니다.`);
+      else showToast(gameRadio.checked ? window.RMSI18n.t("ui.legacy.4f41c8b27f") : window.RMSI18n.t("ui.legacy.6ccaf8365a", {value0: (system)}));
     });
     const actions = [h("button", { class: "btn", onClick: closeModal }, ["취소"])];
     if (d.gameCore) {
@@ -3152,7 +3152,7 @@
         const r = await api.setGameCore(d.system, d.file, null);
         if (!r.ok) { showToast(r.error, "error"); return; }
         closeModal();
-        showToast("이 게임의 Core 지정을 지웠습니다 - System 기본값으로 실행됩니다.");
+        showToast(window.RMSI18n.t("ui.legacy.fbb156ccb1"));
       } }, ["게임 지정 해제"]));
     }
     actions.push(save);
@@ -3211,7 +3211,7 @@
       const fill = h("button", { class: "btn compact stg-core-fill", disabled: !s.cores.length, onClick: async () => {
         const applied = await api.applyDefaultCores(systems);
         if (!applied.ok) { showToast(applied.error, "error"); return; }
-        showToast(applied.data.count ? `기본 Core ${formatCount(applied.data.count)}개를 채웠습니다.` : "새로 채울 System이 없습니다.");
+        showToast(applied.data.count ? window.RMSI18n.t("ui.legacy.b6de517e4a", {value0: (formatCount(applied.data.count))}) : window.RMSI18n.t("ui.legacy.a7243418a0"));
         draw();
       } }, ["기본 Core 자동 채우기"]);
       wrap.appendChild(h("div", { class: "stg-subsection-title stg-core-head" }, [h("span", {}, ["System별 기본 Core"]), fill]));
@@ -3227,7 +3227,7 @@
         const current = (s.resolvedSystemCores || s.systemCores)[system] || "";
         const select = h("select", { class: "stg-control", disabled: !s.cores.length });
         select.appendChild(h("option", { value: "" }, ["지정 안 함"]));
-        if (current && !s.cores.includes(current)) select.appendChild(h("option", { value: current }, [`${coreLabel(current)} (폴더에 없음)`]));
+        if (current && !s.cores.includes(current)) select.appendChild(h("option", { value: current }, [window.RMSI18n.t("ui.legacy.dd571fae94", {value0: (coreLabel(current))})]));
         s.cores.forEach((core) => select.appendChild(h("option", { value: core }, [coreLabel(core)])));
         select.value = current;
         select.addEventListener("change", async () => {
@@ -3276,7 +3276,7 @@
   function openCreateSystem() {
     const detail = activeDetail();
     if (!detail) return;
-    const input = h("input", { class: "field-input add-system-input", placeholder: "예: fbneo, psx" });
+    const input = h("input", { class: "field-input add-system-input", placeholder: window.RMSI18n.t("ui.legacy.57622ff505") });
     const storages = detail.storages || [];
     const select = h("select", { class: "field-input add-system-storage" },
       storages.map((s) => h("option", { value: s.id }, [s.label])));
@@ -3285,9 +3285,9 @@
       storages.length > 1 ? h("div", { class: "field-label" }, ["만들 위치"]) : null,
       storages.length > 1 ? select : null,
       h("div", { class: "modal-hint" }, [
-        "이 이름의 빈 ROM 폴더를 만듭니다. ES-DE는 폴더 이름으로 System을 알아보므로 영문 소문자 이름(psx, snes …)을 쓰세요."]),
+        window.RMSI18n.t("ui.legacy.1e67a292bb")]),
     ]);
-    showModal("System 추가", body, [
+    showModal(window.RMSI18n.t("ui.legacy.9daf1e736a"), body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       h("button", { class: "btn primary add-system-save", onClick: async () => {
         const name = input.value.trim();
@@ -3297,9 +3297,9 @@
         if (!r.ok) { showToast(r.error, "error"); return; }
         await refreshAfterLayoutChange();
         showToast(r.data.knownToEsde === false
-          ? `${name} System을 만들었습니다. ES-DE 기본 목록에 없는 이름이라 custom_systems XML이 필요할 수 있습니다.`
-          : `${name} System을 만들었습니다.`, r.data.knownToEsde === false ? "warning" : "info");
-      } }, ["만들기"]),
+          ? window.RMSI18n.t("ui.legacy.5418b323b4", {value0: (name)})
+          : window.RMSI18n.t("ui.legacy.ee856d7d10", {value0: (name)}), r.data.knownToEsde === false ? "warning" : "info");
+      } }, [window.RMSI18n.t("ui.legacy.731c8b33a4")]),
     ]);
     setTimeout(() => input.focus(), 30);
   }
@@ -3309,12 +3309,12 @@
     const input = h("input", { class: "field-input rename-system-input", value: sys.system });
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "modal-text" }, [side.path
-        ? `${side.label}의 ${side.path} 폴더 이름을 바꿉니다.`
-        : `${sys.system.toUpperCase()} System의 폴더 이름을 바꿉니다(ROM·gamelist·media 폴더를 함께 바꿉니다).`]),
+        ? window.RMSI18n.t("ui.legacy.937da8c539", {value0: (side.label), value1: (side.path)})
+        : window.RMSI18n.t("ui.legacy.04d5346795", {value0: (sys.system.toUpperCase())})]),
       h("div", { class: "field-label" }, ["새 System 이름"]), input,
-      h("div", { class: "modal-hint" }, ["ES-DE는 폴더 이름으로 System을 알아봅니다. 영문 소문자 이름(예: psx, snes)을 쓰세요."]),
+      h("div", { class: "modal-hint" }, [window.RMSI18n.t("ui.legacy.e98755b050")]),
     ]);
-    showModal(`${sys.system.toUpperCase()} 이름 바꾸기`, body, [
+    showModal(window.RMSI18n.t("ui.legacy.6ad06e100d", {value0: (sys.system.toUpperCase())}), body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       h("button", { class: "btn primary rename-system-save", onClick: async () => {
         const name = input.value.trim();
@@ -3323,7 +3323,7 @@
         const r = await api.renameSystemFolder(S.activeId, sys.system, side.storageId, name);
         if (!r.ok) { showToast(r.error, "error"); return; }
         await refreshAfterLayoutChange();
-        showToast(`${sys.system.toUpperCase()} → ${String(r.data.to).toUpperCase()} 이름을 바꿨습니다.`);
+        showToast(window.RMSI18n.t("ui.legacy.2033054d81", {value0: (sys.system.toUpperCase()), value1: (String(r.data.to).toUpperCase())}));
       } }, ["이름 바꾸기"]),
     ]);
     setTimeout(() => { input.focus(); input.select(); }, 30);
@@ -3344,21 +3344,21 @@
       const r = await api.removeSystemFolder(S.activeId, sys.system, side.storageId);
       if (!r.ok) { showToast(r.error, "error"); return; }
       await refreshAfterLayoutChange();
-      showToast(`${d.label}의 ${sys.system.toUpperCase()} 폴더를 지웠습니다.`);
+      showToast(window.RMSI18n.t("ui.legacy.b6b966f6e4", {value0: (d.label), value1: (sys.system.toUpperCase())}));
     });
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "sysdel-warning" }, [
         h("div", { class: "sysdel-warning-title" }, ["되돌릴 수 없는 삭제입니다"]),
-        h("div", { class: "modal-text" }, [`${d.label} 쪽 ROM 폴더만 지웁니다 - 파일 ${formatCount(d.fileCount)}개(${formatBytes(d.totalBytes)}). gamelist와 media는 남깁니다.`]),
+        h("div", { class: "modal-text" }, [window.RMSI18n.t("ui.legacy.6ff07f42dc", {value0: (d.label), value1: (formatCount(d.fileCount)), value2: (formatBytes(d.totalBytes))})]),
       ]),
       h("div", { class: "sysdel-list" }, [h("div", { class: "sysdel-target" }, [
         h("span", { class: "sysdel-kind" }, [d.label]), h("span", { class: "sysdel-path", title: d.path }, [d.path]),
       ])]),
       d.remaining && d.remaining.length ? h("div", { class: "modal-text sysdel-kept" },
-        [`남는 쪽: ${d.remaining.map((x) => `${x.label} (${x.path})`).join(", ")}`]) : null,
+        [window.RMSI18n.t("ui.legacy.1ef8990fe3", {value0: (d.remaining.map((x) => `${x.label} (${x.path})`).join(", "))})]) : null,
       h("label", { class: "sysdel-ack" }, [check, h("span", {}, ["확인하였습니다"])]),
     ]);
-    showModal(`${sys.system.toUpperCase()} - ${d.label} 폴더 삭제`, body, [
+    showModal(window.RMSI18n.t("ui.legacy.ad74874129", {value0: (sys.system.toUpperCase()), value1: (d.label)}), body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]), confirmBtn,
     ]);
   }
@@ -3372,18 +3372,18 @@
     const noSystems = "이 Storage에 붙은 System이 없습니다.";
     const label = storage.label;
     const items = [
-      { label: "언어 태그 적용…", icon: "tag", disabled: none,
-        title: none ? noSystems : "이 그룹의 모든 System 제목에 Settings의 지역별 표시를 적용합니다.",
-        onSelect: () => openTitleAffixDialog({ system: systemNames, label: `${label} 전체` }) },
+      { label: window.RMSI18n.t("ui.legacy.f260aa52ce"), icon: "tag", disabled: none,
+        title: none ? noSystems : window.RMSI18n.t("ui.legacy.49b86b8944"),
+        onSelect: () => openTitleAffixDialog({ system: systemNames, label: window.RMSI18n.t("ui.legacy.ff819f9692", {value0: (label)}) }) },
       { label: "gamelist 만들기", icon: "fileWarning", disabled: none,
-        title: none ? noSystems : "gamelist가 없는 System에 ROM 파일명만 담아 만듭니다.",
+        title: none ? noSystems : window.RMSI18n.t("ui.legacy.be493ea64f"),
         onSelect: () => openMetadataBootstrap(S.activeId, systemNames) },
       "separator",
       { label: "ROM 없는 항목 정리", icon: "eraser", disabled: none || deviceOnly,
-        title: none ? noSystems : "Metadata/Media는 있는데 ROM 파일이 없는 항목을 이 그룹 전체에서 찾아 지웁니다.",
+        title: none ? noSystems : window.RMSI18n.t("ui.legacy.d4980a416c"),
         onSelect: () => confirmOrphanCleanupFor(systemNames, label.toUpperCase()) },
-      { label: "미디어 정리…", icon: "imageOff", disabled: none || deviceOnly,
-        title: none ? noSystems : "media 종류를 골라 이 그룹의 모든 System에서 지웁니다.",
+      { label: window.RMSI18n.t("ui.legacy.46114b3f24"), icon: "imageOff", disabled: none || deviceOnly,
+        title: none ? noSystems : window.RMSI18n.t("ui.legacy.fd0b65db34"),
         onSelect: () => confirmMediaCleanupFor(systemNames, label.toUpperCase()) },
       "separator", { section: "폴더 열기 (상위 폴더)" },
     ];
@@ -3394,7 +3394,7 @@
           if (!r.ok) showToast(r.error, "error");
         } }));
     showContextMenu(menuPoint(event), label.toUpperCase(),
-      none ? "붙은 System 없음" : `${formatCount(systemNames.length)}개 System`, items);
+      none ? "붙은 System 없음" : window.RMSI18n.t("ui.legacy.41f2c00072", {value0: (formatCount(systemNames.length))}), items);
   }
 
   /** Storage 설정 - Internal/External 공통(사용자 결정: "External만 Setting이 있는
@@ -3424,23 +3424,23 @@
         const r = await api.pickFolder("External Storage 폴더");
         if (r.ok && r.data) root.value = r.data;
       } }, [icon("folderOpen", IC.sm)]);
-      body.appendChild(h("div", { class: "field-label" }, ["이 PC에서의 경로"]));
+      body.appendChild(h("div", { class: "field-label" }, [window.RMSI18n.t("ui.legacy.24ec5c1fce")]));
       body.appendChild(h("div", { class: "field-row" }, [root, browse]));
 
       // 기기 경로(전체 경로)가 유일한 입력이다(사용자 결정) - Storage ID만 받으면 PC 경로가
       // SD카드의 하위 폴더일 때 어긋난다. ID는 경로 안에 이미 들어 있다.
       deviceRoot = h("input", { class: "field-input storage-device-root", value: storage.deviceRoot || (storage.deviceId ? `/storage/${storage.deviceId}` : ""),
                                 placeholder: "/storage/1234-ABCD/Roms" });
-      body.appendChild(h("div", { class: "field-label" }, ["Android 기기에서의 전체 경로"]));
+      body.appendChild(h("div", { class: "field-label" }, [window.RMSI18n.t("ui.legacy.e5d5dc5095")]));
       body.appendChild(deviceRoot);
       body.appendChild(h("div", { class: "modal-hint" }, [
-        "위 'PC 경로' 폴더가 안드로이드 기기에서는 어디에 있는지 전체 경로로 적으세요. "
-        + "예: SD카드(1234-ABCD)의 Roms 폴더 → /storage/1234-ABCD/Roms. "
-        + "기기의 파일 앱에서 그 폴더의 경로를 확인할 수 있습니다. ES-DE custom_systems XML의 ROM 경로에 그대로 쓰입니다."]));
+        (window.RMSI18n.t("ui.legacy.ea285ccf8a") + " ")
+        + (window.RMSI18n.t("ui.legacy.a454c99821") + " ")
+        + window.RMSI18n.t("ui.legacy.76a99a9ab2")]));
     } else {
       // Internal의 PC 경로는 Collection 자체의 경로다 - 여기서 바꾸면 저장은 되지 않고
       // 조용히 무시되므로, 아예 입력칸을 주지 않고 참고로만 보여준다.
-      body.appendChild(h("div", { class: "field-label" }, ["이 PC에서의 경로"]));
+      body.appendChild(h("div", { class: "field-label" }, [window.RMSI18n.t("ui.legacy.24ec5c1fce")]));
       body.appendChild(h("div", { class: "modal-text storage-root-readonly" }, [storage.rootPath]));
     }
 
@@ -3469,7 +3469,7 @@
         } }, [icon("save", IC.sm), h("span", {}, [action.label])]));
       });
     }
-    showModal(`${storage.label} 설정`, body, actions);
+    showModal(window.RMSI18n.t("ui.legacy.abfca05c3a", {value0: (storage.label)}), body, actions);
   }
 
   function openStorageMenu(storage) {
@@ -3612,11 +3612,11 @@
       summary.appendChild(h("span", { class: "cheader-stats-divider", "aria-hidden": "true" }, ["|"]));
       summary.appendChild(h("div", {
         class: "cheader-stat-group ownership-summary",
-        title: "각 항목의 ROM과 Media 파일 소유 방식",
+        title: window.RMSI18n.t("ui.legacy.502633baeb"),
       }, [
-        h("span", { class: "cheader-stat" }, [icon("hardDrive", IC.xs), `보관 ${formatCount(own.internal || 0)}`]),
-        h("span", { class: "cheader-stat" }, [icon("link", IC.xs), `연결 ${formatCount(own.linked || 0)}`]),
-        h("span", { class: "cheader-stat" }, [icon("arrowLeftRight", IC.xs), `혼합 ${formatCount(own.mixed || 0)}`]),
+        h("span", { class: "cheader-stat" }, [icon("hardDrive", IC.xs), window.RMSI18n.t("ui.legacy.a5bef88493", {value0: (formatCount(own.internal || 0))})]),
+        h("span", { class: "cheader-stat" }, [icon("link", IC.xs), window.RMSI18n.t("ui.legacy.994749dd10", {value0: (formatCount(own.linked || 0))})]),
+        h("span", { class: "cheader-stat" }, [icon("arrowLeftRight", IC.xs), window.RMSI18n.t("ui.legacy.2a4eed88a5", {value0: (formatCount(own.mixed || 0))})]),
       ]));
     }
     if (detail.storages.length) {
@@ -3645,7 +3645,7 @@
           class: `cheader-storage level-${level}` + (planOver ? " plan-over" : ""),
           title: (planOver ? "복사하면 디스크 용량을 넘습니다. " : "")
             + (target
-              ? `${storage.label} · 목표 ${formatBytes(target)} 중 ${formatBytes(storage.actualBytes)} 사용 (${Math.round(ratio * 100)}%)`
+              ? window.RMSI18n.t("ui.legacy.f283b7bba1", {value0: (storage.label), value1: (formatBytes(target)), value2: (formatBytes(storage.actualBytes)), value3: (Math.round(ratio * 100))})
               : window.RMSI18n.t(msg("ui.storage.noTarget", {name: storage.label}))),
         }, [
           `${window.RMSI18n.t(storage.label)} ${formatBytes(storage.actualBytes)}`,
@@ -3814,7 +3814,7 @@
    * 상태는 글자가 아니라 점 색깔로 말한다.
    */
   async function runAdapterAction(action, storageId, storageLabel) {
-    if (blockedInCompare(`${action.label}을 실행`)) return;
+    if (blockedInCompare(window.RMSI18n.t("ui.legacy.a168e79e19", {value0: (action.label)}))) return;
     const r = await api.runAdapterAction(S.activeId, action.id, storageId);
     if (!r.ok) { showToast(r.error, "error"); return; }
     const data = r.data || {};
@@ -3824,11 +3824,11 @@
     if (data.written === false && !needs.length) {
       // 만들 내용이 없는 것과 실패한 것은 다르다 - 왜 아무 일도 없었는지 말해준다.
       const why = {
-        "no-systems": "이 Storage에 붙은 System이 없습니다. 먼저 Storage의 System을 붙이세요.",
-        "android-internal": "Android Internal은 ES-DE 기본 ROM 폴더를 쓰므로 XML에 적지 않습니다. External Storage에서 실행하세요.",
-        "inside-root": "ROM이 Collection 폴더 안에 있어 ES-DE가 스스로 찾으므로 적을 것이 없습니다.",
+        "no-systems": window.RMSI18n.t("ui.legacy.efb729e408"),
+        "android-internal": window.RMSI18n.t("ui.legacy.fd76e6348f"),
+        "inside-root": window.RMSI18n.t("ui.legacy.afe6fd83d7"),
       }[data.reason];
-      showToast(`${storageLabel || "이 Storage"}: ${why || "XML로 적을 System이 없습니다."}`, "warning");
+      showToast(`${storageLabel || window.RMSI18n.t("ui.legacy.45f7ade966")}: ${why || window.RMSI18n.t("ui.legacy.69cf7e05c8")}`, "warning");
       return;
     }
     const rows = [
@@ -3837,7 +3837,7 @@
       ...needs.map((s) => ({ name: s, warn: true, note: "기기 경로 없음" })),
     ];
     const table = h("div", { class: "xml-table" }, rows.map((row) => h("div", {
-      class: "xml-row" + (row.warn ? " warn" : ""), title: row.note || "정상 반영",
+      class: "xml-row" + (row.warn ? " warn" : ""), title: row.note || window.RMSI18n.t("ui.legacy.8efb9dd10f"),
     }, [
       h("span", { class: "xml-row-dot" }), h("span", { class: "xml-row-name" }, [row.name]),
       h("span", { class: "xml-row-note" }, [row.note]),
@@ -3845,8 +3845,8 @@
     const kept = (data.kept || []).length;
     const body = h("div", { class: "modal-body xml-result" }, [
       h("div", { class: "modal-text" }, [
-        `${storageLabel || "External"} · ${formatCount(systems.length + needs.length)}개`,
-        kept ? ` (다른 System ${formatCount(kept)}개는 그대로 둠)` : "",
+        window.RMSI18n.t("ui.legacy.b8543eea48", {value0: (storageLabel || "External"), value1: (formatCount(systems.length + needs.length))}),
+        kept ? window.RMSI18n.t("ui.legacy.f20d06774d", {value0: (formatCount(kept))}) : "",
       ]),
       table,
     ]);
@@ -3860,14 +3860,14 @@
   // 양쪽에 대응 항목이 있고 비교 대상 Metadata가 같다는 뜻이다. 크기가 달라도 Same일 수
   // 있고, 그 차이는 상세의 Size 줄에서 본다.
   const COMPARE_FILTERS = [
-    ["all", "All", "양쪽을 맞댄 전체 목록"],
-    ["diff", "Diffs", "다른 항목 전부(≠, >, < - Similar(≒)는 빠진다)"],
-    ["same", "Same", "양쪽에 있고 비교 대상 Metadata가 같음 (ROM 파일이 같다는 뜻은 아님 - 크기는 상세에서 확인)"],
-    ["only_a", "Only A", "기준 Collection에만 있음"],
-    ["only_b", "Only B", "상대 Collection에만 있음"],
-    ["conflict", "Conflict", "양쪽에 있는데 Metadata가 다름"],
-    ["similar", "Similar", "양쪽에 있고 Metadata는 같은데 Media만 다름"],
-    ["media", "Media", "Media 구성이 다름 (상태와 별개 신호)"],
+    ["all", "All", window.RMSI18n.t("ui.legacy.ac1bfd251e")],
+    ["diff", "Diffs", window.RMSI18n.t("ui.legacy.def68af946")],
+    ["same", "Same", window.RMSI18n.t("ui.legacy.d734154be7")],
+    ["only_a", "Only A", window.RMSI18n.t("ui.legacy.3761fb2f8e")],
+    ["only_b", "Only B", window.RMSI18n.t("ui.legacy.506dc0f7d6")],
+    ["conflict", "Conflict", window.RMSI18n.t("ui.legacy.d3c37ad12f")],
+    ["similar", "Similar", window.RMSI18n.t("ui.legacy.5c9b1242a4")],
+    ["media", "Media", window.RMSI18n.t("ui.legacy.4243a4a22f")],
   ];
 
   /** Compare 상단 막대. **한 줄**이다(사용자 결정) -
@@ -3914,7 +3914,7 @@
       const btn = h("button", {
         class: "cmp-send", "data-dir": direction, disabled: !S.selected.size,
         title: S.selected.size
-          ? (S.compareMediaSel.size ? `고른 항목의 미디어(${[...S.compareMediaSel].join(", ")})만 보냅니다` : tip)
+          ? (S.compareMediaSel.size ? window.RMSI18n.t("ui.legacy.8abeeae56a", {value0: ([...S.compareMediaSel].join(", "))}) : tip)
           : "보낼 항목을 먼저 고르세요",
       }, [label]);
       btn.addEventListener("click", () => compareSendSelected(direction));
@@ -4021,7 +4021,7 @@
       h("option", { value: "metadata" }, ["메타데이터 우선"]),
       h("option", { value: "media" }, ["미디어 우선"]),
       h("option", { value: "desc_language",
-        title: "Settings의 Language에 맞는 문자 종류를 우선합니다. 언어 태그가 없어 영어·프랑스어·스페인어는 구별하지 못합니다." }, ["언어 우선"]),
+        title: window.RMSI18n.t("ui.legacy.3625f13eb0") }, ["언어 우선"]),
     ]);
     prioritySel.value = S.sortPriority || "";
     prioritySel.addEventListener("change", async (e) => {
@@ -4084,7 +4084,7 @@
     document.querySelectorAll(".cmp-send").forEach((btn) => {
       btn.disabled = !S.selected.size;
       btn.title = S.selected.size
-        ? `고른 항목의 메타데이터+미디어를 ${btn.dataset.dir === "toLeft" ? "왼쪽" : "오른쪽"}으로 덮어씁니다`
+        ? window.RMSI18n.t("ui.legacy.ebafdc4d90", {value0: (btn.dataset.dir === "toLeft" ? "왼쪽" : "오른쪽")})
         : "보낼 항목을 먼저 고르세요";
     });
     // 직접 잇기도 같다 - 한쪽에만 있는 두 항목을 좌우에서 하나씩 골랐을 때만 눌린다.
@@ -4092,8 +4092,8 @@
       const pair = manualLinkPair();
       btn.disabled = !pair;
       btn.title = pair
-        ? `«${pair.a.file}»와 «${pair.b.file}»를 직접 잉습니다`
-        : "한쪽에만 있는 항목을 좌우에서 하나씩, 둘만 고르면 직접 이을 수 있습니다";
+        ? window.RMSI18n.t("ui.legacy.40aa628482", {value0: (pair.a.file), value1: (pair.b.file)})
+        : window.RMSI18n.t("ui.legacy.c94202cb6a");
       btn.onclick = pair ? () => openManualLinkDialog(pair) : null;
     });
     // "Archive로 보내기"는 HERO 아이콘에서 현재 scope를 계산해 Plan에 담는다.
@@ -4106,7 +4106,7 @@
     if (send) {
       const targets = S.tabs.filter((t) => t !== ARCHIVE_ID);
       send.disabled = !S.selected.size || !targets.length;
-      send.title = window.RMSI18n.t(!targets.length ? "보낼 Collection을 먼저 열어주세요"
+      send.title = window.RMSI18n.t(!targets.length ? window.RMSI18n.t("ui.legacy.db8c9a1b3c")
                  : !S.selected.size ? "보낼 항목을 먼저 고르세요"
                  : "선택 항목을 Collection으로 보냅니다");
       send.onclick = (S.selected.size && targets.length) ? openSendToCollection : null;
@@ -4226,13 +4226,13 @@
       const visible = !hidden.has(id);
       items.push({
         label: columnName(COLUMN_BY_ID[id]), icon: visible ? "check" : null, disabled: locked,
-        hint: locked ? "마지막 컬럼" : null, title: locked ? "적어도 하나는 표시되어야 합니다." : null,
+        hint: locked ? window.RMSI18n.t("ui.legacy.968ad34d54") : null, title: locked ? window.RMSI18n.t("ui.legacy.7cb905dd64") : null,
         onSelect: () => toggleColumn(id, !visible),
       });
     });
     items.push("separator",
       { label: "기본 순서와 표시로", onSelect: resetColumns },
-      { label: "Settings에서 설정", icon: "settings", onSelect: () => openSettings("metadata") });
+      { label: window.RMSI18n.t("ui.legacy.5a170ff1aa"), icon: "settings", onSelect: () => openSettings("metadata") });
     showContextMenu(menuPoint(event), "GameList 컬럼", "머리글을 끌어 순서를 바꿉니다", items);
   }
 
@@ -4273,7 +4273,7 @@
    * Plan이 바뀌거나(Auto Plan이 꺼져 있으면) 실제 파일까지 움직인다. */
   function blockedInCompare(what) {
     if (!isCompare()) return false;
-    showToast(`Compare 중에는 ${what}할 수 없습니다. Exit Compare 후 진행하세요.`, "warning");
+    showToast(window.RMSI18n.t("ui.legacy.d398ffb704", {value0: (window.RMSI18n.t(what))}), "warning");
     return true;
   }
 
@@ -4360,7 +4360,7 @@
       const toRight = row.status === "only_a";
       const cell = h("button", {
         class: "cmp-op one-side",
-        title: toRight ? "오른쪽으로 ROM+메타데이터를 보냅니다" : "왼쪽으로 ROM+메타데이터를 보냅니다",
+        title: toRight ? window.RMSI18n.t("ui.legacy.fc009c8d61") : window.RMSI18n.t("ui.legacy.db8e1c7116"),
       }, [toRight ? ">" : "<"]);
       cell.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -4407,9 +4407,9 @@
   const STATUS_ICON_DEFS = [
     { key: "rom", icon: "gamepad", label: "ROM", part: "rom" },
     { key: "metaLevel", icon: "fileText", label: "Metadata", part: "metadata",
-      partial: "Title 또는 Description이 비어 있음" },
+      partial: window.RMSI18n.t("ui.legacy.d1051537bc") },
     { key: "mediaLevel", icon: "image", label: "Media", part: "media",
-      partial: "주요 미디어(cover/screenshot/marquee/miximage) 중 일부가 없음" },
+      partial: window.RMSI18n.t("ui.legacy.2b86504d5a") },
     { key: "videoLevel", icon: "play", label: "Video", part: "video" },
   ];
 
@@ -4432,31 +4432,31 @@
         (rowByUid(uid) || {}).ownership?.rom?.mode));
       const enabled = def.level !== "none" && (def.part !== "rom" || ownedRom);
       showContextMenu(menuPoint(event), def.label,
-        ids.length > 1 ? `${formatCount(ids.length)}개 선택됨` : (row.title || row.file), [
+        ids.length > 1 ? window.RMSI18n.t("ui.legacy.44e748e3d0", {value0: (formatCount(ids.length))}) : (row.title || row.file), [
           { label: names[def.part], icon: "trash", danger: true, disabled: !enabled,
-            title: def.level === "none" ? `${def.label}이(가) 없습니다.`
-                : !ownedRom && def.part === "rom" ? "외부 원본 ROM은 삭제할 수 없습니다." : null,
+            title: def.level === "none" ? window.RMSI18n.t("ui.legacy.f7da702ca3", {value0: (def.label)})
+                : !ownedRom && def.part === "rom" ? window.RMSI18n.t("ui.legacy.78b6a61aba") : null,
             onSelect: () => {
               if (def.part === "rom") { deleteArchiveOwnedRoms(); return; }
               if (def.part === "metadata") { deleteArchiveMetadata(); return; }
               showConfirm(`Archive ${names[def.part]}`,
-                `선택한 ${formatCount(ids.length)}개 항목에서 Archive가 보관하는 ${def.label}만 삭제합니다. `
-                + "외부 원본 파일은 유지합니다.", true, async () => {
+                window.RMSI18n.t("ui.legacy.29dcd6674f", {value0: (formatCount(ids.length)), value1: (def.label)})
+                + window.RMSI18n.t("ui.legacy.a26dfcb11c"), true, async () => {
                   const r = await api.archiveMediaDeleteSelected(ids, def.part);
                   if (!r.ok) { showToast(r.error, "error"); return; }
                   resetList();
                   await reloadList();
-                  showToast(`Archive 보관 ${def.label} ${formatCount(r.data.removed || 0)}개를 삭제했습니다.`
-                    + ((r.data.linkedKept || 0) ? ` 원본 연결 ${formatCount(r.data.linkedKept)}개는 유지했습니다.` : ""));
+                  showToast(window.RMSI18n.t("ui.legacy.d2222a7500", {value0: (def.label), value1: (formatCount(r.data.removed || 0))})
+                    + ((r.data.linkedKept || 0) ? window.RMSI18n.t("ui.legacy.0d365bd0bf", {value0: (formatCount(r.data.linkedKept))}) : ""));
                 });
             } },
         ]);
       return;
     }
     showContextMenu(menuPoint(event), def.label,
-      count > 1 ? `${formatCount(count)}개 선택됨` : (row.title || row.file), [
+      count > 1 ? window.RMSI18n.t("ui.legacy.44e748e3d0", {value0: (formatCount(count))}) : (row.title || row.file), [
         { label: names[def.part], icon: "trash", danger: true, disabled: def.level === "none",
-          title: def.level === "none" ? `${def.label}이(가) 없습니다.` : null,
+          title: def.level === "none" ? window.RMSI18n.t("ui.legacy.f7da702ca3", {value0: (def.label)}) : null,
           onSelect: () => deleteSelection([def.part]) },
       ]);
   }
@@ -4470,7 +4470,7 @@
       // 예전 응답(수준 값 없음)도 견디도록 불리언 필드로 떨어진다.
       let level = row[key] || (row.present !== undefined && key === "rom" ? (row.present ? "ok" : "none") : "none");
       if (key === "rom" && metaOnly && level === "none") level = "ok";
-      const text = level === "ok" ? label : level === "partial" ? `${label}: ${partial || "일부만 있음"}` : `${label} 없음`;
+      const text = level === "ok" ? label : level === "partial" ? `${label}: ${partial || "일부만 있음"}` : window.RMSI18n.t("ui.legacy.5ed5f8c40c", {value0: (label)});
       const el = h("span", { class: `status-icon lv-${level}`, title: text,
                              "data-status": key }, [icon(name, 12)]);
       // 아이콘을 우클릭하면 **그 칸만** 지우는 메뉴가 뜬다(사용자 결정) - 행 우클릭 메뉴가 뜨지 않게 막는다.
@@ -4494,7 +4494,7 @@
     if (mark === "\u25d0") {
       const parts = ((marks.deleteParts || {})[`${row.system}|${row.file}`] || [])
         .map((p) => DELETE_PART_LABEL[p]).join(" + ");
-      return [h("span", { class: "status-mark del", title: `일부 삭제 예정: ${parts}` }, ["\u25d0"])];
+      return [h("span", { class: "status-mark del", title: window.RMSI18n.t("ui.legacy.ba22ae4207", {value0: (parts)}) }, ["\u25d0"])];
     }
     if (mark === "✎") return [h("span", { class: "status-mark edit", title: "저장하지 않은 편집" }, ["✎"])];
     if ((marks.systems || []).includes(row.system)) {
@@ -4534,8 +4534,8 @@
         const set = h("button", { class: "btn primary archive-setup" }, ["Archive 설정"]);
         set.addEventListener("click", openArchiveSettings);
         win.appendChild(h("div", { class: "archive-empty" }, [
-          h("div", { class: "archive-empty-title" }, ["Archive를 어디에 어떤 형식으로 저장할지 정하세요."]),
-          h("div", { class: "stg-help" }, ["폴더와 Frontend 형식을 정하면 그 폴더에 gamelist/미디어가 저장됩니다."]),
+          h("div", { class: "archive-empty-title" }, [window.RMSI18n.t("ui.legacy.9a9c89a24f")]),
+          h("div", { class: "stg-help" }, [window.RMSI18n.t("ui.legacy.5a4fbb8cd7")]),
           set,
         ]));
         return;
@@ -4544,11 +4544,11 @@
       win.style.height = scroll.clientHeight + "px";
       win.appendChild(h("div", { class: "archive-empty" }, [
         activeDetail() ? (isArchive() && !(activeDetail().totalGames > 0) ? msg("ui.archive.emptyHelp") : msg("ui.list.noResults"))
-                       : "Collection은 ROM·메타데이터·미디어 폴더를 함께 관리하는 작업 공간입니다.",
+                       : window.RMSI18n.t("ui.legacy.ec3a21902f"),
         !activeDetail() ? h("button", { class: "btn primary", onClick: openAddCollection }, ["폴더 열기"]) : null,
         !activeDetail() && !S.archiveConfigured
           ? h("button", { class: "btn compact", onClick: openArchiveSettings },
-            ["Archive는 Settings에서 선택해 사용할 수 있습니다."])
+            [window.RMSI18n.t("ui.legacy.5c7266a51d")])
           : null,
       ]));
       return;
@@ -4766,7 +4766,7 @@
       if (file === null || file === undefined) return h("div", { class: `lc lc-${kind} cmp-absent` }, ["—"]);
       const norom = present === false ? " rom-missing" : "";
       if (kind.endsWith("File")) {
-        return h("div", { class: `lc lc-${kind}${norom}`, title: present === false ? `${file} - ROM 파일 없음` : file },
+        return h("div", { class: `lc lc-${kind}${norom}`, title: present === false ? window.RMSI18n.t("ui.legacy.7f409456c8", {value0: (file)}) : file },
                  [truncSpan(file)]);
       }
       return h("div", { class: `lc lc-${kind}` }, [
@@ -4814,8 +4814,8 @@
     // 문서 아이콘으로 구분한다(사용자 결정 - "정보가 덮어질 항목은 +-말고
     // 문서아이콘으로 파란색으로").
     const NO_MARK = { "+": ["plus", "add", "추가 예정"], "-": ["minus", "del", "삭제 예정"],
-                      "\u25d0": ["minus", "del partial", "일부 삭제 예정(ROM/메타데이터/미디어 중 일부)"],
-                      "✎": ["fileText", "edit", "정보 편집 예정"] };
+                      "\u25d0": ["minus", "del partial", window.RMSI18n.t("ui.legacy.3aad01f934")],
+                      "✎": ["fileText", "edit", window.RMSI18n.t("ui.legacy.95761cc930")] };
     const cells = {};
     const noMark = NO_MARK[mark];
     cells.no = h("div", { class: "lc lc-no" }, noMark
@@ -4826,7 +4826,7 @@
     const missingRom = row.present === false && !(activeDetail() && activeDetail().metadataOnly);
     cells.file = h("div", {
       class: "lc lc-file " + (missingRom ? "rom-missing" : "rom-present"),
-      title: missingRom ? `${row.file} - ROM 파일 없음` : row.file,
+      title: missingRom ? window.RMSI18n.t("ui.legacy.7f409456c8", {value0: (row.file)}) : row.file,
     }, [truncSpan(row.file)]);
 
     const titleCell = h("div", { class: "lc lc-title" }, [truncSpan(row.title || row.file)]);
@@ -4835,7 +4835,7 @@
     // 아무것도 일어나지 않는다(§49 - 자동 병합 금지).
     const matchCount = S.matchCounts[row.romUid];
     if (matchCount) {
-      const badge = h("button", { class: "match-badge", title: "서로 다른 버전 보기" },
+      const badge = h("button", { class: "match-badge", title: window.RMSI18n.t("ui.legacy.20eb22d8ef") },
         [`[${matchCount}]`]);
       badge.addEventListener("click", (e) => { e.stopPropagation(); openVersionDialog(row); });
       titleCell.appendChild(badge);
@@ -5090,7 +5090,7 @@
     if (S.archiveConfigured) importSources.push({ label: "Archive", icon: "database",
       onSelect: () => openMatchDialog(row, true) });
 
-    showContextMenu(menuPoint(event), single ? (row.title || row.file) : `${formatCount(count)}개 선택됨`,
+    showContextMenu(menuPoint(event), single ? (row.title || row.file) : window.RMSI18n.t("ui.legacy.44e748e3d0", {value0: (formatCount(count))}),
       single ? row.file : null, availableMenuItems([
         { label: row.favorite ? msg("ui.menu.favoriteRemove") : msg("ui.menu.favoriteAdd"), icon: "star",
           disabled: !single || !star || locked, onSelect: () => toggleFavorite(row, star) },
@@ -5104,13 +5104,13 @@
           disabled: locked, onSelect: cutSelectedRows},
         { label: "게임 복사", icon: "copy", hint: "Ctrl+C", disabled: locked, onSelect: copySelectedRows },
         { label: "붙여넣기", icon: "upload", hint: "Ctrl+V", disabled: !canPaste, hideWhenDisabled: true,
-          title: "같은 System과 ROM 파일명에 붙여넣습니다. 이 행을 선택했다면 이 게임에 붙여넣습니다.",
+          title: window.RMSI18n.t("ui.legacy.6c8a016b24"),
           onSelect: () => pasteClipboard(single ? row : null), children: [
-        { label: "채우기", icon: "upload", disabled: !canPaste,
-          title: "비어 있는 메타데이터와 없는 미디어만 채웁니다.",
+        { label: window.RMSI18n.t("ui.legacy.38053c9133"), icon: "upload", disabled: !canPaste,
+          title: window.RMSI18n.t("ui.legacy.9825f1750f"),
           onSelect: () => pasteClipboard(single ? row : null, null, null, "patch") },
-        { label: "교체하기", icon: "upload", disabled: !canPaste,
-          title: "메타데이터를 복사한 게임의 값으로 교체합니다.",
+        { label: window.RMSI18n.t("ui.legacy.3965df88a5"), icon: "upload", disabled: !canPaste,
+          title: window.RMSI18n.t("ui.legacy.1251b290a4"),
           onSelect: () => pasteClipboard(single ? row : null, null, null, "replace") }] },
         ...(S.lastPasteUndoId ? [{ label: "실행 취소",
           icon: "cornerUpLeft", hint: "Ctrl+Z", disabled: locked,
@@ -5126,49 +5126,49 @@
           hideWhenDisabled: true,
           disabled: !single || !hasImportSource || locked,
           title: hasImportSource ? "열어 둔 Collection이나 Archive에서 출처를 고릅니다."
-            : "다른 Collection을 열거나 Archive를 설정하세요.",
+            : window.RMSI18n.t("ui.legacy.f770bdcf61"),
           }] : []),
-        { label: single ? "제목 앞·뒤 태그 적용…" : `제목 앞·뒤 태그 적용… (${formatCount(count)}개)`,
+        { label: single ? window.RMSI18n.t("ui.legacy.4e87e183a4") : window.RMSI18n.t("ui.legacy.74ba3eed2f", {value0: (formatCount(count))}),
           icon: "tag", disabled: titleAffixDisabled,
           title: titleAffixDisabled && !isArchive() && !locked
-            ? "지금 설정으로는 바뀔 제목이 없습니다. Settings > Metadata & Media에서 규칙을 확인하세요." : null,
+            ? window.RMSI18n.t("ui.legacy.ee9058294d") : null,
           onSelect: () => openTitleAffixDialog({ romUids: [...S.selected],
-            label: single ? (row.title || row.file) : `선택한 ${formatCount(count)}개` }) },
-        { label: single ? "ROM 파일명 복사" : `ROM 파일명 ${formatCount(files.length)}개 복사`, icon: "copy",
+            label: single ? (row.title || row.file) : window.RMSI18n.t("ui.legacy.370c1178c5", {value0: (formatCount(count))}) }) },
+        { label: single ? "ROM 파일명 복사" : window.RMSI18n.t("ui.legacy.820b4f80d8", {value0: (formatCount(files.length))}), icon: "copy",
           disabled: !files.length,
           onSelect: () => copyTextToClipboard(files.join("\n"),
-            files.length > 1 ? `파일명 ${formatCount(files.length)}개를 복사했습니다.` : "파일명을 복사했습니다.") },
+            files.length > 1 ? window.RMSI18n.t("ui.legacy.87424f7c52", {value0: (formatCount(files.length))}) : window.RMSI18n.t("ui.legacy.ed529007d2")) },
         "separator",
         // Archive 보관 ROM은 파일만 지울 수 있다. 외부 연결은 물리 파일을 건드리지 않고,
         // Identity 전체 삭제는 여전히 DB 기록만 제거한다.
         ...(isArchive()
           ? [
-              { label: "보관 ROM 파일 삭제", icon: "gamepad", danger: true,
+              { label: window.RMSI18n.t("ui.legacy.20a1f93661"), icon: "gamepad", danger: true,
                 disabled: locked || !archiveOwnedRoms,
                 title: archiveOwnedRoms
-                  ? "Archive ROM 디렉토리 안의 파일만 삭제합니다. 외부 원본 연결은 유지합니다."
-                  : "선택한 항목에는 Archive가 보관하는 ROM 파일이 없습니다.",
+                  ? window.RMSI18n.t("ui.legacy.7c67e1cba2")
+                  : window.RMSI18n.t("ui.legacy.2cb0ce3489"),
                 onSelect: deleteArchiveOwnedRoms },
               { label: "메타데이터 삭제", icon: "fileText", danger: true,
                 disabled: locked || ![...S.selected].some((uid) => (rowByUid(uid) || {}).hasMetadata),
-                title: "Archive의 현재 메타데이터 표시를 지웁니다. ROM·미디어·출처 Revision은 유지합니다.",
+                title: window.RMSI18n.t("ui.legacy.6441d9e767"),
                 onSelect: deleteArchiveMetadata },
-              { label: "보관 게임·파일 삭제", icon: "trash", danger: true,
+              { label: window.RMSI18n.t("ui.legacy.4cc07aa4e2"), icon: "trash", danger: true,
                 disabled: !canDeleteOwned,
                 title: canDeleteOwned
-                  ? "Archive가 보관하는 ROM·미디어 파일과 이 게임의 Archive 기록을 삭제합니다."
-                  : "외부 원본에 연결된 항목은 전체 삭제할 수 없습니다. Archive에서 지우기는 기록만 제거합니다.",
+                  ? window.RMSI18n.t("ui.legacy.eff0790f8b")
+                  : window.RMSI18n.t("ui.legacy.b14e6b2aeb"),
                 onSelect: deleteArchiveOwnedGames },
-              { label: "Archive 기록 제거", icon: "trash", hint: "Del", danger: true, disabled: locked,
-               title: "실제 ROM/Media 파일은 지우지 않습니다 - Archive의 기록만 지웁니다.",
+              { label: window.RMSI18n.t("ui.legacy.704000649a"), icon: "trash", hint: "Del", danger: true, disabled: locked,
+               title: window.RMSI18n.t("ui.legacy.c3bbb83786"),
                onSelect: () => deleteSelection() },
             ]
           : [
               { label: "Game 삭제", icon: "trash", hint: "Del", danger: true, disabled: locked,
                 children: [
-                  { label: "Game 전체 삭제", danger: true, onSelect: () => deleteSelection(DELETE_ALL) },
+                  { label: window.RMSI18n.t("ui.legacy.1f56f5421f"), danger: true, onSelect: () => deleteSelection(DELETE_ALL) },
                   { label: "메타데이터 삭제", danger: true, onSelect: () => deleteSelection(["metadata"]) },
-                  { label: "미디어 삭제", danger: true, onSelect: () => deleteSelection(["media", "video"]) },
+                  { label: window.RMSI18n.t("ui.legacy.9bdf583756"), danger: true, onSelect: () => deleteSelection(["media", "video"]) },
                 ] },
             ]),
         ...rowFolderItems(row, single),
@@ -5184,28 +5184,28 @@
     if (!single) return [];
     if (isArchive()) {
       return ["separator", { label: "폴더 열기", icon: "folderOpen", children: [
-        { label: "ROM 디렉터리", onSelect: async () => {
+        { label: window.RMSI18n.t("ui.legacy.a2936baffb"), onSelect: async () => {
           const r = await api.archiveRomFolder(row.romIdentityId || row.romUid);
           if (!r.ok) showToast(r.error, "error");
         } },
-        { label: "메타데이터 디렉터리", onSelect: async () => {
+        { label: window.RMSI18n.t("ui.legacy.64657f8a39"), onSelect: async () => {
           const r = await api.archiveSystemFolder(row.system, "metadata");
           if (!r.ok) showToast(r.error, "error");
         } },
-        { label: "미디어 디렉터리", onSelect: async () => {
+        { label: window.RMSI18n.t("ui.legacy.d40fa85824"), onSelect: async () => {
           const r = await api.archiveSystemFolder(row.system, "media");
           if (!r.ok) showToast(r.error, "error");
         } },
       ] }];
     }
     return ["separator", { label: "폴더 열기", icon: "folderOpen", children: [
-      { label: "ROM 디렉터리", disabled: !row.present,
+      { label: window.RMSI18n.t("ui.legacy.a2936baffb"), disabled: !row.present,
         title: row.present ? null : "ROM 파일이 없습니다.",
         onSelect: () => openRowFolder(row, "rom") },
-      { label: "메타데이터 디렉터리", disabled: !row.hasMetadata,
+      { label: window.RMSI18n.t("ui.legacy.64657f8a39"), disabled: !row.hasMetadata,
         title: row.hasMetadata ? null : "Metadata가 없습니다.",
         onSelect: () => openRowFolder(row, "metadata") },
-      { label: "미디어 디렉터리", disabled: !row.hasMedia,
+      { label: window.RMSI18n.t("ui.legacy.d40fa85824"), disabled: !row.hasMedia,
         title: row.hasMedia ? null : "Media가 없습니다.",
         onSelect: () => openRowFolder(row, "media") },
     ] }];
@@ -5332,7 +5332,7 @@
       if (!r.ok) { showToast(r.error, "error"); return; }
       index = r.data;
     }
-    if (index < 0) { showToast(`'${key.toUpperCase()}'(으)로 시작하는 파일이 없습니다.`); return; }
+    if (index < 0) { showToast(window.RMSI18n.t("ui.legacy.e081570776", {value0: (key.toUpperCase())})); return; }
     const row = await rowAtIndex(index);
     if (row) focusRowAt(index, row);
   }
@@ -5352,7 +5352,7 @@
       S.selected = new Set(r.data);
       updateSelectionVisual();
       renderStatusBar();
-      showToast(`${formatCount(S.selected.size)}개를 선택했습니다.`);
+      showToast(window.RMSI18n.t("ui.legacy.4cb1a3a216", {value0: (formatCount(S.selected.size))}));
       return;
     }
     if (isArchive()) {
@@ -5363,7 +5363,7 @@
       S.selected = new Set(r.data);
       updateSelectionVisual();
       renderStatusBar();
-      showToast(`${formatCount(S.selected.size)}개를 선택했습니다.`);
+      showToast(window.RMSI18n.t("ui.legacy.4cb1a3a216", {value0: (formatCount(S.selected.size))}));
       return;
     }
     const r = await api.listUids(S.activeId, currentQuery());
@@ -5371,7 +5371,7 @@
     S.selected = new Set(r.data);
     updateSelectionVisual();
     renderStatusBar();
-    showToast(`${formatCount(S.selected.size)}개를 선택했습니다.`);
+    showToast(window.RMSI18n.t("ui.legacy.4cb1a3a216", {value0: (formatCount(S.selected.size))}));
   }
 
   /** rating은 0~5로 들어온다. 이전 프로젝트처럼 한 자리로만 보여준다. */
@@ -5491,14 +5491,14 @@
     await new Promise((done) => {
       const body = h("div", { class: "modal-body" }, [
         h("div", { class: "modal-text" }, [
-          `메타데이터(gamelist.xml)가 없는 System이 ${formatCount(missing.length)}개 있습니다.`,
+          window.RMSI18n.t("ui.legacy.2a138fb3c2", {value0: (formatCount(missing.length))}),
         ]),
         h("div", { class: "modal-hint" }, [
-          `ROM ${formatCount(roms)}개의 파일명만 담은 gamelist를 지금 만들 수 있습니다. `
-          + "제목은 파일명 그대로 들어가고 나머지 항목은 비워 둡니다 - 추측해서 채우지 않습니다.",
+          window.RMSI18n.t("ui.legacy.b087a9bfc7", {value0: (formatCount(roms))})
+          + window.RMSI18n.t("ui.legacy.e007677f75"),
         ]),
         h("div", { class: "modal-hint" }, [
-          `대상: ${missing.slice(0, 8).join(", ")}${missing.length > 8 ? " …" : ""}`,
+          window.RMSI18n.t("ui.legacy.9acafcc56a", {value0: (missing.slice(0, 8).join(", ")), value1: (missing.length > 8 ? " …" : "")}),
         ]),
       ]);
       showModal("gamelist 만들기", body, [
@@ -5508,8 +5508,8 @@
           const made = await api.generateMetadata(collectionId, missing);
           if (!made.ok) { showToast(made.error, "error"); done(); return; }
           const games = (made.data.created || []).reduce((sum, c) => sum + c.games, 0);
-          showToast(`${formatCount(made.data.created.length)}개 System에 `
-                    + `${formatCount(games)}개 항목의 gamelist를 만들었습니다.`);
+          showToast(window.RMSI18n.t("ui.legacy.9432eb137c", {value0: (formatCount(made.data.created.length))})
+                    + window.RMSI18n.t("ui.legacy.71281bf2cf", {value0: (formatCount(games))}));
           done();
         } }, ["gamelist 만들기"]),
       ]);
@@ -5536,32 +5536,32 @@
 
     const frontendSel = h("select", { class: "field-input" },
       frontends.map((f) => h("option", { value: f.id }, [f.label])));
-    const folderInput = h("input", { class: "field-input", placeholder: "폴더를 선택하세요" });
+    const folderInput = h("input", { class: "field-input", placeholder: window.RMSI18n.t("ui.legacy.3dcfd27fe3") });
     const browseBtn = h("button", { class: "btn" }, [icon("folderOpen", IC.sm), h("span", {}, ["찾아보기"])]);
     browseBtn.addEventListener("click", async () => {
-      const r = await api.pickFolder("변환해 넣을 폴더 선택");
+      const r = await api.pickFolder(window.RMSI18n.t("ui.legacy.d40276e345"));
       if (r.ok && r.data) folderInput.value = r.data;
     });
     const newBlock = h("div", { class: "convert-new-block" }, [
       h("div", { class: "field-label" }, ["Frontend"]), frontendSel,
-      h("div", { class: "field-label" }, ["폴더"]),
+      h("div", { class: "field-label" }, [window.RMSI18n.t("ui.legacy.3224fbe2d0")]),
       h("div", { class: "field-row" }, [folderInput, browseBtn]),
-      h("div", { class: "modal-hint" }, ["비어 있는(또는 아직 없는) 폴더를 고르세요 - 그 자리에 새 Collection을 만듭니다."]),
+      h("div", { class: "modal-hint" }, [window.RMSI18n.t("ui.legacy.abfd0e41c5")]),
     ]);
 
 
     const body = h("div", { class: "modal-body" }, [
-      h("div", { class: "modal-text" }, [`${source.name}의 내용을 다른 Frontend 형식으로 변환합니다.`]),
+      h("div", { class: "modal-text" }, [window.RMSI18n.t("ui.legacy.d0a2188b09", {value0: (source.name)})]),
       newBlock,
       h("div", { class: "modal-hint" },
-        ["원본은 그대로 둡니다. 변환할 항목을 확인한 뒤 대상에 적용합니다."]),
+        [window.RMSI18n.t("ui.legacy.be5ddb4c5a")]),
     ]);
 
     showModal("Convert", body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       h("button", { class: "btn primary", onClick: async () => {
         const folder = folderInput.value.trim();
-        if (!folder) { showToast("폴더를 고르세요.", "warning"); return; }
+        if (!folder) { showToast(window.RMSI18n.t("ui.legacy.813e40cedf"), "warning"); return; }
         const label = (frontends.find((f) => f.id === frontendSel.value) || {}).label || frontendSel.value;
         const created = await api.createCollection(defaultCollectionName(label), frontendSel.value, folder);
         if (!created.ok) { showToast(created.error, "error"); return; }
@@ -5610,20 +5610,20 @@
     };
     lossLine("Unsupported fields", d.unsupportedFields,
              (d.unsupportedFieldNames || []).length
-               ? `${d.targetFrontend} 포맷에 자리가 없는 필드: ${d.unsupportedFieldNames.join(", ")}`
-               : "대상 포맷이 담지 못하는 공통 필드 값의 개수");
+               ? window.RMSI18n.t("ui.legacy.03466f8276", {value0: (d.targetFrontend), value1: (d.unsupportedFieldNames.join(", "))})
+               : window.RMSI18n.t("ui.legacy.b11e245656"));
     lossLine("Unsupported media", d.droppedMedia,
-             `${d.targetFrontend}가 다루지 않는 media 종류`);
+             window.RMSI18n.t("ui.legacy.340496ed4a", {value0: (d.targetFrontend)}));
     lossLine("Frontend-specific", d.frontendSpecific,
-             "원본 Frontend 고유 값 - 다른 Frontend로는 넘어가지 않습니다");
+             window.RMSI18n.t("ui.legacy.0c8b1c7542"));
     body.appendChild(losses);
 
     if (d.unsupportedFields || d.droppedMedia || d.frontendSpecific) {
       body.appendChild(h("div", { class: "modal-hint" },
-        ["표시된 값은 이번 변환에서 대상에 남지 않습니다. 원본 Collection은 그대로 유지됩니다."]));
+        [window.RMSI18n.t("ui.legacy.a43fbed8db")]));
     }
 
-    showModal("Convert 미리보기", body, [
+    showModal(window.RMSI18n.t("ui.legacy.6d6d001d0c"), body, [
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
       h("button", { class: "btn primary", onClick: async () => {
         closeModal();
@@ -5631,7 +5631,7 @@
         if (!result.ok) { showToast(result.error, "error"); return; }
         await openTab(targetId);
         await acceptOperationPreview(result.data);
-      } }, ["변환하기"]),
+      } }, [window.RMSI18n.t("ui.legacy.ab82e5688b")]),
     ]);
   }
 
@@ -5689,8 +5689,8 @@
     const btn = h("button", {
       class: "cmp-link", disabled: !pair,
       title: pair
-        ? `«${pair.a.file}»와 «${pair.b.file}»를 직접 잉습니다`
-        : "한쪽에만 있는 항목을 좌우에서 하나씩, 둘만 고르면 직접 이을 수 있습니다",
+        ? window.RMSI18n.t("ui.legacy.40aa628482", {value0: (pair.a.file), value1: (pair.b.file)})
+        : window.RMSI18n.t("ui.legacy.c94202cb6a"),
     }, [icon("arrowLeftRight", IC.sm)]);
     if (pair) btn.onclick = () => openManualLinkDialog(pair);
     return btn;
@@ -5707,17 +5707,17 @@
         h("div", { class: "picker-main" }, [
           h("div", { class: "picker-title truncate" }, [`${source.file} → ${target.file}`]),
           h("div", { class: "picker-sub truncate" },
-            [`«${source.file}»의 내용으로 «${target.file}»를 채웁니다`]),
+            [window.RMSI18n.t("ui.legacy.f0863ef255", {value0: (source.file), value1: (target.file)})]),
         ]),
       ]);
       btn.addEventListener("click", () => send(source, target));
       return btn;
     };
-    showModal("직접 읽기", h("div", { class: "modal-body" }, [
+    showModal(window.RMSI18n.t("ui.legacy.a3abc71632"), h("div", { class: "modal-body" }, [
       h("div", { class: "modal-text" },
-        ["고른 두 항목을 같은 게임으로 보고 메타데이터와 미디어를 보냅니다. 어느 쪽을 원본으로 삼을까요?"]),
+        [window.RMSI18n.t("ui.legacy.a277b767cb")]),
       h("div", { class: "modal-hint" },
-        ["ROM 파일은 옮기지 않습니다. 이 작업은 Match 결과를 바꾸지 않고, 이번 전송의 대상만 지정합니다."]),
+        [window.RMSI18n.t("ui.legacy.34dd8b505f")]),
       h("div", { class: "picker-list" }, [choice(pair.a, pair.b), choice(pair.b, pair.a)]),
     ]), [h("button", { class: "btn", onClick: closeModal }, ["취소"])]);
   }
@@ -5775,7 +5775,7 @@
     });
     // 체크하면 상단 < >가 이 미디어 종류만 보낸다(여러 종류 선택 가능, 양쪽 Detail에 함께 표시된다).
     const pick = h("button", { class: "cmp-pick" + (S.compareMediaSel.has(type) ? " on" : ""),
-      title: "이 미디어만 보내기 (여러 개 선택 가능)", "aria-pressed": S.compareMediaSel.has(type) ? "true" : "false" },
+      title: window.RMSI18n.t("ui.legacy.a3cef714b8"), "aria-pressed": S.compareMediaSel.has(type) ? "true" : "false" },
       [S.compareMediaSel.has(type) ? "✓" : ""]);
     pick.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -5801,7 +5801,7 @@
     return tile;
   }
 
-  const cmpAbsent = () => h("div", { class: "cmp-absent-note" }, ["이 쪽에는 ROM이 없습니다."]);
+  const cmpAbsent = () => h("div", { class: "cmp-absent-note" }, [window.RMSI18n.t("ui.legacy.7462440def")]);
 
   function cmpMetadataTab(body, d, side) {
     if (!side) { body.appendChild(cmpAbsent()); return; }
@@ -5877,7 +5877,7 @@
       h("div", { style: { minWidth: "0", flex: "1" } }, [
         h("div", { class: "detail-eyebrow truncate" }, [name]),
         h("div", { class: "detail-filename truncate", title: side ? side.filename : "" },
-          [side ? side.filename : "(없음)"]),
+          [side ? side.filename : window.RMSI18n.t("ui.legacy.175bde0cb3")]),
         h("div", { class: "detail-system" }, [systemIcon(d.system, 13), String(d.system).toUpperCase()]),
       ]),
     ]);
@@ -5958,7 +5958,7 @@
       await refreshArchiveRows([state.romIdentityId]);
       showToast("이 버전을 우선 사용합니다.");
     });
-    showModal("서로 다른 버전", body,
+    showModal(window.RMSI18n.t("ui.legacy.c5b5e8b613"), body,
       [h("button", { class: "btn", onClick: closeModal }, ["닫기"])])
       .classList.add("ver-dialog-card");
   }
@@ -5990,7 +5990,7 @@
         h("div", { class: "picker-main" }, [
           h("div", { class: "picker-name" }, ["Archive"]),
           h("div", { class: "picker-sub" },
-            ["가져올 메타데이터와 미디어 확인"]),
+            [window.RMSI18n.t("ui.legacy.d99c0916f0")]),
         ]),
       ]);
       choice.addEventListener("click", () => {
@@ -6002,12 +6002,12 @@
     }
     if (!sources.length && !S.archiveConfigured) {
       list.appendChild(h("div", { class: "empty-msg" },
-        ["다른 Collection을 탭으로 열거나 Archive를 설정하세요."]));
+        [window.RMSI18n.t("ui.legacy.264c9f6da6")]));
     }
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "modal-hint" }, [row
-        ? `${row.file}에 가져올 출처를 고르세요.`
-        : "현재 범위에 가져올 출처를 고르세요."]), list,
+        ? window.RMSI18n.t("ui.legacy.e5488a22df", {value0: (row.file)})
+        : window.RMSI18n.t("ui.legacy.cfc46f93b1")]), list,
     ]);
     showModal("가져오기", body, [h("button", { class: "btn", onClick: closeModal }, ["취소"])]);
   }
@@ -6046,7 +6046,7 @@
           }
         });
       }
-      const why = (candidate.evidence || []).join(" · ");
+      const why = (candidate.evidence || []).map(value => window.RMSI18n.t(value)).join(" · ");
       option.appendChild(h("div", { class: "scrape-candidate-head" }, [cover,
         h("div", { class: "scrape-candidate-main" }, [
           h("div", { class: "scrape-candidate-top" }, [
@@ -6056,11 +6056,11 @@
           ]),
           h("div", { class: "scrape-candidate-desc", "data-i18n-skip": "", title: window.RMSI18n.raw(fields.desc || "") },
             [fields.desc ? window.RMSI18n.raw(String(fields.desc).replace(/\s+/g, " ")) : window.RMSI18n.t("설명 없음")]),
-          window.RMSCandidateUI.facts(h, fields, null, ["일치", `${Math.round(candidate.score)}%`]),
+          window.RMSCandidateUI.facts(h, fields, null, [msg("ui.import.match"), `${Math.round(candidate.score)}%`]),
         ]),
       ]));
       option.appendChild(h("div", { class: "match-option-sub truncate",
-        title: `${candidate.filename}${why ? ` · ${why}` : ""}` }, [candidate.filename]));
+        title: window.RMSI18n.raw(`${candidate.filename}${why ? ` · ${why}` : ""}`) }, [window.RMSI18n.raw(candidate.filename)]));
       const expanded = h("div", { class: "revision-expanded", hidden: true },
         [window.RMSCandidateUI.fields(h, fields)]);
       const toggle = h("button", { class: "icon-btn scrape-expand", title: "자세히", "aria-expanded": "false" },
@@ -6070,7 +6070,7 @@
         event.stopPropagation();
         expanded.hidden = !expanded.hidden;
         toggle.setAttribute("aria-expanded", String(!expanded.hidden));
-        toggle.title = expanded.hidden ? "자세히" : "접기";
+        toggle.title = window.RMSI18n.t(expanded.hidden ? "ui.common.details" : "ui.common.collapse");
         clear(toggle); toggle.appendChild(icon(expanded.hidden ? "chevronDown" : "chevronUp", IC.sm));
         if (!expanded.hidden && !screenshotRequested && (candidate.mediaTypes || []).includes("screenshots")) {
           screenshotRequested = true;
@@ -6079,7 +6079,7 @@
             : api.getArchiveMediaImage(candidate.romIdentityId, "Screenshots", true);
           request.then((result) => {
             if (result.ok && result.data && expanded.isConnected)
-              expanded.appendChild(h("img", { class: "candidate-screenshot", src: result.data, alt: "스크린샷" }));
+              expanded.appendChild(h("img", { class: "candidate-screenshot", src: result.data, alt: window.RMSI18n.t("ui.legacy.efc2b3cebb") }));
           });
         }
       });
@@ -6107,13 +6107,13 @@
 
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "match-source" }, [
-        h("span", { class: "match-source-label" }, ["가져올 게임"]),
-        h("span", { class: "truncate" }, [data.source.title || data.source.filename]),
+        h("span", { class: "match-source-label" }, [msg("ui.import.target")]),
+        h("span", { class: "truncate" }, [window.RMSI18n.raw(data.source.title || data.source.filename)]),
       ]),
-      h("div", { class: "field-label" }, ["후보"]),
+      h("div", { class: "field-label" }, [msg("ui.import.candidates")]),
       list,
       h("div", { class: "modal-hint" },
-        ["점수는 추천 순서일 뿐입니다. 어느 것도 자동으로 반영되지 않습니다."]),
+        [msg("ui.import.review")]),
     ]);
 
     const applyBtn = h("button", { class: "btn primary", disabled: !chosen }, ["선택 적용"]);
@@ -6133,12 +6133,12 @@
       if (!applied.ok) { showToast(applied.error, "error"); return; }
       delete S.matchCounts[row.romUid];
       renderListWindow();
-      showToast("Match를 확정했습니다. Archive에서 값을 가져오려면 Archive → Collection을 실행하세요.");
+      showToast(window.RMSI18n.t("ui.legacy.2dd4655e44"));
     });
 
     const actions = [h("button", { class: "btn", onClick: closeModal }, ["Cancel"])];
     if (data.linkedRomIdentityId && !sourceCollectionId) {
-      const unlink = h("button", { class: "btn danger" }, ["Match 해제"]);
+      const unlink = h("button", { class: "btn danger" }, [window.RMSI18n.t("ui.legacy.13f38c0e8b")]);
       unlink.addEventListener("click", async () => {
         closeModal();
         const cleared = await api.clearMatch(S.activeId, row.romUid);
@@ -6149,8 +6149,8 @@
       actions.push(unlink);
     }
     actions.push(applyBtn);
-    applyBtn.textContent = importOnSelect ? "가져오기" : "Match 확정";
-    showModal(sourceCollectionId ? "Collection에서 가져오기" : "Archive에서 가져오기", body, actions);
+    applyBtn.textContent = importOnSelect ? window.RMSI18n.t("ui.import.apply") : window.RMSI18n.t(window.RMSI18n.t("ui.legacy.dac5cadcd3"));
+    showModal(sourceCollectionId ? msg("ui.import.collection") : msg("ui.import.archive"), body, actions);
   }
 
   // ------------------------------------------------------------------
@@ -6260,7 +6260,7 @@
   }
 
   function scraperSettingsEditor() {
-    const wrap = h("div", { class: "stg-scraper" }, [h("div", { class: "stg-info" }, ["설정을 불러오는 중…"])]);
+    const wrap = h("div", { class: "stg-scraper" }, [h("div", { class: "stg-info" }, [window.RMSI18n.t("ui.legacy.605a0a3cfd")])]);
     const draw = async () => {
       const result = await api.scraperSettings();
       clear(wrap);
@@ -6269,7 +6269,7 @@
       wrap.appendChild(h("div", { class: "stg-info" }, [
         cfg.devIdSet && cfg.devPasswordSet
           ? msg("ui.scraper.account", {user: cfg.userId || window.RMSI18n.t("ui.scraper.notLoggedIn")})
-          : "ScreenScraper 개발자 정보가 필요합니다.",
+          : window.RMSI18n.t("ui.legacy.924e8b3f04"),
       ]));
       const status = h("div", { class: "stg-info" }, ["연결 상태를 확인하지 않았습니다."]);
       const progressHost = h("div", { class: "stg-progress" });
@@ -6280,7 +6280,7 @@
           test.disabled = true;
           const started = await api.startScraperAccountStatus();
           if (!started.ok) { status.textContent = started.error; test.disabled = false; return; }
-          const checked = await pollJob(started.data.jobId, "ScreenScraper 연결 확인", progressHost);
+          const checked = await pollJob(started.data.jobId, window.RMSI18n.t("ui.legacy.8361045f8d"), progressHost);
           test.disabled = false;
           if (!checked.ok) { status.textContent = checked.error; return; }
           status.textContent = window.RMSI18n.t(msg("ui.scrape.accountResult", {quota:scrapeQuotaText(checked.data),threads:checked.data.maxThreads || window.RMSI18n.t("ui.scrape.unknown")}));
@@ -6327,7 +6327,7 @@
         systemSelect.appendChild(h("option", { value: row.name }, [row.name]));
       });
       const datButton = h("button", { class: "btn", onClick: async () => {
-        const picked = await api.pickFile("DAT XML 선택", ["XML files (*.xml;*.dat)"]);
+        const picked = await api.pickFile(window.RMSI18n.t("ui.legacy.3cebf2a745"), ["XML files (*.xml;*.dat)"]);
         if (!picked.ok || !picked.data) return;
         datButton.disabled = true;
         const started = await api.startDatImport(picked.data, systemSelect.value);
@@ -6336,7 +6336,7 @@
           datButton.disabled = false;
           return;
         }
-        const completed = await pollJob(started.data.jobId, "DAT 가져오기", datProgress);
+        const completed = await pollJob(started.data.jobId, window.RMSI18n.t("ui.legacy.cbc69812c1"), datProgress);
         datStatus.textContent = completed.ok
           ? window.RMSI18n.t(msg("ui.dat.imported", {name:completed.data.name,system:completed.data.system,count:completed.data.games.toLocaleString()}))
           : completed.error;
@@ -6397,7 +6397,7 @@
           if (!started.ok) { connectionResult.textContent = window.RMSI18n.t(msg("ui.scrape.connectionFailed", {error:window.RMSI18n.formatError(started.error)})); return; }
           const host = h("div", { class: "stg-progress" });
           body.appendChild(host);
-          const checked = await pollJob(started.data.jobId, "연결 확인", host);
+          const checked = await pollJob(started.data.jobId, window.RMSI18n.t("ui.legacy.bfcde009ac"), host);
           connectionResult.textContent = checked.ok ? window.RMSI18n.t(msg("ui.scrape.connectionSuccess", {quota:scrapeQuotaText(checked.data)})) : window.RMSI18n.t(msg("ui.scrape.connectionFailed", {error:window.RMSI18n.formatError(checked.error)}));
         } finally { button.disabled = false; }
       } }, ["연결 테스트"]),
@@ -6579,7 +6579,7 @@
           ? h("img", { class: "scrape-thumb", src: cover.url, alt: candidate.title, referrerpolicy: "no-referrer" })
           : h("div", { class: "scrape-thumb empty" }, [icon("image", IC.md)]);
         if (cover) thumb.addEventListener("error", () => {
-          thumb.replaceWith(h("div", { class: "scrape-thumb empty", title: "이미지를 불러올 수 없습니다." }, [icon("image", IC.md)]));
+          thumb.replaceWith(h("div", { class: "scrape-thumb empty", title: window.RMSI18n.t("ui.legacy.184fe48d86") }, [icon("image", IC.md)]));
         }, { once: true });
         const toggle = h("button", { class: "icon-btn scrape-expand", title: expanded ? "접기" : "자세히" },
           [icon(expanded ? "chevronUp" : "chevronDown", IC.sm)]);
@@ -6596,7 +6596,7 @@
               h("span", { class: "scrape-system-icon", title: candidate.system || item.system },
                 [systemIcon(item.systemHint || item.system, 16)]),
               h("div", { class: "scrape-candidate-title", "data-i18n-skip": "", title: window.RMSI18n.raw(candidate.title || "") },
-                [candidate.title ? window.RMSI18n.raw(candidate.title) : window.RMSI18n.t("제목 없음")]),
+                [candidate.title ? window.RMSI18n.raw(candidate.title) : window.RMSI18n.t(window.RMSI18n.t("ui.legacy.a1609f9b95"))]),
               Number(candidate.confidence || 0) < 45
                 ? h("span", { class: "scrape-review-icon",
                   title: candidate.confidence_reason || "낮은 유사도 · 직접 확인 필요",
@@ -6708,7 +6708,7 @@
         // The apply job is complete. Release its guard before starting the
         // next search, which manages its own busy state and candidate selection.
         applying = false;
-        showToast(`${formatCount(appliedIds.size)}개 게임에 스크랩 결과를 적용했습니다.`);
+        showToast(window.RMSI18n.t("ui.legacy.cd71e2b7a4", {value0: (formatCount(appliedIds.size))}));
         await reloadList();
         draw();
         const nextItem = session.items[index];
@@ -6773,7 +6773,7 @@
         h("span", { class: "scrape-current-file", title: item.filename }, [item.filename]),
         h("button", { class: "icon-btn scrape-file-copy", title: "ROM 이름 복사",
           onClick: () => copyTextToClipboard(
-            String(item.filename || "").replace(/\.[^.]+$/, ""), "ROM 이름을 복사했습니다.") },
+            String(item.filename || "").replace(/\.[^.]+$/, ""), window.RMSI18n.t("ui.legacy.c7b6366d01")) },
         [icon("copy", IC.sm)]),
       ]);
       quotaBadge.textContent = scrapeQuotaText(quota);
@@ -6883,9 +6883,9 @@
   }
 
   async function confirmArchiveSystemRomDelete(sys) {
-    showConfirm(`${sys.system.toUpperCase()} - Archive 보관 ROM 삭제`,
-      `이 System의 항목 ${formatCount(sys.count)}개를 확인해 Archive ROM 디렉토리 안의 파일만 삭제합니다. `
-      + "외부 Collection의 원본 ROM과 연결은 그대로 유지합니다.", true, async () => {
+    showConfirm(window.RMSI18n.t("ui.legacy.85c15fe1ac", {value0: (sys.system.toUpperCase())}),
+      window.RMSI18n.t("ui.legacy.892c53eef1", {value0: (formatCount(sys.count))})
+      + window.RMSI18n.t("ui.legacy.1ab5595331"), true, async () => {
         const ids = await api.archiveUids([sys.system]);
         if (!ids.ok) { showToast(ids.error, "error"); return; }
         const r = await api.archiveRomDelete(ids.data || []);
@@ -6893,9 +6893,9 @@
         resetList();
         renderAll();
         await reloadList();
-        showToast(`Archive 보관 ROM ${formatCount(r.data.deletedFiles || 0)}개를 삭제했습니다.`
+        showToast(window.RMSI18n.t("ui.legacy.0cb39d3b73", {value0: (formatCount(r.data.deletedFiles || 0))})
           + ((r.data.linkedSourcesKept || 0)
-            ? ` 원본 연결 ${formatCount(r.data.linkedSourcesKept)}개는 유지했습니다.` : ""));
+            ? window.RMSI18n.t("ui.legacy.0d365bd0bf", {value0: (formatCount(r.data.linkedSourcesKept))}) : ""));
       });
   }
 
@@ -6903,13 +6903,13 @@
     const preview = await api.archiveMediaCleanupPreview(sys.system);
     if (!preview.ok) { showToast(preview.error, "error"); return; }
     const types = preview.data.types || [];
-    if (!types.length) { showToast("Archive에 보관된 미디어가 없습니다."); return; }
+    if (!types.length) { showToast(window.RMSI18n.t("ui.legacy.54ed8d88cd")); return; }
     const checks = types.map((item) => {
       const input = h("input", { type: "checkbox" });
       const row = h("label", { class: "media-clean-row" }, [input,
         h("span", { class: "media-clean-name" }, [item.label]),
         h("span", { class: "media-clean-count" },
-          [`${formatCount(item.count)}개 · ${formatBytes(item.bytes)}`]),
+          [window.RMSI18n.t("ui.legacy.cd51b3ddff", {value0: (formatCount(item.count)), value1: (formatBytes(item.bytes))})]),
       ]);
       return { type: item.type, input, row };
     });
@@ -6926,17 +6926,17 @@
       resetList();
       renderAll();
       await reloadList();
-      showToast(`Archive 보관 Media ${formatCount(r.data.removed || 0)}개를 삭제했습니다.`
+      showToast(window.RMSI18n.t("ui.legacy.ee550a9ede", {value0: (formatCount(r.data.removed || 0))})
         + ((r.data.linkedKept || 0)
-          ? ` 원본 연결 ${formatCount(r.data.linkedKept)}개는 유지했습니다.` : "")
+          ? window.RMSI18n.t("ui.legacy.0d365bd0bf", {value0: (formatCount(r.data.linkedKept))}) : "")
         + ((r.data.failures || []).length
-          ? ` 실패 ${formatCount(r.data.failures.length)}개.` : ""),
+          ? window.RMSI18n.t("ui.legacy.9a5173c55b", {value0: (formatCount(r.data.failures.length))}) : ""),
       (r.data.failures || []).length ? "warning" : "success");
     });
-    showModal(`${sys.system.toUpperCase()} - Archive 미디어 정리`,
+    showModal(window.RMSI18n.t("ui.legacy.69a450466c", {value0: (sys.system.toUpperCase())}),
       h("div", { class: "modal-body" }, [
         h("div", { class: "modal-text" }, [
-          "종류를 골라 Archive 보관 미디어만 삭제합니다. 외부 Collection 원본은 유지합니다."]),
+          window.RMSI18n.t("ui.legacy.bcbd3102b7")]),
         ...checks.map((entry) => entry.row),
       ]), [h("button", { class: "btn", onClick: closeModal }, ["취소"]), remove]);
   }
@@ -6984,7 +6984,7 @@
     } else if (isArchive()) {
       const targets = S.tabs.filter((t) => t !== ARCHIVE_ID);
       // 못 쓰는 버튼은 **왜 못 쓰는지 말해야 한다.**
-      const why = !targets.length ? "보낼 Collection을 먼저 열어주세요"
+      const why = !targets.length ? window.RMSI18n.t("ui.legacy.db8c9a1b3c")
                 : !S.selected.size ? "보낼 항목을 먼저 고르세요"
                 : "선택 항목을 Collection으로 보냅니다";
       const send = h("button", {
@@ -7095,7 +7095,7 @@
     // 실행 개념이 있는 일반 Collection 전용이다.
     const copyBtn = h("button", {
       class: "icon-btn detail-copy", title: "파일명 복사",
-      onClick: () => copyTextToClipboard(state.file, "파일명을 복사했습니다."),
+      onClick: () => copyTextToClipboard(state.file, window.RMSI18n.t("ui.legacy.ed529007d2")),
     }, [icon("copy", IC.sm)]);
     header.appendChild(copyBtn);
 
@@ -7137,7 +7137,7 @@
       ]));
       const save = h("button", { class: "btn primary detail-save", disabled: !!conflictInfo },
         [icon("save", IC.md), h("span", {}, [conflictInfo ? "쓰기 막힘 - Storage 충돌" : "저장 (Ctrl+S)"])]);
-      if (conflictInfo) save.title = "같은 System 폴더가 여러 Storage에 있습니다 - System 우클릭에서 한쪽을 지우거나 이름을 바꾸세요.";
+      if (conflictInfo) save.title = window.RMSI18n.t("ui.legacy.14bb34a7fa");
       save.addEventListener("click", handleSaveDetail);
       footer.appendChild(scrap);
       footer.appendChild(save);
@@ -7328,13 +7328,13 @@
     if (!state || state.compare || state.tab !== "media") return;
     if (!file || (!file.type?.startsWith("image/")
                   && !/\.(png|jpe?g|webp|gif)$/i.test(file.name || ""))) {
-      showToast("이미지 파일만 미디어 슬롯에 놓을 수 있습니다.", "warning"); return;
+      showToast(window.RMSI18n.t("ui.legacy.190d8b8d81"), "warning"); return;
     }
     if (file.size > 24 * 1024 * 1024) {
-      showToast("이미지는 24MB 이하만 가져올 수 있습니다.", "error"); return;
+      showToast(window.RMSI18n.t("ui.legacy.d3d6f6cdc4"), "error"); return;
     }
     if (slot.key === "Videos") {
-      showToast("영상 슬롯에는 이미지를 놓을 수 없습니다.", "warning"); return;
+      showToast(window.RMSI18n.t("ui.legacy.3558d4568e"), "warning"); return;
     }
     try {
       const encoded = await new Promise((resolve, reject) => {
@@ -7354,12 +7354,12 @@
           renderDetailPanel();
         }
         await refreshArchiveRows([itemId]);
-        showToast(`${slot.label} 이미지를 적용했습니다.`);
+        showToast(window.RMSI18n.t("ui.legacy.e7cb218e6d", {value0: (slot.label)}));
       } else {
         await acceptOperationPreview(result.data);
       }
     } catch (error) {
-      showToast(`이미지를 읽지 못했습니다: ${error}`, "error");
+      showToast(window.RMSI18n.t("ui.legacy.30a61841d4", {value0: (error)}), "error");
     }
   }
 
@@ -7389,7 +7389,7 @@
     if (ownership) {
       zone.appendChild(h("div", {
         class: `media-tile-owner ${ownership.mode}`,
-        title: OWNERSHIP_LABEL[ownership.mode] || "파일 없음",
+        title: OWNERSHIP_LABEL[ownership.mode] || window.RMSI18n.t("ui.legacy.dad41c54ce"),
       }, [icon(ownership.mode === "internal" ? "hardDrive" : "link", IC.xs)]));
     }
 
@@ -7416,7 +7416,7 @@
       // Screenshot이 없는데 영상은 있는 경우 - 깨진 그림 아이콘 대신 무엇을 기다리는지 말한다
       // (사용자 결정 - "x 표시 대신 wait for video play ...").
       preview.appendChild(h("div", { class: "media-video-wait" }, [
-        icon("play", IC.md), h("span", {}, ["영상 준비 중…"]),
+        icon("play", IC.md), h("span", {}, [window.RMSI18n.t("ui.legacy.ef21054d49")]),
       ]));
     } else {
       // "… 없음"을 열두 번 적으면 그것만 눈에 들어온다. 아이콘 하나로 족하다.
@@ -7441,14 +7441,14 @@
     const ownership = state.archive ? mediaOwnership(slot) : null;
     const ownsMedia = ownership?.mode === "internal";
     showContextMenu(menuPoint(e), slot.label, mediaClip
-      ? `복사해 둔 것: ${mediaClip.label} (${mediaClip.title})` : null, [
+      ? window.RMSI18n.t("ui.legacy.ddf2f14c66", {value0: (mediaClip.label), value1: (mediaClip.title)}) : null, [
       { label: "미디어 복사", icon: "copy", disabled: !has, onSelect: () => {
         mediaClip = state.archive
           ? { kind: "archive", uid: state.romIdentityId, key: slot.key }
           : { kind: "collection", id: S.activeId, uid: state.romUid, key: slot.key };
         mediaClip.label = slot.label;
         mediaClip.title = (state.fields && state.fields.name) || state.file || "";
-        showToast(`${slot.label}을(를) 복사했습니다.`);
+        showToast(window.RMSI18n.t("ui.legacy.dc2dd2bcc5", {value0: (slot.label)}));
       } },
       { label: "미디어 붙여넣기", icon: "upload", disabled: !pasteOk,
         title: mediaClip ? null : "복사한 미디어가 없습니다",
@@ -7463,21 +7463,21 @@
             state.media = { ...(state.media || {}), [slot.key]: true };
             renderDetailPanel();
             await refreshArchiveRows([state.romIdentityId]);
-            showToast(`${slot.label}을(를) 붙여넣었습니다.`);
+            showToast(window.RMSI18n.t("ui.legacy.46533b865f", {value0: (slot.label)}));
             return;
           }
           await acceptOperationPreview(r.data);
         } },
-      ...(state.archive ? [{ label: ownsMedia ? "Archive 보관 미디어 삭제" : "Archive에서 미디어 연결 제거",
+      ...(state.archive ? [{ label: ownsMedia ? window.RMSI18n.t("ui.legacy.387d615ad0") : window.RMSI18n.t("ui.legacy.29871930fe"),
         icon: "trash", danger: true,
         disabled: !has,
         title: ownsMedia
-          ? "Archive가 보관하는 복사본을 삭제하고 제거 상태를 기록합니다. 외부 원본은 그대로 둡니다."
-          : "외부 원본 파일은 건드리지 않고 Archive의 연결만 제거 상태로 기록합니다.",
-        onSelect: () => showConfirm(ownsMedia ? "Archive 보관 미디어 삭제" : "Archive 미디어 연결 제거",
+          ? window.RMSI18n.t("ui.legacy.f09b69f4f8")
+          : window.RMSI18n.t("ui.legacy.c28ce0bbe7"),
+        onSelect: () => showConfirm(ownsMedia ? window.RMSI18n.t("ui.legacy.387d615ad0") : window.RMSI18n.t("ui.legacy.0d0eb851dc"),
           ownsMedia
-            ? `${slot.label}의 Archive 보관 복사본을 삭제합니다. 외부 원본 파일은 삭제하지 않습니다.`
-            : `${slot.label} 연결을 Archive 항목에서 제거합니다. 외부 원본 파일은 삭제하지 않습니다.`,
+            ? window.RMSI18n.t("ui.legacy.0a47e083ec", {value0: (slot.label)})
+            : window.RMSI18n.t("ui.legacy.c2dd490d34", {value0: (slot.label)}),
           true, async () => {
             const r = await api.archiveMediaDelete(state.romIdentityId, slot.key);
             if (!r.ok) { showToast(r.error, "error"); return; }
@@ -7488,8 +7488,8 @@
             }
             await refreshArchiveRows([state.romIdentityId]);
             showToast(ownsMedia
-              ? `${slot.label}의 Archive 보관 복사본을 삭제했습니다. 외부 원본은 그대로입니다.`
-              : `${slot.label} 연결을 Archive에서 제거했습니다. 원본 파일은 그대로입니다.`);
+              ? window.RMSI18n.t("ui.legacy.3657a6cb0a", {value0: (slot.label)})
+              : window.RMSI18n.t("ui.legacy.5cd5382eae", {value0: (slot.label)}));
           }) }] : []),
     ]);
   }
@@ -7516,7 +7516,7 @@
         h("span", { class: "media-flag-label" }, [slot.label]),
         ownership ? h("span", {
           class: `media-flag-owner ${ownership.mode}`,
-          title: OWNERSHIP_LABEL[ownership.mode] || "파일 없음",
+          title: OWNERSHIP_LABEL[ownership.mode] || window.RMSI18n.t("ui.legacy.dad41c54ce"),
         }, [icon(ownership.mode === "internal" ? "hardDrive" : "link", 9)]) : null,
       ]));
     });
@@ -7761,7 +7761,7 @@
     }
     if (versions.length > 1) {
       body.appendChild(h("div", { class: "modal-hint revision-single" },
-        [`서로 다른 판 ${formatCount(versions.length)}개 · 사용할 판을 고르세요.`]));
+        [window.RMSI18n.t("ui.legacy.b6e5a03c13", {value0: (formatCount(versions.length))})]));
     }
 
     const preferredId = state.preferredRecordId || null;
@@ -7774,7 +7774,7 @@
     state.revisionPreviewId = previewId;
     const choose = h("button", { class: "btn primary compact",
       disabled: previewId == null || previewId === preferredId },
-      ["선택"]);
+      [window.RMSI18n.t("ui.legacy.7f8af40ba0")]);
     let choosing = false;
     const commitPreview = async (recordId) => {
       if (choosing || recordId == null || recordId === preferredId) return;
@@ -7838,7 +7838,7 @@
         });
       }
       const expanded = h("div", { class: "revision-expanded", hidden: true });
-      const screenshot = h("img", { class: "candidate-screenshot", alt: "스크린샷", hidden: true });
+      const screenshot = h("img", { class: "candidate-screenshot", alt: window.RMSI18n.t("ui.legacy.efc2b3cebb"), hidden: true });
       let screenshotLoaded = false;
       const toggle = h("button", { class: "icon-btn scrape-expand revision-expand", title: "자세히" },
         [icon("chevronDown", IC.sm)]);
@@ -7855,14 +7855,14 @@
         }
         clear(toggle);
         toggle.appendChild(icon(expanded.hidden ? "chevronDown" : "chevronUp", IC.sm));
-        toggle.title = expanded.hidden ? "자세히" : "접기";
+        toggle.title = window.RMSI18n.t(expanded.hidden ? "ui.common.details" : "ui.common.collapse");
       });
       box.appendChild(h("div", { class: "scrape-candidate-head" }, [cover,
         h("div", { class: "scrape-candidate-main" }, [
           h("div", { class: "scrape-candidate-top" }, [
             h("span", { class: "scrape-system-icon" }, [systemIcon(state.system, 16)]),
             h("span", { class: "scrape-candidate-title", "data-i18n-skip": "", title: window.RMSI18n.raw(fields.name || "") },
-              [fields.name || state.filename ? window.RMSI18n.raw(fields.name || state.filename) : "제목 없음"]),
+              [fields.name || state.filename ? window.RMSI18n.raw(fields.name || state.filename) : window.RMSI18n.t("ui.legacy.a1609f9b95")]),
             (version.recordIds || []).includes(preferredId)
               ? h("span", { class: "revision-badge" }, ["현재 사용"]) : null,
           ]),
@@ -7887,7 +7887,7 @@
           chips.appendChild(h("span", {
             class: "revision-chip" + (size == null ? " off" : "")
               + (mediaDiffering.has(type) ? " changed" : ""),
-            title: size == null ? `${type} 없음` : `${type} ${formatBytes(size)}`,
+            title: size == null ? window.RMSI18n.t("ui.legacy.5ed5f8c40c", {value0: (type)}) : `${type} ${formatBytes(size)}`,
           }, [MEDIA_LABEL[type] || type]));
         });
         expanded.appendChild(chips);
@@ -7931,8 +7931,8 @@
       ["파일명", state.file],
       ["System", String(state.system).toUpperCase()],
       ["크기", state.size ? formatBytes(state.size) : "-"],
-      ["ROM 파일", state.present ? "있음" : "없음 (metadata만 존재)"],
-      ...(state.archive ? [["보관 방식", OWNERSHIP_LABEL[state.ownership?.rom?.mode] || "파일 없음"]] : []),
+      ["ROM 파일", state.present ? "있음" : window.RMSI18n.t("ui.legacy.b459cbfa1c")],
+      ...(state.archive ? [[window.RMSI18n.t("ui.legacy.47adbd577a"), OWNERSHIP_LABEL[state.ownership?.rom?.mode] || window.RMSI18n.t("ui.legacy.dad41c54ce")]] : []),
       ["SHA256", state.sha256 || "계산 안 됨"],
     ];
     const box = h("div", { class: "rom-info" });
@@ -7951,7 +7951,7 @@
     const section = h("div", { class: "rom-core" }, [h("div", { class: "rom-core-title" }, ["RetroArch Core"])]);
     const target = { romUid: state.romUid, system: state.system, file: state.file, present: state.present };
     if (!retroarchVerified(state.system)) section.appendChild(h("div", { class: "rom-core-note" },
-      ["이 System의 실행은 아직 검증되지 않았습니다. 선택한 Core로 실행할 수 있습니다."]));
+      [window.RMSI18n.t("ui.legacy.5c9c9b756b")]));
     const blocked = launchBlockReason(target);
     if (blocked) {
       section.appendChild(h("div", { class: "rom-core-note" }, [blocked]));
@@ -7968,9 +7968,9 @@
       if (!info.ok) { content.appendChild(h("div", { class: "rom-core-note" }, [window.RMSI18n.formatError(info.error)])); return; }
       const d = info.data;
       if (!d.cores.length) {
-        content.appendChild(h("div", { class: "rom-core-note" }, ["Core 폴더가 없거나 비어 있습니다."]));
+        content.appendChild(h("div", { class: "rom-core-note" }, [window.RMSI18n.t("ui.legacy.872409ac35")]));
         content.appendChild(h("button", { class: "btn compact rom-core-settings", onClick: () => openSettings("emulator") },
-          ["Settings > Emulator 열기"]));
+          [window.RMSI18n.t("ui.legacy.d5341a80ba")]));
         return;
       }
       const system = String(d.system).toUpperCase();
@@ -7991,20 +7991,20 @@
           ? await api.setGameCore(d.system, d.file, select.value)
           : await api.setSystemCore(d.system, select.value);
         if (!r.ok) { showToast(r.error, "error"); return; }
-        showToast(forGame ? "이 게임의 Core를 지정했습니다." : `${system} 기본 Core를 저장했습니다.`);
+        showToast(forGame ? window.RMSI18n.t("ui.legacy.4f41c8b27f") : window.RMSI18n.t("ui.legacy.6ccaf8365a", {value0: (system)}));
         draw();
       });
       const current = (label, value) => h("div", { class: "health-row" }, [h("span", {}, [label]), h("span", { class: "truncate" }, [value])]);
-      content.appendChild(current(`${system} 기본값`, d.systemCore ? coreLabel(d.systemCore) : "없음"));
-      content.appendChild(current("이 게임 지정", d.gameCore ? coreLabel(d.gameCore) : "없음 (System 기본값 사용)"));
+      content.appendChild(current(window.RMSI18n.t("ui.legacy.63cfaef607", {value0: (system)}), d.systemCore ? coreLabel(d.systemCore) : "없음"));
+      content.appendChild(current("이 게임 지정", d.gameCore ? coreLabel(d.gameCore) : window.RMSI18n.t("ui.legacy.348b595613")));
       content.appendChild(select);
-      content.appendChild(h("label", { class: "core-scope" }, [sysRadio, h("span", {}, [`${system} 전체의 기본값으로 저장`])]));
+      content.appendChild(h("label", { class: "core-scope" }, [sysRadio, h("span", {}, [window.RMSI18n.t("ui.legacy.0c5170db99", {value0: (system)})])]));
       content.appendChild(h("label", { class: "core-scope" }, [gameRadio, h("span", {}, ["이 게임에만 지정"])]));
       content.appendChild(h("div", { class: "rom-core-actions" }, [
         d.gameCore ? h("button", { class: "btn compact core-clear", onClick: async () => {
           const r = await api.setGameCore(d.system, d.file, null);
           if (!r.ok) { showToast(r.error, "error"); return; }
-          showToast("이 게임의 Core 지정을 지웠습니다 - System 기본값으로 실행됩니다.");
+          showToast(window.RMSI18n.t("ui.legacy.fbb156ccb1"));
           draw();
         } }, ["게임 지정 해제"]) : null,
         save,
@@ -8028,7 +8028,7 @@
     state.draft = null;
     if (state.archive) {
       // Archive 편집은 Collection에 자동 반영되지 않는다(스펙 §40). 그 사실을 매번 말해준다.
-      showToast("Archive에 저장했습니다. Collection에 반영하려면 \"Collection으로 보내기\"를 누르세요.");
+      showToast(window.RMSI18n.t("ui.legacy.c6f1e2d022"));
       await refreshArchiveRows([state.romIdentityId]);
       return;
     }
@@ -8068,11 +8068,11 @@
     if (retention?.eventId && retention.eventId !== S.lastRetentionNotice) {
       S.lastRetentionNotice = retention.eventId;
       if (retention.sizeWarning) {
-        showToast(`백업이 약 ${formatBytes(retention.bytesRemaining)}입니다. Settings > Advanced에서 백업을 정리할 수 있습니다.`, "warning");
+        showToast(window.RMSI18n.t("ui.legacy.76e6d9e21c", {value0: (formatBytes(retention.bytesRemaining))}), "warning");
       } else if (retention.discarded || retention.limitExceeded || retention.errors?.length) {
-        showToast(`오래된 백업 ${retention.discarded || 0}개 정리`
-          + (retention.limitExceeded ? " · 보호된 백업으로 한도 초과" : "")
-          + (retention.errors?.length ? " · 일부 백업은 유지했습니다" : ""),
+        showToast(window.RMSI18n.t("ui.legacy.a6bf4faa8b", {value0: (retention.discarded || 0)})
+          + (retention.limitExceeded ? (" " + window.RMSI18n.t("ui.legacy.a466af3139")) : "")
+          + (retention.errors?.length ? (" " + window.RMSI18n.t("ui.legacy.7a7f5d44ac")) : ""),
           retention.limitExceeded || retention.errors?.length ? "warning" : "success");
       }
     }
@@ -8103,7 +8103,7 @@
       const started = await api.renameGame(isArchive() ? "__archive__" : S.activeId, row.romUid, input.value);
       if (!started.ok) { showToast(started.error, "error"); return; }
       closeModal();
-      const result = await pollJob(started.data.jobId, "이름 변경 중");
+      const result = await pollJob(started.data.jobId, window.RMSI18n.t("ui.legacy.b8dee4fe7e"));
       if (!result.ok) { showToast(result.error, "error"); return; }
       S.lastPasteUndoId = result.data.undoOperationId;
       resetList(); await reloadList(); await refreshPlan();
@@ -8111,12 +8111,12 @@
       const rows = isArchive() ? await api.archiveRows(query) : await api.listRows(S.activeId, query);
       const renamed = rows.ok && rows.data.rows.find(item => item.file === result.data.filename);
       if (renamed) { S.selected = new Set([renamed.romUid]); await openDetail(renamed); }
-      showToast("이름을 변경했습니다.", "success");
+      showToast(window.RMSI18n.t("ui.legacy.79db849b78"), "success");
     };
     input.addEventListener("keydown", event => { if (event.key === "Enter") apply(); });
     showModal("이름 변경", h("div", {class: "modal-body"}, [input]), [
       h("button", {class: "btn", onClick: closeModal}, ["취소"]),
-      h("button", {class: "btn primary", onClick: apply}, ["변경"]),
+      h("button", {class: "btn primary", onClick: apply}, [window.RMSI18n.t("ui.legacy.359e017233")]),
     ]);
     input.focus(); input.setSelectionRange(0, row.file.lastIndexOf(".") > 0 ? row.file.lastIndexOf(".") : row.file.length);
   }
@@ -8125,7 +8125,7 @@
     if (isCompare() || !S.selected.size) return;
     const result = await api.cutSelection(isArchive() ? "__archive__" : S.activeId, [...S.selected]);
     if (!result.ok) { showToast(result.error, "error"); return; }
-    showToast(`${formatCount(result.data.count)}개 잘라냈습니다. 대상 System에서 붙여넣으세요.`);
+    showToast(window.RMSI18n.t("ui.legacy.66bd1f029d", {value0: (formatCount(result.data.count))}));
   }
 
   async function copySelectedRows() {
@@ -8166,10 +8166,10 @@
           renderDetailPanel();
         }
       }
-      showToast(`Archive에 ${formatCount(d.pasted || 0)}개를 붙여넣었습니다.`
-        + ((d.copiedRoms || 0) ? ` ROM ${formatCount(d.copiedRoms)}개를 보관 폴더로 복사했습니다.` : "")
-        + ((d.conflicts || []).length ? ` 기존 ROM ${formatCount(d.conflicts.length)}개는 덮어쓰지 않았습니다.` : "")
-        + ((d.skipped || []).length ? ` 건너뜀 ${formatCount(d.skipped.length)}개: ${d.skipped[0].reason || "사유 없음"}.` : ""),
+      showToast(window.RMSI18n.t("ui.legacy.d457ee2e15", {value0: (formatCount(d.pasted || 0))})
+        + ((d.copiedRoms || 0) ? window.RMSI18n.t("ui.legacy.523ae4c007", {value0: (formatCount(d.copiedRoms))}) : "")
+        + ((d.conflicts || []).length ? window.RMSI18n.t("ui.legacy.d45f266575", {value0: (formatCount(d.conflicts.length))}) : "")
+        + ((d.skipped || []).length ? window.RMSI18n.t("ui.legacy.4a76ddaa04", {value0: (formatCount(d.skipped.length)), value1: (d.skipped[0].reason || window.RMSI18n.t("ui.legacy.4c5dcbc26c"))}) : ""),
         (d.conflicts || []).length || (d.skipped || []).length ? "warning" : "success");
       return;
     }
@@ -8182,7 +8182,7 @@
       const clip = await api.clipboardItems();
       if (!clip.ok) { showToast(clip.error, "error"); return; }
       if (clip.data.count !== 1) {
-        showToast("항목을 하나만 복사했을 때만 이 항목에 붙여넣을 수 있습니다.", "warning");
+        showToast(window.RMSI18n.t("ui.legacy.520bb22935"), "warning");
         return;
       }
       const item = clip.data.items[0];
@@ -8208,12 +8208,12 @@
       return;
     }
     const left = (d.skipped || []).filter((item) => item.reason);
-    showToast(left.length ? `붙여넣을 내용이 없습니다 - ${left[0].reason}`
-      : "작업 미리보기를 받지 못했습니다. 다시 시도하세요.", "warning");
+    showToast(left.length ? window.RMSI18n.t("ui.legacy.f59818def6", {value0: (left[0].reason)})
+      : window.RMSI18n.t("ui.legacy.06e8898ba5"), "warning");
   }
 
   async function acceptOperationPreview(preview) {
-    if (!preview.operationId) { showToast("작업 미리보기를 받지 못했습니다.", "error"); return; }
+    if (!preview.operationId) { showToast(window.RMSI18n.t("ui.legacy.75572bc9cf"), "error"); return; }
     if (preview.collisions?.length) openPasteConflictDialog(preview);
     else await executePasteOperation(preview, {});
   }
@@ -8221,7 +8221,7 @@
   async function runCompareOperation(options) {
     const response = await api.compareOperationPreview(options);
     if (!response.ok) { showToast(response.error, "error"); return; }
-    if (!response.data.count) { showToast(response.data.skipped?.[0]?.reason || "적용할 변경이 없습니다.", "warning"); return; }
+    if (!response.data.count) { showToast(response.data.skipped?.[0]?.reason || window.RMSI18n.t("ui.legacy.4a99344c54"), "warning"); return; }
     if (response.data.collisions?.length) openPasteConflictDialog(response.data);
     else await executePasteOperation(response.data, {});
   }
@@ -8231,22 +8231,22 @@
     if (action === "archive-import") {
       const started = await api.startArchiveImportPreview(S.activeId, options);
       if (!started.ok) { showToast(started.error, "error"); return; }
-      response = await pollJob(started.data.jobId, "Archive 가져오기 준비");
+      response = await pollJob(started.data.jobId, window.RMSI18n.t("ui.legacy.28363408e6"));
     } else response = await api.operationPreview(S.activeId, action, options);
     if (!response.ok) { showToast(response.error, "error"); return; }
-    if (!response.data.count) { showToast(response.data.skipped?.[0]?.reason || "변경할 항목이 없습니다."); return; }
+    if (!response.data.count) { showToast(response.data.skipped?.[0]?.reason || window.RMSI18n.t("ui.legacy.cb3865a74c")); return; }
     if (response.data.collisions?.length) openPasteConflictDialog(response.data);
     else await executePasteOperation(response.data, {});
   }
 
   async function executePasteOperation(preview, decisions, acknowledged = false) {
-    const operationLabel = ({ title: "제목 변경", disc: "디스크 태그 변경", move: "이동",
-      storage: "Storage 이동", media: "미디어 붙여넣기", compare: "비교 결과 적용", convert: "변환", import: "가져오기", "archive-import": "가져오기" })[preview.action] || "붙여넣기";
+    const operationLabel = window.RMSI18n.t(({ title: window.RMSI18n.t("ui.legacy.3906d4ee9b"), disc: window.RMSI18n.t("ui.legacy.3479f43bd1"), move: window.RMSI18n.t("ui.legacy.8389ba5869"),
+      storage: window.RMSI18n.t("ui.legacy.9d67156750"), media: "미디어 붙여넣기", compare: window.RMSI18n.t("ui.legacy.7e7ba30284"), convert: window.RMSI18n.t("ui.legacy.97d396f42f"), import: "가져오기", "archive-import": "가져오기" })[preview.action] || "붙여넣기");
     if (!preview.undoable && !acknowledged) {
-      showConfirm(`${operationLabel} 확인`,
+      showConfirm(window.RMSI18n.t("ui.legacy.3799853cdf", {value0: (operationLabel)}),
         preview.target === "archive"
           ? "Archive에는 변경 이력이 남지만 파일 전체 되돌리기는 아직 보장하지 못합니다. 계속할까요?"
-          : "이 작업은 자동 되돌리기를 보장할 수 없습니다. 계속할까요?",
+          : window.RMSI18n.t("ui.legacy.a156c835e3"),
         true, () => executePasteOperation(preview, decisions, true));
       return;
     }
@@ -8257,14 +8257,14 @@
     const detailTab = S.detailState?.tab || "metadata";
     const started = await api.pasteExecute(preview.operationId, decisions, acknowledged);
     if (!started.ok) { showToast(started.error, "error"); return; }
-    if (!started.data.jobId) { showToast("건너뛴 항목 외에 붙여넣을 내용이 없습니다."); return; }
-    const result = await pollJob(started.data.jobId, `${operationLabel} 중`);
-    if (!result.ok) { showToast(result.error || "붙여넣기가 중단되었습니다.", "error"); return; }
+    if (!started.data.jobId) { showToast(window.RMSI18n.t("ui.legacy.f431567720")); return; }
+    const result = await pollJob(started.data.jobId, window.RMSI18n.t("ui.legacy.8714af5080", {value0: (operationLabel)}));
+    if (!result.ok) { showToast(result.error || window.RMSI18n.t("ui.legacy.3583791930"), "error"); return; }
     const data = result.data || {};
     if (data.undoOperationId) S.lastPasteUndoId = data.undoOperationId;
-    showToast((data.rolledBack ? `${operationLabel}에 실패해 변경을 복구했습니다.` : `${operationLabel} ${formatCount(data.applied || 0)}개`)
-      + (data.failed ? ` · 실패 ${formatCount(data.failed)}개` : "")
-      + (data.partial ? ` · 일부 반영 ${formatCount(data.partial)}개` : ""),
+    showToast((data.rolledBack ? window.RMSI18n.t("ui.legacy.56f60c868c", {value0: (operationLabel)}) : window.RMSI18n.t("ui.legacy.0c61b8d318", {value0: (operationLabel), value1: (formatCount(data.applied || 0))}))
+      + (data.failed ? window.RMSI18n.t("ui.legacy.17d1480882", {value0: (formatCount(data.failed))}) : "")
+      + (data.partial ? window.RMSI18n.t("ui.legacy.c7d7fc1f42", {value0: (formatCount(data.partial))}) : ""),
     data.failed || data.partial ? "warning" : "success");
     if (S.activeId !== collectionId) return;
     if (compareSnapshot) {
@@ -8289,7 +8289,7 @@
     const detailTab = S.detailState?.tab || "metadata";
     const started = await api.pasteUndo(isArchive() ? "__archive__" : collectionId);
     if (!started.ok) { showToast(started.error, "warning"); return; }
-    const result = await pollJob(started.data.jobId, "작업 되돌리는 중");
+    const result = await pollJob(started.data.jobId, window.RMSI18n.t("ui.legacy.9c0df60bc7"));
     if (!result.ok) { showToast(result.error, "error"); return; }
     S.lastPasteUndoId = null;
     if (S.activeId === collectionId) {
@@ -8298,7 +8298,7 @@
       if (S.activeId === collectionId) await restoreGameFocus(focused, detailTab, focusedIndex);
     }
 
-    showToast("직전 작업을 되돌렸습니다.", "success");
+    showToast(window.RMSI18n.t("ui.legacy.b19d486221"), "success");
     await refreshPlan();
   }
 
@@ -8310,7 +8310,7 @@
     const id = isArchive() ? "__archive__" : S.activeId;
     const started = await api.pasteRedo(id);
     if (!started.ok) { showToast(started.error, "warning"); return; }
-    const result = await pollJob(started.data.jobId, "다시 실행 중");
+    const result = await pollJob(started.data.jobId, window.RMSI18n.t("ui.legacy.16f187fffc"));
     if (!result.ok) { showToast(result.error, "error"); return; }
     if (S.activeId !== activeId) return;
     resetList();
@@ -8318,7 +8318,7 @@
     if (S.activeId !== activeId) return;
     await restoreGameFocus(focused, detailTab, focusedIndex);
     await refreshPlan();
-    showToast("작업을 다시 실행했습니다.", "success");
+    showToast(window.RMSI18n.t("ui.legacy.c87da5c0da"), "success");
   }
 
   async function openOperationHistory() {
@@ -8327,7 +8327,7 @@
     if (!result.ok) { showToast(result.error, "error"); return; }
     const rows = result.data.items || [];
     const labels = {committed: "완료", undone: "실행 취소", recovered: "복구됨", recovery_failed: "복구 실패", closed: "닫힘 · 백업 유지", running: "복구 필요", restoring: "복구 필요", redoing: "복구 필요"};
-    const actions = {paste: "붙여넣기", add: "붙여넣기", delete: "삭제", rename: "이름 변경", move: "이동", metadata_edit: "메타데이터 편집", "file-operation": "파일 작업", archive_edit: "메타데이터 편집", archive_rename: "이름 변경", archive_rom_delete: "ROM 삭제", archive_delete: "기록 삭제"};
+    const actions = {paste: "붙여넣기", add: "붙여넣기", delete: "삭제", rename: "이름 변경", move: window.RMSI18n.t("ui.legacy.8389ba5869"), metadata_edit: window.RMSI18n.t("ui.legacy.da8b8cc661"), "file-operation": window.RMSI18n.t("ui.legacy.1217166fa0"), archive_edit: window.RMSI18n.t("ui.legacy.da8b8cc661"), archive_rename: "이름 변경", archive_rom_delete: "ROM 삭제", archive_delete: window.RMSI18n.t("ui.legacy.b1d272fc25")};
     const body = h("div", {class: "modal-body operation-history-body"});
     if (result.data.recoveryError) body.appendChild(h("div", {class: "field-help"}, [window.RMSI18n.formatError(result.data.recoveryError)]));
     body.appendChild(h("div", {class: "field-help"}, [msg("ui.history.summary", {count:rows.length,size:formatBytes(rows.reduce((sum,row)=>sum+row.bytes,0))})]));
@@ -8340,7 +8340,7 @@
       body.appendChild(h("div", {class: "field-row operation-history-row"}, [
         h("span", {class: "field-help"}, [msg("ui.history.row", {date:new Date(row.createdAt*1000).toLocaleString(),action:window.RMSI18n.t(actions[row.action] || "Archive 편집"),status:window.RMSI18n.t(labels[row.status] || row.status),size:formatBytes(row.bytes)})]),
         h("button", {class: "btn", disabled: !row.canDiscard, onClick: () => {
-          showConfirm("백업 삭제", row.status === "closed" ? "남겨 둔 복구 백업을 영구 삭제합니다." : "이 작업의 실행 취소·다시 실행이 불가능해집니다.", true, async () => {
+          showConfirm("백업 삭제", row.status === "closed" ? window.RMSI18n.t("ui.legacy.83ea668416") : window.RMSI18n.t("ui.legacy.3c6968d5de"), true, async () => {
             const removed = await api.discardOperationHistory(id, [row.id], true);
             if (!removed.ok) { showToast(removed.error, "error"); return; }
             closeModal(); await refreshPlan(); await openOperationHistory();
@@ -8381,14 +8381,14 @@
       const item = collisions[position];
       if (!item) return;
       body.appendChild(h("div", { class: "modal-hint" }, [
-        msg("ui.paste.summary", {source:window.RMSI18n.t(preview.source || "원본"),target:preview.target === "archive" ? "Archive" : window.RMSI18n.t("현재 Collection"),count:formatCount(preview.count),conflicts:formatCount(collisions.length),index:position+1,total:collisions.length}),
+        msg("ui.paste.summary", {source:window.RMSI18n.t(preview.source || window.RMSI18n.t("ui.legacy.e828d32bbf")),target:preview.target === "archive" ? "Archive" : window.RMSI18n.t("현재 Collection"),count:formatCount(preview.count),conflicts:formatCount(collisions.length),index:position+1,total:collisions.length}),
       ]));
       body.appendChild(h("div", { class: "paste-conflict-filename" },
         [msg("ui.paste.exists", {filename:item.filename})]));
       const makeSide = (label, title, desc, fields, incoming) => {
-        const cover = h("img", { alt: "커버", class: "paste-conflict-thumb" });
-        const screen = h("img", { alt: "스크린샷", class: "paste-conflict-thumb" });
-        const detailCover = h("img", { alt: "커버", class: "scrape-thumb" });
+        const cover = h("img", { alt: window.RMSI18n.t("ui.legacy.375e858515"), class: "paste-conflict-thumb" });
+        const screen = h("img", { alt: window.RMSI18n.t("ui.legacy.efc2b3cebb"), class: "paste-conflict-thumb" });
+        const detailCover = h("img", { alt: window.RMSI18n.t("ui.legacy.375e858515"), class: "scrape-thumb" });
         [cover, screen, detailCover].forEach((image) => { image.style.visibility = "hidden"; });
         const expanded = h("div", { class: "paste-conflict-expanded scrape-candidate" }, [
           h("div", { class: "scrape-candidate-head" }, [
@@ -8402,7 +8402,7 @@
         ]);
         const fieldRows = window.RMSCandidateUI.fields(h, fields);
         expanded.appendChild(fieldRows);
-        const detailScreen = h("img", { class: "candidate-screenshot", alt: "스크린샷", hidden: true });
+        const detailScreen = h("img", { class: "candidate-screenshot", alt: window.RMSI18n.t("ui.legacy.efc2b3cebb"), hidden: true });
         expanded.appendChild(detailScreen);
         const toggle = h("button", { class: "btn compact paste-conflict-expand",
           title: "자세히 보기", "aria-expanded": "false" }, [icon("chevronDown", IC.sm)]);
@@ -8437,8 +8437,8 @@
         });
         const romFacts = item.romComparison?.[incoming ? "incoming" : "existing"];
         if (romFacts) {
-          const size = romFacts.size == null ? "크기 확인 불가" : formatBytes(romFacts.size);
-          const modified = romFacts.modifiedAt == null ? "수정일 확인 불가"
+          const size = romFacts.size == null ? window.RMSI18n.t("ui.legacy.23c969799f") : formatBytes(romFacts.size);
+          const modified = romFacts.modifiedAt == null ? window.RMSI18n.t("ui.legacy.e83f4ac461")
             : new Date(romFacts.modifiedAt).toLocaleString();
           const text = `ROM · ${size} · ${modified}`;
           row.insertBefore(h("div", { class: "paste-conflict-rom truncate", title: text }, [text]), expanded);
@@ -8527,18 +8527,18 @@
       const selects = missing.map((entry) => {
         const select = h("select", { class: "field-input paste-system-select", "data-system": entry.system }, [
           // 원본 이름 그대로 쓰면 그 이름의 System이 새로 생긴다.
-          h("option", { value: "" }, [`새 System으로 만들기 (${entry.system})`]),
+          h("option", { value: "" }, [window.RMSI18n.t("ui.legacy.9f18124c91", {value0: (entry.system)})]),
           ...targets.map((name) => h("option", { value: name }, [name.toUpperCase()])),
         ]);
         return { entry, select };
       });
       const body = h("div", { class: "modal-body paste-system-map" }, [
         h("div", { class: "modal-text" }, [
-          `이 Collection에 없는 System이 ${formatCount(missing.length)}개 있습니다. 어디로 붙일지 고르세요.`]),
+          window.RMSI18n.t("ui.legacy.846fe308f0", {value0: (formatCount(missing.length))})]),
         h("div", { class: "modal-hint" }, [
-          "Frontend마다 쓸 수 있는 System 이름이 다릅니다. 기존 System을 고르면 그 폴더로 들어갑니다."]),
+          window.RMSI18n.t("ui.legacy.0306bace0e")]),
         ...selects.map(({ entry, select }) => h("div", { class: "paste-system-row" }, [
-          h("div", { class: "field-label" }, [`${entry.system} · ${formatCount(entry.count)}개`]),
+          h("div", { class: "field-label" }, [window.RMSI18n.t("ui.legacy.b8543eea48", {value0: (entry.system), value1: (formatCount(entry.count))})]),
           select,
         ])),
       ]);
@@ -8563,9 +8563,8 @@
   async function deleteArchiveMetadata() {
     const ids = [...S.selected];
     if (!ids.length) return;
-    showConfirm("Archive 메타데이터 삭제",
-      `선택한 ${formatCount(ids.length)}개 항목의 Archive 메타데이터를 지웁니다. `
-      + "ROM·미디어·원본 Collection과 출처 Revision은 유지합니다.", true, async () => {
+    showConfirm(msg("ui.delete.archiveMetadataTitle"),
+      msg("ui.delete.archiveMetadata", {count: formatCount(ids.length)}), true, async () => {
         const r = await api.archiveMetadataDelete(ids);
         if (!r.ok) { showToast(r.error, "error"); return; }
         resetList();
@@ -8578,25 +8577,24 @@
           }
         }
         const failed = (r.data.failures || []).length;
-        showToast(`Archive 메타데이터 ${formatCount(r.data.cleared || 0)}개를 지웠습니다.`
-          + (failed ? ` 실패 ${formatCount(failed)}개.` : ""), failed ? "warning" : "success");
+        showToast(window.RMSI18n.t("ui.delete.archiveMetadataDone", {count: formatCount(r.data.cleared || 0)})
+          + (failed ? window.RMSI18n.t("ui.delete.failed", {count: formatCount(failed)}) : ""), failed ? "warning" : "success");
       });
   }
 
   async function deleteArchiveOwnedGames() {
     const ids = [...S.selected];
     if (!ids.length) return;
-    showConfirm("Archive Game 전체 삭제",
-      `Archive가 보관하는 ${formatCount(ids.length)}개 게임의 ROM·미디어 파일과 기록을 삭제합니다. `
-      + "외부 원본에 연결된 게임은 이 동작으로 삭제할 수 없습니다.", true, async () => {
+    showConfirm(msg("ui.delete.archiveOwnedTitle"),
+      msg("ui.delete.archiveOwned", {count: formatCount(ids.length)}), true, async () => {
         const r = await api.archiveDeleteOwned(ids);
         if (!r.ok) { showToast(r.error, "error"); return; }
         const failures = r.data.failures || [];
         S.selected.clear();
         resetList();
         await reloadList();
-        showToast(`Archive Game ${formatCount(r.data.deleted || 0)}개를 삭제했습니다.`
-          + (failures.length ? ` 실패 ${formatCount(failures.length)}개: ${failures[0].reason}` : ""),
+        showToast(window.RMSI18n.t("ui.delete.archiveOwnedDone", {count: formatCount(r.data.deleted || 0)})
+          + (failures.length ? window.RMSI18n.t("ui.delete.failedReason", {count: formatCount(failures.length), reason: window.RMSI18n.formatError(failures[0].reason)}) : ""),
         failures.length ? "warning" : "success");
       });
   }
@@ -8605,9 +8603,8 @@
     if (blockedInCompare("ROM 삭제")) return;
     const ids = [...S.selected];
     if (!ids.length) return;
-    showConfirm("Archive 보관 ROM 삭제",
-      `선택한 ${formatCount(ids.length)}개 항목에서 Archive ROM 디렉토리 안의 파일만 삭제합니다. `
-      + "외부 Collection의 원본 연결은 그대로 유지합니다.", true, async () => {
+    showConfirm(msg("ui.delete.archiveRomTitle"),
+      msg("ui.delete.archiveRom", {count: formatCount(ids.length)}), true, async () => {
         const r = await api.archiveRomDelete(ids);
         if (!r.ok) { showToast(r.error, "error"); return; }
         const result = r.data || {};
@@ -8621,9 +8618,9 @@
         }
         const kept = result.linkedSourcesKept || 0;
         const failed = (result.failures || []).length;
-        showToast(`Archive 보관 ROM ${formatCount(result.deletedFiles || 0)}개를 삭제했습니다.`
-          + (kept ? ` 원본 연결 ${formatCount(kept)}개는 유지했습니다.` : "")
-          + (failed ? ` 실패 ${formatCount(failed)}개.` : ""), failed ? "warning" : "success");
+        showToast(window.RMSI18n.t("ui.delete.archiveRomDone", {count: formatCount(result.deletedFiles || 0)})
+          + (kept ? window.RMSI18n.t("ui.delete.linksKept", {count: formatCount(kept)}) : "")
+          + (failed ? window.RMSI18n.t("ui.delete.failed", {count: formatCount(failed)}) : ""), failed ? "warning" : "success");
       });
   }
 
@@ -8645,26 +8642,23 @@
         S.selected.clear();
         resetList();
         await reloadList();
-        showToast(`Archive에서 ${formatCount(r.data.deleted)}개를 지웠습니다 - 실제 ROM/Media 파일은 그대로입니다.`);
+        showToast(msg("ui.delete.archiveRecordDone", {count: formatCount(r.data.deleted)}));
       };
-      showConfirm("Archive에서 지우기",
-        `${formatCount(count)}개를 Archive에서 지웁니다. 실제 ROM/Media 파일은 지워지지 않습니다 - `
-        + "필요하면 해당 Collection에서 다시 수집할 수 있습니다.", true, run);
+      showConfirm(msg("ui.delete.archiveRecordTitle"), msg("ui.delete.archiveRecord", {count: formatCount(count)}), true, run);
       return;
     }
     const chosen = Array.isArray(parts) && parts.length ? parts : DELETE_ALL;
-    const what = chosen.map((p) => DELETE_PART_LABEL[p]).join(" + ");
+    const what = chosen.map((p) => window.RMSI18n.t(p === "video" ? "ui.delete.video" : DELETE_PART_LABEL[p])).join(" + ");
     const collectionId = S.activeId;
     const ids = [...S.selected];
     const run = async (force = false) => {
       const r = await api.deleteImmediate(collectionId, ids, chosen, force);
       if (!r.ok) { showToast(r.error, "error"); return; }
       if (r.data.requiresConfirmation) {
-        showConfirm("삭제 확인", formatCount(count) + "개의 " + what
-          + "을(를) 영구 삭제합니다. 이 경로에서는 되돌릴 수 없습니다.", true, () => run(true));
+        showConfirm(msg("ui.delete.confirmTitle"), msg("ui.delete.noUndo", {count: formatCount(count), parts: what}), true, () => run(true));
         return;
       }
-      const completed = await pollJob(r.data.jobId, "삭제하는 중");
+      const completed = await pollJob(r.data.jobId, window.RMSI18n.t("ui.delete.progress"));
       if (!completed.ok) { showToast(completed.error, "error"); return; }
       const result = completed.data || {};
       if (result.undoOperationId) S.lastPasteUndoId = result.undoOperationId;
@@ -8673,13 +8667,12 @@
       resetList();
       await reloadList();
       await refreshPlan();
-      showToast(result.rolledBack ? "삭제에 실패해 변경을 복구했습니다."
-        : formatCount(result.applied || 0) + "개 삭제"
-          + (result.undoOperationId ? " · Ctrl+Z로 실행 취소" : ""),
+      showToast(result.rolledBack ? msg("ui.delete.rolledBack")
+        : window.RMSI18n.t("ui.delete.completed", {count: formatCount(result.applied || 0)})
+          + (result.undoOperationId ? window.RMSI18n.t("ui.delete.undoHint") : ""),
       result.failed || result.partial ? "warning" : "success");
     };
-    if (permanent) showConfirm("영구 삭제", formatCount(count) + "개의 " + what
-      + "을(를) 영구 삭제합니다. 되돌릴 수 없습니다.", true, () => run(true));
+    if (permanent) showConfirm(msg("ui.delete.permanentTitle"), msg("ui.delete.permanent", {count: formatCount(count), parts: what}), true, () => run(true));
     else await run();
   }
 
@@ -8692,9 +8685,9 @@
   /** 기존 파일과 가져올 파일을 나란히 보여주고, 선택한 쪽만 강조한다. */
   function conflictDetailRow(conflict, entryKey, index, choices) {
     const current = h("button", { class: "conflict-choice existing", type: "button",
-      title: `현재 Collection · ${conflictKindLabel(conflict)}` });
+      title: window.RMSI18n.t("ui.legacy.9b214b3fd5", {value0: (conflictKindLabel(conflict))}) });
     const incoming = h("button", { class: "conflict-choice incoming", type: "button",
-      title: `가져올 파일 · ${conflictKindLabel(conflict)}` });
+      title: window.RMSI18n.t("ui.legacy.074fa588ba", {value0: (conflictKindLabel(conflict))}) });
     const update = () => {
       current.classList.toggle("selected", choices[index] === "skip");
       incoming.classList.toggle("selected", choices[index] === "overwrite");
@@ -8714,8 +8707,8 @@
         });
       });
     } else {
-      current.appendChild(h("span", {}, ["현재 ROM"]));
-      incoming.appendChild(h("span", {}, ["가져올 ROM"]));
+      current.appendChild(h("span", {}, [window.RMSI18n.t("ui.legacy.e1e54b7a10")]));
+      incoming.appendChild(h("span", {}, [window.RMSI18n.t("ui.legacy.c619ab1683")]));
     }
     return h("div", { class: "conflict-preview", title: conflictKindLabel(conflict) },
       [current, incoming]);
@@ -8756,9 +8749,9 @@
   }
 
   function archiveScopeLabel(scope) {
-    if (scope.kind === "selected") return `선택한 ${formatCount(scope.romUids.length)}개`;
-    if (scope.kind === "system") return `${String(scope.system).toUpperCase()} 전체`;
-    return "Collection 전체";
+    if (scope.kind === "selected") return window.RMSI18n.t("ui.legacy.370c1178c5", {value0: (formatCount(scope.romUids.length))});
+    if (scope.kind === "system") return window.RMSI18n.t("ui.legacy.ff819f9692", {value0: (String(scope.system).toUpperCase())});
+    return window.RMSI18n.t("ui.legacy.c8df40a91a");
   }
 
   async function ingestToArchive() {
@@ -8768,18 +8761,18 @@
     const label = archiveScopeLabel(scope);
     const result = await api.startArchiveIngest(S.activeId, scope);
     if (!result.ok) { showToast(result.error, "error"); return; }
-    const done = await pollJob(result.data.jobId, "Archive로 보내는 중");
+    const done = await pollJob(result.data.jobId, window.RMSI18n.t("ui.legacy.979611caaf"));
     if (!done.ok) { showToast(done.error, "error"); return; }
-    showToast(`${label} · Archive에 저장했습니다.`);
+    showToast(window.RMSI18n.t("ui.legacy.4eb21a8a85", {value0: (label)}));
   }
 
   function importParts(entry) {
     const parts = entry.parts || {};
     const labels = [];
     if (parts.metadata) labels.push("메타데이터");
-    if (parts.media) labels.push(`미디어 ${formatCount(parts.media)}`);
+    if (parts.media) labels.push(window.RMSI18n.t("ui.legacy.6709a6c7ba", {value0: (formatCount(parts.media))}));
     if (parts.rom) labels.push("ROM");
-    return labels.join(" · ") || "변경";
+    return labels.join(" · ") || window.RMSI18n.t("ui.legacy.359e017233");
   }
 
   /** 방금 가져온 항목만 보여 준다. 기존 Plan 항목과 섞어 결과를 과장하지 않는다. */
@@ -8788,7 +8781,7 @@
   async function importFromCollection(sourceId, targetId) {
     const scope = activeScope();
     const system = scope.kind === "system" ? scope.id : null;
-    const label = system ? `${String(system).toUpperCase()} 전체` : "Collection 전체";
+    const label = system ? window.RMSI18n.t("ui.legacy.ff819f9692", {value0: (String(system).toUpperCase())}) : window.RMSI18n.t("ui.legacy.c8df40a91a");
     await runImmediateAction("import", { sourceId, system, mode: currentPasteMode() });
   }
 
@@ -8796,10 +8789,10 @@
   async function importFromArchive() {
     const scope = activeScope();
     const systems = scope.kind === "system" ? [scope.id] : null;
-    const label = systems ? `${String(scope.id).toUpperCase()} 전체` : "Collection 전체";
+    const label = systems ? window.RMSI18n.t("ui.legacy.ff819f9692", {value0: (String(scope.id).toUpperCase())}) : window.RMSI18n.t("ui.legacy.c8df40a91a");
     const uidsR = await api.archiveUids(systems);
     if (!uidsR.ok) { showToast(uidsR.error, "error"); return; }
-    if (!uidsR.data.length) { showToast(`${label}에 해당하는 Archive 항목이 없습니다.`, "warning"); return; }
+    if (!uidsR.data.length) { showToast(window.RMSI18n.t("ui.legacy.3415c007a5", {value0: (label)}), "warning"); return; }
     await runImmediateAction("archive-import", { ids: uidsR.data, mode: currentPasteMode() });
   }
 
@@ -8821,10 +8814,10 @@
     });
     const body = h("div", { class: "modal-body" }, [
       h("div", { class: "modal-text" },
-        [`선택한 ${formatCount(S.selected.size)}개를 어느 Collection으로 보낼까요?`]),
+        [window.RMSI18n.t("ui.legacy.f73fb4cfbe", {value0: (formatCount(S.selected.size))})]),
       list,
       h("div", { class: "modal-hint" }, [
-        "대상을 선택한 뒤 충돌을 확인하고 바로 복사합니다."]),
+        window.RMSI18n.t("ui.legacy.e7a99d71a8")]),
     ]);
     showModal("Collection으로 보내기", body, [h("button", { class: "btn", onClick: closeModal }, ["취소"])]);
   }
@@ -8910,11 +8903,11 @@
       // 설정이 없으면(configured 아님) 읽을 디렉토리가 없으므로 조용히 넘어간다.
       const started = await api.startArchiveRefresh();
       if (!started.ok) { showToast(started.error, "error"); return; }
-      const synced = await pollJob(started.data.jobId, "Archive 다시 읽는 중");
+      const synced = await pollJob(started.data.jobId, window.RMSI18n.t("ui.legacy.a8df6c65df"));
       if (!synced.ok) { if (!synced.cancelled) showToast(synced.error, "error"); return; }
       if (synced.data && (synced.data.added || synced.data.romsLinked || synced.data.mediaLinked)) {
-        showToast(`Archive 디렉토리에서 ${synced.data.added}개 추가, ROM ${synced.data.romsLinked}개, `
-          + `Media ${synced.data.mediaLinked || 0}개 연결`);
+        showToast(window.RMSI18n.t("ui.legacy.cf0917ca38", {value0: (synced.data.added), value1: (synced.data.romsLinked)})
+          + window.RMSI18n.t("ui.legacy.3d450cf0fc", {value0: (synced.data.mediaLinked || 0)}));
       }
       await ensureDetail(ARCHIVE_ID);
       resetList();
@@ -8928,7 +8921,7 @@
   async function runScan(collectionId, force) {
     const r = await api.startScan(collectionId, !!force);
     if (!r.ok) { showToast(r.error, "error"); return; }
-    const result = await pollJob(r.data.jobId, "Collection 스캔 중");
+    const result = await pollJob(r.data.jobId, window.RMSI18n.t("ui.legacy.9f205de475"));
     if (!result.ok) {
       if (!result.cancelled) showToast(result.error, "error");
       return;
@@ -8961,7 +8954,7 @@
   let dashboardToken = 0;
   async function showDashboard() {
     if (!S.activeId || isArchive()) {
-      showToast("Dashboard는 Collection 탭에서 볼 수 있습니다.", "warning");
+      showToast(window.RMSI18n.t("ui.legacy.c556211794"), "warning");
       return;
     }
     const id = S.activeId;
@@ -9132,7 +9125,7 @@
       const next = Math.max(min, Math.min(max, current + (e.deltaY < 0 ? step : -step)));
       if (next === current) return;
       updateSettings("appearance", { scale: next });
-      showToast(`UI 크기 ${next}%`);
+      showToast(window.RMSI18n.t("ui.legacy.ba8bd2a182", {value0: (next)}));
     }, { passive: false });
     document.addEventListener("keydown", (e) => {
       if (e.key === "F1") {

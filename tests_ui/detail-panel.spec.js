@@ -168,9 +168,9 @@ test.describe("Media 격자", () => {
     const tiles = await page.locator(".media-tile-label").allTextContents();
     const flags = await page.locator(".media-flag-label").allTextContents();
     const all = [...tiles, ...flags];
-    ["Cover", "Marquee", "MixImage", "TitleScreen", "Screenshot",
+    ["커버", "Marquee", "MixImage", "TitleScreen", "스크린샷",
      "3DBox", "BackCover", "PhysicalMedia", "Wheel",
-     "동영상", "Manual", "FanArt"].forEach((name) => {
+     "영상", "Manual", "FanArt"].forEach((name) => {
       expect(all).toContain(name);
     });
   });
@@ -288,7 +288,7 @@ test.describe("Media 격자", () => {
     // 영상은 실어 오기엔 크고 설명서는 PDF라 애초에 그릴 수 없다. FanArt는 자리를
     // 차지할 만큼 자주 보는 것이 아니다(사용자 결정).
     await openMedia(page);
-    const video = page.locator(".media-flag-item", { hasText: "동영상" });
+    const video = page.locator(".media-flag-item", { hasText: "영상" });
     await expect(video).toHaveClass(/on/);
     // `v` / `x` 글자는 둘이 닮아서 멀리서 구분이 안 됐다(사용자 피드백) - 지금은
     // media 종류를 뜻하는 아이콘 칩이고, 있고 없고는 밝기로 갈린다.
@@ -313,7 +313,7 @@ test.describe("Media 확대(lightbox)", () => {
 
   test("그림이 있는 타일을 누르면 확대된 이미지가 뜬다", async ({ page }) => {
     await openMedia(page);
-    const cover = page.locator(".media-tile[title='Cover']");
+    const cover = page.locator(".media-tile[title='커버']");
     await expect(cover).toHaveClass(/clickable/);
     await cover.click();
     await expect(page.locator(".lightbox-img")).toBeVisible();
@@ -321,7 +321,7 @@ test.describe("Media 확대(lightbox)", () => {
 
   test("ESC로 닫힌다", async ({ page }) => {
     await openMedia(page);
-    await page.locator(".media-tile[title='Cover']").click();
+    await page.locator(".media-tile[title='커버']").click();
     await expect(page.locator(".lightbox-img")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.locator(".lightbox-img")).toHaveCount(0);
@@ -329,7 +329,7 @@ test.describe("Media 확대(lightbox)", () => {
 
   test("바깥 영역을 누르면 닫힌다", async ({ page }) => {
     await openMedia(page);
-    await page.locator(".media-tile[title='Cover']").click();
+    await page.locator(".media-tile[title='커버']").click();
     await expect(page.locator(".lightbox-img")).toBeVisible();
     await page.locator(".modal-overlay").click({ position: { x: 5, y: 5 } });
     await expect(page.locator(".lightbox-img")).toHaveCount(0);
@@ -339,7 +339,7 @@ test.describe("Media 확대(lightbox)", () => {
     // 확대해서 본 다음에 하는 일은 닫는 것뿐이고, 그때 손이 가 있는 곳은 그 이미지
     // 위다. 버튼을 찾아 눈을 옮기게 할 이유가 없다.
     await openMedia(page);
-    await page.locator(".media-tile[title='Cover']").click();
+    await page.locator(".media-tile[title='커버']").click();
     await expect(page.locator(".lightbox-img")).toBeVisible();
     await page.locator(".lightbox-img").click();
     await expect(page.locator(".lightbox-img")).toHaveCount(0);
@@ -347,7 +347,7 @@ test.describe("Media 확대(lightbox)", () => {
 
   test("별도의 닫기 버튼은 두지 않는다", async ({ page }) => {
     await openMedia(page);
-    await page.locator(".media-tile[title='Cover']").click();
+    await page.locator(".media-tile[title='커버']").click();
     await expect(page.locator(".lightbox-card .modal-actions .btn")).toHaveCount(0);
   });
 

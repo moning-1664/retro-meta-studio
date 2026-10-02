@@ -20,10 +20,10 @@ async function openConvertFromTab(page) {
  * 여기서는 항상 "이미 있는 Collection으로"를 골라 기존 흐름을 그대로 쓴다. */
 async function openConvertPreview(page) {
   await openConvertFromTab(page);
-  await expect(page.locator(".modal-title")).toHaveText("Convert");
+  await expect(page.locator(".modal-title")).toHaveText("변환");
   await page.locator(".convert-new-block input.field-input").fill("D:\\Converted");
   await modalButton(page, "다음").click();
-  await expect(page.locator(".modal-title")).toHaveText("Convert 미리보기");
+  await expect(page.locator(".modal-title")).toHaveText("변환 미리보기");
 }
 
 test("Collection 정보에서 Convert를 시작한다", async ({ page }) => {
@@ -50,7 +50,7 @@ test("'새 Collection으로'는 그 자리에서 Collection을 만들고 이어�
   await page.locator(".convert-new-block select").selectOption("es-de");
   await page.locator(".convert-new-block input.field-input").fill("D:\\NewPegasus");
   await modalButton(page, "다음").click();
-  await expect(page.locator(".modal-title")).toHaveText("Convert 미리보기");
+  await expect(page.locator(".modal-title")).toHaveText("변환 미리보기");
   await expect(page.locator(".convert-head")).toContainText("Master Library");
 });
 

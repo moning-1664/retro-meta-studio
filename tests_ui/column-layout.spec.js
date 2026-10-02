@@ -51,8 +51,8 @@ test.describe("머리글 우클릭 - 컬럼 표시", () => {
     });
     await page.locator("#list-head").click({ button: "right" });
     await menuItem(page, "장르").click();
-    await expect.poll(() => page.evaluate(() => window.__saved.length)).toBeGreaterThan(0);
-    const saved = await page.evaluate(() => window.__saved.at(-1));
+    await expect.poll(() => page.evaluate(() => window.__saved.filter(patch => patch.gamelist).length)).toBeGreaterThan(0);
+    const saved = await page.evaluate(() => window.__saved.filter(patch => patch.gamelist).at(-1));
     expect(saved.gamelist.hidden).toEqual(["genre"]);
   });
 });

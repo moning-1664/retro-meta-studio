@@ -56,3 +56,32 @@ def test_all_stable_ids_have_five_languages():
 def test_missing_required_optional_language_fails(tmp_path):
     with pytest.raises(ValueError, match='missing required ko/en/ja'):
         validate_catalog(catalog(tmp_path, {'ui.test':{'ko':'확인','en':'OK'}}), required_languages=('ko','en','ja'))
+
+def test_backend_rule_unknown_id_fails(tmp_path):
+    root = catalog(tmp_path, {'ui.test': {'ko':'안내', 'en':'Notice'}})
+    file = root / 'gui_web/i18n-messages.js'
+    with file.open('a', encoding='utf-8') as stream:
+        stream.write('window.RMSI18n.addBackendMessages([{"template":"안내", "key":"ui.missing"}]);')
+    with pytest.raises(ValueError, match='backend rule: unknown message'):
+        validate_catalog(root)
+
+
+def test_backend_rule_parameter_mismatch_fails(tmp_path):
+    root = catalog(tmp_path, {'ui.test': {'ko':'안내 {count}', 'en':'Notice {count}'}})
+    file = root / 'gui_web/i18n-messages.js'
+    with file.open('a', encoding='utf-8') as stream:
+        stream.write('window.RMSI18n.addBackendMessages([{"template":"안내 {path}", "key":"ui.test"}]);')
+    with pytest.raises(ValueError, match='backend rule parameter names differ'):
+        validate_catalog(root)
+
+
+def test_backend_source_audit_keeps_ui_and_excludes_logs_and_metadata(tmp_path):
+    from tools.ui_translation_sources import backend_messages
+    app = tmp_path / 'app'
+    app.mkdir()
+    (app / 'sample.py').write_text('''"""개발 문서"""
+logger.info("진단 로그")
+region = "한국(KR)"
+raise ValueError(f"파일 없음: {path}")
+''', encoding='utf-8')
+    assert [m['text'] for m in backend_messages(tmp_path)] == ['파일 없음: {value0}']

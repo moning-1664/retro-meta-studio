@@ -362,3 +362,104 @@ for (const language of ['ja','es','fr']) {
     await expect.poll(()=>untranslated(page)).toEqual([]);
   });
 }
+
+for (const language of ['en','ja','es','fr']) {
+  test(`${language} Collection setup and Archive import candidates`, async ({page}) => {
+    await page.evaluate(language => window.RMSI18n.setLanguage(language), language);
+    await page.locator('.ctab-add').click();
+    await expect.poll(() => untranslated(page)).toEqual([]);
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => {
+      window.api.matchCandidates=async () => ({ok:true,data:{source:{title:'한글 게임',filename:'게임.zip'},
+        candidates:[{romIdentityId:998,filename:'원본.zip',title:'원본 게임',system:'ps2',score:88,
+          fields:{name:'원본 게임',desc:'사용자 설명',developer:'Studio',genre:'RPG'},mediaTypes:[]}],
+        linkedRomIdentityId:null}});
+    });
+    await page.locator('.lrow').first().click({button:'right'});
+    await page.locator('.ctx-item').filter({hasText:await page.evaluate(() => window.RMSI18n.t('ui.menu.import'))}).hover();
+    await page.locator('.ctx-submenu .ctx-item').filter({hasText:/^Archive$/}).click();
+    await expect(page.locator('.match-option')).toHaveCount(1);
+    await expect.poll(() => untranslated(page)).toEqual([]);
+    await page.locator('.match-option .scrape-expand').click();
+    await expect.poll(() => untranslated(page)).toEqual([]);
+    await expect(page.locator('.match-source')).toContainText('한글 게임');
+  });
+}
+
+for (const language of ['en','ja','es','fr']) {
+  test(`${language} permanent deletion and non-undoable confirmation`, async ({page}) => {
+    await page.evaluate(language => {
+      window.RMSI18n.setLanguage(language);
+      window.__deletions=[];
+      window.api.deleteImmediate=async (...args) => {
+        window.__deletions.push(args);
+        return args[3] ? {ok:true,data:{jobId:'delete-i18n'}} : {ok:true,data:{requiresConfirmation:true}};
+      };
+      const original=window.api.jobProgress;
+      window.api.jobProgress=async id => id==='delete-i18n' ?
+        {ok:true,data:{done:true,result:{applied:1,undoOperationId:'undo-i18n'}}} : original(id);
+    },language);
+    await page.locator('.lrow').first().click();
+    await page.keyboard.press('Shift+Delete');
+    await expect(page.locator('.modal-text')).toBeVisible();
+    await expect.poll(() => untranslated(page)).toEqual([]);
+    expect(await page.evaluate(() => window.__deletions.length)).toBe(0);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Delete');
+    await expect(page.locator('.modal-text')).toBeVisible();
+    await expect.poll(() => untranslated(page)).toEqual([]);
+    expect(await page.evaluate(() => window.__deletions[0][3])).toBe(false);
+    await page.locator('.modal-actions .danger').click();
+    await expect(page.locator('#toast')).toContainText('Ctrl+Z');
+    await expect.poll(() => untranslated(page)).toEqual([]);
+    expect(await page.evaluate(() => window.__deletions[1][3])).toBe(true);
+  });
+
+  test(`${language} shared Archive conflict completion and concurrent change`, async ({page}) => {
+    await page.evaluate(language => {
+      window.RMSI18n.setLanguage(language);
+      window.__sharedCalls=[];
+      window.api.startArchiveRefresh=async () => ({ok:true,data:{jobId:'shared-i18n'}});
+      const original=window.api.jobProgress;
+      window.api.jobProgress=async id => id==='shared-i18n' ?
+        {ok:true,data:{done:true,error:'자동으로 합칠 수 없습니다'}} : original(id);
+      window.api.archiveSharedConflictStatus=async () => ({ok:true,data:{digest:'observed-digest'}});
+      window.api.archiveResolveSharedConflict=async (choice,digest) => {
+        window.__sharedCalls.push([choice,digest]);
+        return {ok:true,data:choice==='local' ? {status:'published',backups:['D:/백업/local.db','D:/백업/shared.db']} : {status:'conflict'}};
+      };
+    },language);
+    await page.locator('.settings-btn').click();
+    await page.locator('.stg-nav-item[data-section="archive"]').click();
+    await page.locator('.archive-rescan').click();
+    await expect(page.locator('.modal-title')).toHaveText(await page.evaluate(() => window.RMSI18n.t('ui.archive.sharedTitle')));
+    await expect.poll(() => untranslated(page)).toEqual([]);
+    await page.getByRole('button',{name:await page.evaluate(() => window.RMSI18n.t('ui.archive.useLocal')),exact:true}).click();
+    await expect(page.locator('#toast')).toHaveText(await page.evaluate(() => window.RMSI18n.t('ui.archive.resolved',{paths:'D:/백업/local.db · D:/백업/shared.db'})));
+    expect(await page.evaluate(() => window.__sharedCalls)).toEqual([['local','observed-digest']]);
+    // Raw paths inside the parameterized toast are deliberately preserved.
+    await page.locator('.settings-btn').click();
+    await page.locator('.stg-nav-item[data-section="archive"]').click();
+    await page.locator('.archive-rescan').click();
+    await page.getByRole('button',{name:await page.evaluate(() => window.RMSI18n.t('ui.archive.useShared')),exact:true}).click();
+    await expect(page.locator('#toast')).toHaveText(await page.evaluate(() => window.RMSI18n.t('ui.archive.changedAgain')));
+    await expect.poll(() => untranslated(page)).toEqual([]);
+  });
+}
+
+for (const language of ['en','ja','es','fr']) {
+  test(`${language} Archive record deletion preserves file warning`, async ({page}) => {
+    await page.evaluate(language => {
+      window.RMSI18n.setLanguage(language);
+      window.api.archiveRows=async () => ({ok:true,data:{rows:[{romUid:'rid1',romIdentityId:'rid1',system:'ps2',file:'Game.iso',title:'Game',hasMetadata:true,present:true,storageId:'archive'}],total:1,offset:0}});
+      window.api.archiveSystems=async () => ({ok:true,data:[{system:'ps2',count:1}]});
+    },language);
+    await page.locator('.ctab.archive').click();
+    await page.locator('.lrow').first().click();
+    await page.keyboard.press('Delete');
+    await expect(page.locator('.modal-text')).toHaveText(await page.evaluate(() => window.RMSI18n.t('ui.delete.archiveRecord',{count:'1'})));
+    await expect.poll(() => untranslated(page)).toEqual([]);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.modal-actions')).toHaveCount(0);
+  });
+}

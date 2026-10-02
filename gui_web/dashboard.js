@@ -149,16 +149,16 @@ const dashboardMessage = (id, params) => window.RMSI18n.message(id, params);
         statuses.invalidXml ? statusLine("bad", `Invalid XML ${formatCount(statuses.invalidXml)}`)
           : statusLine("good", "Invalid XML 0"),
         problems || countsStale ? null
-          : statusLine("good", `Metadata 파일 ${formatCount(checked)}개 확인 · 문제 없음`),
+          : statusLine("good", window.RMSI18n.t("ui.legacy.d2d37c3974", {value0: (formatCount(checked))})),
       ]);
       if (countsStale) {
         summary.appendChild(statusLine("bad",
-          `개수를 다시 세지 못했습니다 - 스캔 실패${staleReason ? ": " + staleReason : ""}`));
+          window.RMSI18n.t("ui.legacy.8c48a1b2b2", {value0: (staleReason ? ": " + staleReason : "")})));
       }
       const head = h("div", { class: "dsb-validate-head" }, [summary, h("span", { class: "dsb-validate-spacer" })]);
       if (problems) {
         const toggle = h("button", { class: "btn compact dsb-validate-toggle", "aria-expanded": String(!!ctx.validationOpen) },
-          [`세부 문제 ${formatCount(problems)}개 `, ctx.validationOpen ? "▲" : "▼"]);
+          [window.RMSI18n.t("ui.legacy.848c29e8e1", {value0: (formatCount(problems))}), ctx.validationOpen ? "▲" : "▼"]);
         toggle.addEventListener("click", () => { ctx.validationOpen = !ctx.validationOpen; drawValidation(); });
         head.appendChild(toggle);
       }
@@ -173,11 +173,11 @@ const dashboardMessage = (id, params) => window.RMSI18n.message(id, params);
         details.appendChild(h("div", { class: "dsb-validate-section-title" }, [title]));
         details.appendChild(h("ul", { class: "dsb-invalid" }, items.map(line)));
       };
-      issueSection(`읽을 수 없는 파일 ${formatCount(invalid.length)}개`, invalid, (item) =>
+      issueSection(window.RMSI18n.t("ui.legacy.57806dc431", {value0: (formatCount(invalid.length))}), invalid, (item) =>
         h("li", { title: item.error }, [h("b", {}, [String(item.system).toUpperCase()]), ` ${item.path}`]));
-      issueSection(`중복된 Metadata ${formatCount(duplicates.length)}개`, duplicates, (item) =>
-        h("li", {}, [h("b", {}, [String(item.system).toUpperCase()]), ` ${item.filename} · ${formatCount(item.count)}개`]));
-      issueSection(`ROM 연결·이름 문제 ${formatCount(issues.length)}개`, issues, (item) =>
+      issueSection(window.RMSI18n.t("ui.legacy.af2dac33e1", {value0: (formatCount(duplicates.length))}), duplicates, (item) =>
+        h("li", {}, [h("b", {}, [String(item.system).toUpperCase()]), window.RMSI18n.t("ui.legacy.c0346abdc2", {value0: (item.filename), value1: (formatCount(item.count))})]));
+      issueSection(window.RMSI18n.t("ui.legacy.1765311eed", {value0: (formatCount(issues.length))}), issues, (item) =>
         h("li", {}, [h("b", {}, [String(item.system).toUpperCase()]),
           ` ${item.filename} · ${item.issues.map((k) => ISSUE_LABEL[k] || k).join(", ")}`]));
       validation.appendChild(details);
@@ -212,8 +212,8 @@ const dashboardMessage = (id, params) => window.RMSI18n.message(id, params);
       sub ? h("div", { class: "dsb-tile-sub" }, [sub]) : null,
     ]));
     tile("Games", formatCount(t.games), dashboardMessage("ui.dashboard.present", {count: formatCount(health.present)}));
-    tile("ROM", formatBytes(t.romBytes), `${formatCount(t.romCount)}개 파일`);
-    tile("Media", formatBytes(t.mediaBytes), `${formatCount(t.mediaCount)}개 파일`);
+    tile("ROM", formatBytes(t.romBytes), window.RMSI18n.t("ui.legacy.fb012aeafd", {value0: (formatCount(t.romCount))}));
+    tile("Media", formatBytes(t.mediaBytes), window.RMSI18n.t("ui.legacy.fb012aeafd", {value0: (formatCount(t.mediaCount))}));
     tile("Metadata", formatCount(health.metadata), dashboardMessage("ui.dashboard.total", {count: formatCount(health.total)}));
     data.storages.forEach((s) => tile(s.label, formatBytes(s.romBytes + s.mediaBytes),
       dashboardMessage("ui.dashboard.roms", {count: formatCount(s.romCount), storage: window.RMSI18n.t(s.kind === "external" ? "External" : "Internal")})));
@@ -247,7 +247,7 @@ const dashboardMessage = (id, params) => window.RMSI18n.message(id, params);
       const parts = ranked.slice(0, TOP_SYSTEMS).map((s, i) => ({ ...s, name: s.system.toUpperCase(), color: `var(--series-${i + 1})` }));
       const rest = ranked.slice(TOP_SYSTEMS);
       if (rest.length) {
-        parts.push({ name: `기타 ${rest.length}개`, bytes: rest.reduce((sum, s) => sum + s.bytes, 0), color: "var(--series-other)" });
+        parts.push({ name: window.RMSI18n.t("ui.legacy.40cebcca2b", {value0: (rest.length)}), bytes: rest.reduce((sum, s) => sum + s.bytes, 0), color: "var(--series-other)" });
       }
       const stack = h("div", { class: "dsb-stack", role: "img",
         "aria-label": parts.map((p) => `${p.name} ${pct(p.bytes, total)}%`).join(", ") });
@@ -369,7 +369,7 @@ const dashboardMessage = (id, params) => window.RMSI18n.message(id, params);
         ]),
         h("div", { class: "dsb-target-foot" }, [
           h("span", {}, [summary]),
-          level === "over" ? statusLine("warn", `목표 초과 ${formatBytes(used - target)}`) : null,
+          level === "over" ? statusLine("warn", window.RMSI18n.t("ui.legacy.a7791cac7a", {value0: (formatBytes(used - target))})) : null,
           s.freeBytes != null ? h("span", { class: "dsb-muted" }, [dashboardMessage("ui.dashboard.free", {size: formatBytes(s.freeBytes)})]) : null,
         ]),
       ]);

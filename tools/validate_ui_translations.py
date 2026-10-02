@@ -7,6 +7,10 @@ import re
 import shutil
 import subprocess
 import threading
+try:
+    from .ui_translation_sources import backend_messages
+except ImportError:
+    from ui_translation_sources import backend_messages
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +28,20 @@ def validate_catalog(root=ROOT, required_languages=('ko', 'en')):
         for language in ('en', 'ja', 'es', 'fr'):
             if language in forms and parameters != set(re.findall(r'\{(\w+)\}', forms[language])):
                 errors.append(f'{key}: parameter names differ ({language})')
+    if 'addBackendMessages(' in source:
+        rule_start = source.index('[', source.index('addBackendMessages('))
+        rules, _ = json.JSONDecoder().raw_decode(source[rule_start:])
+        for rule in rules:
+            key = rule['key']
+            if key not in messages:
+                errors.append(f'backend rule: unknown message {key}')
+                continue
+            expected = set(re.findall(r'\{(\w+)\}', rule['template']))
+            if rule.get('prefix'):
+                expected.discard('detail')
+            actual = set(re.findall(r'\{(\w+)\}', messages[key]['ko']))
+            if expected != actual:
+                errors.append(f'{key}: backend rule parameter names differ')
     for file in (root / 'gui_web').glob('*.js'):
         if file.name == 'i18n-messages.js':
             continue
@@ -46,6 +64,12 @@ def main():
     cli = ROOT / 'node_modules/@playwright/test/cli.js'
     if not node or not cli.exists():
         raise RuntimeError('UI translation validation requires Node.js, npm ci, and npx playwright install chromium.')
+
+    source_audit = subprocess.run([node, str(ROOT / 'tools/audit_ui_translations.cjs')],
+                                  cwd=ROOT, input=json.dumps(backend_messages(ROOT), ensure_ascii=False),
+                                  encoding='utf-8')
+    if source_audit.returncode:
+        return source_audit.returncode
 
     class QuietHandler(http.server.SimpleHTTPRequestHandler):
         def log_message(self, *args):

@@ -119,7 +119,7 @@ test.describe("상단 탭 - 갖다대기와 우클릭", () => {
     await tab(page).click({ button: "right" });
     await menuItem(page, "Collection 정보").click();
     await page.locator(".modal-body button", { hasText: "Convert" }).click();
-    await expect(page.locator(".modal-title")).toHaveText("Convert");
+    await expect(page.locator(".modal-title")).toHaveText("변환");
   });
 
   test("Metadata 폴더를 바꾸면 재스캔 경고가 뜨고, 확인해야 반영된다", async ({ page }) => {
