@@ -26,7 +26,7 @@ test("Gamelist가 목업 3행을 렌더하고 총 개수를 알린다", async ({
 });
 
 test("상태바가 선택 개수와 Storage 용량을 보여준다", async ({ page }) => {
-  await expect(page.locator(".sb-left")).toContainText("Selected 1");
+  await expect(page.locator(".sb-left")).toContainText("선택 1개");
   await expect(page.locator(".sb-storage")).toHaveCount(2);
 });
 

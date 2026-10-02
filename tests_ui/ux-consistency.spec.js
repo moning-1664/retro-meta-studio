@@ -3,7 +3,7 @@ const { openApp } = require('./_helpers');
 
 async function openScraper(page) {
   await page.locator('.lrow').first().click({ button: 'right' });
-  await page.locator('.ctx-item').filter({ has: page.locator('.ctx-label', { hasText: /^게임 정보 스크랩…$/ }) }).click();
+  await page.locator('.ctx-item').filter({ has: page.locator('.ctx-label', { hasText: /^온라인에서 게임 정보 검색…$/ }) }).click();
   await expect(page.locator('.scrape-context-card')).toBeVisible();
 }
 

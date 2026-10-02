@@ -1,3 +1,4 @@
+const dashboardMessage = (id, params) => window.RMSI18n.message(id, params);
 /* ==========================================================================
    dashboard.js — Collection Dashboard (Navigator의 Dashboard로 중앙 영역을 전환)
 
@@ -210,12 +211,12 @@
       h("div", { class: "dsb-tile-value" }, [value]),
       sub ? h("div", { class: "dsb-tile-sub" }, [sub]) : null,
     ]));
-    tile("Games", formatCount(t.games), `${formatCount(health.present)}개에 ROM 있음`);
+    tile("Games", formatCount(t.games), dashboardMessage("ui.dashboard.present", {count: formatCount(health.present)}));
     tile("ROM", formatBytes(t.romBytes), `${formatCount(t.romCount)}개 파일`);
     tile("Media", formatBytes(t.mediaBytes), `${formatCount(t.mediaCount)}개 파일`);
-    tile("Metadata", formatCount(health.metadata), `전체 ${formatCount(health.total)}개 중`);
+    tile("Metadata", formatCount(health.metadata), dashboardMessage("ui.dashboard.total", {count: formatCount(health.total)}));
     data.storages.forEach((s) => tile(s.label, formatBytes(s.romBytes + s.mediaBytes),
-      `ROM ${formatCount(s.romCount)}개 · ${s.kind === "external" ? "External" : "Internal"}`));
+      dashboardMessage("ui.dashboard.roms", {count: formatCount(s.romCount), storage: window.RMSI18n.t(s.kind === "external" ? "External" : "Internal")})));
     host.appendChild(tiles);
 
     const grid = h("div", { class: "dsb-grid" });
@@ -290,7 +291,7 @@
       const level = !target ? "none" : ratio > 1 ? "over" : ratio >= 0.9 ? "warn" : "ok";
 
       const input = h("input", { class: "dsb-target-input", value: formatCapacity(target),
-        placeholder: "예: 512 GB", title: "예: 512 GB, 1 TB", "aria-label": `${s.label} 목표 용량` });
+        placeholder: "예: 512 GB", title: "예: 512 GB, 1 TB", "aria-label": dashboardMessage("ui.dashboard.target", {name: s.label}) });
       const commit = (bytes) => {
         if (!bytes) { input.value = formatCapacity(target); return; }
         // 슬라이더를 키보드로 움직이는 중이면 새로 그린 뒤에도 슬라이더에 초점을 남긴다.
@@ -320,7 +321,7 @@
       let current = target ? { bytes: target, snapped: SNAP.includes(target) } : null;
       const slider = h("input", {
         type: "range", class: "dsb-target-slider", min: "0", max: String(SLIDER_STEPS), step: "1",
-        value: String(target ? toPos(target) : 0), "aria-label": `${s.label} 목표 용량`,
+        value: String(target ? toPos(target) : 0), "aria-label": dashboardMessage("ui.dashboard.target", {name: s.label}),
         "aria-valuetext": target ? formatCapacity(target) : "목표 없음",
       });
       const ticks = h("div", { class: "dsb-slider-ticks", "aria-hidden": "true" }, SNAP.map((p) => h("span", {
@@ -353,7 +354,7 @@
 
       const summary = !target
         ? "목표를 정하지 않았습니다"
-        : `사용 ${formatBytes(used)} / 목표 ${formatCapacity(target)} · ${pct(used, target)}%`;
+        : window.RMSI18n.t(dashboardMessage("ui.dashboard.usage", {used: formatBytes(used), target: formatCapacity(target), percent: pct(used, target)}));
       const row = h("div", { class: "dsb-target", "data-storage": s.id }, [
         h("div", { class: "dsb-target-head" }, [
           h("span", { class: "dsb-target-name" }, [s.label]),
@@ -369,7 +370,7 @@
         h("div", { class: "dsb-target-foot" }, [
           h("span", {}, [summary]),
           level === "over" ? statusLine("warn", `목표 초과 ${formatBytes(used - target)}`) : null,
-          s.freeBytes != null ? h("span", { class: "dsb-muted" }, [`디스크 여유 ${formatBytes(s.freeBytes)}`]) : null,
+          s.freeBytes != null ? h("span", { class: "dsb-muted" }, [dashboardMessage("ui.dashboard.free", {size: formatBytes(s.freeBytes)})]) : null,
         ]),
       ]);
       return row;
@@ -402,8 +403,8 @@
     tableCard.classList.add("dsb-wide");
     const sort = ctx.sort || (ctx.sort = { key: "size", desc: true });
     const statusOf = (s) => (s.games === 0 ? ["muted", "Empty"]
-      : s.missingMedia > 0 ? ["warn", `Media 없음 ${formatCount(s.missingMedia)}`]
-      : s.missingMetadata > 0 ? ["warn", `Metadata 없음 ${formatCount(s.missingMetadata)}`]
+      : s.missingMedia > 0 ? ["warn", dashboardMessage("ui.dashboard.noMedia", {count: formatCount(s.missingMedia)})]
+      : s.missingMetadata > 0 ? ["warn", dashboardMessage("ui.dashboard.noMetadata", {count: formatCount(s.missingMetadata)})]
       : ["good", "정상"]);
     const storageName = (s) => (storageById[s.storageId] || {}).label || s.storageId;
     //: [key, 머리글, 정렬 값, 칸 내용, 숫자 칸인지]
@@ -439,7 +440,7 @@
       return sort.desc ? -c : c;
     }).forEach((s) => {
       const [level, label] = statusOf(s);
-      const tr = h("tr", { tabindex: "0", title: `${s.system.toUpperCase()} 목록 열기`, "data-system": s.system },
+      const tr = h("tr", { tabindex: "0", title: dashboardMessage("ui.dashboard.open", {system: s.system.toUpperCase()}), "data-system": s.system },
         COLS.map(([key, , , cell, numeric]) => h("td", {
           class: key === "system" ? "dsb-sys" : key === "total" ? "num dsb-total" : numeric ? "num" : "",
         }, [cell ? cell(s) : statusLine(level, label)])));

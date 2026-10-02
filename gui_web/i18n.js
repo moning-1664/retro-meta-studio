@@ -7,6 +7,7 @@
   const LANGS = ["ko", "en", "ja", "es", "fr"];
   const LABELS = { ko: "한국어", en: "English", ja: "日本語", es: "Español", fr: "Français" };
   const TABLE = window.RMS_I18N_TABLE || {};
+  const MESSAGES = {};
   const ATTRS = ["title", "aria-label", "placeholder"];
 
   // "N개 선택됨"처럼 숫자가 끼는 문구. 정규식은 리터럴이라 \d를 한 번만 쓴다.
@@ -40,8 +41,21 @@
   }
 
   /** 앞뒤 공백은 보존하고 가운데만 번역한다. */
-  function t(value) {
-    if (typeof value !== "string" || current === "ko" || !value) return value;
+  function t(value, params) {
+    if (value && typeof value === "object" && value.i18nRaw !== undefined) return String(value.i18nRaw);
+    if (value && typeof value === "object" && value.i18nKey) {
+      params = value.params; value = value.i18nKey;
+    }
+    if (typeof value !== "string" || !value) return value;
+    const message = MESSAGES[value];
+    if (message) {
+      const template = message[current] || message.en || message.ko;
+      return template.replace(/\{([a-zA-Z][\w]*)\}/g, (_, name) => {
+        if (!params || !(name in params)) throw new Error(`Missing translation parameter: ${value}.${name}`);
+        return String(params[name]);
+      });
+    }
+    if (value.startsWith("ui.")) throw new Error(`Unknown translation key: ${value}`);
     const core = value.trim();
     if (!core) return value;
     const out = lookup(core, current);
@@ -58,13 +72,18 @@
     if (!document.body) return;
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     const nodes = [];
-    while (walker.nextNode()) nodes.push(walker.currentNode);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (node.parentElement?.closest('script,style,[data-i18n-skip],.lc-text,.candidate-detail-value,.candidate-detail-current')) continue;
+      nodes.push(node);
+    }
     nodes.forEach((n) => {
       if (!textOriginal.has(n)) textOriginal.set(n, n.nodeValue);
       const next = t(textOriginal.get(n));
       if (next !== n.nodeValue) n.nodeValue = next;
     });
     document.body.querySelectorAll("[title],[aria-label],[placeholder]").forEach((el) => {
+      if (el.closest('[data-i18n-skip]')) return;
       let saved = attrOriginal.get(el);
       if (!saved) { saved = {}; attrOriginal.set(el, saved); }
       ATTRS.forEach((attr) => {
@@ -88,6 +107,23 @@
 
   window.RMSI18n = {
     LANGS, LABELS, t, setLanguage, retranslateExistingDOM,
+    message: (id, params = {}) => ({ i18nKey: id, params }),
+    raw: (text) => ({ i18nRaw: String(text ?? "") }),
+    isMessage: (value) => !!value && typeof value === "object" && (value.i18nKey || value.i18nRaw !== undefined),
+    addMessages: (messages) => {
+      Object.entries(messages).forEach(([id, forms]) => {
+        MESSAGES[id] = forms;
+        // Migration bridge: exact legacy UI text still resolves without regex
+        // composition. ID callers never depend on the Korean wording.
+        if (!/\{\w+\}/.test(forms.ko)) {
+          TABLE[forms.ko] = { ...TABLE[forms.ko], ...forms };
+          TABLE[forms.en] = { ...TABLE[forms.en], ...forms };
+        }
+      });
+    },
+    getMessages: () => ({ ...MESSAGES }),
+    isRawText: (node) => textOriginal.get(node)?.i18nRaw !== undefined,
+    isRawAttribute: (node, attr) => attrOriginal.get(node)?.[attr]?.i18nRaw !== undefined,
     getLanguage: () => current,
     /** h()가 만든 노드는 이미 번역돼 있다 - 원문을 기억해 둬야 다른 언어/한국어로 되돌릴 수 있다. */
     remember: (node, original) => { textOriginal.set(node, original); },

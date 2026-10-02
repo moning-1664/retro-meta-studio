@@ -28,12 +28,12 @@
       ]);
       if (options.current) {
         const current = valueText(options.current[key]);
-        content.appendChild(h("span", { class: "candidate-detail-current", title: current },
+        content.appendChild(h("span", { class: "candidate-detail-current", title: window.RMSI18n.raw(current) },
           [h("span", { class: "candidate-detail-label" }, ["기존"]), " · ",
-            current ? document.createTextNode(current) : "비어 있음"]));
+            current ? window.RMSI18n.raw(current) : "비어 있음"]));
       }
-      content.appendChild(h("span", { class: "candidate-detail-value", title: text },
-        [text ? document.createTextNode(text) : "없음"]));
+      content.appendChild(h("span", { class: "candidate-detail-value", title: window.RMSI18n.raw(text) },
+        [text ? window.RMSI18n.raw(text) : "없음"]));
       row.appendChild(content);
       grid.appendChild(row);
     });
@@ -45,7 +45,7 @@
     const entries = [["연도", year], ["개발사", values?.developer], ["장르", values?.genre]];
     if (extra) entries.push(extra);
     const row = h("div", { class: "scrape-fact-row" }, entries.filter(([, value]) => value)
-      .map(([label, value]) => h("span", { class: "scrape-fact", title: `${label}: ${valueText(value)}` },
+      .map(([label, value]) => h("span", { class: "scrape-fact", title: window.RMSI18n.message("ui.candidate.factTooltip", {label:window.RMSI18n.t(label), value:valueText(value)}) },
         [document.createTextNode(valueText(value))])));
     if (toggle) row.appendChild(toggle);
     return h("div", { class: "scrape-candidate-facts" }, [row]);

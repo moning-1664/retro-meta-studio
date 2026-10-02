@@ -53,7 +53,7 @@ test.describe("External Storage가 있으면 Storage별로 묶인다", () => {
 test.describe("빈 System은 자기 그룹 안에서 뒤로 정렬될 뿐 따로 묶이지 않는다", () => {
   test("게임이 있는 System이 그룹 안에서 먼저 나온다", async ({ page }) => {
     // snes(1개)와 gba(0개)는 둘 다 Internal 그룹이다. gba가 나중이어야 한다.
-    const internalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "INTERNAL" }) });
+    const internalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "내부" }) });
     const names = await internalGroup.locator(".nav-system .nav-label").allTextContents();
     expect(names).toEqual(["SNES", "GBA"]);
   });
@@ -91,14 +91,14 @@ test.describe("Storage 이동은 System 우클릭 메뉴로", () => {
     });
 
     await page.locator(".nav-system", { hasText: "PS2" }).click({ button: "right" });
-    await page.locator(".ctx-menu .ctx-item", { hasText: "Internal" }).click();
+    await page.locator(".ctx-menu .ctx-item", { hasText: "내부" }).click();
     await expect.poll(() => moved.length).toBeGreaterThan(0);
     expect(moved[0]).toEqual(["ps2", "internal"]);
   });
 
   test("자기가 이미 있는 Storage는 이동 후보로 내놓지 않는다", async ({ page }) => {
     await page.locator(".nav-system", { hasText: "PS2" }).click({ button: "right" });
-    await expect(page.locator(".ctx-menu .ctx-item", { hasText: "Internal" })).toBeVisible();
+    await expect(page.locator(".ctx-menu .ctx-item", { hasText: "내부" })).toBeVisible();
     const targets = await page.locator(".ctx-menu .ctx-item .ctx-label").allTextContents();
     expect(targets).not.toContain("External SD");
   });
@@ -115,7 +115,7 @@ test.describe("Storage 이동은 드래그로도 된다", () => {
       };
     });
 
-    const internalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "INTERNAL" }) });
+    const internalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "내부" }) });
     await page.locator(".nav-system", { hasText: "PS2" }).dragTo(internalGroup);
     await expect.poll(() => moved.length).toBeGreaterThan(0);
     expect(moved[0]).toEqual(["ps2", "internal"]);

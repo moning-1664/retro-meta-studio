@@ -82,6 +82,13 @@ if not errorlevel 1 (
 )
 
 REM Each packaging attempt allocates a new patch version.
+echo Validating UI translations...
+python tools\validate_ui_translations.py
+if errorlevel 1 (
+    echo [ERROR] UI translation validation failed. Build output was not changed.
+    pause
+    exit /b 1
+)
 echo Updating application version...
 python version.py --bump patch
 if errorlevel 1 (

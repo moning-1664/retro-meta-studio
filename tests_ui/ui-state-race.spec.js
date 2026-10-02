@@ -155,10 +155,10 @@ test.describe("Collection 경계", () => {
     // romUid는 Collection마다 새로 매겨지므로 두 Collection에서 값이 흔히 겹친다.
     // 선택이 남아 있으면 화면에 보이지도 않는 게임이 Archive 수집 대상이 된다.
     await page.locator(".lrow").first().click();
-    await expect(page.locator("#status-bar")).toContainText("Selected 1");
+    await expect(page.locator("#status-bar")).toContainText("선택 1개");
 
     await page.locator(".ctab", { hasText: "Master Library" }).click();
-    await expect(page.locator("#status-bar")).toContainText("Selected 1");
+    await expect(page.locator("#status-bar")).toContainText("선택 1개");
     await expect(page.locator(".detail-filename")).toContainText("FFX.iso");
   });
 });

@@ -11,8 +11,8 @@ test.beforeEach(async ({ page }) => { await openApp(page); });
 test("External Storage가 있으면 내비가 Storage별로 그룹을 나눈다", async ({ page }) => {
   // 기본 mock 데이터에 이미 Internal + External SD(ext-1) 두 Storage가 있다.
   await expect(page.locator(".nav-group-name")).toHaveCount(2);
-  await expect(page.locator(".nav-group-name").nth(0)).toHaveText("INTERNAL");
-  await expect(page.locator(".nav-group-name").nth(1)).toHaveText("EXTERNAL SD");
+  await expect(page.locator(".nav-group-name").nth(0)).toHaveText("내부");
+  await expect(page.locator(".nav-group-name").nth(1)).toHaveText("외부 SD");
   await expect(page.locator(".nav-system")).toHaveCount(3);
 });
 
@@ -23,7 +23,7 @@ test("Add External Storage 버튼은 이미 External이 있으면 숨는다(사�
 });
 
 test("External Storage를 지우면 버튼이 다시 나타나고, 다시 추가하면 그룹이 늘어난다", async ({ page }) => {
-  const externalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "EXTERNAL SD" }) });
+  const externalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "외부 SD" }) });
   await externalGroup.locator(".storage-remove-btn").click();
   await modalButton(page, "확인").click();
   // External이 하나도 없으면 System 목록은 평평하다 - Storage 그룹 자체가 없다

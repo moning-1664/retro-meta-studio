@@ -24,7 +24,7 @@ test("요약 카드가 큰 표지와 요약 정보를 보여주고, 그 아래�
   await expect(values.first()).toHaveText("RPG");           // Genre
   await expect(page.locator(".title-input")).toHaveValue("Final Fantasy X");
   // 폼에 없는 것(ROM/Media 상태)은 요약 맨 아래 한 줄로만 있다.
-  await expect(page.locator(".identity-facts")).toContainText("Media");
+  await expect(page.locator(".identity-facts")).toContainText("미디어");
 });
 
 test("탭을 바꿔도 저장 버튼은 Metadata 탭에서만 보인다", async ({ page }) => {
@@ -32,15 +32,15 @@ test("탭을 바꿔도 저장 버튼은 Metadata 탭에서만 보인다", async 
   await expect(page.locator(".detail-save")).toContainText("저장");
   await page.locator(".detail-tab", { hasText: "ROM" }).click();
   await expect(page.locator(".detail-footer")).toHaveCount(0);
-  await page.locator(".detail-tab", { hasText: "Metadata" }).click();
+  await page.locator(".detail-tab", { hasText: "메타데이터" }).click();
   await expect(page.locator(".detail-save")).toContainText("저장");
 });
 
 test("탭을 오갔다 와도 편집 중이던 값이 남아 있다(draft 보존)", async ({ page }) => {
   await page.locator(".lrow").first().click();
   await page.locator(".title-input").fill("편집 중인 제목");
-  await page.locator(".detail-tab", { hasText: "Media" }).click();
-  await page.locator(".detail-tab", { hasText: "Metadata" }).click();
+  await page.locator(".detail-tab", { hasText: "미디어" }).click();
+  await page.locator(".detail-tab", { hasText: "메타데이터" }).click();
   await expect(page.locator(".title-input")).toHaveValue("편집 중인 제목");
 });
 
@@ -60,23 +60,23 @@ const cellOf = (page, n) => page.locator(".lrow").nth(n).locator(".lc-file");
 
 test("클릭하면 그 항목 하나만 선택된다", async ({ page }) => {
   await cellOf(page, 0).click();
-  await expect(page.locator(".sb-left")).toContainText("Selected 1");
+  await expect(page.locator(".sb-left")).toContainText("선택 1개");
   await cellOf(page, 1).click();
-  await expect(page.locator(".sb-left")).toContainText("Selected 1");
+  await expect(page.locator(".sb-left")).toContainText("선택 1개");
 });
 
 test("Ctrl+클릭은 선택에 넣고 뺀다", async ({ page }) => {
   await cellOf(page, 0).click();
   await cellOf(page, 1).click({ modifiers: ["Control"] });
-  await expect(page.locator(".sb-left")).toContainText("Selected 2");
+  await expect(page.locator(".sb-left")).toContainText("선택 2개");
   await cellOf(page, 1).click({ modifiers: ["Control"] });
-  await expect(page.locator(".sb-left")).toContainText("Selected 1");
+  await expect(page.locator(".sb-left")).toContainText("선택 1개");
 });
 
 test("Shift+클릭은 기준점부터 여기까지를 고른다", async ({ page }) => {
   await cellOf(page, 0).click();
   await cellOf(page, 2).click({ modifiers: ["Shift"] });
-  await expect(page.locator(".sb-left")).toContainText("Selected 3");
+  await expect(page.locator(".sb-left")).toContainText("선택 3개");
 });
 
 test("고른 행은 눈에 보이게 표시된다", async ({ page }) => {

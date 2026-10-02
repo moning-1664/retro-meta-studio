@@ -8,7 +8,7 @@ const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
-const HEADERS = ["No.", "File", "Title", "Description", "Status", "Rating", "Genre", "Region", "★"];
+const HEADERS = ["No.", "파일", "제목", "설명", "상태", "평점", "장르", "지역", "★"];
 
 test.describe("컬럼 구성", () => {
   test("이전 프로젝트의 아홉 개 컬럼이 그대로 있다", async ({ page }) => {
@@ -32,7 +32,7 @@ test.describe("컬럼 구성", () => {
   test("Description 컬럼이 가장 넓다", async ({ page }) => {
     const widths = await page.locator("#list-head").evaluate(
       (el) => getComputedStyle(el).gridTemplateColumns.split(" ").map(parseFloat));
-    const desc = widths[HEADERS.indexOf("Description")];
+    const desc = widths[HEADERS.indexOf("설명")];
     expect(Math.max(...widths)).toBeCloseTo(desc, 0);
   });
 
@@ -88,7 +88,7 @@ test.describe("컬럼 폭 조절", () => {
   });
 
   test("끌면 그 컬럼이 넓어진다", async ({ page }) => {
-    const titleIndex = HEADERS.indexOf("Title");
+    const titleIndex = HEADERS.indexOf("제목");
     const widthOf = () => page.locator("#list-head").evaluate(
       (el, i) => parseFloat(getComputedStyle(el).gridTemplateColumns.split(" ")[i]), titleIndex);
     const before = await widthOf();

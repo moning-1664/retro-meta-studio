@@ -25,7 +25,7 @@ test.describe("좁은 창(기본) - 추가 정보는 숨어 있다", () => {
 
   test("Media 탭에 Title/Description이 없다", async ({ page }) => {
     await openFirstGame(page);
-    await page.locator(".detail-tab", { hasText: "Media" }).click();
+    await page.locator(".detail-tab", { hasText: "미디어" }).click();
     await expect(page.locator(".media-tab-identity")).not.toBeVisible();
   });
 
@@ -66,7 +66,7 @@ test.describe("넉넉히 큰 창(850px 이상) - 추가 정보가 나타난다",
 
   test("Media 탭 맨 위에 Title, 그다음 Description이 순서대로 나온다", async ({ page }) => {
     await openFirstGame(page);
-    await page.locator(".detail-tab", { hasText: "Media" }).click();
+    await page.locator(".detail-tab", { hasText: "미디어" }).click();
     const identity = page.locator(".media-tab-identity");
     await expect(identity).toBeVisible();
     await expect(identity.locator(".media-tab-title")).toHaveText("Final Fantasy X");
@@ -95,7 +95,7 @@ test.describe("넉넉히 큰 창(850px 이상) - 추가 정보가 나타난다",
       };
     });
     await openFirstGame(page);
-    await page.locator(".detail-tab", { hasText: "Media" }).click();
+    await page.locator(".detail-tab", { hasText: "미디어" }).click();
     await expect(page.locator(".media-tab-desc")).toHaveText("설명 없음");
   });
 });

@@ -29,7 +29,7 @@ test("Shift+↓는 선택을 넓힌다", async ({ page }) => {
   await page.locator(".lrow").nth(0).click();
   await page.keyboard.press("Shift+ArrowDown");
   await page.keyboard.press("Shift+ArrowDown");
-  await expect(page.locator("#status-bar")).toContainText("Selected 3");
+  await expect(page.locator("#status-bar")).toContainText("선택 3개");
 });
 
 test("영문키는 그 글자로 시작하는 파일로 가고, 목록 전체를 백엔드에 묻는다", async ({ page }) => {
@@ -68,7 +68,7 @@ test("검색창에 입력하는 글자는 점프로 가로채지 않는다", asy
 test("Ctrl+A는 목록 전체를 고른다", async ({ page }) => {
   await page.locator(".lrow").nth(0).click();
   await page.keyboard.press("Control+a");
-  await expect(page.locator("#status-bar")).toContainText("Selected 3");
+  await expect(page.locator("#status-bar")).toContainText("선택 3개");
   await expect(page.locator("#toast")).toContainText("3개를 선택");
 });
 

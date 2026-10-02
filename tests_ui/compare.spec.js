@@ -124,7 +124,7 @@ test.describe("가운데 Gamelist", () => {
   test("좌/우 각자의 File | Title과 연산자가 한 행에 나온다", async ({ page }) => {
     await startCompare(page);
     const heads = await page.locator("#list-head .lh").allInnerTexts();
-    expect(heads).toEqual(["No.", "File", "Title", "", "File", "Title"]);
+    expect(heads).toEqual(["No.", "파일", "제목", "", "파일", "제목"]);
     // 짝이 이름 정규화로 맺어져 파일명이 서로 다른 행 - 양쪽에 같은 값이 찍히면 안 된다.
     const row = page.locator(".lrow", { hasText: "Media Only" });
     await expect(row.locator(".lc-srcFile")).toHaveText("MediaOnly.iso");
@@ -285,7 +285,7 @@ test.describe("선택과 키보드", () => {
     await startCompare(page);
     await openDetail(page, "Same Game");
     await expect(rows(page).first()).toHaveClass(/selected/);
-    await expect(page.locator("#status-bar")).toContainText("Selected 1");
+    await expect(page.locator("#status-bar")).toContainText("선택 1개");
     await expect(page.locator("#detail-panel")).toHaveClass(/open/);
   });
 
@@ -293,16 +293,16 @@ test.describe("선택과 키보드", () => {
     await startCompare(page);
     await rows(page).nth(0).locator(".lc-srcTitle").click();
     await rows(page).nth(2).locator(".lc-srcTitle").click({ modifiers: ["Control"] });
-    await expect(page.locator("#status-bar")).toContainText("Selected 2");
+    await expect(page.locator("#status-bar")).toContainText("선택 2개");
     await rows(page).nth(2).locator(".lc-srcTitle").click({ modifiers: ["Control"] });
-    await expect(page.locator("#status-bar")).toContainText("Selected 1");
+    await expect(page.locator("#status-bar")).toContainText("선택 1개");
   });
 
   test("Shift+클릭으로 범위를 고른다", async ({ page }) => {
     await startCompare(page);
     await rows(page).nth(0).locator(".lc-srcTitle").click();
     await rows(page).nth(3).locator(".lc-dstTitle").click({ modifiers: ["Shift"] });
-    await expect(page.locator("#status-bar")).toContainText("Selected 4");
+    await expect(page.locator("#status-bar")).toContainText("선택 4개");
     await expect(rows(page).nth(1)).toHaveClass(/selected/);
   });
 
@@ -310,7 +310,7 @@ test.describe("선택과 키보드", () => {
     await startCompare(page);
     await rows(page).first().locator(".lc-srcTitle").click();
     await page.keyboard.press("Control+a");
-    await expect(page.locator("#status-bar")).toContainText("Selected 5");
+    await expect(page.locator("#status-bar")).toContainText("선택 5개");
   });
 
   test("위아래 화살표로 옮겨 다니고 Shift로 범위를 넓힌다", async ({ page }) => {
@@ -318,9 +318,9 @@ test.describe("선택과 키보드", () => {
     await rows(page).first().locator(".lc-srcTitle").click();
     await page.keyboard.press("ArrowDown");
     await expect(rows(page).nth(1)).toHaveClass(/focused/);
-    await expect(page.locator("#status-bar")).toContainText("Selected 1");
+    await expect(page.locator("#status-bar")).toContainText("선택 1개");
     await page.keyboard.press("Shift+ArrowDown");
-    await expect(page.locator("#status-bar")).toContainText("Selected 2");
+    await expect(page.locator("#status-bar")).toContainText("선택 2개");
   });
 });
 
@@ -364,10 +364,10 @@ test.describe("다시 비교해도 선택은 남는다", () => {
       await startCompare(page);
       await page.locator(".lrow").nth(0).locator(".lc-srcTitle").click();
       await page.locator(".lrow").nth(1).locator(".lc-srcTitle").click({ modifiers: ["Control"] });
-      await expect(page.locator("#status-bar")).toContainText("Selected 2");
+      await expect(page.locator("#status-bar")).toContainText("선택 2개");
       await page.locator(selector).click();
       await expect(page.locator("#filter-bar.compare")).toBeVisible();
-      await expect(page.locator("#status-bar")).toContainText("Selected 2");
+      await expect(page.locator("#status-bar")).toContainText("선택 2개");
       await expect(page.locator(".lrow.selected")).toHaveCount(2);
     });
   }
@@ -378,7 +378,7 @@ test.describe("다시 비교해도 선택은 남는다", () => {
     await page.locator(".lrow").first().locator(".lc-srcTitle").click();
     await page.locator(".cmp-tool[title*='새로고침']").click();
     await expect(page.locator(".compare-select")).toHaveValue("conflict");
-    await expect(page.locator("#status-bar")).toContainText("Selected 1");
+    await expect(page.locator("#status-bar")).toContainText("선택 1개");
   });
 });
 
@@ -396,7 +396,7 @@ test.describe("좌/우 Detail", () => {
     for (const side of ["#compare-left", "#detail-panel"]) {
       const changed = page.locator(`${side} .cmp-card.changed`);
       await expect(changed).toHaveCount(1);
-      await expect(changed).toContainText("Genre");
+      await expect(changed).toContainText("장르");
     }
     await expect(page.locator("#compare-left .cmp-card.changed")).toContainText("RPG");
     await expect(page.locator("#detail-panel .cmp-card.changed")).toContainText("Action");
@@ -405,11 +405,11 @@ test.describe("좌/우 Detail", () => {
   test("탭을 누르면 반대쪽도 같이 바뀐다", async ({ page }) => {
     await startCompare(page);
     await openDetail(page, "Conflict Game");
-    await page.locator("#compare-left .detail-tab", { hasText: "Media" }).click();
-    await expect(page.locator("#detail-panel .detail-tab.active")).toHaveText("Media");
+    await page.locator("#compare-left .detail-tab", { hasText: "미디어" }).click();
+    await expect(page.locator("#detail-panel .detail-tab.active")).toHaveText("미디어");
     await page.locator("#detail-panel .detail-tab", { hasText: "ROM" }).click();
     await expect(page.locator("#compare-left .detail-tab.active")).toHaveText("ROM");
-    await expect(page.locator("#compare-left .cmp-block", { hasText: "File" })).toBeVisible();
+    await expect(page.locator("#compare-left .cmp-block", { hasText: "파일" })).toBeVisible();
   });
 
   test("Metadata: Description은 12줄로 고정하고 카드는 한 줄에 둘이다", async ({ page }) => {
@@ -428,7 +428,7 @@ test.describe("좌/우 Detail", () => {
   test("Media: cover / screenshot / marquee+mixImage+3dbox 순이고 비율이 고정이다", async ({ page }) => {
     await startCompare(page);
     await openDetail(page, "Conflict Game");
-    await page.locator("#compare-left .detail-tab", { hasText: "Media" }).click();
+    await page.locator("#compare-left .detail-tab", { hasText: "미디어" }).click();
     const rows = page.locator("#compare-left .cmp-media-row");
     await expect(rows).toHaveCount(3);
     await expect(rows.nth(0).locator(".cmp-tile")).toHaveCount(1);
@@ -447,7 +447,7 @@ test.describe("좌/우 Detail", () => {
   test("미디어만 다른 행은 그 미디어에 노란 테두리가 붙는다", async ({ page }) => {
     await startCompare(page);
     await openDetail(page, "Media Only");
-    await page.locator("#compare-left .detail-tab", { hasText: "Media" }).click();
+    await page.locator("#compare-left .detail-tab", { hasText: "미디어" }).click();
     await expect(page.locator("#compare-left .cmp-tile.changed")).toHaveCount(1);
     await expect(page.locator("#compare-left .cmp-tile.changed")).toContainText("Cover");
   });
@@ -503,7 +503,7 @@ test("Media 탭에서 여러 종류를 체크하면 상단 < >가 그 종류만 
     window.api.compareOperationPreview = (options) => { window.__note([options.keys, options.direction, options.mediaTypes]); return original(options); };
   });
   await openDetail(page, "Media Only");
-  await page.locator("#compare-left .detail-tab", { hasText: "Media" }).click();
+  await page.locator("#compare-left .detail-tab", { hasText: "미디어" }).click();
   const picks = page.locator("#compare-left .cmp-pick");
   await picks.nth(0).click();
   await picks.nth(1).click();

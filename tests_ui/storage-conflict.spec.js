@@ -35,7 +35,7 @@ test.describe("충돌 표시와 쓰기 막힘", () => {
 
   test("우클릭 메뉴에 양쪽의 이름 바꾸기/삭제가 있다", async ({ page }) => {
     await ps2Row(page).click({ button: "right" });
-    for (const label of ["Internal 폴더 이름 바꾸기…", "Internal 폴더 삭제…", "External SD 폴더 이름 바꾸기…", "External SD 폴더 삭제…"]) {
+    for (const label of ["내부 폴더 이름 바꾸기…", "내부 폴더 삭제…", "외부 SD 폴더 이름 바꾸기…", "외부 SD 폴더 삭제…"]) {
       await expect(page.locator(".ctx-menu .ctx-item", { hasText: label })).toBeEnabled();
     }
     await expect(page.locator(".ctx-menu .ctx-item", { hasText: "System 이름 바꾸기…" })).toBeDisabled();
@@ -48,7 +48,7 @@ test.describe("충돌 표시와 쓰기 막힘", () => {
       window.api.renameSystemFolder = (...args) => { window.__renamed.push(args); return original(...args); };
     });
     await ps2Row(page).click({ button: "right" });
-    await page.locator(".ctx-menu .ctx-item", { hasText: "External SD 폴더 이름 바꾸기…" }).click();
+    await page.locator(".ctx-menu .ctx-item", { hasText: "외부 SD 폴더 이름 바꾸기…" }).click();
     await page.locator(".rename-system-input").fill("ps2sd");
     await page.locator(".rename-system-save").click();
     await expect.poll(() => page.evaluate(() => window.__renamed)).toEqual([["c1", "ps2", "ext-1", "ps2sd"]]);
@@ -57,7 +57,7 @@ test.describe("충돌 표시와 쓰기 막힘", () => {
 
   test("한쪽 폴더 삭제는 확인을 체크해야 되고, 끝나면 충돌이 풀린다", async ({ page }) => {
     await ps2Row(page).click({ button: "right" });
-    await page.locator(".ctx-menu .ctx-item", { hasText: "External SD 폴더 삭제…" }).click();
+    await page.locator(".ctx-menu .ctx-item", { hasText: "외부 SD 폴더 삭제…" }).click();
     await expect(page.locator(".sysdel-warning")).toContainText("ROM 폴더만");
     await expect(page.locator(".sysdel-kept")).toContainText("Internal");
     await expect(modalButton(page, "확인")).toBeDisabled();
@@ -76,7 +76,7 @@ test.describe("External Storage 설정과 연결", () => {
       const original = window.api.updateStorage;
       window.api.updateStorage = (...args) => { window.__updated.push(args); return original(...args); };
     });
-    const head = page.locator(".nav-group-head", { hasText: "EXTERNAL SD" });
+    const head = page.locator(".nav-group-head", { hasText: "외부 SD" });
     await head.locator(".storage-settings-btn").click();
     // Storage ID 칸은 없다 - 전체 경로 하나만 받는다(사용자 결정).
     await expect(page.locator(".storage-device-id")).toHaveCount(0);
@@ -91,7 +91,7 @@ test.describe("External Storage 설정과 연결", () => {
   // 경로는 의미없다." write_custom_systems()가 Internal을 애초에 건너뛰므로
   // (Android는 %ROMPATH%를 쓴다) 그 필드를 채워도 아무 데도 쓰이지 않는다.
   test("Internal 설정에는 Android Storage ID/경로 칸이 아예 없다", async ({ page }) => {
-    const head = page.locator(".nav-group-head", { hasText: "INTERNAL" });
+    const head = page.locator(".nav-group-head", { hasText: "내부" });
     await head.locator(".storage-settings-btn").click();
     await expect(page.locator(".modal-title")).toContainText("설정");
     await expect(page.locator(".storage-device-id")).toHaveCount(0);
@@ -107,7 +107,7 @@ test.describe("External Storage 설정과 연결", () => {
       const original = window.api.updateStorage;
       window.api.updateStorage = (...args) => { window.__updated.push(args); return original(...args); };
     });
-    await page.locator(".nav-group-head", { hasText: "INTERNAL" }).locator(".storage-settings-btn").click();
+    await page.locator(".nav-group-head", { hasText: "내부" }).locator(".storage-settings-btn").click();
     await page.locator(".storage-settings-save").click();
     const args = await page.evaluate(() => window.__updated[0]);
     expect(args[4]).toBeNull();   // deviceId
@@ -118,7 +118,7 @@ test.describe("External Storage 설정과 연결", () => {
     await page.evaluate(() => {
       window.api.updateStorage = async () => ({ ok: false, error: "기기 경로는 /로 시작해야 합니다(예: /storage/1234-ABCD/ROMs)." });
     });
-    await page.locator(".nav-group-head", { hasText: "EXTERNAL SD" }).locator(".storage-settings-btn").click();
+    await page.locator(".nav-group-head", { hasText: "외부 SD" }).locator(".storage-settings-btn").click();
     await page.locator(".storage-device-root").fill("storage/x");
     await page.locator(".storage-settings-save").click();
     await expect(page.locator(".toast-msg")).toContainText("/로 시작");
@@ -133,7 +133,7 @@ test.describe("External Storage 설정과 연결", () => {
         path: "D:\\ES-DE\\custom_systems\\es_systems.xml", platform: "android", systems: [], written: false,
         needsDeviceId: ["ps2"], noTemplate: [], kept: [] } });
     });
-    await page.locator(".nav-group-head", { hasText: "EXTERNAL SD" }).locator(".storage-settings-btn").click();
+    await page.locator(".nav-group-head", { hasText: "외부 SD" }).locator(".storage-settings-btn").click();
     await page.locator(".modal-actions .btn", { hasText: "ES-DE XML 생성" }).click();
     const row = page.locator(".xml-row", { hasText: "ps2" });
     await expect(row).toHaveClass(/warn/);
@@ -143,7 +143,7 @@ test.describe("External Storage 설정과 연결", () => {
   test("External Storage를 지우고 다시 추가하면 그 밑의 System을 연결한다", async ({ page }) => {
     // Add External Storage는 External이 없을 때만 보인다(사용자 결정) - 이미
     // 있는 것을 먼저 지운다.
-    await page.locator(".nav-group-head", { hasText: "EXTERNAL SD" }).locator(".storage-remove-btn").click();
+    await page.locator(".nav-group-head", { hasText: "외부 SD" }).locator(".storage-remove-btn").click();
     await modalButton(page, "확인").click();
     await expect(page.locator(".nav-action", { hasText: "Add External Storage" })).toBeVisible();
 

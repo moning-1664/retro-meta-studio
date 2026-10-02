@@ -16,7 +16,7 @@ async function openForRows(page, count = 1, start = true) {
     await page.keyboard.up("Control");
   }
   await rows.nth(0).click({ button: "right" });
-  const label = count === 1 ? "게임 정보 스크랩…" : `게임 정보 스크랩… (${count}개)`;
+  const label = count === 1 ? "온라인에서 게임 정보 검색…" : `온라인에서 게임 정보 검색… (${count}개)`;
   await exactMenuItem(page, label).click();
   await expect(page.locator(".scrape-context-card")).toBeVisible();
   if (start) {
@@ -217,7 +217,7 @@ test("후보가 없으면 선택 적용이 비활성화된다", async ({ page })
   const row = page.locator(".lrow").first();
   await row.click();
   await row.click({ button: "right" });
-  await exactMenuItem(page, "게임 정보 스크랩…").click();
+  await exactMenuItem(page, "온라인에서 게임 정보 검색…").click();
   await page.getByRole("button", { name: "스크랩 시작" }).click();
   await expect(page.locator(".scrape-candidates")).toContainText("후보가 없습니다");
   const apply = page.getByRole("button", { name: "선택 적용" });
@@ -243,7 +243,7 @@ test("스크랩 진행률은 모달 안에 표시하고 스크랩 시작 버튼�
   const row = page.locator(".lrow").first();
   await row.click();
   await row.click({ button: "right" });
-  await exactMenuItem(page, "게임 정보 스크랩…").click();
+  await exactMenuItem(page, "온라인에서 게임 정보 검색…").click();
   await page.getByRole("button", { name: "스크랩 시작" }).click();
   await expect(page.locator(".scrape-progress .scrape-progress-line")).toBeVisible();
   await expect(page.locator(".scrape-progress .job-progress-cancel")).toHaveCount(0);

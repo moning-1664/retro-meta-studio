@@ -21,7 +21,7 @@ test.beforeEach(async ({ page }) => {
 
 const openMediaOf = async (page, file) => {
   await page.locator(".lrow", { hasText: file }).locator(".lc-file").click();
-  await page.locator(".detail-tab", { hasText: "Media" }).click();
+  await page.locator(".detail-tab", { hasText: "미디어" }).click();
 };
 const video = (page) => page.locator(".media-tile.wide video.media-video");
 

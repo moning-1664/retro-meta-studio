@@ -4,18 +4,18 @@ const { openApp } = require("./_helpers");
 test("Detail Media tab survives a Collection round trip", async ({ page }) => {
   await openApp(page);
   await page.locator(".lrow").first().click();
-  await page.locator(".detail-tab").filter({ hasText: /^Media$/ }).click();
+  await page.locator(".detail-tab").filter({ hasText: /^미디어$/ }).click();
   await page.locator(".ctab-add").click();
   await page.locator(".add-collection-history summary").click();
   await page.locator(".picker-row", { hasText: "Android ES-DE" }).click();
   await page.locator(".ctab", { hasText: "Master Library" }).click();
-  await expect(page.locator(".detail-tab.active")).toHaveText("Media");
+  await expect(page.locator(".detail-tab.active")).toHaveText("미디어");
 });
 
 test("Scraper apply cannot be submitted twice while starting", async ({ page }) => {
   await openApp(page);
   await page.locator(".lrow").first().click({ button: "right" });
-  await page.locator(".ctx-item", { hasText: "게임 정보 스크랩" }).click();
+  await page.locator(".ctx-item", { hasText: "온라인에서 게임 정보 검색" }).click();
   await page.getByRole("button", { name: "스크랩 시작" }).click();
   await page.locator(".scrape-candidate").first().click();
   await expect(page.getByRole("button", { name: "선택 적용" })).toBeEnabled();

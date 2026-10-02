@@ -370,7 +370,7 @@ test.describe("미디어 선택 후 정리", () => {
 // 그 그룹의 System 전체에 적용한다(사용자 결정).
 test.describe("Storage 그룹 우클릭 메뉴", () => {
   test.beforeEach(async ({ page }) => { await openApp(page); });
-  const groupMenu = async (page, name = "INTERNAL") =>
+  const groupMenu = async (page, name = "내부") =>
     page.locator(".nav-group-head", { hasText: name }).click({ button: "right" });
   const item = (page, label) => page.locator(".ctx-menu .ctx-item", { hasText: label });
 

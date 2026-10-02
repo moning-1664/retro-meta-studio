@@ -5,7 +5,7 @@ test.beforeEach(async ({ page }) => { await openApp(page); });
 
 test("Media 슬롯에 외부 그림을 놓으면 기존 Plan 미디어 경로로 전달한다", async ({ page }) => {
   await page.locator(".lrow", { hasText: "FFX.iso" }).locator(".lc-file").click();
-  await page.locator(".detail-tab", { hasText: "Media" }).click();
+  await page.locator(".detail-tab", { hasText: "미디어" }).click();
   await page.evaluate(() => {
     window.__externalImageCalls = [];
     window.api.importMediaImage = (...args) => {

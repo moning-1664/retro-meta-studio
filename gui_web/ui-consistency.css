@@ -95,3 +95,7 @@ input[type="range"]:disabled { opacity: .5; cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) {
   .btn, .job-progress-bar-fill, .stg-slider, .stg-slider::before { transition: none; }
 }
+/* Shared, compact shortcut help; follows the existing modal typography. */
+.shortcut-help-body { overflow: auto; max-height: 60vh; }
+.shortcut-help-row { display: grid; grid-template-columns: 140px 1fr; gap: 12px; padding: 7px 0; align-items: center; }
+.shortcut-help-row kbd { font: inherit; color: var(--text-muted); }

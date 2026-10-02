@@ -265,12 +265,7 @@
         add(row("media.videoLoop", "반복 재생", toggle(m.videoLoop, (v) => ctx.update("media", { videoLoop: v }))));
         add(h("div", { class: "stg-subsection-title" }, ["제목 앞뒤 문구"]));
         add(h("div", { class: "stg-help" }, [
-          "구역은 ROM 파일명의 지역 태그로 정합니다 - (KR), [Kor], _k, (USA), global 같은 표시입니다. "
-          + "해당 구역이 켜져 있으면 제목 양 끝의 기존 장식을 떼고(디스크 표시는 보존) 아래 텍스트를 "
-          + "다시 붙입니다. 태그가 없는 파일은 미분류라 건드리지 않습니다. "
-          + "문구 앞뒤의 공백은 그대로 쓰입니다(예: \" (KR)\"). 파일명에 지역이 여럿이면((Japan, Europe)) 켜진 구역의 "
-          + "문구를 모두 붙이고, 같은 괄호면 [JP][EU]가 [JP,EU]로 합쳐집니다. "
-          + "실행은 Gamelist나 System 우클릭 메뉴에서 합니다.",
+          window.RMSI18n.message("ui.metadata.titleAffixHelp"),
         ]));
         add(titleAffixEditor(s));
 

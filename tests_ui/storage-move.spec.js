@@ -11,8 +11,8 @@ test('System Storage drag requests an independent immediate operation', async ({
     };
     window.api.pasteExecute=async () => ({ok:true,data:{jobId:null}});
   });
-  await page.locator('.nav-group', {hasText:'INTERNAL'}).locator('.nav-system', {hasText:'SNES'})
-    .dragTo(page.locator('.nav-group', {hasText:'EXTERNAL SD'}));
+  await page.locator('.nav-group', {hasText:'내부'}).locator('.nav-system', {hasText:'SNES'})
+    .dragTo(page.locator('.nav-group', {hasText:'외부 SD'}));
   await expect.poll(() => page.evaluate(() => window.__storage.length)).toBe(1);
   const args=await page.evaluate(() => window.__storage[0]);
   expect(args[1]).toBe('storage');
@@ -27,8 +27,8 @@ test('Storage preview failure reports its reason and never executes', async ({pa
     window.api.operationPreview=async () => ({ok:false,error:'대상 Storage에 같은 이름의 파일이 있습니다.'});
     window.api.pasteExecute=async () => {window.__executed++; return {ok:true,data:{}};};
   });
-  await page.locator('.nav-group', {hasText:'INTERNAL'}).locator('.nav-system', {hasText:'SNES'})
-    .dragTo(page.locator('.nav-group', {hasText:'EXTERNAL SD'}));
+  await page.locator('.nav-group', {hasText:'내부'}).locator('.nav-system', {hasText:'SNES'})
+    .dragTo(page.locator('.nav-group', {hasText:'외부 SD'}));
   await expect(page.locator('#toast')).toContainText('같은 이름의 파일');
   expect(await page.evaluate(() => window.__executed)).toBe(0);
 });

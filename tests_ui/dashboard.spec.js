@@ -172,7 +172,7 @@ test.describe("Validate Collection - 강화된 결과", () => {
 test("System 표는 Media size 뒤에 Total size(ROM + Media)를 보여준다", async ({ page }) => {
   await openDashboard(page);
   const heads = (await page.locator(".dsb-table thead th").allTextContents()).map((t) => t.replace(/[↑↓]/g, "").trim());
-  expect(heads).toEqual(["System", "Storage", "Games", "ROM size", "Media size", "Total size", "Status"]);
+  expect(heads).toEqual(["System", "Storage", "Games", "ROM size", "Media size", "Total size", "상태"]);
   const totals = await page.locator(".dsb-table tbody td.dsb-total").allTextContents();
   expect(totals.length).toBeGreaterThan(0);
   totals.forEach((text) => expect(text).toMatch(/\d/));

@@ -8,7 +8,8 @@
     "test": "tests"
   },
   "scripts": {
-    "test:ui": "playwright test"
+    "test:ui": "playwright test",
+    "test:i18n": "python tools/validate_ui_translations.py"
   },
   "repository": {
     "type": "git",

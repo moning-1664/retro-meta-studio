@@ -64,7 +64,7 @@ test("미리보기가 넘어가는 것과 잃는 것을 나눠 보여준다", as
   await expect(moving).toHaveCount(3);
   await expect(moving.nth(0)).toContainText("Games");
   await expect(moving.nth(0)).toContainText("1,284");
-  await expect(moving.nth(2)).toContainText("Media");
+  await expect(moving.nth(2)).toContainText("미디어");
 
   const losses = page.locator(".convert-losses .convert-row");
   await expect(losses).toHaveCount(3);

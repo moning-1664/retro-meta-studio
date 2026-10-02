@@ -27,7 +27,7 @@ test.describe("System 우클릭 메뉴", () => {
     await expect(menuItem(page, "멀티 디스크 태그 적용…")).toBeVisible();
     await expect(menuItem(page, "미디어 정리…")).toBeVisible();
     await expect(menuItem(page, "시스템과 파일 삭제…")).toBeVisible();
-    await expect(menuItem(page, "게임 정보 스크랩…")).toBeEnabled();
+    await expect(menuItem(page, "온라인에서 게임 정보 검색…")).toBeEnabled();
   });
 
   test("복사한 게임을 다른 System에 신규 추가한다", async ({ page }) => {
@@ -95,7 +95,7 @@ test.describe("상단 탭 - 갖다대기와 우클릭", () => {
     await expect.poll(() => tab(page).getAttribute("title")).toContain("롬 개수");
     const t = await tab(page).getAttribute("title");
     expect(t).toContain("총 용량");
-    expect(t).toContain("Metadata");
+    expect(t).toContain("메타데이터");
   });
 
   test("이름 변경/Convert 대신 'Collection 정보' 하나만 있다", async ({ page }) => {
@@ -165,6 +165,6 @@ test.describe("Gamelist 행 우클릭 메뉴", () => {
 
   test("메타데이터 스크랩을 시작할 수 있다", async ({ page }) => {
     await rightClickRow(page, "Final Fantasy X");
-    await expect(menuItem(page, "게임 정보 스크랩…")).toBeEnabled();
+    await expect(menuItem(page, "온라인에서 게임 정보 검색…")).toBeEnabled();
   });
 });

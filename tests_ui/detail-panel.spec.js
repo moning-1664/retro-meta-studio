@@ -159,7 +159,7 @@ test.describe("Detail 상단 빈 공간 (레이아웃 재검토 §18-19)", () =>
 test.describe("Media 격자", () => {
   const openMedia = async (page) => {
     await openFirstGame(page);
-    await page.locator(".detail-tab", { hasText: "Media" }).click();
+    await page.locator(".detail-tab", { hasText: "미디어" }).click();
   };
 
   test("ES-DE가 쓰는 media 종류를 전부 다룬다", async ({ page }) => {
@@ -170,7 +170,7 @@ test.describe("Media 격자", () => {
     const all = [...tiles, ...flags];
     ["Cover", "Marquee", "MixImage", "TitleScreen", "Screenshot",
      "3DBox", "BackCover", "PhysicalMedia", "Wheel",
-     "Video", "Manual", "FanArt"].forEach((name) => {
+     "동영상", "Manual", "FanArt"].forEach((name) => {
       expect(all).toContain(name);
     });
   });
@@ -212,7 +212,7 @@ test.describe("Media 격자", () => {
     });
     const first = await sizes();
     await page.locator(".lrow").nth(2).locator(".lc-file").click();
-    await page.locator(".detail-tab", { hasText: "Media" }).click();
+    await page.locator(".detail-tab", { hasText: "미디어" }).click();
     expect(await sizes()).toEqual(first);
   });
 
@@ -265,7 +265,7 @@ test.describe("Media 격자", () => {
     const labels = () => page.locator(".media-tile-label").allTextContents();
     const first = await labels();
     await page.locator(".lrow").nth(2).locator(".lc-file").click();
-    await page.locator(".detail-tab", { hasText: "Media" }).click();
+    await page.locator(".detail-tab", { hasText: "미디어" }).click();
     expect(await labels()).toEqual(first);
   });
 
@@ -288,7 +288,7 @@ test.describe("Media 격자", () => {
     // 영상은 실어 오기엔 크고 설명서는 PDF라 애초에 그릴 수 없다. FanArt는 자리를
     // 차지할 만큼 자주 보는 것이 아니다(사용자 결정).
     await openMedia(page);
-    const video = page.locator(".media-flag-item", { hasText: "Video" });
+    const video = page.locator(".media-flag-item", { hasText: "동영상" });
     await expect(video).toHaveClass(/on/);
     // `v` / `x` 글자는 둘이 닮아서 멀리서 구분이 안 됐다(사용자 피드백) - 지금은
     // media 종류를 뜻하는 아이콘 칩이고, 있고 없고는 밝기로 갈린다.
@@ -298,7 +298,7 @@ test.describe("Media 격자", () => {
   test("없으면 흐리게 남는다", async ({ page }) => {
     await openMedia(page);
     await page.locator(".lrow").nth(2).locator(".lc-file").click();
-    await page.locator(".detail-tab", { hasText: "Media" }).click();
+    await page.locator(".detail-tab", { hasText: "미디어" }).click();
     // 칸은 그대로 있고(자리가 흔들리지 않는다) 켜진 것만 없다.
     await expect(page.locator(".media-flag-item")).toHaveCount(3);
     await expect(page.locator(".media-flag-item.on")).toHaveCount(0);
@@ -308,7 +308,7 @@ test.describe("Media 격자", () => {
 test.describe("Media 확대(lightbox)", () => {
   const openMedia = async (page) => {
     await openFirstGame(page);
-    await page.locator(".detail-tab", { hasText: "Media" }).click();
+    await page.locator(".detail-tab", { hasText: "미디어" }).click();
   };
 
   test("그림이 있는 타일을 누르면 확대된 이미지가 뜬다", async ({ page }) => {
@@ -359,7 +359,7 @@ test.describe("Media 확대(lightbox)", () => {
   });
 });
 
-test.describe("Description", () => {
+test.describe("설명", () => {
   test("12줄에서 멈추고 늘어나지 않는다(실사용 피드백)", async ({ page }) => {
     // 예전엔 flex:1 1 auto라 남는 세로 공간을 전부 흡수해서, 창을 늘릴수록
     // 한없이 길어졌다 - 지금은 12줄 고정이고 그 남는 공간은 패널이 넉넉히 클

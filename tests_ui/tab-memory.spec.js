@@ -19,12 +19,12 @@ test.describe("탭을 오갈 때", () => {
   test("고른 게임이 그대로 돌아온다", async ({ page }) => {
     await page.locator(".lrow", { hasText: "Final Fantasy X" }).locator(".lc-file").click();
     await page.locator(".lrow", { hasText: "Metal Gear Solid 2" }).locator(".lc-file").click({ modifiers: ["Control"] });
-    await expect(page.locator("#status-bar")).toContainText("Selected 2");
+    await expect(page.locator("#status-bar")).toContainText("선택 2개");
 
     await openSecondTab(page);
-    await expect(page.locator("#status-bar")).toContainText("Selected 1");
+    await expect(page.locator("#status-bar")).toContainText("선택 1개");
     await page.locator(".ctab", { hasText: "Master Library" }).click();
-    await expect(page.locator("#status-bar")).toContainText("Selected 2");
+    await expect(page.locator("#status-bar")).toContainText("선택 2개");
   });
 
   test("탭으로 돌아오면 마지막으로 포커스한 게임의 상세도 복원한다", async ({ page }) => {

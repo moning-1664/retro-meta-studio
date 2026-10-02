@@ -81,7 +81,7 @@ test.describe("파일명 색 - ROM 파일이 있는지", () => {
 });
 
 test.describe("저장하면 목록에 바로 보인다", () => {
-  test("Description", async ({ page }) => {
+  test("설명", async ({ page }) => {
     await openFirstGame(page);
     await page.locator(".detail-body-desc-wrap textarea").fill("새로 적은 설명");
     await page.locator(".detail-footer .btn.primary").click();
@@ -90,8 +90,8 @@ test.describe("저장하면 목록에 바로 보인다", () => {
 
   test("Genre / Region", async ({ page }) => {
     await openFirstGame(page);
-    await page.locator("#detail-panel div:has(> .field-label:has-text('Genre')) > input").fill("Puzzle");
-    await page.locator("#detail-panel div:has(> .field-label:has-text('Region')) > input").fill("jp");
+    await page.locator("#detail-panel div:has(> .field-label:has-text('장르')) > input").fill("Puzzle");
+    await page.locator("#detail-panel div:has(> .field-label:has-text('지역')) > input").fill("jp");
     await page.locator(".detail-footer .btn.primary").click();
     const row = page.locator(".lrow").first();
     await expect(row.locator(".lc-genre")).toHaveText("Puzzle");
@@ -147,7 +147,7 @@ test.describe("Media 확대가 창에 맞는다", () => {
   test("낮고 좁은 창에서도 이미지와 카드가 창 안에 있다", async ({ page }) => {
     await page.setViewportSize({ width: 820, height: 520 });
     await openFirstGame(page);
-    await page.locator(".detail-tab", { hasText: "Media" }).click();
+    await page.locator(".detail-tab", { hasText: "미디어" }).click();
     await page.locator(".media-tile[title='Cover']").click();
     const img = page.locator(".lightbox-img");
     await expect(img).toBeVisible();

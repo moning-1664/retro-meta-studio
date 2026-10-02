@@ -428,6 +428,10 @@ npx playwright test
 
 The UI can use a mock API when pywebview is unavailable, allowing many interaction tests to run without starting the complete desktop application.
 
+`python tools/validate_ui_translations.py` checks Korean/English message IDs and renders the main, detail, menus, Dashboard and nine Settings sections to detect untranslated UI text. It also checks the empty Archive, F1 help, scraper candidates and expanded metadata, search/stop/empty-result states, account connection results, DAT import counts and Archive folder detection. Game titles, descriptions and other user data are excluded. `build_web.bat` requires this check before changing the version or replacing build output, so Node.js, `npm ci` and Playwright Chromium are required for packaging too. Use `--catalog-only` for the fast message-ID check.
+
+New UI messages use stable IDs and named parameters in `gui_web/i18n-messages.js`. Existing text-based translations remain during migration. Japanese, Spanish and French remain available, but these screen checks currently validate Korean/English; new messages fall back to English when those translations are missing.
+
 ### End-to-end / real filesystem
 
 The repository also contains real-filesystem scenarios under `tests_e2e/`, including workflows for ROM-only entries and scoped operations.

@@ -23,13 +23,13 @@ test("우클릭하면 삭제 확인이 아니라 메뉴가 뜬다", async ({ pag
   await expect(page.locator(".ctx-menu")).toBeVisible();
   await expect(page.locator(".modal-title")).toHaveCount(0);
   await expect(page.locator(".ctx-title")).toHaveText("Final Fantasy X");
-  await expect(menuItem(page, "Game 삭제")).toBeVisible();
+  await expect(menuItem(page, "게임 삭제")).toBeVisible();
   await expect(menuItem(page, "ROM 파일명 복사")).toBeVisible();
 });
 
 test("선택하지 않은 행을 우클릭하면 그 행 하나만 선택된다", async ({ page }) => {
   await rightClick(page, "Final Fantasy X");
-  await expect(page.locator("#status-bar")).toContainText("Selected 1");
+  await expect(page.locator("#status-bar")).toContainText("선택 1개");
 });
 
 test("메뉴의 삭제를 고르면 삭제를 요청하고 메뉴를 닫는다", async ({ page }) => {
@@ -43,7 +43,7 @@ test("메뉴의 삭제를 고르면 삭제를 요청하고 메뉴를 닫는다",
   });
 
   await rightClick(page, "Final Fantasy X");
-  await menuItem(page, "Game 삭제").hover();
+  await menuItem(page, "게임 삭제").hover();
   await menuItem(page, "Game 전체 삭제").click();
 
   await expect(page.locator(".ctx-menu")).toHaveCount(0);
@@ -65,7 +65,7 @@ test.describe("부분 삭제", () => {
 
   test("Game 삭제 하위 메뉴에 전체·메타데이터·미디어가 있다", async ({ page }) => {
     await rightClick(page, "Final Fantasy X");
-    await menuItem(page, "Game 삭제").hover();
+    await menuItem(page, "게임 삭제").hover();
     for (const label of ["Game 전체 삭제", "메타데이터 삭제", "미디어 삭제"])
       await expect(menuItem(page, label)).toBeVisible();
   });
@@ -73,13 +73,13 @@ test.describe("부분 삭제", () => {
   test("각 항목이 서로 다른 범위로 삭제를 요청한다", async ({ page }) => {
     await spy(page);
     await rightClick(page, "Final Fantasy X");
-    await menuItem(page, "Game 삭제").hover();
+    await menuItem(page, "게임 삭제").hover();
     await menuItem(page, "Game 전체 삭제").click();
     await rightClick(page, "Final Fantasy X");
-    await menuItem(page, "Game 삭제").hover();
+    await menuItem(page, "게임 삭제").hover();
     await menuItem(page, "미디어 삭제").click();
     await rightClick(page, "Final Fantasy X");
-    await menuItem(page, "Game 삭제").hover();
+    await menuItem(page, "게임 삭제").hover();
     await menuItem(page, "메타데이터 삭제").click();
     await expect.poll(() => page.evaluate(() => window.__parts.length)).toBe(3);
     expect(await page.evaluate(() => window.__parts)).toEqual([
@@ -120,13 +120,13 @@ test.describe("부분 삭제", () => {
 test("이미 여러 개를 선택한 상태로 그중 하나를 우클릭하면 선택 전체가 대상이다", async ({ page }) => {
   await page.locator(".lrow").nth(0).click();
   await page.locator(".lrow").nth(1).click({ modifiers: ["Control"] });
-  await expect(page.locator("#status-bar")).toContainText("Selected 2");
+  await expect(page.locator("#status-bar")).toContainText("선택 2개");
 
   await page.locator(".lrow").nth(0).click({ button: "right" });
   await expect(page.locator(".ctx-title")).toContainText("2개 선택됨");
   await expect(menuItem(page, "ROM 파일명 2개 복사")).toBeVisible();
   // 선택이 그대로 유지된다 - 우클릭이 선택을 1개로 되돌리지 않는다.
-  await expect(page.locator("#status-bar")).toContainText("Selected 2");
+  await expect(page.locator("#status-bar")).toContainText("선택 2개");
 });
 
 test("Esc와 바깥 클릭으로 닫힌다", async ({ page }) => {

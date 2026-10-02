@@ -96,7 +96,7 @@ test("Archive에서 가져오기는 선택한 후보로 독립 충돌 미리보�
     };
   });
   await page.locator(".lrow").first().click({ button: "right" });
-  await page.locator(".ctx-menu .ctx-item", { hasText: "메타데이터 가져오기" }).hover();
+  await page.locator(".ctx-menu .ctx-item", { hasText: "다른 목록에서 메타데이터 가져오기" }).hover();
   await page.locator(".ctx-submenu .ctx-item").filter({ hasText: /^Archive$/ }).click();
   await expect(page.locator(".match-option")).toHaveCount(1);
   await expect(page.locator(".match-option .scrape-candidate-desc")).toHaveText("Archive description");
@@ -119,7 +119,7 @@ test("변경이 없는 가져오기는 실행하지 않고 제외 이유를 표�
       {filename: "A.iso", reason: "원본 파일을 찾을 수 없습니다."}]}});
     window.api.pasteExecute = async () => {throw new Error("empty operation executed");};
   });
-  await page.getByRole("button", {name: "메타데이터 가져오기", exact: true}).click();
+  await page.getByRole("button", {name: "다른 목록에서 메타데이터 가져오기", exact: true}).click();
   await page.getByRole("button", {name: "Archive"}).last().click();
   await expect(page.locator("#toast")).toContainText("원본 파일을 찾을 수 없습니다");
 });
@@ -133,7 +133,7 @@ test("대량 가져오기도 한 독립 작업으로 실행하고 Plan을 만들
       action: "archive-import", undoable: true, collisions: [], skipped: []}});
     window.api.pasteExecute = async (id) => {window.__executed.push(id); return {ok: true, data: {jobId: "mock-operation"}};};
   });
-  await page.getByRole("button", {name: "메타데이터 가져오기", exact: true}).click();
+  await page.getByRole("button", {name: "다른 목록에서 메타데이터 가져오기", exact: true}).click();
   await page.getByRole("button", {name: "Archive"}).last().click();
   await expect.poll(() => page.evaluate(()=>window.__executed)).toEqual(["bulk-import"]);
   await expect(page.locator("#filter-bar .plan-actions")).toHaveCount(0);
@@ -356,7 +356,7 @@ test.describe("Revision 탭 - 무엇이 다른지 보여준다", () => {
 });
 
 test("Archive에서도 Ctrl+A로 전체를 고를 수 있다", async ({ page }) => {
-  // archiveUids()는 이미 있었고(HERO의 "메타데이터 가져오기"가 쓴다) 테스트도 있었는데,
+  // archiveUids()는 이미 있었고(HERO의 "다른 목록에서 메타데이터 가져오기"가 쓴다) 테스트도 있었는데,
   // Ctrl+A만 "아직 지원하지 않습니다" 경고만 띄우고 실제로는 부르지 않고 있었다.
   await openArchive(page);
   await page.locator(".lrow").nth(0).click();
@@ -627,7 +627,7 @@ test("미디어를 우클릭하면 복사/붙여넣기 메뉴가 나온다", asy
       romSources: [], edited: false, preferredRecordId: null } });
   });
   await page.locator(".lrow", { hasText: "Final Fantasy X" }).locator(".lc-title").click();
-  await page.locator(".detail-tab", { hasText: "Media" }).click();
+  await page.locator(".detail-tab", { hasText: "미디어" }).click();
   await page.locator(".media-tile.cover").click({ button: "right" });
   await expect(page.locator(".ctx-item", { hasText: "미디어 복사" })).toBeVisible();
   await expect(page.locator(".ctx-item", { hasText: "미디어 붙여넣기" })).toBeVisible();
@@ -713,7 +713,7 @@ test("Collection에서도 미디어 한 장만 독립 적용한다", async ({ pa
     };
   });
   await page.locator(".lrow", { hasText: "Final Fantasy X" }).locator(".lc-file").click();
-  await page.locator(".detail-tab", { hasText: "Media" }).click();
+  await page.locator(".detail-tab", { hasText: "미디어" }).click();
   await page.locator(".media-tile.cover").click({ button: "right" });
   await page.locator(".ctx-item", { hasText: "미디어 복사" }).click();
   await page.locator(".media-tile.cover").click({ button: "right" });

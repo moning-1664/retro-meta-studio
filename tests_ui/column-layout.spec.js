@@ -8,7 +8,7 @@ const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
-const HEADERS = ["No.", "File", "Title", "Description", "Status", "Rating", "Genre", "Region", "★"];
+const HEADERS = ["No.", "파일", "제목", "설명", "상태", "평점", "장르", "지역", "★"];
 const headLabels = async (page) => (await page.locator("#list-head .lh").allTextContents()).map((t) => t.trim());
 const rowCellClasses = (page) => page.locator(".lrow").first().evaluate(
   (el) => [...el.children].map((c) => [...c.classList].find((k) => k.startsWith("lc-") && k !== "lc-text")));
@@ -23,24 +23,24 @@ test.describe("머리글 우클릭 - 컬럼 표시", () => {
   test("컬럼을 끄면 머리글과 행에서 함께 빠지고 폭이 맞는다", async ({ page }) => {
     await page.locator(".lh-region").click({ button: "right" });
     await expect(page.locator(".ctx-title")).toHaveText("GameList 컬럼");
-    await menuItem(page, "Region").click();
+    await menuItem(page, "지역").click();
     await expect(page.locator("#list-head .lh-region")).toHaveCount(0);
     await expect(page.locator(".lrow .lc-region")).toHaveCount(0);
     expect(await templatesMatch(page)).toBe(true);
 
     await page.locator("#list-head").click({ button: "right" });
-    await menuItem(page, "Region").click();
+    await menuItem(page, "지역").click();
     await expect(page.locator("#list-head .lh-region")).toHaveCount(1);
   });
 
   test("마지막 하나 남은 컬럼은 숨길 수 없다", async ({ page }) => {
     // 하나만 남을 때까지 실제 메뉴 경로로 순서대로 끈다.
-    for (const label of ["No.", "★ Favorite", "Description", "Status", "Rating", "Genre", "Region", "File"]) {
+    for (const label of ["No.", "★ Favorite", "설명", "상태", "평점", "장르", "지역", "파일"]) {
       await page.locator("#list-head").click({ button: "right" });
       await menuItem(page, label).click();
     }
     await page.locator("#list-head").click({ button: "right" });
-    await expect(menuItem(page, "Title")).toBeDisabled();
+    await expect(menuItem(page, "제목")).toBeDisabled();
   });
 
   test("설정으로 저장한다", async ({ page }) => {
@@ -50,7 +50,7 @@ test.describe("머리글 우클릭 - 컬럼 표시", () => {
       window.api.saveAppSettings = (patch) => { window.__saved.push(patch); return original(patch); };
     });
     await page.locator("#list-head").click({ button: "right" });
-    await menuItem(page, "Genre").click();
+    await menuItem(page, "장르").click();
     await expect.poll(() => page.evaluate(() => window.__saved.length)).toBeGreaterThan(0);
     const saved = await page.evaluate(() => window.__saved.at(-1));
     expect(saved.gamelist.hidden).toEqual(["genre"]);
@@ -64,7 +64,7 @@ test.describe("머리글 드래그 - 컬럼 순서", () => {
   test("Genre를 File 앞에 놓으면 머리글과 행이 같은 순서가 된다", async ({ page }) => {
     await page.locator(".lh-genre").dragTo(page.locator(".lh-file"), { targetPosition: { x: 4, y: 8 } });
     await expect.poll(() => headLabels(page)).toEqual(
-      ["No.", "Genre", "File", "Title", "Description", "Status", "Rating", "Region", "★"]);
+      ["No.", "장르", "파일", "제목", "설명", "상태", "평점", "지역", "★"]);
     expect(await templatesMatch(page)).toBe(true);
   });
 
@@ -73,7 +73,7 @@ test.describe("머리글 드래그 - 컬럼 순서", () => {
     const box = await target.boundingBox();
     await page.locator(".lh-file").dragTo(target, { targetPosition: { x: Math.round(box.width * 0.75), y: 8 } });
     await expect.poll(() => headLabels(page)).toEqual(
-      ["No.", "Title", "Description", "File", "Status", "Rating", "Genre", "Region", "★"]);
+      ["No.", "제목", "설명", "파일", "상태", "평점", "장르", "지역", "★"]);
   });
 
   test("No.도 다른 컬럼처럼 끌어 옮길 수 있다", async ({ page }) => {
@@ -125,7 +125,7 @@ test.describe("Settings - GameList Columns", () => {
     await expect(title).toHaveClass(/drop-after/);
     await page.mouse.up();
     await expect.poll(() => headLabels(page)).toEqual(
-      ["No.", "Title", "File", "Description", "Status", "Rating", "Genre", "Region", "★"]);
+      ["No.", "제목", "파일", "설명", "상태", "평점", "장르", "지역", "★"]);
     await page.locator(".stg-column-row[data-column='desc'] input").uncheck();
     await page.locator(".stg-column-reset").click();
     await expect.poll(() => headLabels(page)).toEqual(HEADERS);
@@ -136,7 +136,7 @@ test.describe("Settings - GameList Columns", () => {
     await page.locator(".stg-column-row[data-column='file'] .stg-column-grip").focus();
     await page.keyboard.press("ArrowUp");
     await expect.poll(() => headLabels(page)).toEqual(
-      ["File", "No.", "Title", "Description", "Status", "Rating", "Genre", "Region", "★"]);
+      ["파일", "No.", "제목", "설명", "상태", "평점", "장르", "지역", "★"]);
     await expect(page.locator(".stg-column-row[data-column='file'] .stg-column-grip")).toBeFocused();
   });
 

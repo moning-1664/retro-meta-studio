@@ -30,8 +30,8 @@ test("설정 버튼은 Internal/External 둘 다 있고, 제거 버튼은 Extern
   // ES-DE XML 생성은 이제 그 설정 안에 있다(§22 개정 - 예전엔 그룹 머리에 따로
   // 아이콘이 있었는데, External이 여럿일 때 "어느 그룹에서 눌러도 전체를 다시
   // 쓴다"는 뜻이 아이콘만 봐서는 안 보였다).
-  const internalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "INTERNAL" }) });
-  const externalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "EXTERNAL SD" }) });
+  const internalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "내부" }) });
+  const externalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "외부 SD" }) });
   await expect(internalGroup.locator(".nav-group-head .storage-settings-btn")).toHaveCount(1);
   await expect(internalGroup.locator(".nav-group-head .storage-remove-btn")).toHaveCount(0);
   await expect(externalGroup.locator(".nav-group-head .storage-settings-btn")).toHaveCount(1);
@@ -39,7 +39,7 @@ test("설정 버튼은 Internal/External 둘 다 있고, 제거 버튼은 Extern
 });
 
 test("ES-DE XML 생성은 Storage 설정 안에 있고, 실행하면 결과를 알려준다", async ({ page }) => {
-  const externalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "EXTERNAL SD" }) });
+  const externalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "외부 SD" }) });
   await externalGroup.locator(".storage-settings-btn").click();
   await expect(page.locator(".modal-body.storage-settings")).toBeVisible();
   await page.locator(".modal-actions .btn", { hasText: "ES-DE XML 생성" }).click();
@@ -52,7 +52,7 @@ test("ES-DE XML 생성은 Storage 설정 안에 있고, 실행하면 결과를 �
 test("Internal 설정에는 PC 경로 입력칸이 없다(참고용 텍스트만)", async ({ page }) => {
   // Internal의 PC 경로는 Collection 경로 자체라 여기서 바꿔도 저장되지 않는다 -
   // 바꿀 수 있는 것처럼 입력칸을 주지 않는다.
-  const internalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "INTERNAL" }) });
+  const internalGroup = page.locator(".nav-group", { has: page.locator(".nav-group-name", { hasText: "내부" }) });
   await internalGroup.locator(".storage-settings-btn").click();
   await expect(page.locator(".storage-settings .storage-root")).toHaveCount(0);
   await expect(page.locator(".storage-settings .storage-root-readonly")).toBeVisible();

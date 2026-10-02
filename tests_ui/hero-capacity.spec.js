@@ -32,7 +32,7 @@ test("ROM/Metadata와 Internal/External 사이에 | 구분선이 있다", async 
 });
 
 test("목표를 정하지 않은 Storage는 무채색이다(넘었다고 말할 수 없다)", async ({ page }) => {
-  const badge = page.locator(".cheader-storage", { hasText: "Internal" });
+  const badge = page.locator(".cheader-storage", { hasText: "내부" });
   await expect(badge).toHaveClass(/level-none/);
   await expect(badge.locator(".cheader-storage-warn")).not.toHaveClass(/on/);
 });
@@ -41,7 +41,7 @@ test("목표를 넉넉히 넘겨 잡으면 여유(파랑) 단계다", async ({ p
   // External(ext-1) actualBytes는 mock에서 8.7GB다. 목표를 100GB로 넉넉히 잡는다.
   await setTarget(page, "ext-1", 100 * 1024 ** 3);
   await reopenToPickUpUiState(page);
-  const badge = page.locator(".cheader-storage", { hasText: "External" });
+  const badge = page.locator(".cheader-storage", { hasText: "외부" });
   await expect(badge).toHaveClass(/level-blue/);
   await expect(badge.locator(".cheader-storage-warn")).not.toHaveClass(/on/);
 });
@@ -50,14 +50,14 @@ test("목표를 넘으면 빨강 단계 + 경고 아이콘이 뜬다", async ({ 
   // 목표를 실사용량보다 작게 잡아 강제로 넘긴다.
   await setTarget(page, "ext-1", 1 * 1024 ** 3);   // 1GB < 8.7GB
   await reopenToPickUpUiState(page);
-  const badge = page.locator(".cheader-storage", { hasText: "External" });
+  const badge = page.locator(".cheader-storage", { hasText: "외부" });
   await expect(badge).toHaveClass(/level-over/);
   await expect(badge.locator(".cheader-storage-warn")).toHaveClass(/on/);
   await expect(badge.locator(".cheader-storage-warn .icon")).toBeVisible();
 });
 
 test("Dashboard에서 목표를 바꾸면 HERO도 그 자리에서 따라간다", async ({ page }) => {
-  const badge = page.locator(".cheader-storage", { hasText: "External" });
+  const badge = page.locator(".cheader-storage", { hasText: "외부" });
   await expect(badge).toHaveClass(/level-none/);
 
   await openDashboard(page);
@@ -75,7 +75,7 @@ test("펼친 정보의 Capacity는 목표를 정하면 그 값으로, 라벨도 
   await setTarget(page, "ext-1", 10 * 1024 ** 3);
   await reopenToPickUpUiState(page);
   await page.locator("#collection-header .icon-btn[title='펼치기']").click();
-  const box = page.locator(".storage-box", { hasText: "EXTERNAL SD" });
+  const box = page.locator(".storage-box", { hasText: "외부 SD" });
   const capacityRow = box.locator(".health-row", { hasText: "Target" });
   await expect(capacityRow).toBeVisible();
   await expect(capacityRow).toContainText("10");
@@ -86,7 +86,7 @@ test("펼친 정보의 그래프도 같은 5단계 색을 쓴다", async ({ page
   await setTarget(page, "ext-1", 1 * 1024 ** 3);
   await reopenToPickUpUiState(page);
   await page.locator("#collection-header .icon-btn[title='펼치기']").click();
-  const box = page.locator(".storage-box", { hasText: "EXTERNAL SD" });
+  const box = page.locator(".storage-box", { hasText: "외부 SD" });
   await expect(box.locator(".storage-bar")).toHaveClass(/level-over/);
 });
 
@@ -98,7 +98,7 @@ test.describe("펼친 정보의 Free는 목표를 정하면 물리 디스크가 
     await setTarget(page, "ext-1", 20 * 1024 ** 3);   // 20GiB - 8.7GB ≈ 11.9GiB
     await reopenToPickUpUiState(page);
     await page.locator("#collection-header .icon-btn[title='펼치기']").click();
-    const box = page.locator(".storage-box", { hasText: "EXTERNAL SD" });
+    const box = page.locator(".storage-box", { hasText: "외부 SD" });
     await expect(box.locator(".health-row", { hasText: "Free" })).toContainText("11.9 GB");
   });
 
@@ -106,13 +106,13 @@ test.describe("펼친 정보의 Free는 목표를 정하면 물리 디스크가 
     await setTarget(page, "ext-1", 200 * 1024 ** 3);   // 목표 기준 계산은 191.9GiB, 물리 여유(83.8GiB)가 더 작다
     await reopenToPickUpUiState(page);
     await page.locator("#collection-header .icon-btn[title='펼치기']").click();
-    const box = page.locator(".storage-box", { hasText: "EXTERNAL SD" });
+    const box = page.locator(".storage-box", { hasText: "외부 SD" });
     await expect(box.locator(".health-row", { hasText: "Free" })).toContainText("83.8 GB");
   });
 
   test("목표를 정하지 않았으면 예전처럼 물리 디스크 여유 용량이다", async ({ page }) => {
     await page.locator("#collection-header .icon-btn[title='펼치기']").click();
-    const box = page.locator(".storage-box", { hasText: "EXTERNAL SD" });
+    const box = page.locator(".storage-box", { hasText: "외부 SD" });
     await expect(box.locator(".health-row", { hasText: "Free" })).toContainText("83.8 GB");
   });
 });
@@ -120,7 +120,7 @@ test.describe("펼친 정보의 Free는 목표를 정하면 물리 디스크가 
 test("하단 Status Bar의 Storage 칩을 눌러 보는 Health 모달도 같은 규칙을 쓴다", async ({ page }) => {
   await setTarget(page, "ext-1", 20 * 1024 ** 3);
   await reopenToPickUpUiState(page);
-  await page.locator(".sb-storage", { hasText: "External" }).click();
+  await page.locator(".sb-storage", { hasText: "외부" }).click();
   const modal = page.locator(".modal-body");
   await expect(modal.locator(".health-row", { hasText: "Target" })).toContainText("20.0 GB");
   await expect(modal.locator(".health-row", { hasText: "Free" })).toContainText("11.9 GB");

@@ -17,7 +17,7 @@ const { openApp, modalButton } = require("./_helpers");
 // fixture에서 INTERNAL Storage에 있다 - 그 그룹 머리를 우클릭한다.
 // 우클릭하면 메뉴가 뜨고(사용자 결정 - 예전에는 곧바로 이 창이 떴다) 거기서 "gamelist 만들기"를 고른다.
 const openViaInternalGroup = async (page) => {
-  await page.locator(".nav-group-head", { hasText: "INTERNAL" }).click({ button: "right" });
+  await page.locator(".nav-group-head", { hasText: "내부" }).click({ button: "right" });
   await page.locator(".ctx-menu .ctx-item", { hasText: "gamelist 만들기" }).click();
 };
 
