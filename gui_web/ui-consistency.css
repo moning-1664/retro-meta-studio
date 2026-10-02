@@ -1,7 +1,7 @@
 /* Shared controls and candidate details. Geometry stays independent of theme. */
 :root { --header-row-h: calc(62px * var(--font-scale)); }
 /* Branding has a fixed footprint; content scaling must not hide its version. */
-.nav-app-title-name { font-size: 15px; }
+.nav-app-title-name { font-size: 18px; }
 .btn {
   min-height: 28px; border: 1px solid var(--border); border-radius: var(--radius-sm);
   line-height: 1.2; justify-content: center; text-align: center;

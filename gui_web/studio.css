@@ -174,7 +174,7 @@ body { font-size: var(--fs-body); }
 /* 가운데 네 칸. 오른쪽 한 칸(6번째)은 비워 둔다. */
 .nav-app-title-text { grid-column: 2 / -1; min-width: 0; display: flex; flex-direction: column; gap: 0; }
 .nav-app-title-line { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; }
-.nav-app-version { flex: none; font-family: Tahoma, sans-serif; font-size: 10px; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+.nav-app-version { align-self: flex-end; flex: none; font-family: Tahoma, sans-serif; font-size: 9px; line-height: 1.05; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* 제목은 **글자다**(사용자 결정) - 구워 둔 그림은 배율이 바뀔 때마다 열화됐다.
    레트로 간판처럼 보이도록 폭이 좁고 두꺼운 서체에 자간을 주고, 밝은 테마에서도
@@ -217,7 +217,7 @@ body { font-size: var(--fs-body); }
   box-shadow: 0 0 0 calc(1px * var(--font-scale)) var(--app-title-outline);
 }
 .nav-app-subtitle {
-  color: var(--muted); font-size: calc(8px * var(--font-scale));
+  color: var(--muted); font-size: calc(9px * var(--font-scale));
   letter-spacing: .04em; line-height: 1.2; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis;
 }
@@ -426,7 +426,7 @@ body { font-size: var(--fs-body); }
 .ownership-badge.internal { color: var(--success); }
 .ownership-badge.linked { color: var(--accent); }
 .ownership-badge.mixed { color: var(--warning); }
-.ownership-badge.compact { padding: 1px 5px; font-size: calc(8px * var(--font-scale)); }
+.ownership-badge.compact { padding: 1px 5px; font-size: calc(9px * var(--font-scale)); }
 .cheader { display: flex; align-items: center; gap: 10px; min-height: calc(var(--header-row-h) - 1px); box-sizing: border-box; padding: 8px 13px; }
 .cheader-icon {
   display: flex; align-items: center; justify-content: center;
@@ -645,7 +645,7 @@ body { font-size: var(--fs-body); }
 .media-tile-label {
   position: absolute; left: 4px; top: 4px; z-index: 2;
   padding: 1px 5px; border-radius: var(--radius-xs);
-  font-size: calc(8px * var(--font-scale)); font-weight: 600; color: var(--text);
+  font-size: calc(9px * var(--font-scale)); font-weight: 600; color: var(--text);
   background: color-mix(in srgb, var(--card3) 86%, transparent); pointer-events: none;
   max-width: calc(100% - 10px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }

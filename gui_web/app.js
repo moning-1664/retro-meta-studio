@@ -1001,7 +1001,7 @@
         const rowEl = h("div", { class: "stg-column-row" + (hidden.has(id) ? " off" : ""), "data-column": id }, [
           grip,
           h("label", { class: "stg-column-name" }, [check, h("span", {}, [columnName(col)])]),
-          locked ? h("span", { class: "stg-column-note" }, ["마지막 컴럼"]) : null,
+          locked ? h("span", { class: "stg-column-note" }, ["마지막 컬럼"]) : null,
         ]);
         grip.addEventListener("keydown", (e) => {
           if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
@@ -2108,11 +2108,11 @@
           h("span", { class: "apt-i" }, ["ı"]),
           letter("o"),
         ]),
-        h("span", { class: "nav-app-version", translate: "no" },
-          [window.RMS_APP_VERSION ? `v${window.RMS_APP_VERSION}` : ""]),
         ]),
         // 부제(사용자 결정) - 제목보다 훨씬 작게, 한 줄로.
         h("div", { class: "nav-app-subtitle" }, ["Retro Game Metadata Editor"]),
+        h("span", { class: "nav-app-version", translate: "no" },
+          [window.RMS_APP_VERSION ? `v${window.RMS_APP_VERSION}` : ""]),
       ]),
     ]));
     return top;
@@ -4983,11 +4983,12 @@
     };
     const onLeave = () => closeContextMenu();
     menu.addEventListener("scroll", closeSubmenu);
-    setTimeout(() => document.addEventListener("mousedown", onDown, true), 0);
+    const outsideClickTimer = setTimeout(() => document.addEventListener("mousedown", onDown, true), 0);
     document.addEventListener("keydown", onKey, true);
     window.addEventListener("blur", onLeave);
     window.addEventListener("resize", onLeave);
     contextMenuCleanup = () => {
+      clearTimeout(outsideClickTimer);
       closeSubmenu();
       menu.remove();
       document.removeEventListener("mousedown", onDown, true);

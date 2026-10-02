@@ -129,7 +129,7 @@ test.describe("App Title / Settings 자리와 크기", () => {
     ]);
     expect(icon.height).toBeCloseTo(icon.width, 0);
     expect(title.x).toBeGreaterThan(icon.x + icon.width);
-    expect(version.x).toBeGreaterThanOrEqual(title.x + title.width - 1);
+    expect(version.y).toBeGreaterThanOrEqual(title.y + title.height - 1);
     expect(version.x + version.width).toBeLessThanOrEqual(nav.x + nav.width + 1);
   });
 

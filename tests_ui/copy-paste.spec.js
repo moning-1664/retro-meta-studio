@@ -7,6 +7,22 @@ const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
+test("빠르게 닫고 다시 연 메뉴에 이전 메뉴의 바깥 클릭 핸들러가 남지 않는다", async ({ page }) => {
+  await page.evaluate(() => {
+    const row = document.querySelector('.lrow');
+    const rect = row.getBoundingClientRect();
+    const open = () => row.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, clientX: rect.x + 20, clientY: rect.y + 10,
+    }));
+    open();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    open();
+  });
+  await expect(page.locator('.ctx-menu')).toBeVisible();
+  await page.locator('.ctx-menu .ctx-label').first().dispatchEvent('mousedown');
+  await expect(page.locator('.ctx-menu')).toBeVisible();
+});
+
 test("열린 설정창 뒤의 목록에 붙여넣기·삭제 단축키가 전달되지 않는다", async ({ page }) => {
   await page.locator(".lrow").first().click();
   await page.evaluate(() => {
