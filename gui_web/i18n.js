@@ -107,17 +107,40 @@
 
   window.RMSI18n = {
     LANGS, LABELS, t, setLanguage, retranslateExistingDOM,
+    formatError: (value) => {
+      if (typeof value !== "string") return value;
+      const rules = [
+        [/^ScreenScraper 응답 오류 \((\d+)\)$/, "ui.error.http", "code"],
+        [/^ScreenScraper 연결 실패 \(([A-Za-z][A-Za-z0-9_]*)\)$/, "ui.error.network", "kind"],
+        [/^ScreenScraper 서비스를 사용할 수 없습니다 \((\d+)\)\.$/, "ui.error.unavailable", "code"],
+      ];
+      for (const [pattern, id, name] of rules) {
+        const match = value.match(pattern);
+        if (match) return t(id, {[name]:match[1]});
+      }
+      return t(value);
+    },
     message: (id, params = {}) => ({ i18nKey: id, params }),
     raw: (text) => ({ i18nRaw: String(text ?? "") }),
     isMessage: (value) => !!value && typeof value === "object" && (value.i18nKey || value.i18nRaw !== undefined),
     addMessages: (messages) => {
       Object.entries(messages).forEach(([id, forms]) => {
-        MESSAGES[id] = forms;
+        // Reuse only exact legacy text with the same named parameters.
+        // This retains existing translations when a caller moves to an ID.
+        const merged = {...forms};
+        const names = text => [...String(text || "").matchAll(/\{([a-zA-Z][\w]*)\}/g)]
+          .map(match => match[1]).sort().join("|");
+        const legacy = TABLE[forms.ko] || {};
+        for (const lang of LANGS) {
+          if (!merged[lang] && legacy[lang] && names(legacy[lang]) === names(forms.ko))
+            merged[lang] = legacy[lang];
+        }
+        MESSAGES[id] = merged;
         // Migration bridge: exact legacy UI text still resolves without regex
         // composition. ID callers never depend on the Korean wording.
         if (!/\{\w+\}/.test(forms.ko)) {
-          TABLE[forms.ko] = { ...TABLE[forms.ko], ...forms };
-          TABLE[forms.en] = { ...TABLE[forms.en], ...forms };
+          TABLE[forms.ko] = { ...TABLE[forms.ko], ...merged };
+          TABLE[forms.en] = { ...TABLE[forms.en], ...merged };
         }
       });
     },

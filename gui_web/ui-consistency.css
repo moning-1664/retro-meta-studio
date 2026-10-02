@@ -99,3 +99,12 @@ input[type="range"]:disabled { opacity: .5; cursor: not-allowed; }
 .shortcut-help-body { overflow: auto; max-height: 60vh; }
 .shortcut-help-row { display: grid; grid-template-columns: 140px 1fr; gap: 12px; padding: 7px 0; align-items: center; }
 .shortcut-help-row kbd { font: inherit; color: var(--text-muted); }
+/* Recovery actions must remain usable with longer translated labels. */
+.operation-history-row { flex-wrap: wrap; min-width: 0; }
+.operation-history-row > .field-help { flex: 1 1 100%; overflow-wrap: anywhere; }
+.operation-history-row > .btn { max-width: 100%; white-space: normal; }
+.operation-history-body > .field-help { overflow-wrap: anywhere; }
+/* Expanded comparisons scroll without pushing the decision buttons away. */
+.paste-conflict-card { display: flex; flex-direction: column; overflow: hidden; }
+.paste-conflict-card > .modal-title, .paste-conflict-card > .modal-actions { flex: none; }
+.paste-conflict-card > .paste-conflict-body { flex: 1 1 auto; min-height: 0; }

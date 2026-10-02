@@ -743,7 +743,7 @@
     const draw = async () => {
       const [cfgR, feR] = await Promise.all([api.archiveConfig(), api.frontends()]);
       clear(wrap);
-      if (!cfgR.ok) { wrap.appendChild(h("div", { class: "stg-info" }, [cfgR.error])); return; }
+      if (!cfgR.ok) { wrap.appendChild(h("div", { class: "stg-info" }, [window.RMSI18n.formatError(cfgR.error)])); return; }
       const cfg = cfgR.data;
       const frontends = feR.ok ? feR.data : [{ id: "es-de", label: "ES-DE" }];
 
@@ -1070,7 +1070,7 @@
     const el = $("toast");
     clear(el);
     el.className = "show " + (type || "info");
-    el.appendChild(h("div", { class: "toast-msg" }, [message]));
+    el.appendChild(h("div", { class: "toast-msg" }, [type === "error" ? window.RMSI18n.formatError(message) : message]));
     clearTimeout(showToast._timer);
     showToast._timer = setTimeout(() => { el.className = ""; }, 3200);
   }
@@ -1864,7 +1864,7 @@
       const r = await api.mtpBrowse(browsePath);
       if (browsePath === null || request !== browserRequest || browsePath !== requestedPath) return;
       browserList.replaceChildren();
-      if (!r.ok) { browserList.appendChild(h("div", { class: "empty-msg" }, [r.error])); return; }
+      if (!r.ok) { browserList.appendChild(h("div", { class: "empty-msg" }, [window.RMSI18n.formatError(r.error)])); return; }
       const data = r.data;
       renderBreadcrumb(data.path);
       upBtn.disabled = !data.parent;
@@ -3172,7 +3172,7 @@
     const draw = async () => {
       const r = await api.retroarchSettings();
       clear(wrap);
-      if (!r.ok) { wrap.appendChild(h("div", { class: "stg-info" }, [r.error])); return; }
+      if (!r.ok) { wrap.appendChild(h("div", { class: "stg-info" }, [window.RMSI18n.formatError(r.error)])); return; }
       const s = r.data;
       retroarchUnverified = new Set((s.unverified || []).map((x) => String(x).toLowerCase()));
 
@@ -3594,7 +3594,7 @@
       h("div", { class: "cheader-stat-group" }, [
         h("span", { class: "cheader-stat", title: "ROM 항목 수" }, [
           icon("cartridge", IC.sm),
-          h("span", { class: "cheader-stat-num" }, [formatCount(romCount)]), " ROMs",
+          h("span", { class: "cheader-stat-num" }, [formatCount(romCount)]), msg("ui.list.romLabel"),
         ]),
         h("span", { class: "cheader-stat", title: "Metadata가 있는 항목 수" }, [
           icon("fileText", IC.sm),
@@ -4058,7 +4058,7 @@
     renderPlanActions(bar);
 
     bar.appendChild(h("div", { class: "filter-total", id: "filter-total" },
-      [`${formatCount(S.total)} items`]));
+      [msg("ui.list.count", {count:formatCount(S.total)})]));
   }
 
   /** Archive에 수집 / Delete / AutoPlan / Apply / Cancel. Gamelist 위 툴바 한 곳에
@@ -4299,7 +4299,7 @@
     S.loadedPages.add(0);
     r.data.rows.forEach((row, i) => S.rowCache.set(i, row));
     const totalEl = $("filter-total");
-    if (totalEl) totalEl.textContent = `${formatCount(S.total)} items`;
+    if (totalEl) totalEl.textContent = window.RMSI18n.t(msg("ui.list.count", {count:formatCount(S.total)}));
     renderListWindow();
     loadMatchCounts(r.data.rows, token);
     if (autoSelect && S.focused == null && !S.selected.size && r.data.rows.length && S.view === "list") {
@@ -5092,7 +5092,7 @@
 
     showContextMenu(menuPoint(event), single ? (row.title || row.file) : `${formatCount(count)}개 선택됨`,
       single ? row.file : null, availableMenuItems([
-        { label: row.favorite ? "즐겨찾기 해제" : "즐겨찾기에 추가", icon: "star",
+        { label: row.favorite ? msg("ui.menu.favoriteRemove") : msg("ui.menu.favoriteAdd"), icon: "star",
           disabled: !single || !star || locked, onSelect: () => toggleFavorite(row, star) },
         { label: "이름 변경", icon: "edit", hint: "F2", hideWhenDisabled: true,
           disabled: locked || !single, onSelect: () => renameSelectedGame(row) },
@@ -6264,7 +6264,7 @@
     const draw = async () => {
       const result = await api.scraperSettings();
       clear(wrap);
-      if (!result.ok) { wrap.appendChild(h("div", { class: "stg-info" }, [result.error])); return; }
+      if (!result.ok) { wrap.appendChild(h("div", { class: "stg-info" }, [window.RMSI18n.formatError(result.error)])); return; }
       const cfg = result.data;
       wrap.appendChild(h("div", { class: "stg-info" }, [
         cfg.devIdSet && cfg.devPasswordSet
@@ -6392,13 +6392,13 @@
         if (userPassword.value) patch.userPassword = userPassword.value;
         try {
           const saved = await api.saveScraperSettings(patch);
-          if (!saved.ok) { connectionResult.textContent = window.RMSI18n.t(msg("ui.scrape.connectionFailed", {error:saved.error})); return; }
+          if (!saved.ok) { connectionResult.textContent = window.RMSI18n.t(msg("ui.scrape.connectionFailed", {error:window.RMSI18n.formatError(saved.error)})); return; }
           const started = await api.startScraperAccountStatus();
-          if (!started.ok) { connectionResult.textContent = window.RMSI18n.t(msg("ui.scrape.connectionFailed", {error:started.error})); return; }
+          if (!started.ok) { connectionResult.textContent = window.RMSI18n.t(msg("ui.scrape.connectionFailed", {error:window.RMSI18n.formatError(started.error)})); return; }
           const host = h("div", { class: "stg-progress" });
           body.appendChild(host);
           const checked = await pollJob(started.data.jobId, "연결 확인", host);
-          connectionResult.textContent = checked.ok ? window.RMSI18n.t(msg("ui.scrape.connectionSuccess", {quota:scrapeQuotaText(checked.data)})) : window.RMSI18n.t(msg("ui.scrape.connectionFailed", {error:checked.error}));
+          connectionResult.textContent = checked.ok ? window.RMSI18n.t(msg("ui.scrape.connectionSuccess", {quota:scrapeQuotaText(checked.data)})) : window.RMSI18n.t(msg("ui.scrape.connectionFailed", {error:window.RMSI18n.formatError(checked.error)}));
         } finally { button.disabled = false; }
       } }, ["연결 테스트"]),
       h("button", { class: "btn", onClick: closeModal }, ["취소"]),
@@ -6826,10 +6826,10 @@
         } }, ["확정·별칭 해제"]),
       ]));
       if (item.applyError) body.appendChild(h("div", { class: "modal-text error", role: "alert" },
-          [msg("ui.scrape.applyFailed", {error:item.applyError})]));
+          [msg("ui.scrape.applyFailed", {error:window.RMSI18n.formatError(item.applyError)})]));
       const candidates = h("div", { class: "scrape-candidates" });
       if (searching) candidates.appendChild(h("div", { class: "panel-empty-state" }, ["검색 중…"]));
-      else if (item.error) candidates.appendChild(h("div", { class: "modal-text error" }, [item.error]));
+      else if (item.error) candidates.appendChild(h("div", { class: "modal-text error" }, [window.RMSI18n.formatError(item.error)]));
       else if (!(item.candidates || []).length && item.status !== "pending")
         candidates.appendChild(h("div", { class: "panel-empty-state" },
           ["후보가 없습니다. 검색 키나 시스템을 바꾸고 다시 스크랩하세요."]));
@@ -7965,7 +7965,7 @@
       // 그 사이 다른 게임이나 탭으로 넘어갔으면 그리지 않는다.
       if (S.detailState !== state || launchTargetId() !== collectionId) return;
       clear(content);
-      if (!info.ok) { content.appendChild(h("div", { class: "rom-core-note" }, [info.error])); return; }
+      if (!info.ok) { content.appendChild(h("div", { class: "rom-core-note" }, [window.RMSI18n.formatError(info.error)])); return; }
       const d = info.data;
       if (!d.cores.length) {
         content.appendChild(h("div", { class: "rom-core-note" }, ["Core 폴더가 없거나 비어 있습니다."]));
@@ -8135,7 +8135,7 @@
       ? await api.archiveCopySelection([...S.selected])
       : await api.copySelection(S.activeId, [...S.selected]);
     if (!r.ok) { showToast(r.error, "error"); return; }
-    showToast(`${formatCount(r.data.count)}개 복사했습니다. 대상 System/Collection에서 Ctrl+V로 붙여넣으세요.`);
+    showToast(msg("ui.copy.completed", {count:formatCount(r.data.count)}));
   }
 
   /** `targetRow`를 주면 클립보드 항목(정확히 하나여야 한다)을 **그 행에 지목해서** 붙인다 -
@@ -8328,17 +8328,17 @@
     const rows = result.data.items || [];
     const labels = {committed: "완료", undone: "실행 취소", recovered: "복구됨", recovery_failed: "복구 실패", closed: "닫힘 · 백업 유지", running: "복구 필요", restoring: "복구 필요", redoing: "복구 필요"};
     const actions = {paste: "붙여넣기", add: "붙여넣기", delete: "삭제", rename: "이름 변경", move: "이동", metadata_edit: "메타데이터 편집", "file-operation": "파일 작업", archive_edit: "메타데이터 편집", archive_rename: "이름 변경", archive_rom_delete: "ROM 삭제", archive_delete: "기록 삭제"};
-    const body = h("div", {class: "modal-body"});
-    if (result.data.recoveryError) body.appendChild(h("div", {class: "field-help"}, [result.data.recoveryError]));
-    body.appendChild(h("div", {class: "field-help"}, [`${rows.length}개 · 백업 약 ${formatBytes(rows.reduce((sum, row) => sum + row.bytes, 0))}`]));
+    const body = h("div", {class: "modal-body operation-history-body"});
+    if (result.data.recoveryError) body.appendChild(h("div", {class: "field-help"}, [window.RMSI18n.formatError(result.data.recoveryError)]));
+    body.appendChild(h("div", {class: "field-help"}, [msg("ui.history.summary", {count:rows.length,size:formatBytes(rows.reduce((sum,row)=>sum+row.bytes,0))})]));
     for (const row of rows) {
       const recover = async (action) => {
         const response = await api.recoveryAction(id, row.id, action);
         if (!response.ok) { showToast(response.error, "error"); return; }
         if (action !== "open") { closeModal(); await refreshPlan(); await reloadList(); await openOperationHistory(); }
       };
-      body.appendChild(h("div", {class: "field-row"}, [
-        h("span", {class: "field-help"}, [`${new Date(row.createdAt * 1000).toLocaleString()} · ${actions[row.action] || "Archive 편집"} · ${labels[row.status] || row.status} · ${formatBytes(row.bytes)}`]),
+      body.appendChild(h("div", {class: "field-row operation-history-row"}, [
+        h("span", {class: "field-help"}, [msg("ui.history.row", {date:new Date(row.createdAt*1000).toLocaleString(),action:window.RMSI18n.t(actions[row.action] || "Archive 편집"),status:window.RMSI18n.t(labels[row.status] || row.status),size:formatBytes(row.bytes)})]),
         h("button", {class: "btn", disabled: !row.canDiscard, onClick: () => {
           showConfirm("백업 삭제", row.status === "closed" ? "남겨 둔 복구 백업을 영구 삭제합니다." : "이 작업의 실행 취소·다시 실행이 불가능해집니다.", true, async () => {
             const removed = await api.discardOperationHistory(id, [row.id], true);
@@ -8357,12 +8357,14 @@
             "현재 파일을 유지하고 자동 복구를 종료합니다. 백업은 남습니다.", false, () => recover("close"))}, ["기록 닫기(백업 유지)"]),
         ] : []),
       ]));
-      if (row.recoveryError) body.appendChild(h("div", {class: "field-help"}, [row.recoveryError]));
+      if (row.recoveryError) body.appendChild(h("div", {class: "field-help"}, [window.RMSI18n.formatError(row.recoveryError)]));
     }
     showModal("작업 기록", body, [h("button", {class: "btn", onClick: closeModal}, ["닫기"])]);
   }
 
   function openPasteConflictDialog(preview) {
+    const toast = $("toast");
+    if (toast?.classList.contains("info")) toast.classList.remove("show");
     const collisions = preview.collisions || [];
     const decisions = {};
     let position = 0;
@@ -8379,11 +8381,10 @@
       const item = collisions[position];
       if (!item) return;
       body.appendChild(h("div", { class: "modal-hint" }, [
-        `${preview.source || "원본"}에서 ${preview.target === "archive" ? "Archive" : "현재 Collection"}로 ${formatCount(preview.count)}개 복사 예정`
-        + ` (${formatCount(collisions.length)}건 충돌) · ${position + 1}/${collisions.length}`,
+        msg("ui.paste.summary", {source:window.RMSI18n.t(preview.source || "원본"),target:preview.target === "archive" ? "Archive" : window.RMSI18n.t("현재 Collection"),count:formatCount(preview.count),conflicts:formatCount(collisions.length),index:position+1,total:collisions.length}),
       ]));
       body.appendChild(h("div", { class: "paste-conflict-filename" },
-        [`대상 게임 ${item.filename}이(가) 이미 있습니다.`]));
+        [msg("ui.paste.exists", {filename:item.filename})]));
       const makeSide = (label, title, desc, fields, incoming) => {
         const cover = h("img", { alt: "커버", class: "paste-conflict-thumb" });
         const screen = h("img", { alt: "스크린샷", class: "paste-conflict-thumb" });
@@ -8410,9 +8411,9 @@
           toggle.setAttribute("aria-expanded", String(open));
         });
         const row = h("div", { class: "paste-conflict-side" + (!incoming ? " selected" : ""),
-          title: desc || title, tabindex: "0", role: "radio", "aria-checked": String(!incoming) }, [
+          title: window.RMSI18n.raw(desc || title), tabindex: "0", role: "radio", "aria-checked": String(!incoming) }, [
           h("span", { class: "paste-conflict-side-label" }, [label]),
-          h("span", { class: "paste-conflict-side-title truncate" }, [title]),
+          h("span", { class: "paste-conflict-side-title truncate" }, [window.RMSI18n.raw(title)]),
           cover, screen, toggle, expanded,
         ]);
         const selectSide = () => {

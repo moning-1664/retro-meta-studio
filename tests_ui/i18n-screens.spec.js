@@ -193,3 +193,172 @@ test('F1 opens help, Escape closes it, and F1 preserves an existing dialog', asy
   await page.keyboard.press('F1');
   await expect(page.locator('.stg-nav-item')).toHaveCount(9);
 });
+
+test('English favorite menu covers add and remove states', async ({page}) => {
+  const row=page.locator('.lrow').first();
+  await row.click({button:'right'});
+  await expect(page.getByRole('menuitem',{name:/Add to favorites|Remove from favorites/})).toBeVisible();
+  await expect.poll(() => untranslated(page)).toEqual([]);
+  await page.getByRole('menuitem',{name:/Add to favorites|Remove from favorites/}).click();
+  await row.click({button:'right'});
+  await expect.poll(() => untranslated(page)).toEqual([]);
+});
+
+test('English paste conflict includes expanded comparison', async ({page}) => {
+  await page.evaluate(() => {window.__RMS_MOCK_IMMEDIATE_PASTE=true;});
+  await page.locator('.lrow').first().click();
+  await page.keyboard.press('Control+c');
+  await page.keyboard.press('Control+v');
+  await expect(page.locator('.paste-conflict-card')).toBeVisible();
+  await expect.poll(() => untranslated(page)).toEqual([]);
+  await page.locator('.paste-conflict-expand').first().click();
+  await expect.poll(() => untranslated(page)).toEqual([]);
+});
+
+test('English failed recovery includes close confirmation', async ({page}) => {
+  await page.evaluate(() => {
+    window.api.operationHistory=async()=>({ok:true,data:{items:[{id:'failed',status:'recovery_failed',action:'paste',createdAt:1,bytes:2048,canDiscard:false,canForceRecovery:true,recoveryError:'External file changed'}]}});
+  });
+  await page.locator('.settings-btn').click();
+  await page.locator('.stg-nav-item[data-section="advanced"]').click();
+  await page.getByRole('button',{name:'Open recovery records',exact:true}).click();
+  await expect.poll(() => untranslated(page)).toEqual([]);
+  await page.getByRole('button',{name:'Close record (keep backup)',exact:true}).click();
+  await expect.poll(() => untranslated(page)).toEqual([]);
+});
+
+test('English connection failure remains visible and retryable', async ({page}) => {
+  await page.evaluate(() => {window.api.startScraperAccountStatus=async()=>({ok:false,error:'HTTP 401'});});
+  await page.locator('.settings-btn').click();
+  await page.locator('.stg-nav-item[data-section="scraper"]').click();
+  await page.getByRole('button',{name:'Connection settings…',exact:true}).click();
+  const button=page.getByRole('button',{name:'Test connection',exact:true});
+  await button.click();
+  await expect(page.locator('.scrape-connection-result')).toContainText('HTTP 401');
+  await expect(button).toBeEnabled();
+  await expect.poll(() => untranslated(page)).toEqual([]);
+});
+
+test('Korean item count uses Korean UI text', async ({page}) => {
+  await page.evaluate(() => window.RMSI18n.setLanguage('ko'));
+  await expect(page.locator('#filter-total')).toContainText('개 항목');
+  await expect(page.locator('#filter-total')).not.toContainText('items');
+});
+
+test('English backend connection error translates the reason and allows retry', async ({page}) => {
+  await page.evaluate(() => {window.api.startScraperAccountStatus=async()=>({ok:false,error:'ScreenScraper 인증에 실패했습니다.'});});
+  await page.locator('.settings-btn').click();
+  await page.locator('.stg-nav-item[data-section="scraper"]').click();
+  await page.getByRole('button',{name:'Connection settings…',exact:true}).click();
+  await page.getByRole('button',{name:'Test connection',exact:true}).click();
+  await expect(page.locator('.scrape-connection-result')).toContainText('ScreenScraper authentication failed.');
+  await expect.poll(() => untranslated(page)).toEqual([]);
+});
+
+test('backend error translation preserves codes and unknown diagnostic text', async ({page}) => {
+  expect(await page.evaluate(() => {
+    const f=window.RMSI18n.formatError;
+    return [f('ScreenScraper 응답 오류 (400)'),f('ScreenScraper 연결 실패 (ReadTimeout)'),f('ScreenScraper 서비스를 사용할 수 없습니다 (503).'),f('Collection을 찾을 수 없습니다.'),f('D:\\게임\\test.zip: unknown diagnostic')];
+  })).toEqual(['ScreenScraper response error (400)','ScreenScraper connection failed (ReadTimeout)','ScreenScraper service unavailable (503).','Collection not found.','D:\\게임\\test.zip: unknown diagnostic']);
+  await page.evaluate(() => window.RMSI18n.setLanguage('ko'));
+  expect(await page.evaluate(() => window.RMSI18n.formatError('ScreenScraper 응답 오류 (400)'))).toBe('ScreenScraper 응답 오류 (400)');
+});
+
+for (const language of ['ja','es','fr']) {
+  test(`partial language audit: ${language} settings and stable IDs`, async ({page}, testInfo) => {
+    await page.evaluate(lang => window.RMSI18n.setLanguage(lang),language);
+    await page.locator('.settings-btn').click();
+    const report={language,settings:{},stableIds:null};
+    for (const section of ['general','collections','metadata','scraper','transfer','archive','emulator','appearance','advanced']) {
+      await page.locator(`.stg-nav-item[data-section="${section}"]`).click();
+      report.settings[section]=await untranslated(page);
+      expect(report.settings[section], `${language}: ${section}`).toEqual([]);
+
+    }
+    report.stableIds=await page.evaluate(lang => {
+      const entries=Object.entries(window.RMSI18n.getMessages());
+      return {total:entries.length,translated:entries.filter(([,forms])=>forms[lang]).length,englishFallback:entries.filter(([,forms])=>!forms[lang]).map(([id])=>id)};
+    },language);
+    expect(report.stableIds.translated).toBe(report.stableIds.total);
+    expect(report.stableIds.englishFallback).toEqual([]);
+    // This audit measures remaining gaps; it does not claim full translation.
+    await testInfo.attach('partial-language-audit',{body:JSON.stringify(report,null,2),contentType:'application/json'});
+    console.log('Language audit '+language+': '+JSON.stringify({translated:report.stableIds.translated,total:report.stableIds.total,koreanBySettings:Object.fromEntries(Object.entries(report.settings).map(([section,strings])=>[section,strings.length]))}));
+    await page.locator('.stg-nav-item[data-section="general"]').click();
+    await expect(page.locator('[data-key="general.language"] .stg-help')).toHaveText(await page.evaluate(()=>window.RMSI18n.t('ui.settings.languageCoverage')));
+  });
+}
+
+test('ID migration reuses compatible translations but rejects changed parameters', async ({page}) => {
+  expect(await page.evaluate(()=>{
+    const i=window.RMSI18n;
+    i.addTable({'호환 {count}':{ja:'互換 {count}'},'불일치 {count}':{ja:'不一致 {number}'}});
+    i.addMessages({'ui.test.compatible':{ko:'호환 {count}',en:'Compatible {count}'},'ui.test.incompatible':{ko:'불일치 {count}',en:'Mismatch {count}'}});
+    i.setLanguage('ja');
+    return [i.t('ui.test.compatible',{count:3}),i.t('ui.test.incompatible',{count:3})];
+  })).toEqual(['互換 3','Mismatch 3']);
+});
+
+for (const language of ['ja','es','fr']) {
+  test(`translated scraper workflow: ${language}`, async ({page}) => {
+    await page.evaluate(lang=>window.RMSI18n.setLanguage(lang),language);
+    await page.locator('.lrow').first().click({button:'right'});
+    const menuLabel=await page.evaluate(()=>window.RMSI18n.t('ui.menu.scrape'));
+    await page.locator('.ctx-item',{hasText:menuLabel}).click();
+    await expect(page.locator('.scrape-context-card')).toBeVisible();
+    const name=id=>page.evaluate(key=>window.RMSI18n.t(key),id);
+    await expect.poll(()=>untranslated(page)).toEqual([]);
+    await page.getByRole('button',{name:await name('ui.scrape.start'),exact:true}).click();
+    await expect(page.locator('.scrape-candidate').first()).toBeVisible();
+    await expect.poll(()=>untranslated(page)).toEqual([]);
+    await page.locator('.scrape-expand').first().click();
+    await expect.poll(()=>untranslated(page)).toEqual([]);
+    expect(await page.locator('.scrape-actions button').evaluateAll(nodes=>nodes.every(el=>el.scrollWidth<=el.clientWidth))).toBe(true);
+    await page.keyboard.press('Escape');
+    await page.locator('.settings-btn').click();
+    await page.locator('.stg-nav-item[data-section="scraper"]').click();
+    await page.getByRole('button',{name:await name('ui.scraper.connect'),exact:true}).click();
+    await expect(page.locator('.scrape-setup-card')).toBeVisible();
+    await expect.poll(()=>untranslated(page)).toEqual([]);
+    await page.evaluate(()=>{window.api.startScraperAccountStatus=async()=>({ok:false,error:'ScreenScraper 인증에 실패했습니다.'});});
+    await page.getByRole('button',{name:await name('ui.scraper.test'),exact:true}).click();
+    await expect(page.locator('.scrape-connection-result')).toContainText(await name('ui.error.auth'));
+    await expect.poll(()=>untranslated(page)).toEqual([]);
+  });
+}
+
+for (const language of ['ja','es','fr']) {
+  test(`translated menus, conflicts, recovery and help: ${language}`, async ({page}) => {
+    await page.evaluate(lang=>window.RMSI18n.setLanguage(lang),language);
+    await page.locator('.lrow').first().click({button:'right'});
+    await expect.poll(()=>untranslated(page)).toEqual([]);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('F1');
+    await expect(page.locator('.shortcut-help-body')).toBeVisible();
+    await expect.poll(()=>untranslated(page)).toEqual([]);
+    await page.keyboard.press('Escape');
+    await page.evaluate(()=>{window.__RMS_MOCK_IMMEDIATE_PASTE=true;});
+    await page.locator('.lrow').first().click();
+    await page.keyboard.press('Control+c');
+    await page.keyboard.press('Control+v');
+    await expect(page.locator('.paste-conflict-card')).toBeVisible();
+    await expect.poll(()=>untranslated(page)).toEqual([]);
+    await page.locator('.paste-conflict-expand').first().click();
+    await expect.poll(()=>untranslated(page)).toEqual([]);
+    await page.keyboard.press('Escape');
+    await page.evaluate(()=>{window.api.operationHistory=async()=>({ok:true,data:{items:[{id:'failed',status:'recovery_failed',action:'paste',createdAt:1,bytes:2048,canDiscard:false,canForceRecovery:true,recoveryError:'External file changed'}]}});});
+    await page.locator('.settings-btn').click();
+    await page.locator('.stg-nav-item[data-section="advanced"]').click();
+    const label=id=>page.evaluate(key=>window.RMSI18n.t(key),id);
+    await page.getByRole('button',{name:await label('ui.backup.open'),exact:true}).click();
+    await expect.poll(()=>untranslated(page)).toEqual([]);
+    await page.getByRole('button',{name:await label('ui.history.force'),exact:true}).click();
+    await expect.poll(()=>untranslated(page)).toEqual([]);
+    await page.keyboard.press('Escape');
+    await page.locator('.settings-btn').click();
+    await page.locator('.stg-nav-item[data-section="advanced"]').click();
+    await page.getByRole('button',{name:await label('ui.backup.open'),exact:true}).click();
+    await page.getByRole('button',{name:await label('ui.history.close'),exact:true}).click();
+    await expect.poll(()=>untranslated(page)).toEqual([]);
+  });
+}

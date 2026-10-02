@@ -29,7 +29,7 @@ test.describe("Navigation ↔ Overview 헤더", () => {
     await page.locator(".nav-system", { hasText: "PS2" }).click();
     await expect(page.locator(".cheader-name")).toHaveText("PlayStation 2 · Master Library");
     // 숫자 앞에 작은 아이콘이 붙고, Metadata 개수도 함께 보여준다.
-    await expect(page.locator(".cheader-stats")).toContainText("2 ROMs");
+    await expect(page.locator(".cheader-stats")).toContainText("2 ROM");
     await expect(page.locator(".cheader-stats")).toContainText("1 메타데이터");
   });
 
@@ -38,7 +38,7 @@ test.describe("Navigation ↔ Overview 헤더", () => {
     await expect(page.locator(".cheader-name")).toHaveText("PlayStation 2 · Master Library");
     await page.locator(".nav-all").click();
     await expect(page.locator(".cheader-name")).toHaveText("Master Library");
-    await expect(page.locator(".cheader-stats")).toContainText("3 ROMs");
+    await expect(page.locator(".cheader-stats")).toContainText("3 ROM");
   });
 });
 

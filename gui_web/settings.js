@@ -217,7 +217,7 @@
             (window.RMSI18n ? window.RMSI18n.LANGS.map((code) => [code, window.RMSI18n.LABELS[code]])
               : [["ko", "한국어"], ["en", "English"], ["ja", "日本語"], ["es", "Español"], ["fr", "Français"]])
               .map(([code, label]) => [code, document.createTextNode(label)]),
-            (v) => ctx.update("general", { language: v })), null));
+            (v) => ctx.update("general", { language: v })), window.RMSI18n.message("ui.settings.languageCoverage")));
       } else if (key === "collections") {
         add(...section("컬렉션", "Collection 자체의 경로가 아니라 열기/복원 동작을 설정합니다."));
         const coll = { restoreTabs: true, rememberSystem: true, ...(s.collections || {}) };

@@ -1,4 +1,4 @@
-"""Required ko/en catalog and rendered-screen checks. No packaging side effects."""
+"""Required five-language catalog and rendered-screen checks. No packaging side effects."""
 import argparse
 import functools
 import http.server
@@ -12,16 +12,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def validate_catalog(root=ROOT):
+def validate_catalog(root=ROOT, required_languages=('ko', 'en')):
     source = (root / 'gui_web/i18n-messages.js').read_text(encoding='utf-8')
     start = source.index('{', source.index('addMessages('))
     messages, _ = json.JSONDecoder().raw_decode(source[start:])
     errors = []
     for key, forms in messages.items():
-        if not key.startswith('ui.') or not forms.get('ko') or not forms.get('en'):
-            errors.append(f'{key}: missing required ko/en translation')
-        if set(re.findall(r'\{(\w+)\}', forms.get('ko',''))) != set(re.findall(r'\{(\w+)\}', forms.get('en',''))):
-            errors.append(f'{key}: parameter names differ')
+        if not key.startswith('ui.') or any(not forms.get(language) for language in required_languages):
+            errors.append(f'{key}: missing required {"/".join(required_languages)} translation')
+        parameters = set(re.findall(r'\{(\w+)\}', forms.get('ko','')))
+        for language in ('en', 'ja', 'es', 'fr'):
+            if language in forms and parameters != set(re.findall(r'\{(\w+)\}', forms[language])):
+                errors.append(f'{key}: parameter names differ ({language})')
     for file in (root / 'gui_web').glob('*.js'):
         if file.name == 'i18n-messages.js':
             continue
@@ -37,7 +39,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--catalog-only', action='store_true')
     args = parser.parse_args()
-    print(f'Validated {validate_catalog()} ko/en message IDs.')
+    print(f'Validated {validate_catalog(required_languages=("ko","en","ja","es","fr"))} message IDs in five languages.')
     if args.catalog_only:
         return 0
     node = shutil.which('node')
