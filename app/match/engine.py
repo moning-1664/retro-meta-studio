@@ -42,7 +42,7 @@ from difflib import SequenceMatcher
 
 from similar_rom import DEFAULT_WEIGHTS, compute_pair_score
 from utils import normalize_title
-from app.model.constants import metadata_compatible
+from app.model.constants import metadata_compatible, same_system, system_aliases
 
 TIER_EXACT = "exact"
 TIER_NORMALIZED = "normalized"
@@ -170,7 +170,7 @@ def classify(a: dict, b: dict) -> tuple[str | None, float, list[str]]:
     내려간다. 그 조합을 Exact의 2차 증거로 인정하는 것은 ARCHITECTURE의 해시 정책("전량
     사전 해싱 금지, (size, 정규화 파일명)이 1차 판정")을 따른 의도된 결정이다.
     """
-    if a["system"] != b["system"]:
+    if not same_system(a["system"], b["system"]):
         return None, 0.0, []
 
     a_sha, b_sha = a.get("sha256"), b.get("sha256")
@@ -292,14 +292,19 @@ def quick_candidates(archive, source: dict, *, exclude_collection=None,
                      limit=DEFAULT_LIMIT) -> list[dict]:
     """Exact/Normalized만 본다. 화면에 보이는 행마다 불러도 될 만큼 가벼워야 한다."""
     found = []
-    for identity in archive.identities_matching(
-            source["system"], filename_norm=source["filename_norm"],
-            title_norm=source["title_norm"], sha256=source.get("sha256"),
-            exclude_collection=exclude_collection):
-        tier, score, evidence = classify(source, subject_of_identity(identity))
-        if tier:
-            found.append({**_identity_view(identity), "tier": tier,
-                          "score": score, "evidence": evidence})
+    systems = [source["system"]] + [name for name in system_aliases(source["system"])
+                                   if name != source["system"]]
+    for system in systems:
+        if system != source["system"] and any(item["system"] == source["system"] for item in found):
+            break
+        for identity in archive.identities_matching(
+                system, filename_norm=source["filename_norm"],
+                title_norm=source["title_norm"], sha256=source.get("sha256"),
+                exclude_collection=exclude_collection):
+            tier, score, evidence = classify(source, subject_of_identity(identity))
+            if tier:
+                found.append({**_identity_view(identity), "tier": tier,
+                              "score": score, "evidence": evidence})
     return _rank(found, limit)
 
 
@@ -311,10 +316,14 @@ def deep_candidates(archive, source: dict, *, exclude_collection=None,
     점수에 반영한다. 안 주면 Identity에 들어 있는 정보만으로 계산한다.
     """
     found = []
-    systems = [source["system"]] + [row["system"] for row in archive.systems()
-        if row["system"] != source["system"] and metadata_compatible(source["system"], row["system"])]
+    available = [row["system"] for row in archive.systems() if row["system"] != source["system"]]
+    aliases = [system for system in available if same_system(source["system"], system)]
+    systems = [source["system"]] + aliases + [system for system in available
+        if system not in aliases and metadata_compatible(source["system"], system)]
     for system in systems:
         if system != source["system"] and any(candidate["system"] == source["system"] for candidate in found):
+            break
+        if not same_system(system, source["system"]) and found:
             break
         for identity in archive.identities_in_system(system, exclude_collection=exclude_collection):
             fields = (fields_of(identity["rom_identity_id"]) if fields_of else {}) or {}

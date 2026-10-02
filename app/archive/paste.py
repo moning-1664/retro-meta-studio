@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from app.archive import projection
-from app.model.constants import normalize_system, metadata_compatible
+from app.model.constants import normalize_system, metadata_compatible, same_system, system_aliases
 from app.plan import transfer
 from app.plan.rom_preview import comparison as rom_comparison
 
@@ -80,11 +80,23 @@ def prepare(store, config, source_items, mode, *, target_id=None, target_system=
                 item["rom"] = None
             identity = target
         else:
+            requested_system = target_system or item.get("system") or ""
             item["system"] = normalize_system(
-                config["frontend"], target_system or item.get("system") or "")
-            identity = store.find_rom_identity(item["system"], item.get("filename") or "")
+                config["frontend"], requested_system)
+            filename = item.get("filename") or ""
+            identity = store.find_rom_identity(requested_system, filename)
+            if identity is None:
+                aliases = [store.find_rom_identity(alias, filename)
+                           for alias in system_aliases(requested_system) if alias != requested_system]
+                aliases = [entry for entry in aliases if entry is not None]
+                if len(aliases) > 1:
+                    skipped.append({"filename": filename, "reason": "같은 기기의 게임이 여러 System에 있습니다. 대상 게임을 선택하세요."})
+                    continue
+                identity = aliases[0] if aliases else None
+            if identity is not None:
+                item["system"] = identity["system"]
         source_system = normalize_system(config["frontend"], source.get("system") or "")
-        if source_system != item["system"]:
+        if not same_system(source_system, item["system"]):
             if not metadata_compatible(source_system, item["system"]) or identity is None:
                 skipped.append({"filename": item.get("filename"), "reason": "같은 메타데이터 계열의 기존 게임에만 붙여넣을 수 있습니다."})
                 continue

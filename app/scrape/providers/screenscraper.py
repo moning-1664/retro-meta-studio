@@ -20,6 +20,7 @@ except ImportError:  # 앱의 나머지 기능은 선택 의존성 누락과 무
 _REQUEST_ERROR = requests.RequestException if requests is not None else OSError
 
 from app.scrape.models import ScrapeCandidate, ScrapeIdentity, ScrapeMedia
+from app.model.constants import SYSTEM_ALIAS_GROUPS, canonical_system
 from app.scrape.providers.base import ScrapeProvider
 
 
@@ -164,6 +165,14 @@ SYSTEM_IDS = {
     "snes": 4, "supergrafx": 105,
 }
 
+# Reuse hardware aliases, not metadata-sharing families: MSX2 and MSX, for
+# example, must retain their separate provider IDs.
+for _aliases in SYSTEM_ALIAS_GROUPS:
+    _known_id = next((SYSTEM_IDS[name] for name in _aliases if name in SYSTEM_IDS), None)
+    if _known_id is not None:
+        for _alias in _aliases:
+            SYSTEM_IDS.setdefault(_alias, _known_id)
+
 
 def _system_id(hint: str) -> str | None:
     value = str(hint or "").strip().casefold()
@@ -171,7 +180,7 @@ def _system_id(hint: str) -> str | None:
         return None
     if value.isdigit() and int(value) > 0:
         return str(int(value))
-    system_id = SYSTEM_IDS.get(value)
+    system_id = SYSTEM_IDS.get(canonical_system(value))
     if system_id is None:
         raise ScreenScraperError(
             f"ScreenScraper 시스템 ID를 알 수 없습니다: {hint}. 숫자 System ID를 입력하세요.",

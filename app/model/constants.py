@@ -30,7 +30,40 @@ FRONTEND_LABELS = {
     "launchbox": "LaunchBox",
 }
 
-# 같은 플랫폼을 가리키는 ES-DE 폴더명들. 매칭용 정규화에만 쓴다.
+# Same hardware aliases, including ES-DE's regional folder names. The first
+# name is the matching key; actual folder names are never rewritten. Do not
+# infer aliases from ES-DE <platform>: that field also groups unrelated boards.
+SYSTEM_ALIAS_GROUPS = (
+    ("msx", "msx1"),
+    ("nes", "famicom", "fc"),
+    ("sfc", "snes", "snesna", "superfamicom"),
+    ("megadrive", "megadrivejp", "genesis", "md"),
+    ("segacd", "megacd", "megacdjp"),
+    ("sega32x", "sega32xjp", "sega32xna", "32x"),
+    ("mastersystem", "mark3", "sms"),
+    ("pcengine", "tg16", "turbografx16", "pce"),
+    ("pcenginecd", "tg-cd", "turbografxcd", "pcecd"),
+    ("saturn", "saturnjp"),
+    ("neogeocd", "neogeocdjp"),
+    ("sg-1000", "sg1000", "multivision"),
+    ("odyssey2", "videopac"),
+    ("psx", "ps1", "playstation"),
+    ("psvita", "vita"),
+    ("n3ds", "3ds"),
+    ("gc", "gamecube"),
+    ("pc88", "pc8801"),
+    ("pc98", "pc9801"),
+)
+
+
+def _system_token(system):
+    return str(system or "").strip().casefold().replace("-", "").replace("_", "").replace(" ", "")
+
+
+_SYSTEM_ALIAS_KEYS = {_system_token(name): group[0]
+                      for group in SYSTEM_ALIAS_GROUPS for name in group}
+# Legacy Archive identity normalization. Keep these keys stable: changing this
+# table can redirect projection paths or detach ROM sources in existing DBs.
 ESDE_SYSTEM_ALIASES = {
     "msx1": "msx", "msx": "msx",
     "famicom": "nes", "nes": "nes",
@@ -39,6 +72,22 @@ ESDE_SYSTEM_ALIASES = {
     "pcengine": "pcengine", "turbografx16": "pcengine",
     "pcenginecd": "pcenginecd", "turbografxcd": "pcenginecd",
 }
+
+
+def canonical_system(system):
+    """Matching key shared by all frontends; unknown systems stay distinct."""
+    raw = str(system or "").strip().casefold()
+    return _SYSTEM_ALIAS_KEYS.get(_system_token(raw), raw)
+
+
+def same_system(left, right):
+    """Same hardware, rather than a broader metadata-sharing family."""
+    return bool(canonical_system(left)) and canonical_system(left) == canonical_system(right)
+
+
+def system_aliases(system):
+    key = canonical_system(system)
+    return next((group for group in SYSTEM_ALIAS_GROUPS if group[0] == key), (key,))
 
 # ES-DE가 만들지만 게임 시스템이 아닌 폴더
 ESDE_IGNORED_SYSTEMS = {"cleanup"}
@@ -52,12 +101,13 @@ METADATA_SYSTEM_GROUPS = (
 
 
 def metadata_systems(system):
-    key = str(system or "").lower().replace("-", "").replace("_", "").replace(" ", "")
+    key = _system_token(canonical_system(system))
     return next((group for group in METADATA_SYSTEM_GROUPS if key in group), frozenset({key}))
 
 
 def metadata_compatible(left, right):
-    return bool(metadata_systems(left) & metadata_systems(right))
+    return bool(canonical_system(left) and canonical_system(right)
+                and metadata_systems(left) & metadata_systems(right))
 
 
 def normalize_system(frontend, raw_system, overrides=None) -> str:

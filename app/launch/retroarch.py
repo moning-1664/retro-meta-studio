@@ -29,6 +29,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from app.model.constants import SYSTEM_ALIAS_GROUPS, canonical_system, same_system
 
 #: System별 "무난한 기본 Core" 후보(앞에 있을수록 우선). cores 폴더에 실제로 있는 첫 파일을 쓴다.
 #: 본격적인 Core Registry(.info 파싱 등)는 하지 않는다 - 시스템마다 하나씩 고르는 수고만 줄인다.
@@ -95,7 +96,30 @@ _WINDOWED_OVERRIDE = Path(tempfile.gettempdir()) / "retro_meta_studio_retroarch_
 
 
 def is_verified(system) -> bool:
-    return str(system or "").lower() not in UNVERIFIED_SYSTEMS
+    return canonical_system(system) not in UNVERIFIED_SYSTEMS
+
+
+def configured_core(existing, system):
+    """Read legacy alias keys too; an exact saved preference wins."""
+    key = str(system or "").strip().casefold()
+    if existing.get(key):
+        return existing[key]
+    canonical = canonical_system(key)
+    if existing.get(canonical):
+        return existing[canonical]
+    return next((existing[name] for name in sorted(existing)
+                 if existing[name] and same_system(name, key)), None)
+
+
+def core_settings_view(existing):
+    """Expose the shared setting under folder aliases without storing copies."""
+    result = dict(existing)
+    for group in SYSTEM_ALIAS_GROUPS:
+        for name in group:
+            core = configured_core(existing, name)
+            if core:
+                result[name] = core
+    return result
 
 
 @dataclass
@@ -131,9 +155,9 @@ def default_cores_for(systems, available, existing) -> dict[str, str]:
     applied = {}
     for system in systems:
         key = str(system or "").lower()
-        if not key or key in (existing or {}):
+        if not key or configured_core({**(existing or {}), **applied}, key):
             continue
-        for candidate in KNOWN_DEFAULT_CORES.get(key, []):
+        for candidate in KNOWN_DEFAULT_CORES.get(canonical_system(key), []):
             if candidate in available:
                 applied[key] = candidate
                 break

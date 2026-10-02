@@ -95,8 +95,8 @@ class CoreHelpersTests(unittest.TestCase):
         available = retroarch.list_cores(self.dir)
         applied = retroarch.default_cores_for(["snes", "gba", "cps2", "n64", "SFC"], available,
                                               existing={"gba": "gpsp_libretro.dll"})
-        self.assertEqual(applied, {"snes": "snes9x_libretro.dll", "cps2": "fbneo_libretro.dll",
-                                   "sfc": "snes9x_libretro.dll"})
+        self.assertEqual(applied, {"snes": "snes9x_libretro.dll", "cps2": "fbneo_libretro.dll"})
+        self.assertEqual(retroarch.configured_core(applied, "sfc"), "snes9x_libretro.dll")
 
     def test_verified(self):
         self.assertFalse(retroarch.is_verified("PS2"))

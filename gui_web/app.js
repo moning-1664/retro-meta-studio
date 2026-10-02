@@ -3222,7 +3222,7 @@
       }
       const table = h("div", { class: "stg-cores" });
       systems.forEach((system) => {
-        const current = s.systemCores[system] || "";
+        const current = (s.resolvedSystemCores || s.systemCores)[system] || "";
         const select = h("select", { class: "stg-control", disabled: !s.cores.length });
         select.appendChild(h("option", { value: "" }, ["지정 안 함"]));
         if (current && !s.cores.includes(current)) select.appendChild(h("option", { value: current }, [`${coreLabel(current)} (폴더에 없음)`]));
@@ -3231,6 +3231,7 @@
         select.addEventListener("change", async () => {
           const saved = await api.setSystemCore(system, select.value || null);
           if (!saved.ok) { showToast(saved.error, "error"); select.value = current; }
+          else { draw(); }
         });
         const unverified = retroarchUnverified.has(system);
         table.appendChild(h("div", { class: "stg-core-row" + (unverified ? " unverified" : ""), "data-system": system }, [

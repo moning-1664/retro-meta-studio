@@ -39,7 +39,7 @@ from adapters import get_adapter
 from adapters.base import MediaFile
 from app import paths
 from app.model.collection import FRONTENDS, STORAGE_INTERNAL
-from app.model.constants import MEDIA_TYPES, VIDEO_MEDIA_TYPE, normalize_system, metadata_compatible
+from app.model.constants import MEDIA_TYPES, VIDEO_MEDIA_TYPE, normalize_system, metadata_compatible, same_system, canonical_system
 from app import dashboard
 from app.folder_detection import inspect_folder
 from app import collection_import
@@ -2513,6 +2513,17 @@ class Api:
         # System 이름 바꾸기는 **정책을 따지기 전에** 한다 - 이 뒤의 검사(쓰기 가능한 System인가)는
         # 실제로 파일이 놓일 System을 봐야 한다.
         remap = {str(k): str(v).strip() for k, v in (system_map or {}).items() if str(v or "").strip()}
+        if not cut:
+            available_systems = {entry.system for entry in collection.systems}
+            for item in items:
+                source_system = item["system"]
+                if source_system in remap or source_system in available_systems:
+                    continue
+                aliases = sorted(system for system in available_systems if same_system(source_system, system))
+                if len(aliases) == 1:
+                    remap[source_system] = aliases[0]
+                elif len(aliases) > 1 and not fallback_target and not target_map:
+                    return err("같은 기기의 대상 System이 여러 개입니다. 붙여넣을 System을 선택하세요.")
         if (descriptor.get("sourceCollectionId") == collection_id
                 and collection.frontend in self._FIXED_SYSTEM_FRONTENDS):
             for item in items:
@@ -2602,7 +2613,7 @@ class Api:
                 existing, how = index.find(item, exact_only=True)
             source_system = item.get("pasteSourceSystem", item["system"])
             destination_system = existing["system"] if existing is not None else item["system"]
-            if source_system != destination_system:
+            if not same_system(source_system, destination_system):
                 if cut or not metadata_compatible(source_system, destination_system):
                     extra_skipped.append({"filename": item["filename"], "reason": "메타데이터 계열이 다른 System입니다."})
                     continue
@@ -5295,7 +5306,7 @@ class Api:
         if not ids:
             wanted = normalize_system(target.frontend, target_system) if target_system else None
             ids = [row["rom_uid"] for row in source_cache.all_entries()
-                   if wanted is None or normalize_system(source.frontend, row["system"]) == wanted]
+                   if wanted is None or same_system(normalize_system(source.frontend, row["system"]), wanted)]
         result = collection_import.plan_import(
             _operation if _operation is not None else self._plan(target_id), source, source_cache, target, target_cache, provider,
             ids, mode=mode or self._transfer_policy()["pasteMode"],
@@ -5855,17 +5866,25 @@ class Api:
     def _game_core_key(system, filename):
         #: 게임 단위 Core는 System+파일명으로 기억한다. rom_uid는 다시 스캔하면 바뀌고, 같은 ROM을
         #: 다른 Collection에서 열어도 같은 Core로 실행되는 편이 자연스럽다.
-        return f"{str(system or '').lower()}/{filename}"
+        return f"{canonical_system(system)}/{filename}"
+
+    def _game_core(self, emulator, system, filename):
+        cores = emulator["gameCores"]
+        exact = f"{str(system or '').lower()}/{filename}"
+        return (cores.get(exact) or cores.get(self._game_core_key(system, filename))
+                or next((core for key, core in sorted(cores.items())
+                         if key.partition('/')[2] == filename
+                         and same_system(key.partition('/')[0], system)), None))
 
     def _system_core(self, emulator, frontend, system):
         cores = emulator["systemCores"]
-        key = str(system or "").lower()
-        return cores.get(key) or cores.get(str(normalize_system(frontend, key)).lower())
+        return retroarch.configured_core(cores, system)
 
     @guarded
     def retroarch_settings(self):
         emulator = self._emulator()
-        return ok({**emulator, "cores": retroarch.list_cores(emulator["coresDir"]),
+        return ok({**emulator, "resolvedSystemCores": retroarch.core_settings_view(emulator["systemCores"]),
+                   "cores": retroarch.list_cores(emulator["coresDir"]),
                    "unverified": sorted(retroarch.UNVERIFIED_SYSTEMS)})
 
     @guarded
@@ -5884,11 +5903,13 @@ class Api:
         if core:
             if core not in retroarch.list_cores(emulator["coresDir"]):
                 return err(f"Core 폴더에 없는 파일입니다: {core}")
-            emulator["systemCores"][key] = core
-        else:
-            emulator["systemCores"].pop(key, None)
+        for saved_key in list(emulator["systemCores"]):
+            if same_system(saved_key, key):
+                emulator["systemCores"].pop(saved_key)
+        if core:
+            emulator["systemCores"][canonical_system(key)] = core
         self.save_app_settings({"emulator": {"systemCores": emulator["systemCores"]}})
-        return ok(emulator["systemCores"])
+        return ok(retroarch.core_settings_view(emulator["systemCores"]))
 
     @guarded
     def set_game_core(self, system, filename, core):
@@ -5900,9 +5921,12 @@ class Api:
         if core:
             if core not in retroarch.list_cores(emulator["coresDir"]):
                 return err(f"Core 폴더에 없는 파일입니다: {core}")
+        for saved_key in list(emulator["gameCores"]):
+            saved_system, _, saved_filename = saved_key.partition('/')
+            if saved_filename == filename and same_system(saved_system, system):
+                emulator["gameCores"].pop(saved_key)
+        if core:
             emulator["gameCores"][key] = core
-        else:
-            emulator["gameCores"].pop(key, None)
         self.save_app_settings({"emulator": {"gameCores": emulator["gameCores"]}})
         return ok(emulator["gameCores"])
 
@@ -5954,7 +5978,7 @@ class Api:
         target = self._launch_target(collection_id, rom_uid)
         emulator = self._emulator()
         system_core = self._system_core(emulator, target["frontend"], target["system"])
-        game_core = emulator["gameCores"].get(self._game_core_key(target["system"], target["filename"]))
+        game_core = self._game_core(emulator, target["system"], target["filename"])
         return ok({
             "system": target["system"], "file": target["filename"], "present": target["present"],
             "verified": retroarch.is_verified(target["system"]),
@@ -5972,7 +5996,7 @@ class Api:
         if not target["present"]:
             return {"ok": False, "error": "ROM 파일이 없는 항목입니다.", "errorKind": "rom_missing",
                     "system": system}
-        core = (emulator["gameCores"].get(self._game_core_key(system, filename))
+        core = (self._game_core(emulator, system, filename)
                 or self._system_core(emulator, target["frontend"], system))
         result = retroarch.launch(emulator["retroarchPath"], emulator["coresDir"], core, rom_path, system)
         log.info("RETROARCH_LAUNCH system=%s rom=%s core=%s ok=%s %s", system, rom_path, core,

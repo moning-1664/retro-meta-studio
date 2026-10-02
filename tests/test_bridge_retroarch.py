@@ -91,8 +91,9 @@ class BridgeRetroarchTests(unittest.TestCase):
         self.api.set_game_core("snes", "A.sfc", "bsnes_libretro.dll")
         self.api.set_retroarch_paths(str(self.exe), str(self.cores))
         s = self.api.retroarch_settings()["data"]
-        self.assertEqual(s["systemCores"], {"snes": "snes9x_libretro.dll"})
-        self.assertEqual(s["gameCores"], {"snes/A.sfc": "bsnes_libretro.dll"})
+        self.assertEqual(s["systemCores"], {"sfc": "snes9x_libretro.dll"})
+        self.assertEqual(s["resolvedSystemCores"]["snes"], "snes9x_libretro.dll")
+        self.assertEqual(s["gameCores"], {"sfc/A.sfc": "bsnes_libretro.dll"})
 
     def test_apply_default_cores_fills_only_missing(self):
         self.assertFalse(self.api.apply_default_cores(["snes"])["ok"])   # Core 폴더 없음

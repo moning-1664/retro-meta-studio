@@ -29,7 +29,7 @@ from adapters import get_adapter
 from app.archive import conflicts as conflict_service
 from app import title_affix
 from app.match import service as match_service
-from app.model.constants import normalize_system
+from app.model.constants import normalize_system, canonical_system, same_system
 from app.store.archive import ARCHIVE_EDIT_SOURCE
 from adapters.base import GameEntry
 from utils import normalize_title
@@ -246,7 +246,7 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
     index = {(r["system"], r["filename"]): r for r in cache.query_rows()}
     exact_index = {}
     for (system, filename), row in index.items():
-        exact_index.setdefault((normalize_system(collection.frontend, system), filename.casefold()), []).append(row)
+        exact_index.setdefault((canonical_system(normalize_system(collection.frontend, system)), filename.casefold()), []).append(row)
     linked_targets = {}
     for key, linked_id in archive.match_links_of(collection.id).items():
         row = index.get(key)
@@ -271,12 +271,15 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
         # language_base deliberately keeps, yet still be the selected target.
         linked_matches = ([explicit_target] if explicit_target is not None
                           else linked_targets.get(rom_identity_id, []))
-        matches = linked_matches or exact_index.get((normalize_system(collection.frontend, system), filename.casefold()), [])
+        matches = linked_matches or exact_index.get((canonical_system(normalize_system(collection.frontend, system)), filename.casefold()), [])
+        same_folder = [row for row in matches if row["system"] == system]
+        if same_folder and not linked_matches:
+            matches = same_folder
         targets = [cache.get_row(r["rom_uid"]) for r in matches] or [None]
         available = [entry.system for entry in collection.systems]
         target_system = (system if system in available else next(
             (entry for entry in available
-             if normalize_system(collection.frontend, entry) == normalize_system(collection.frontend, system)),
+             if same_system(normalize_system(collection.frontend, entry), normalize_system(collection.frontend, system))),
             system))
         for row in targets:
             target_name = row["filename"] if row is not None else filename
@@ -287,7 +290,7 @@ def to_collection(archive, collection, cache, provider, rom_identity_ids, *,
             # 가져와야 한다. "이미 있는 항목"으로 뭉뚱그리면 그 경우를 영영 못 채운다.
             # 언어 변종에는 ROM을 채우지 않는다 - 다른 언어판 ROM을 그 파일명으로 복사하면 안 된다.
             need_rom = row is None or (target_name.casefold() == filename.casefold() and
-                normalize_system(collection.frontend, destination_system) == normalize_system(collection.frontend, system)
+                same_system(normalize_system(collection.frontend, destination_system), normalize_system(collection.frontend, system))
                 and not row["present"])
             rom = None
             if need_rom:
