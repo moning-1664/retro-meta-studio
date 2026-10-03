@@ -8,7 +8,7 @@ const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
-const HEADERS = ["No.", "파일", "제목", "설명", "상태", "평점", "장르", "지역", "★"];
+const HEADERS = ["No.", "★", "파일", "제목", "설명", "상태", "평점", "장르", "지역"];
 
 test.describe("컬럼 구성", () => {
   test("이전 프로젝트의 아홉 개 컬럼이 그대로 있다", async ({ page }) => {

@@ -5,6 +5,53 @@ const { openApp } = require("./_helpers");
 
 test.beforeEach(async ({ page }) => { await openApp(page); });
 
+test("카드 우클릭은 목록과 같은 메뉴를 연다", async ({ page }) => {
+  await page.locator("#filter-bar .seg-btn[title='카드 보기']").click();
+  await page.locator(".preview-card").first().click({button:"right"});
+  await expect(page.locator(".ctx-menu")).toBeVisible();
+  await expect(page.locator(".ctx-menu")).toContainText("복사");
+});
+
+test("빈 공간에서 드래그하면 사각형 안의 카드를 선택한다", async ({ page }) => {
+  await page.locator("#filter-bar .seg-btn[title='카드 보기']").click();
+  const cards = await page.locator(".preview-card").evaluateAll((items) => items.map(item => {
+    const rect=item.getBoundingClientRect(); return {left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom};
+  }));
+  await page.mouse.move(cards[0].left-3, cards[0].top-3);
+  await page.mouse.down();
+  await page.mouse.move(cards[1].right+2, cards[1].bottom+2, {steps:8});
+  await page.mouse.up();
+  await expect(page.locator(".preview-card.selected")).toHaveCount(2);
+  await expect(page.locator(".card-selection-box")).toHaveCount(0);
+});
+
+test("Ctrl+Shift 클릭은 카드의 직사각형 영역을 고른다", async ({page}) => {
+  await page.evaluate(() => {
+    const original=window.api.listRows;
+    window.api.listRows=async (...args) => {
+      const result=await original(...args);
+      result.data.rows=Array.from({length:12}, (_, index) => ({...result.data.rows[index%3],romUid:100+index}));
+      result.data.total=12;
+      return result;
+    };
+  });
+  await page.locator(".lh-file").click();
+  await page.locator("#filter-bar .seg-btn[title='카드 보기']").click();
+  await expect(page.locator(".preview-card")).toHaveCount(12);
+  const cards=page.locator(".preview-card");
+  const geometry=await cards.evaluateAll(items => items.map(item => {
+    const r=item.getBoundingClientRect();return {key:item.dataset.romUid,left:r.left,right:r.right,top:r.top,bottom:r.bottom};
+  }));
+  const first=geometry[0];
+  const secondRow=geometry.findIndex(r=>r.top>first.top+1);
+  expect(secondRow).toBeGreaterThan(1);
+  const last=geometry[secondRow+1];
+  const expected=geometry.filter(r=>r.left>=first.left-1 && r.right<=last.right+1 && r.top>=first.top-1 && r.bottom<=last.bottom+1).map(r=>r.key);
+  await cards.first().click();
+  await cards.nth(secondRow+1).click({modifiers:['Control','Shift']});
+  expect(await page.locator(".preview-card.selected").evaluateAll(items=>items.map(item=>item.dataset.romUid))).toEqual(expected);
+});
+
 test("기본은 List 보기다", async ({ page }) => {
   await expect(page.locator(".lrow")).toHaveCount(3);
   await expect(page.locator(".preview-card")).toHaveCount(0);

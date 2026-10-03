@@ -783,9 +783,13 @@ class ApplyBoundaryTests(unittest.TestCase):
             return __file__
         api._download_scrape_media = download
         api._apply_scraped_collection_media = lambda *_args: []
-        result = api._apply_scrape_session(session["id"], lambda *_args: None)
+        progress = []
+        result = api._apply_scrape_session(session["id"], lambda *args: progress.append(args))
         self.assertEqual(result["applied"], ["1"])
         self.assertEqual(result["failed"], [])
+        self.assertTrue(any(0 < current < total for current, total, _ in progress), progress)
+        self.assertEqual([current / total for current, total, _ in progress],
+                         sorted(current / total for current, total, _ in progress))
 
     def test_archive_without_internal_media_does_not_treat_remote_as_owned(self):
         api = self.make_api()

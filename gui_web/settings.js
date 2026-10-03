@@ -277,6 +277,8 @@
           (window.RMSI18n.t("ui.legacy.e47c2599fa") + " ")
           + window.RMSI18n.t("ui.legacy.fdec9c6fb9")));
         add(discFormatRow(s));
+        add(...section(window.RMSI18n.t("ui.translation.title"), window.RMSI18n.t("ui.translation.disclosure")));
+        if (ctx.renderTranslation) add(ctx.renderTranslation());
       } else if (key === "scraper") {
         add(...section("스크랩", "ScreenScraper 계정과 요청 사용량을 관리합니다."));
         add(ctx.renderScraper ? ctx.renderScraper()

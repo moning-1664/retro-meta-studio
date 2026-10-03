@@ -194,11 +194,24 @@ test("목표 용량을 바꾸면 그 Collection의 화면 상태로 저장된다
   await expect(page.locator(".dsb-target[data-storage='internal'] .dsb-target-input")).toHaveValue("1 TB");
 });
 
-test("Archive 탭에서는 Dashboard를 열지 않고 이유를 알려준다", async ({ page }) => {
+test("Archive Dashboard는 읽기 전용 통계를 보여준다", async ({ page }) => {
+  await page.evaluate(() => {
+    const original = window.api.dashboardStats;
+    window.api.dashboardStats = async (id) => {
+      window.__dashboardTarget = id;
+      const result = await original(id);
+      result.data.collectionName = "Archive";
+      result.data.recordedOnly = true;
+      result.data.storages = [];
+      return result;
+    };
+  });
   await page.locator(".ctab.archive").click();
   await page.locator(".nav-dashboard").click();
-  await expect(page.locator("#toast")).toContainText("Collection 탭");
-  await expect(page.locator("#dashboard-view")).toBeHidden();
+  await expect(page.locator("#dashboard-view")).toBeVisible();
+  await expect(page.locator(".dsb-title")).toHaveText("Archive");
+  await expect.poll(() => page.evaluate(() => window.__dashboardTarget)).toBe("archive");
+  await expect(page.locator(".dsb-validate-btn")).toHaveCount(0);
 });
 
 // Storage target Slider - 32GB~8TB를 로그 눈금으로 연속해서 움직이다가, 프리셋 근처에 오면 그 값에 딱

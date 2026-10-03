@@ -16,6 +16,39 @@ from __future__ import annotations
 from collections import Counter
 
 
+def archive_stats(store) -> dict:
+    """Read recorded Archive state in batches; never probe each NAS file."""
+    rows = store.list_rows(limit=None)
+    fields = store.resolve_fields_many([row["rom_identity_id"] for row in rows])
+    health = dict.fromkeys(("total", "present", "metadata", "media", "description", "cover",
+                           "complete", "missingRom", "missingMedia", "missingDescription", "missingCover"), 0)
+    systems = {}
+    for row in rows:
+        values = fields.get(str(row["rom_identity_id"]), ({}, {}))[0]
+        media = set(filter(None, (row.get("media_types") or "").split(",")))
+        present = bool(row.get("rom_count"))
+        metadata = any(value is not None and str(value).strip() for value in values.values())
+        description = bool(str(values.get("desc") or "").strip())
+        for key, value in (("total", True), ("present", present), ("metadata", metadata),
+                           ("media", bool(media)), ("description", description), ("cover", "covers" in media),
+                           ("complete", present and metadata and description and bool(media)),
+                           ("missingRom", not present), ("missingMedia", not media),
+                           ("missingDescription", not description), ("missingCover", "covers" not in media)):
+            health[key] += int(value)
+        system = systems.setdefault(row["system"], {"system": row["system"], "storageId": "archive",
+            "mediaStorageId": "archive", "games": 0, "romCount": 0, "romBytes": 0,
+            "mediaCount": 0, "mediaBytes": 0, "missingMetadata": 0, "missingMedia": 0})
+        system["games"] += 1
+        system["romCount"] += int(present)
+        system["mediaCount"] += len(media)
+        system["missingMetadata"] += int(not metadata)
+        system["missingMedia"] += int(not media)
+    # These are recorded assets, not a filesystem size audit.
+    return {"recordedOnly": True, "storages": [], "systems": list(systems.values()), "health": health,
+            "totals": {"games": len(rows), "romCount": health["present"], "romBytes": 0,
+                       "mediaCount": sum(row["mediaCount"] for row in systems.values()), "mediaBytes": 0}}
+
+
 def collection_stats(collection, cache) -> dict:
     stats = {row["system"]: row for row in cache.system_stats()}
     games = cache.count_by_system()

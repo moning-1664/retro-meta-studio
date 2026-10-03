@@ -262,6 +262,11 @@
     get_archive_media_video_url: () => ok(null),
     get_media_image: () => ok(
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="),
+    translation_settings: () => ok({mode:'off',hasKey:false}),
+    save_translation_settings: (mode, key) => ok({mode,hasKey:!!key}),
+    original_description: () => ok(null),
+    remember_description_translation: () => ok(true),
+    start_translate_description: () => Promise.resolve({ok:false,error:'ui.translation.configure'}),
     save_fields: (id, uid, fields) => ok({ title: fields.name || "" }),
     frontends: () => ok([
       { id: "es-de", label: "ES-DE" }, { id: "pegasus", label: "Pegasus" },
@@ -1146,6 +1151,11 @@
     getMediaImage: (id, romUid, label, thumbnail) => call("get_media_image", id, romUid, label, !!thumbnail),
     getMediaVideoUrl: (id, romUid) => call("get_media_video_url", id, romUid),
     getArchiveMediaVideoUrl: (romIdentityId) => call("get_archive_media_video_url", romIdentityId),
+    translationSettings: () => call("translation_settings"),
+    saveTranslationSettings: (mode,key) => call("save_translation_settings",mode,key),
+    startTranslateDescription: (text,language) => call("start_translate_description",text,language),
+    rememberDescriptionTranslation: (gameKey,result) => call("remember_description_translation",gameKey,result),
+    originalDescription: (gameKey,text) => call("original_description",gameKey,text),
     saveFields: (id, romUid, fields) => call("save_fields", id, romUid, fields),
 
     operationState: (id) => call("operation_state", id),

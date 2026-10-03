@@ -42,13 +42,17 @@
 
   function facts(h, values, toggle = null, extra = null) {
     const year = String(values?.releasedate || "").match(/\d{4}/)?.[0];
-    const entries = [["연도", year], ["개발사", values?.developer], ["장르", values?.genre]];
+    const entries = [["연도", year], ["장르", values?.genre], ["개발사", values?.developer],
+      ["배급사", values?.publisher], ["플레이어", values?.players], ["평점", values?.rating]];
     if (extra) entries.push(extra);
-    const row = h("div", { class: "scrape-fact-row" }, entries.filter(([, value]) => value)
+    const filled = entries.filter(([, value]) => value);
+    const split = filled.length > 3 ? Math.ceil(filled.length / 2) : filled.length;
+    const groups = split ? [filled.slice(0, split), filled.slice(split)].filter(group => group.length) : [[]];
+    const rows = groups.map(group => h("div", { class: "scrape-fact-row" }, group
       .map(([label, value]) => h("span", { class: "scrape-fact", title: window.RMSI18n.message("ui.candidate.factTooltip", {label:window.RMSI18n.t(label), value:valueText(value)}) },
-        [document.createTextNode(valueText(value))])));
-    if (toggle) row.appendChild(toggle);
-    return h("div", { class: "scrape-candidate-facts" }, [row]);
+        [document.createTextNode(valueText(value))]))));
+    if (toggle) rows.at(-1).appendChild(toggle);
+    return h("div", { class: "scrape-candidate-facts" }, rows);
   }
   window.RMSCandidateUI = { fields, facts };
 })();

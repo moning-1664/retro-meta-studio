@@ -16,6 +16,8 @@ from app.plan import builder
 from app.plan.applier import apply_plan
 from app.plan.validator import validate
 from app.archive import service as archive_service
+from app.archive import projection as archive_projection
+from app.archive.edit_lock import archive_write
 from app.scrape.providers import ScreenScraperClient, ScreenScraperConfig
 from app.scrape.providers.screenscraper import SYSTEM_IDS, _system_id
 from app.scrape import secrets as scrape_secrets
@@ -24,6 +26,39 @@ log = logging.getLogger("bridge.api")
 
 
 class ScraperBridge:
+    @archive_write
+    def _apply_scraped_archive_media(self, rom_identity_id, downloaded):
+        """One revision, projection and undo journal for a game's media set."""
+        started = time.monotonic()
+        if self.archive.get_identity(rom_identity_id) is None:
+            return err("Archive 항목을 찾을 수 없습니다.")
+        source = archive_service.ARCHIVE_EDIT_SOURCE
+        media_state = self._archive_edit_media_state(rom_identity_id)
+        for _index, media, path in downloaded:
+            stat = Path(path).stat()
+            kind = media["media_type"]
+            self.archive.put_media_ref(rom_identity_id, kind, source, path, stat.st_size)
+            media_state[kind] = {"media_type": kind, "abs_path": path,
+                "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "state": "present"}
+        fields, raw = self.archive.resolve_fields(rom_identity_id)
+        self.archive.put_record(rom_identity_id, source, fields, raw, media=list(media_state.values()))
+        record = self.archive.latest_record(rom_identity_id, source)
+        kinds = {media["media_type"] for _, media, _ in downloaded}
+        projection = self._project_archive({"revisionRecordIds": [record["record_id"]]},
+            [rom_identity_id], overwrite_media={rom_identity_id: kinds})
+        if isinstance(projection, dict) and projection.get("error"):
+            return err(projection["error"])
+        cfg = self._archive_config()
+        if archive_projection.is_configured(cfg) and cfg.get("mediaInternal"):
+            for _, media, path in downloaded:
+                destination = self._archive_media_display_path(rom_identity_id, media["media_type"],
+                    {"abs_path": path, "size": Path(path).stat().st_size}, require_exists=False, cfg=cfg)
+                if not destination or Path(destination).stat().st_size != Path(path).stat().st_size:
+                    return err("Archive 미디어 복사본의 크기가 원본과 다릅니다.")
+        log.info("Scraper Archive media batch item=%s media=%d projectionCalls=1 seconds=%.3f",
+                 rom_identity_id, len(downloaded), time.monotonic() - started)
+        return ok({"mediaTypes": sorted(kinds), "projection": projection})
+
     def _screen_scraper_client(self):
         public = (self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {}).get("scraper") or {}
         protected = self.registry.get_setting(self.SCRAPER_SECRET_KEY, {}) or {}
@@ -358,7 +393,7 @@ class ScraperBridge:
         touched_systems = set()
         selected = [item for item in session["items"] if self.scrape.proposal(item)]
         for index, item in enumerate(selected, start=1):
-            progress(index - 1, max(1, len(selected)), item["filename"])
+            progress((index - 1) * 100, max(1, len(selected)) * 100, item["filename"])
             proposal = self.scrape.proposal(item)
             if not proposal:
                 continue
@@ -424,21 +459,13 @@ class ScraperBridge:
                                    for _media_index, media in selected_media]
                         for number, ((media_index, media), future) in enumerate(
                                 zip(selected_media, futures), start=1):
-                            progress(index - 1, max(1, len(selected)),
+                            progress((index - 1) * 100 + 10 + int(70 * (number - 1) / len(selected_media)), max(1, len(selected)) * 100,
                                      f'{item["filename"]} · 미디어 {number}/{len(selected_media)}')
                             try:
                                 source_path = future.result()
-                                if session["target"] == "archive":
-                                    result = self.archive_media_paste(
-                                        item["id"], media["media_type"],
-                                        {"kind": "scraper", "path": source_path})
-                                    if not result.get("ok"):
-                                        raise ValueError(result.get("error"))
-                                    applied_media.append(media)
-                                    log.info("Scraper archive media applied item=%s type=%s",
-                                             item["id"], media["media_type"])
-                                else:
-                                    downloaded.append((media_index, media, source_path))
+                                progress((index - 1) * 100 + 10 + int(70 * number / len(selected_media)), max(1, len(selected)) * 100,
+                                         f'{item["filename"]} · 미디어 {number}/{len(selected_media)}')
+                                downloaded.append((media_index, media, source_path))
                             except Exception as exc:
                                 failed_media_indexes.append(media_index)
                                 errors.append(f'{media.get("media_type") or "미디어"}: {exc}')
@@ -446,9 +473,14 @@ class ScraperBridge:
                                             item["id"], media.get("media_type"), type(exc).__name__, exc)
                     if downloaded:
                         try:
-                            touched_systems.update(self._apply_scraped_collection_media(
-                                session["collectionId"], target_rom_uid,
-                                [(media["media_type"], path) for _, media, path in downloaded]) or [])
+                            if session["target"] == "archive":
+                                result = self._apply_scraped_archive_media(item["id"], downloaded)
+                                if not result.get("ok"):
+                                    raise ValueError(result.get("error"))
+                            else:
+                                touched_systems.update(self._apply_scraped_collection_media(
+                                    session["collectionId"], target_rom_uid,
+                                    [(media["media_type"], path) for _, media, path in downloaded]) or [])
                             applied_media.extend(media for _, media, _ in downloaded)
                             log.info("Scraper collection media applied item=%s types=%s",
                                      item["id"], [media["media_type"] for _, media, _ in downloaded])
@@ -495,7 +527,7 @@ class ScraperBridge:
             log.info("Scraper apply end item=%s fieldsApplied=%d mediaApplied=%s errors=%d seconds=%.3f",
                      item["id"], len(applied_fields), [m["media_type"] for m in applied_media],
                      len(errors), time.monotonic() - item_started)
-            progress(index, max(1, len(selected)), item["filename"])
+            progress(index * 100, max(1, len(selected)) * 100, item["filename"])
         if touched_systems and session["target"] == "collection":
             systems = sorted(touched_systems)
             self.workspace.scan(session["collectionId"], force=True, systems=systems)

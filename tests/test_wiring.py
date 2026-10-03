@@ -48,7 +48,7 @@ def python_api_methods() -> dict:
     실제 js_api는 창마다 붙는 WindowBridge(bridge/windows.py)이고, 그 외 메서드는 Api로 넘긴다.
     그래서 Api 메서드에 WindowBridge에만 있는 창 메서드(window_info 등)를 더한다."""
     out = {}
-    for path, name in ((API_PY, "Api"), (ROOT / "bridge/scraper.py", "ScraperBridge"), (WINDOWS_PY, "WindowBridge")):
+    for path, name in ((API_PY, "Api"), (ROOT / "bridge/scraper.py", "ScraperBridge"), (ROOT / "bridge/translation.py", "TranslationBridge"), (WINDOWS_PY, "WindowBridge")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         cls = next(n for n in ast.walk(tree)
                    if isinstance(n, ast.ClassDef) and n.name == name)
@@ -76,7 +76,7 @@ class WiringTests(unittest.TestCase):
     def setUp(self):
         self.app_js = strip_js_comments(APP_JS.read_text(encoding="utf-8")
             + "\n" + "\n".join((ROOT / "gui_web" / name).read_text(encoding="utf-8")
-                for name in ['scraper-ui.js', 'transfer-ui.js', 'archive-settings-ui.js', 'collection-setup-ui.js']))
+                for name in ['scraper-ui.js', 'transfer-ui.js', 'translation-ui.js', 'archive-settings-ui.js', 'collection-setup-ui.js']))
         self.client_src = API_CLIENT_JS.read_text(encoding="utf-8")
         self.client = api_client_methods(strip_js_comments(self.client_src))
         self.python = python_api_methods()

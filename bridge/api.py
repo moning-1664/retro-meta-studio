@@ -149,6 +149,7 @@ def _sorted_systems(entries, games, *, with_storage=False, stats=None):
 
 from bridge.responses import ok, err, guarded
 from bridge.scraper import ScraperBridge
+from bridge.translation import TranslationBridge
 
 
 def _reveal_path(path, select=False):
@@ -179,7 +180,7 @@ def _reveal_path(path, select=False):
         subprocess.Popen(["xdg-open", str(Path(path).parent) if select else path])
 
 
-class Api(ScraperBridge):
+class Api(ScraperBridge, TranslationBridge):
     def __init__(self, registry_path=None, cache_dir=None):
         """registry_path/cache_dir는 테스트에서만 넘긴다. 실행 시에는 app/paths.py의
         기본 위치(실행 파일 옆 db/)를 쓴다."""
@@ -637,6 +638,9 @@ class Api(ScraperBridge):
         (`install_dashboard`) - 오류 처리(@guarded)도 테스트도 없이 Cache 내부
         연결을 밖에서 직접 썼다. 계산은 app/dashboard.py로 옮겼다.
         """
+        if collection_id in ("archive", "__archive__"):
+            return ok({"collectionId": "archive", "collectionName": "Archive",
+                       **dashboard.archive_stats(self.archive)})
         collection = self.registry.get_collection(collection_id)
         if collection is None:
             return err("Collection을 찾을 수 없습니다.")
@@ -2071,7 +2075,8 @@ class Api(ScraperBridge):
             row = target_cache.get_row_by_filename(dest_system, dest_filename)
             if row is None:
                 return err(f"지목한 대상을 찾을 수 없습니다: {dest_key}")
-            targets[str(source_key)] = row
+            source_system, _, source_filename = str(source_key).partition("|")
+            targets[f"{remap.get(source_system, source_system)}|{source_filename}"] = row
 
         # **화면에서 고른 행**(`fallback_target`). 단일 붙여넣기에서는 명시적 대상이 우선한다.
         #
@@ -2166,6 +2171,10 @@ class Api(ScraperBridge):
                                                   allow_rom_replace=immediate and undoable,
                                                   force_media=immediate and mode == transfer.MODE_REPLACE)
         extra_skipped.extend(mode_skipped)
+        log.info("Paste prepared collection=%s mode=%s requested=%d prepared=%d skipped=%d "
+                 "systemMap=%s explicitTargets=%d skippedSample=%s",
+                 collection_id, mode, len(items), len(prepared), len(extra_skipped), remap,
+                 len(targets), extra_skipped[:3])
 
         if not prepared:
             return ok({"added": 0, "skipped": extra_skipped, "conflicts": 0,

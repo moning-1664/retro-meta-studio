@@ -12,6 +12,7 @@ ACTIONS = {
     "archive_apply_title_affix", "archive_apply_disc_retag", "archive_cleanup_orphans",
     "archive_rename",
     "_archive_ingest_job",
+    "_apply_scraped_archive_media",
 }
 
 

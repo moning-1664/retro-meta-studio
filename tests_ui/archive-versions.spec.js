@@ -146,6 +146,25 @@ test("Archive에서는 서로 다른 버전이 있는 행에만 뱃지가 붙는
   await expect(page.locator(".lrow", { has: page.locator(".match-badge") })).toContainText("Metal Gear Solid 2");
 });
 
+test("두 Revision을 확장해도 후보만 스크롤하고 닫기는 보인다", async ({page}) => {
+  await openArchive(page);
+  await page.evaluate(() => {
+    const original = window.api.archiveVersions;
+    window.api.archiveVersions = async (...args) => {
+      const result = await original(...args);
+      result.data.versions.forEach(version => Object.assign(version.fields, {
+        developer:"Developer",publisher:"Publisher",genre:"Action",players:"2",rating:"0.8",releasedate:"19990101",region:"Japan"}));
+      return result;
+    };
+  });
+  await page.setViewportSize({width:900,height:640});
+  await page.locator(".match-badge").click();
+  for (const button of await page.locator(".ver-dialog-card .revision-expand").all()) await button.click();
+  const body = page.locator(".revision-dialog-body");
+  await expect.poll(() => body.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
+  await expect(page.locator(".ver-dialog-card > .modal-actions .btn")).toBeInViewport();
+});
+
 test("뱃지를 누르면 판단에 필요한 정보와 함께 버전이 나온다", async ({ page }) => {
   await openArchive(page);
   await page.locator(".match-badge").click();

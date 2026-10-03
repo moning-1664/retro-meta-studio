@@ -24,9 +24,10 @@
   // 가장 넓다. 목록만 훑어도 어떤 게임인지 알 수 있어야 하기 때문이다.
   //
   // `key`가 없는 컬럼(No., ★)은 정렬도 폭 조절도 하지 않는다.
-  // 기본 순서는 사용자 결정: No/File/Title/Description/Status/Rating/Genre/Region.
+  // 기본 순서는 사용자 결정: No/★/File/Title/Description/Status/Rating/Genre/Region.
   const COLUMNS = [
     { id: "no", label: "No.", width: 34, fixed: true },
+    { id: "fav", label: "★", key: "favorite", width: 30, fixed: true },
     { id: "file", label: "File", key: "filename", width: 190 },
     { id: "title", label: "Title", key: "title", width: 220 },
     { id: "desc", label: "Description", key: "desc", width: 390 },
@@ -34,7 +35,6 @@
     { id: "rating", label: "Rating", key: "rating", width: 66 },
     { id: "genre", label: "Genre", key: "genre", width: 120 },
     { id: "region", label: "Region", key: "region", width: 78 },
-    { id: "fav", label: "★", key: "favorite", width: 30, fixed: true },
   ];
   const COL_MIN_WIDTH = 50;
   const DEFAULT_COL_WIDTHS = Object.fromEntries(COLUMNS.map((c) => [c.id, c.width]));
@@ -700,6 +700,7 @@
       renderColumns: columnSettingsEditor,
       renderEmulator: emulatorSettingsEditor,
       renderScraper: scraperSettingsEditor,
+      renderTranslation: () => getTranslationUI().settingsEditor(),
       renderArchive: () => archiveSettingsEditor(async () => {
         await loadArchiveConfigured();
         if (isArchive()) {
@@ -1415,6 +1416,7 @@
         systemCount: (systems.ok ? systems.data : []).length,
         totalGames: rows.ok ? rows.data.total : 0,
         archiveSystems: systems.ok ? systems.data : [],
+        systems: (systems.ok ? systems.data : []).map((entry) => ({ ...entry, count: entry.count ?? entry.games ?? 0 })),
         ownershipSummary: null,
       };
       return;
@@ -3960,6 +3962,41 @@
    * 정렬). 그것은 `S.queryToken`이 말해 준다. 스크롤·선택·hover는 여기 해당하지 않는다.
    */
   function renderCardWindow(scroll, spacer, win) {
+    if (!scroll.dataset.cardSelectionBound) {
+      scroll.dataset.cardSelectionBound = "1";
+      scroll.addEventListener("pointerdown", (event) => {
+        if (S.viewMode !== "card" || event.button !== 0 || event.target.closest(".preview-card,button,input")) return;
+        const token = S.queryToken;
+        const origin = { x: event.clientX, y: event.clientY };
+        const original = new Set(event.ctrlKey || event.metaKey ? S.selected : []);
+        const rowsByKey = new Map([...S.rowCache.values()].filter(Boolean).map((row) => [String(rowKey(row)), row]));
+        const box = h("div", { class: "card-selection-box" });
+        document.body.appendChild(box);
+        const move = (next) => {
+          if (S.queryToken !== token || S.viewMode !== "card") { finish(); return; }
+          const left = Math.min(origin.x, next.clientX), right = Math.max(origin.x, next.clientX);
+          const top = Math.min(origin.y, next.clientY), bottom = Math.max(origin.y, next.clientY);
+          Object.assign(box.style, { left: left + "px", top: top + "px", width: (right-left) + "px", height: (bottom-top) + "px" });
+          S.selected = new Set(original);
+          win.querySelectorAll(".preview-card").forEach((card) => {
+            const bounds = card.getBoundingClientRect();
+            if (bounds.right > left && bounds.left < right && bounds.bottom > top && bounds.top < bottom) {
+              const row = rowsByKey.get(card.dataset.romUid);
+              if (row) S.selected.add(rowKey(row));
+            }
+          });
+          updateSelectionVisual(); renderStatusBar();
+        };
+        const finish = () => {
+          box.remove(); document.removeEventListener("pointermove", move);
+          document.removeEventListener("pointerup", finish); document.removeEventListener("pointercancel", finish);
+        };
+        document.addEventListener("pointermove", move);
+        document.addEventListener("pointerup", finish, { once: true });
+        document.addEventListener("pointercancel", finish, { once: true });
+        event.preventDefault();
+      });
+    }
     spacer.style.height = "0px";
     spacer.style.width = "1px";
     win.style.transform = "";
@@ -4042,6 +4079,7 @@
     card.appendChild(h("div", { class: "preview-title truncate", "data-i18n-skip": "", title: window.RMSI18n.raw(row.title || row.file) },
                        [window.RMSI18n.raw(row.title || row.file)]));
     card.addEventListener("click", (e) => handleRowClick(e, row, index));
+    card.addEventListener("contextmenu", (e) => { e.preventDefault(); openRowMenu(row, e); });
     card.addEventListener("dblclick", (e) => { if (!e.target.closest("button")) launchGame(row); });
     return card;
   }
@@ -4790,9 +4828,26 @@
       if (anchorIndex >= 0) {
         const [lo, hi] = anchorIndex < index ? [anchorIndex, index] : [index, anchorIndex];
         if (!additive) S.selected.clear();
+        const cards = [...document.querySelectorAll("#list-window .preview-card")];
+        const anchorCard = cards.find((card) => card.dataset.romUid === String(anchor));
+        const endCard = cards.find((card) => card.dataset.romUid === String(key));
+        if (S.viewMode === "card" && additive && anchorCard && endCard) {
+          const rowsByKey = new Map([...S.rowCache.values()].filter(Boolean).map((entry) => [String(rowKey(entry)), entry]));
+          const a = anchorCard.getBoundingClientRect(), b = endCard.getBoundingClientRect();
+          const left = Math.min(a.left, b.left), right = Math.max(a.right, b.right);
+          const top = Math.min(a.top, b.top), bottom = Math.max(a.bottom, b.bottom);
+          cards.forEach((card) => {
+            const bounds = card.getBoundingClientRect();
+            if (bounds.left >= left-1 && bounds.right <= right+1 && bounds.top >= top-1 && bounds.bottom <= bottom+1) {
+              const entry = rowsByKey.get(card.dataset.romUid);
+              if (entry) S.selected.add(rowKey(entry));
+            }
+          });
+        } else {
         for (let i = lo; i <= hi; i++) {
           const r = S.rowCache.get(i);
           if (r) S.selected.add(rowKey(r));
+        }
         }
       } else {
         S.selected = new Set([key]);
@@ -5449,7 +5504,7 @@
           });
         }
       });
-      option.querySelector(".scrape-fact-row").appendChild(toggle);
+      option.querySelector(".scrape-fact-row:last-child").appendChild(toggle);
       option.appendChild(expanded);
       const selectOption = () => {
         chosen = candidate.romIdentityId;
@@ -5516,7 +5571,7 @@
     }
     actions.push(applyBtn);
     applyBtn.textContent = importOnSelect ? window.RMSI18n.t("ui.import.apply") : window.RMSI18n.t(window.RMSI18n.t("ui.legacy.dac5cadcd3"));
-    showModal(sourceCollectionId ? msg("ui.import.collection") : msg("ui.import.archive"), body, actions);
+    showModal(sourceCollectionId ? msg("ui.import.collection") : msg("ui.import.archive"), body, actions).classList.add("game-candidate-dialog");
   }
 
   // ------------------------------------------------------------------
@@ -5965,10 +6020,17 @@
     // 스크롤한다. rows 속성 그대로가 그 12줄 높이를 정한다 - CSS가 더 이상
     // flex:1로 늘리지 않는다(style.css의 .detail-body-desc-wrap 참고).
     const descWrap = h("div", { class: "detail-body-desc-wrap" });
-    descWrap.appendChild(h("div", { class: "field-label" }, ["Description"]));
+
     const desc = h("textarea", { class: "field-input", rows: 12, placeholder: msg("ui.detail.descriptionEmpty") });
     desc.value = value("desc");
     fieldRefs.desc = desc;
+    const translation = h("button", { class: "btn compact description-translate", disabled: !desc.value.trim(), onClick: () => {
+      const ownerId = S.activeId;
+      const gameKey = JSON.stringify([state.archive ? "archive" : ownerId, String(state.romIdentityId || state.romUid)]);
+      getTranslationUI().open(desc, state, gameKey, () => S.detailState === state && S.activeId === ownerId, () => captureDraft());
+    } }, [window.RMSI18n.t("ui.translation.button")]);
+    desc.addEventListener("input", () => { translation.disabled = !desc.value.trim(); });
+    descWrap.appendChild(h("div", { class: "description-heading" }, [h("div", { class: "field-label" }, ["Description"]), translation]));
     descWrap.appendChild(desc);
     body.appendChild(descWrap);
 
@@ -6766,6 +6828,13 @@
     return section;
   }
 
+  let translationUI = null;
+  function getTranslationUI() {
+    if (!translationUI) translationUI = window.RMSTranslationUI.create({ h, api, showModal, closeModal, showToast, pollJob, openSettings,
+      language: () => (S.settings.general || {}).language || "ko" });
+    return translationUI;
+  }
+
   async function handleSaveDetail() {
     if (blockedInCompare("저장")) return;
     const state = S.detailState;
@@ -6779,7 +6848,6 @@
     state.fields = fields;
     state.draft = null;
     if (state.archive) {
-      // Archive 편집은 Collection에 자동 반영되지 않는다(스펙 §40). 그 사실을 매번 말해준다.
       showToast(window.RMSI18n.t("ui.legacy.c6f1e2d022"));
       await refreshArchiveRows([state.romIdentityId]);
       return;
@@ -7296,7 +7364,7 @@
 
   let dashboardToken = 0;
   async function showDashboard() {
-    if (!S.activeId || isArchive()) {
+    if (!S.activeId) {
       showToast(window.RMSI18n.t("ui.legacy.c556211794"), "warning");
       return;
     }
@@ -7329,7 +7397,7 @@
         S.dashboardTargets = { ...targets };
         if (id === S.activeId) renderHeader();
       },
-      onValidate: () => api.validateCollection(id),
+      onValidate: isArchive() ? null : () => api.validateCollection(id),
       onOpenSystem: (system) => setScope({ kind: "system", id: system }),
     });
   }

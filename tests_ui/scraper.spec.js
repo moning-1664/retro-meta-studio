@@ -84,7 +84,7 @@ test("스크랩 창은 요청 없이 열리고 포인트 색 시작 버튼으로
   await expect(page.locator(".scrape-candidate")).toHaveCount(1);
 });
 
-test("확정 게임에서 다른 후보 검색과 확정 해제가 보인다", async ({ page }) => {
+test("확정 게임은 다른 후보 검색 하나로 다시 검색한다", async ({ page }) => {
   await page.evaluate(() => {
     const create = window.api.createScrapeSession;
     window.api.createScrapeSession = async (...args) => {
@@ -107,8 +107,6 @@ test("확정 게임에서 다른 후보 검색과 확정 해제가 보인다", a
   await openForRows(page, 1, false);
   await page.getByRole("button", { name: "다른 후보 검색" }).click();
   await expect.poll(() => page.evaluate(() => window.__forceSearch)).toBe(true);
-  await page.getByRole("button", { name: "확정·별칭 해제" }).click();
-  await expect.poll(() => page.evaluate(() => window.__cleared)).toBe(1);
   await expect(page.getByRole("button", { name: "확정·별칭 해제" })).toHaveCount(0);
 });
 
@@ -130,7 +128,8 @@ test("∨를 누르면 필드 비교와 미디어 선택을 펼친다", async ({
   await openForRows(page);
   await page.locator(".scrape-expand").first().click();
   await expect(page.locator(".candidate-detail-field", { hasText: "제목" })).toBeVisible();
-  await expect(page.locator(".candidate-detail-field", { hasText: "비어 있음" }).first()).toBeVisible();
+  await expect(page.locator(".candidate-detail-current")).toHaveCount(0);
+  await expect(page.locator(".scrape-evidence")).toHaveCount(0);
   await expect(page.locator(".scrape-media-option", { hasText: "covers" })).toBeVisible();
   await expect(page.locator(".scrape-media-option input")).toBeChecked();
 });
@@ -158,7 +157,7 @@ test("후보는 cover와 screenshot만 미리 보고 다른 설정 미디어도 
   await openForRows(page);
   await page.locator(".scrape-expand").first().click();
   await expect(page.locator(".scrape-media-option")).toHaveCount(2);
-  await expect(page.locator(".scrape-media-option img")).toHaveCount(2);
+  await expect(page.locator(".scrape-media-option img")).toHaveCount(1);
   await expect(page.locator(".scrape-media-option", { hasText: "videos" })).toHaveCount(0);
   await page.locator(".scrape-candidate-title").first().click();
   await expect.poll(() => page.evaluate(() => window.__previewSelectedMedia)).toEqual([0, 1, 2, 3]);
@@ -393,7 +392,7 @@ test("compact candidate card uses click focus without a large selection button",
   await expect(card.locator(".scrape-expand")).toBeVisible();
 });
 
-test("candidate card keeps year, developer and genre in one compact row", async ({ page }) => {
+test("candidate card keeps secondary metadata in at most two compact rows", async ({ page }) => {
   await page.evaluate(() => {
     const original = window.api.jobProgress;
     window.api.jobProgress = async (...args) => {
@@ -412,6 +411,6 @@ test("candidate card keeps year, developer and genre in one compact row", async 
   await expect(card.locator(".scrape-candidate-facts")).toContainText("1999");
   await expect(card.locator(".scrape-candidate-facts")).toContainText("Nintendo");
   await expect(card.locator(".scrape-candidate-facts")).toContainText("Simulation");
-  await expect(card.locator(".scrape-fact-row")).toHaveCount(1);
+  await expect(card.locator(".scrape-fact-row")).toHaveCount(2);
   await expect(card.locator(".scrape-expand svg")).toHaveCount(1);
 });

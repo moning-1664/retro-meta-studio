@@ -19,7 +19,7 @@ function check(text, location) {
     if (/[가-힣]/.test(i18n.t(sample))) failures.push(`${location} (${language}): ${text}`);
   }
 }
-for (const file of ['app.js','scraper-ui.js','transfer-ui.js','archive-settings-ui.js','collection-setup-ui.js','settings.js','dashboard.js','candidate-ui.js','shortcut-help.js','title-affix.js']) {
+for (const file of ['app.js','scraper-ui.js','transfer-ui.js','translation-ui.js','archive-settings-ui.js','collection-setup-ui.js','settings.js','dashboard.js','candidate-ui.js','shortcut-help.js','title-affix.js']) {
   const source = fs.readFileSync(path.join(root,'gui_web',file),'utf8');
   traverse(babelParse(source,file), {
     StringLiteral({node}) {

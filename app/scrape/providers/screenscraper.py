@@ -267,6 +267,8 @@ class ScreenScraperClient(ScrapeProvider):
             payload = response.json()
         except ValueError as exc:
             message = response.text.strip()[:240]
+            if "informations obligatoires manquantes" in message.casefold() or "informations obligatories manquantes" in message.casefold():
+                raise ScreenScraperError("ui.scrape.missingParameters", kind="parameters") from exc
             raise ScreenScraperError(message or "ScreenScraper 응답을 읽을 수 없습니다.") from exc
         if not isinstance(payload, dict):
             raise ScreenScraperError("ScreenScraper 응답 형식이 올바르지 않습니다.")

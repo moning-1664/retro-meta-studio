@@ -352,10 +352,8 @@
                 window.RMSCandidateUI.facts(h, candidate.fields, toggle),
               ])]));
             if (!expanded) return;
-            if ((candidate.evidence || []).length) wrap.appendChild(h("div", { class: "scrape-evidence" },
-              candidate.evidence.map((value) => h("div", {}, [value]))));
             wrap.appendChild(window.RMSCandidateUI.fields(h, candidate.fields, {
-              current: item.fields || {}, selected: selectedFields,
+              selected: selectedFields,
               onChange: (key, checked) => {
                 if (checked) selectedFields.add(key); else selectedFields.delete(key);
                 if (item.selectedCandidateId === candidate.candidate_id) selectCandidate();
@@ -380,7 +378,7 @@
                 });
                 mediaList.appendChild(h("label", { class: "scrape-media-option" }, [
                   radio,
-                  h("img", { src: media.url, alt: media.media_type, loading: "lazy", referrerpolicy: "no-referrer" }),
+                  media.media_type === "screenshots" ? h("img", { src: media.url, alt: media.media_type, loading: "lazy", referrerpolicy: "no-referrer" }) : null,
                   h("span", {}, [media.media_type]),
                   h("small", {}, [[media.region, media.language].filter(Boolean).join(" · ")]),
                 ]));
@@ -560,15 +558,8 @@
             h("span", {}, [msg("ui.scrape.candidateCount", {count:(item.candidates || []).length})]), retry,
           ]));
           if (item.confirmedGameId || item.aliasGameId) body.appendChild(h("div", { class: "scrape-confirmed-actions" }, [
-            h("span", {}, ["이전에 확정한 게임을 우선 표시합니다."]),
             h("button", { class: "btn compact", disabled: searching,
               onClick: () => searchCurrent(query.value.trim(), system.value, true) }, ["다른 후보 검색"]),
-            h("button", { class: "btn compact", disabled: searching, onClick: async () => {
-              const cleared = await api.clearScrapeConfirmedMatch(session.id, item.id);
-              if (!cleared.ok) { showToast(cleared.error, "error"); return; }
-              delete item.confirmedGameId;
-              draw();
-            } }, ["확정·별칭 해제"]),
           ]));
           if (item.applyError) body.appendChild(h("div", { class: "modal-text error", role: "alert" },
               [msg("ui.scrape.applyFailed", {error:window.RMSI18n.formatError(item.applyError)})]));

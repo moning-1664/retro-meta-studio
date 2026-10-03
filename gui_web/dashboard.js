@@ -199,10 +199,9 @@ const dashboardMessage = (id, params) => window.RMSI18n.message(id, params);
         h("div", { class: "dsb-eyebrow" }, ["DASHBOARD"]),
         h("div", { class: "dsb-title" }, [data.collectionName || "Collection"]),
       ]),
-      validateBtn,
+      ctx.onValidate ? validateBtn : null,
     ]));
-    host.appendChild(validation);
-    drawValidation();
+    if (ctx.onValidate) { host.appendChild(validation); drawValidation(); }
 
     // ---------------------------------------------------------- 요약 카드
     const tiles = h("div", { class: "dsb-tiles" });
@@ -212,8 +211,8 @@ const dashboardMessage = (id, params) => window.RMSI18n.message(id, params);
       sub ? h("div", { class: "dsb-tile-sub" }, [sub]) : null,
     ]));
     tile("Games", formatCount(t.games), dashboardMessage("ui.dashboard.present", {count: formatCount(health.present)}));
-    tile("ROM", formatBytes(t.romBytes), window.RMSI18n.t("ui.legacy.fb012aeafd", {value0: (formatCount(t.romCount))}));
-    tile("Media", formatBytes(t.mediaBytes), window.RMSI18n.t("ui.legacy.fb012aeafd", {value0: (formatCount(t.mediaCount))}));
+    tile("ROM", data.recordedOnly ? formatCount(t.romCount) : formatBytes(t.romBytes), window.RMSI18n.t("ui.legacy.fb012aeafd", {value0: (formatCount(t.romCount))}));
+    tile("Media", data.recordedOnly ? formatCount(t.mediaCount) : formatBytes(t.mediaBytes), window.RMSI18n.t("ui.legacy.fb012aeafd", {value0: (formatCount(t.mediaCount))}));
     tile("Metadata", formatCount(health.metadata), dashboardMessage("ui.dashboard.total", {count: formatCount(health.total)}));
     data.storages.forEach((s) => tile(s.label, formatBytes(s.romBytes + s.mediaBytes),
       dashboardMessage("ui.dashboard.roms", {count: formatCount(s.romCount), storage: window.RMSI18n.t(s.kind === "external" ? "External" : "Internal")})));
@@ -416,7 +415,7 @@ const dashboardMessage = (id, params) => window.RMSI18n.message(id, params);
       ["media", "Media size", (s) => s.mediaBytes, (s) => formatBytes(s.mediaBytes), true],
       ["total", "Total size", (s) => s.romBytes + s.mediaBytes, (s) => formatBytes(s.romBytes + s.mediaBytes), true],
       ["status", "Status", (s) => statusOf(s)[1], null, false],
-    ];
+    ].filter(([key]) => !data.recordedOnly || !["storage", "size", "media", "total"].includes(key));
     const table = h("table", { class: "dsb-table" });
     const thead = h("thead");
     const tbody = h("tbody");

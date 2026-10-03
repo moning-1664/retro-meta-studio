@@ -88,6 +88,10 @@ input[type="range"]:disabled { opacity: .5; cursor: not-allowed; }
 .match-option .scrape-thumb img { width: 100%; height: 100%; object-fit: contain; }
 .revision-dialog-body { max-height: min(600px, calc(100vh - 130px)); overflow-y: auto; }
 .revision-dialog-body .revision-actions { position: sticky; bottom: 0; background: var(--panel); }
+.ver-dialog-card { display: flex; flex-direction: column; overflow: hidden; }
+.ver-dialog-card > .modal-title, .ver-dialog-card > .modal-actions { flex: none; }
+.ver-dialog-card > .revision-dialog-body { flex: 1 1 auto; min-height: 0; }
+.revision-dialog-body > .revision-row, .revision-dialog-body > .revision-actions { flex: none; }
 @media (max-width: 360px) {
   .scrape-actions .btn { flex: 1 1 0; width: auto; padding: 5px 2px; font-size: calc(9px * var(--font-scale)); }
   .scrape-action-spacer { flex: 0 0 3px; }
@@ -108,3 +112,16 @@ input[type="range"]:disabled { opacity: .5; cursor: not-allowed; }
 .paste-conflict-card { display: flex; flex-direction: column; overflow: hidden; }
 .paste-conflict-card > .modal-title, .paste-conflict-card > .modal-actions { flex: none; }
 .paste-conflict-card > .paste-conflict-body { flex: 1 1 auto; min-height: 0; }
+.description-heading,.translation-controls,.translation-settings-actions { display:flex;align-items:center;gap:8px; }
+.description-heading { justify-content:space-between;margin-bottom:6px; }
+.description-heading .field-label { margin:0; }
+.translation-controls select { width:120px; }
+.translation-grid { display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px; }
+.translation-grid textarea { resize:vertical;min-height:100px; }
+.translation-settings > .field-input { max-width:360px; }
+.translation-settings-actions { margin-top:8px; }
+@media (max-width:560px) { .translation-grid { grid-template-columns:minmax(0,1fr); } }
+.card-selection-box { position: fixed; pointer-events: none; z-index: 1000; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.detail-body > .revision-row { flex-shrink: 0; }
+.detail-body > .revision-actions { flex-shrink: 0; position: sticky; bottom: 0; background: var(--card2); }
+.game-candidate-dialog { width: calc(331px * var(--font-scale)); max-width: calc(100vw - 24px); }
