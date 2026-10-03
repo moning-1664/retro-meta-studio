@@ -61,10 +61,9 @@ for(const language of ['ko','en','ja','es','fr']) {
       if(language==='fr' && scale===130) await page.screenshot({path:'.codex-test-tmp/fr-conflict-compact.png'});
       await page.keyboard.press('Escape');
       await page.evaluate(()=>{window.api.operationHistory=async()=>({ok:true,data:{items:[{id:'failed',status:'recovery_failed',action:'paste',createdAt:1,bytes:2048,canDiscard:true,canForceRecovery:true,recoveryError:'External file changed'}]}});});
-      await page.locator('.settings-btn').click();
-      await page.locator('.stg-nav-item[data-section="advanced"]').click();
-      const open=await page.evaluate(()=>window.RMSI18n.t('ui.backup.open'));
-      await page.getByRole('button',{name:open,exact:true}).click();
+      await page.evaluate(()=>{window.api.operationState=async()=>({ok:true,data:{recoveryError:'interrupted'}});});
+      await page.locator('.ctab.archive').click();
+      await page.locator('.modal-actions .btn.primary').click();
       await fitted(page.locator('.modal-card'));
       if(language==='fr' && scale===130) await page.screenshot({path:'.codex-test-tmp/fr-recovery-compact.png'});
     });

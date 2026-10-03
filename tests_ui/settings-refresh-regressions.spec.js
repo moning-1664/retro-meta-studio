@@ -28,14 +28,12 @@ test('scraper connection cancel restores settings and selected section',async({p
   await page.locator('.scrape-setup-card').getByRole('button',{name:'취소',exact:true}).click();
   await expect(page.locator('.stg-nav-item[data-section="scraper"]')).toHaveClass(/active/);
 });
-test('recovery dialog close restores settings',async({page})=>{
+test('advanced omits routine recovery controls',async({page})=>{
   await page.locator('.settings-btn').click();
   await page.locator('.stg-nav-item[data-section="advanced"]').click();
-  await page.getByRole('button',{name:'복구 기록 열기',exact:true}).click();
-  await expect(page.locator('.operation-history-body')).toBeVisible();
-  await page.locator('.modal-actions').getByRole('button',{name:'닫기',exact:true}).click();
-  await expect(page.locator('.stg-nav-item[data-section="advanced"]')).toHaveClass(/active/);
+  await expect(page.locator('[data-key="advanced.recovery"]')).toHaveCount(0);
 });
+
 test('old metadata editor disappears while next game is loading',async({page})=>{
   const rows=page.locator('.lrow');
   await rows.nth(0).click();await expect(page.locator('.detail-save')).toBeVisible();

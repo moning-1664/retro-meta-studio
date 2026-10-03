@@ -342,7 +342,7 @@
     navigation: { hideEmptySystems: false, defaultSortPriority: "none" },
     gamelist: { order: [], hidden: [] },
     collections: { order: [], restoreTabs: true, rememberSystem: true },
-    backupRetention: { enabled: false, maxCount: 20, maxSizeGB: 10 },
+    backupRetention: { enabled: true, clearOnExit: true, maxCount: 20, maxSizeGB: 10 },
     //: 마지막으로 열어 둔 탭(앱을 다시 켜면 그대로 되살린다). 떼어 낸 창에서는 쓰지 않는다.
     session: { tabs: [], active: null },
     transfer: { pasteMode: "overwrite", includeRom: true, includeMedia: true, conflict: "ask",
@@ -834,6 +834,9 @@
   // 토스트 / 확인창
   // ------------------------------------------------------------------
   function showToast(message, type) {
+    if (message === "ui.recovery.required" && !document.querySelector(".operation-history-body")) {
+      setTimeout(() => showConfirm(msg("ui.recovery.title"), msg("ui.recovery.required"), false, () => openOperationHistory()), 0);
+    }
     const el = $("toast");
     clear(el);
     el.className = "show " + (type || "info");
@@ -6036,11 +6039,13 @@
     const desc = h("textarea", { class: "field-input", rows: 12, placeholder: msg("ui.detail.descriptionEmpty") });
     desc.value = value("desc");
     fieldRefs.desc = desc;
-    const translation = h("button", { class: "btn compact description-translate", disabled: !desc.value.trim(), onClick: () => {
+    const translation = h("button", { class: "btn compact description-translate", hidden: true, disabled: !desc.value.trim(), onClick: () => {
       const ownerId = S.activeId;
       const gameKey = JSON.stringify([state.archive ? "archive" : ownerId, String(state.romIdentityId || state.romUid)]);
       getTranslationUI().open(desc, state, gameKey, () => S.detailState === state && S.activeId === ownerId, () => captureDraft());
     } }, [window.RMSI18n.t("ui.translation.button")]);
+    const translationEpoch = translationSettingsEpoch;
+    api.translationSettings().then(result => { if (translationEpoch === translationSettingsEpoch && S.detailState === state && translation.isConnected) translation.hidden = !(result.ok && result.data.verified); });
     desc.addEventListener("input", () => { translation.disabled = !desc.value.trim(); });
     descWrap.appendChild(h("div", { class: "description-heading" }, [h("div", { class: "field-label" }, ["Description"]), translation]));
     descWrap.appendChild(desc);
@@ -6841,6 +6846,11 @@
     return section;
   }
 
+  let translationSettingsEpoch = 0;
+  window.addEventListener("rms-translation-settings", event => {
+    ++translationSettingsEpoch;
+    document.querySelectorAll(".description-translate").forEach(button => { button.hidden = !event.detail.verified; });
+  });
   let translationUI = null;
   function getTranslationUI() {
     if (!translationUI) translationUI = window.RMSTranslationUI.create({ h, api, showModal, closeModal, showToast, pollJob, openSettings,
@@ -6897,6 +6907,10 @@
     if (S.activeId !== collectionId) return;
     S.plan = r.ok ? r.data : null;
     S.lastPasteUndoId = S.plan?.undoOperationId || null;
+    if (S.plan?.recoveryError && S.lastRecoveryNotice !== S.activeId + S.plan.recoveryError) {
+      S.lastRecoveryNotice = S.activeId + S.plan.recoveryError;
+      showConfirm(msg("ui.recovery.title"), msg("ui.recovery.required"), false, () => openOperationHistory());
+    }
     const retention = S.plan?.retention;
     if (retention?.eventId && retention.eventId !== S.lastRetentionNotice) {
       S.lastRetentionNotice = retention.eventId;

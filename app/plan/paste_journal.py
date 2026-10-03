@@ -66,7 +66,7 @@ class PasteJournal:
 
     def begin(self, operation_id, collection_id, collection, plan, *, extra_paths=()):
         if self.pending(collection_id):
-            raise ValueError("파일 작업이 진행 중이거나 복구가 필요합니다. Settings > Advanced > 파일 작업 복구를 확인하세요.")
+            raise ValueError("ui.recovery.required")
         directory = self.root / operation_id
         directory.mkdir(parents=True, exist_ok=False)
         adapter = get_adapter(collection.frontend)

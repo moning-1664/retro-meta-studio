@@ -155,3 +155,13 @@ input[type="range"]:disabled { opacity: .5; cursor: not-allowed; }
 .scrape-dat-settings a { font-size: var(--fs-caption); }
 .cheader-expanded, #header-row.has-sys-art .detail-topspace { background: var(--chrome); background-image: none; }
 @media(max-width:1000px) { .scrape-media-settings { grid-template-columns: repeat(3,minmax(0,1fr)); } }
+
+/* Title tags: fit controls to their content instead of a full-width framed band. */
+.stg-title-affix { width: fit-content; max-width:100%; gap:3px; }
+.stg-title-affix-row { width:fit-content; border:0; background:none; padding:2px 0; min-height:26px; grid-template-columns:28px 80px 58px 76px; gap:7px; }
+.stg-title-affix-row .stg-control { height:26px; min-height:26px; padding:2px 6px; font-size:var(--fs-caption); }
+.stg-title-affix-label { font-size:var(--fs-caption); }
+.stg-title-affix-row .stg-switch { transform:scale(.8); transform-origin:left center; }
+.stg-tags-action-help { font-size:var(--fs-caption); color:var(--muted); margin:0 0 12px; }
+.stg-content[data-section="tags"] > .stg-section-desc { margin-bottom:0; }
+.description-translate[hidden] { display:none !important; }

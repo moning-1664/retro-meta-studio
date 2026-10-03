@@ -24,7 +24,7 @@ def record(api, key, created, status="committed", **extra):
     return directory
 
 
-def test_automatic_cleanup_is_disabled_by_default(context):
+def test_default_retention_preserves_small_history(context):
     original = record(context, "old", 1)
     assert prune(context, "collection", None)["discarded"] == 0
     assert original.exists()
@@ -118,14 +118,14 @@ def test_both_unlimited_rejected_when_enabled():
 def test_disabled_cleanup_warns_above_20gb_without_deleting(context):
     original = record(context, "old", 1)
     with patch("app.plan.history._backup_bytes", return_value=21 * 1024 ** 3):
-        result = prune(context, "collection", None)
+        result = prune(context, "collection", {"enabled":False})
     assert result["sizeWarning"] and result["discarded"] == 0
     assert original.exists()
 
 
 def test_disabled_cleanup_is_quiet_below_20gb(context):
     record(context, "old", 1)
-    assert not prune(context, "collection", None)["sizeWarning"]
+    assert not prune(context, "collection", {"enabled":False})["sizeWarning"]
 
 
 def test_capacity_warning_counts_other_collections(context):
@@ -134,4 +134,57 @@ def test_capacity_warning_counts_other_collections(context):
     data["collectionId"] = "another-collection"
     context._paste_journal._save(directory, data)
     with patch("app.plan.history._backup_bytes", return_value=21 * 1024 ** 3):
-        assert prune(context, "collection", None)["sizeWarning"]
+        assert prune(context, "collection", {"enabled":False})["sizeWarning"]
+
+
+def test_exit_cleanup_removes_latest_undo_and_redo(context):
+    from app.plan.backup_retention import clear_on_exit
+    first = record(context, 'committed', 1)
+    second = record(context, 'redo', 2, status='undone', redoReady=True)
+    result = clear_on_exit(context, None)
+    assert result['discarded'] == 2
+    assert not first.exists() and not second.exists()
+
+
+def test_exit_cleanup_can_be_disabled(context):
+    from app.plan.backup_retention import clear_on_exit
+    first = record(context, 'committed', 1)
+    assert clear_on_exit(context, {'clearOnExit':False})['discarded'] == 0
+    assert first.exists()
+
+
+def test_exit_cleanup_protects_pending_scope_and_closed_backups(context):
+    from app.plan.backup_retention import clear_on_exit
+    first = record(context, 'committed', 1)
+    pending = record(context, 'failed', 2, status='recovery_failed')
+    closed = record(context, 'closed', 3, status='closed')
+    assert clear_on_exit(context, None)['discarded'] == 0
+    assert first.exists() and pending.exists() and closed.exists()
+
+
+def test_exit_cleanup_handles_archive_and_protects_its_failures(context):
+    from app.plan.backup_retention import clear_on_exit
+    root = context._archive_journal.root
+    directory = root / 'arc'; directory.mkdir()
+    ArchiveTransaction(directory, {'id':'arc','status':'committed','createdAt':1,'config':{},'files':{}}).save()
+    assert clear_on_exit(context, None)['discarded'] == 1
+    assert not directory.exists()
+
+
+def test_exit_cleanup_keeps_archive_when_recovery_failed(context):
+    from app.plan.backup_retention import clear_on_exit
+    for key, status in [('done','committed'),('failed','recovery_failed')]:
+        directory = context._archive_journal.root / key; directory.mkdir()
+        ArchiveTransaction(directory, {'id':key,'status':status,'createdAt':1,'config':{},'files':{}}).save()
+    assert clear_on_exit(context, None)['discarded'] == 0
+    assert (context._archive_journal.root / 'done').exists()
+    assert (context._archive_journal.root / 'failed').exists()
+
+
+def test_live_file_operation_does_not_show_interruption_prompt(monkeypatch):
+    from app.plan import history
+    monkeypatch.setattr(history.process_owner, 'status', lambda row:'alive')
+    assert not history.requires_recovery([{'status':'running'}])
+    assert history.requires_recovery([{'status':'recovery_failed'}])
+    monkeypatch.setattr(history.process_owner, 'status', lambda row:'dead')
+    assert history.requires_recovery([{'status':'running'}])

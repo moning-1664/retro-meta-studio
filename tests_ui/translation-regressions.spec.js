@@ -36,7 +36,7 @@ test('Korean warning requires explicit second click without a first API request'
     let calls=0;
     const input=document.createElement('textarea'); input.value='이 게임은 한국어 설명으로 작성되어 있습니다';document.body.appendChild(input);
     const h=(tag,attrs={},children=[])=>{const el=document.createElement(tag);for(const [key,value]of Object.entries(attrs)){if(key==='onClick')el.addEventListener('click',value);else if(key==='class')el.className=value;else el[key]=value;}for(const child of children)el.append(child);return el;};
-    const ui=window.RMSTranslationUI.create({h,api:{translationSettings:async()=>({ok:true,data:{mode:'deepl-free',hasKey:true}}),originalDescription:async()=>({ok:true,data:null}),startTranslateDescription:async()=>{calls++;return{ok:false,error:'ui.translation.connection'};}},showModal:(title,body)=>document.body.appendChild(body),closeModal:()=>{},showToast:()=>{},openSettings:()=>{},language:()=> 'ko'});
+    const ui=window.RMSTranslationUI.create({h,api:{translationSettings:async()=>({ok:true,data:{mode:'deepl-free',hasKey:true,verified:true}}),originalDescription:async()=>({ok:true,data:null}),startTranslateDescription:async()=>{calls++;return{ok:false,error:'ui.translation.connection'};}},showModal:(title,body)=>document.body.appendChild(body),closeModal:()=>{},showToast:()=>{},openSettings:()=>{},language:()=> 'ko'});
     await ui.open(input,null,'game-key',()=>true,()=>{});
     document.querySelector('.translation-start').click();
     const first=calls, warning=document.querySelector('.translation-status').textContent;

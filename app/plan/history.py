@@ -155,3 +155,9 @@ def discard(api, collection_id, operation_ids, *, _permitted=None):
             path.unlink(missing_ok=True)
         shutil.rmtree(directory)
     return {"discarded": len(operation_ids)}
+
+
+def requires_recovery(records):
+    """A live owner's running operation is not an interrupted operation."""
+    return any(row.get('status') == 'recovery_failed' or process_owner.status(row) != 'alive'
+               for row in records)

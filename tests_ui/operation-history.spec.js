@@ -27,9 +27,9 @@ test('failed recovery is reachable in Settings and preserves backup when closed'
       return {ok:true,data:{action}};
     };
   });
-  await page.locator('.settings-btn').click();
-  await page.locator('.stg-nav-item[data-section="advanced"]').click();
-  await page.getByRole('button', {name:'복구 기록 열기', exact:true}).click();
+  await page.evaluate(()=>{window.api.operationState=async()=>({ok:true,data:{recoveryError:'interrupted'}});});
+  await page.locator('.ctab.archive').click();
+  await page.locator('.modal-actions .btn.primary').click();
   await expect(page.getByRole('button', {name:'다시 시도', exact:true})).toBeVisible();
   await page.getByRole('button', {name:'백업 폴더 열기', exact:true}).click();
   await expect.poll(() => page.evaluate(() => window.__recoveryActions.length)).toBe(1);
@@ -101,9 +101,9 @@ test('unknown ownership offers confirmed manual recovery and closed record delet
     ]}});
     window.api.recoveryAction = async (...args) => {window.__manualRecovery.push(args); return {ok:true,data:{}};};
   });
-  await page.locator('.settings-btn').click();
-  await page.locator('.stg-nav-item[data-section="advanced"]').click();
-  await page.getByRole('button',{name:'복구 기록 열기',exact:true}).click();
+  await page.evaluate(()=>{window.api.operationState=async()=>({ok:true,data:{recoveryError:'interrupted'}});});
+  await page.locator('.ctab.archive').click();
+  await page.locator('.modal-actions .btn.primary').click();
   await expect(page.getByRole('button',{name:'백업 삭제',exact:true}).last()).toBeEnabled();
   await page.getByRole('button',{name:'수동 복구…',exact:true}).click();
   expect(await page.evaluate(() => window.__manualRecovery)).toEqual([]);

@@ -18,7 +18,7 @@
     ["general", "일반", "프로그램의 기본 동작"],
     ["collections", "컬렉션", "Collection 열기와 세션"],
     ["metadata", window.RMSI18n.message("ui.settings.gamelist"), window.RMSI18n.message("ui.settings.gamelistHelp")],
-    ["tags", window.RMSI18n.message("ui.settings.tags"), window.RMSI18n.message("ui.settings.tagsHelp")],
+    ["tags", window.RMSI18n.message("ui.settings.tags"), window.RMSI18n.message("ui.settings.tagsNavHelp")],
     ["scraper", "스크랩", "외부 게임 정보 검색"],
     ["transfer", window.RMSI18n.message("ui.settings.copyPolicy"), window.RMSI18n.message("ui.settings.copyPolicyHelp")],
     ["archive", "Archive", "저장 형식과 위치"],
@@ -269,6 +269,7 @@
         if (ctx.renderTranslation) add(ctx.renderTranslation());
       } else if (key === "tags") {
         add(...section(window.RMSI18n.message("ui.settings.tags"), window.RMSI18n.message("ui.settings.tagsHelp")));
+        add(h("div", { class: "stg-tags-action-help" }, [window.RMSI18n.message("ui.settings.tagsApplyHelp")]));
         add(h("div", { class: "stg-subsection-title" }, [window.RMSI18n.message("ui.settings.languageTags")]));
         add(h("div", { class: "stg-help" }, [
           window.RMSI18n.message("ui.metadata.titleAffixHelp"),
@@ -278,10 +279,9 @@
         // 여러 장짜리 게임 - ES-DE는 목록에 파일명을 안 보여줘서 제목이 전부 같아 보인다.
         // 이름은 사용자 결정(메뉴 정리 §9) - "장 번호"는 비직관적이라 "디스크 번호"로 바꿨다.
         add(h("div", { class: "stg-subsection-title" }, ["멀티디스크 태그"]));
-        add(row("metadata.discTitles", "제목 뒤에 디스크 번호 태그 붙이기",
+        add(row("metadata.discTitles", window.RMSI18n.message("ui.settings.discTagsEnabled"),
           toggle(!!(s.metadata || {}).discTitles, (v) => ctx.update("metadata", { discTitles: v })),
-          (window.RMSI18n.t("ui.legacy.e47c2599fa") + " ")
-          + window.RMSI18n.t("ui.legacy.fdec9c6fb9")));
+          window.RMSI18n.message("ui.settings.discTagsHelp")));
         add(discFormatRow(s));
       } else if (key === "scraper") {
         add(...section("스크랩", "ScreenScraper 계정과 요청 사용량을 관리합니다."));
@@ -345,16 +345,13 @@
           "처음 여는 Collection에서 미리보기를 켤지 정합니다. 이미 연 Collection은 마지막 상태를 따릅니다."));
       } else {
         add(...section("고급", "진단과 화면 설정을 관리합니다."));
-        const recovery = h("button", {class: "btn", onClick: () => ctx.openRecovery()}, ["복구 기록 열기"]);
-        add(row("advanced.recovery", "파일 작업 복구", recovery, "복구 실패를 다시 시도하거나 백업을 보존한 채 기록을 닫습니다."));
-        const retention = s.backupRetention || {enabled:false, maxCount:20, maxSizeGB:10};
-        add(row("backupRetention.enabled", "백업 자동 정리", toggle(retention.enabled,
-          value => { ctx.update("backupRetention", {enabled:value,
-            ...(value && !retention.maxCount && !retention.maxSizeGB ? {maxCount:20} : {})}); render(); }),
+        const retention = {enabled:true, clearOnExit:true, maxCount:20, maxSizeGB:10, ...(s.backupRetention || {})};
+        add(row("backupRetention.clearOnExit", window.RMSI18n.message("ui.settings.backupExit"), toggle(retention.clearOnExit !== false,
+          value => { ctx.update("backupRetention", {clearOnExit:value, enabled:true}); render(); }),
           window.RMSI18n.message("ui.settings.backupHelp")));
         const limitInput = (key, fallback, maximum) => {
           const input = h("input", {class:"stg-control stg-number", type:"number", min:"0", max:String(maximum),
-            step:"1", value:String(retention[key] ?? fallback), disabled:!retention.enabled});
+            step:"1", value:String(retention[key] ?? fallback)});
           input.addEventListener("change", () => {
             const current = ctx.get().backupRetention || retention;
             const value = Number(input.value);
@@ -364,7 +361,7 @@
             if (value === 0 && Number(current[key === "maxCount" ? "maxSizeGB" : "maxCount"]) === 0) {
               input.value = String(current[key] ?? fallback); return;
             }
-            ctx.update("backupRetention", {[key]:value});
+            ctx.update("backupRetention", {[key]:value, enabled:true});
           });
           return input;
         };

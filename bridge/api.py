@@ -284,6 +284,13 @@ class Api(ScraperBridge, TranslationBridge):
                     temporary.unlink(missing_ok=True)
             except OSError:
                 log.warning("Could not remove incomplete scrape download %s", temporary)
+        try:
+            from app.plan.backup_retention import clear_on_exit
+            settings = self.registry.get_setting(self.APP_SETTINGS_KEY, {}) or {}
+            report = clear_on_exit(self, settings.get('backupRetention'))
+            log.info('Exit Undo backup cleanup: %s', report)
+        except Exception:
+            log.exception('Exit Undo backup cleanup failed; backups retained')
         self.workspace.close()
         self.archive.close()
         self.registry.close()
@@ -1424,6 +1431,7 @@ class Api(ScraperBridge, TranslationBridge):
 
     @guarded
     def operation_state(self, collection_id):
+        from app.plan.history import requires_recovery
         if collection_id == "__archive__":
             cfg = self._archive_config()
             pending = self._archive_journal.pending(cfg)
@@ -1446,7 +1454,7 @@ class Api(ScraperBridge, TranslationBridge):
         return ok({"undoOperationId": archive_id or local_id,
                    "redoOperationId": archive_redo or local_redo,
                    "retention": self._backup_retention_report.get(collection_id),
-                   "recoveryError": "파일 작업이 진행 중이거나 복구가 필요합니다. Settings > Advanced > 파일 작업 복구를 확인하세요." if self._paste_journal.pending(collection_id) else None,
+                   "recoveryError": "ui.recovery.required" if requires_recovery(self._paste_journal.pending(collection_id)) else None,
                    "clipboard": clipboard.peek(self.registry)})
 
     @guarded

@@ -15,18 +15,35 @@
         const key=h('input',{type:'password',class:'field-input translation-key',autocomplete:'new-password',placeholder:t(r.data.hasKey?'ui.translation.keySaved':'ui.translation.key')});
         key.addEventListener('input',()=>{if(mode.value.startsWith('deepl-'))mode.value=key.value.trim().endsWith(':fx')?'deepl-free':'deepl-pro';});
         const status=h('div',{class:'modal-hint translation-settings-result'});
+        const announce=verified=>window.dispatchEvent(new CustomEvent('rms-translation-settings',{detail:{verified}}));
+        const test=h('button',{class:'btn compact translation-test',onClick:async()=>{
+          test.disabled=true;save.disabled=true;mode.disabled=true;key.disabled=true;announce(false);
+          try{
+            const saved=await api.saveTranslationSettings(mode.value,key.value.trim()||null);
+            if(!saved.ok){status.textContent=window.RMSI18n.formatError(saved.error);return;}
+            key.value='';key.placeholder=t(saved.data.hasKey?'ui.translation.keySaved':'ui.translation.key');
+            status.textContent=t('ui.translation.testing');
+            const started=await api.testTranslationConnection();
+            if(!started.ok){status.textContent=window.RMSI18n.formatError(started.error);return;}
+            const result=await pollJob(started.data.jobId,t('ui.translation.testing'),testHost);
+            const verified=!!(result.ok&&result.data?.verified);announce(verified);
+            status.textContent=result.ok?t('ui.translation.testPassed'):window.RMSI18n.formatError(result.error);
+          }finally{test.disabled=false;save.disabled=false;mode.disabled=false;key.disabled=false;}
+        }},[t('ui.translation.test')]);
+        const testHost=h('div',{class:'translation-test-progress'});
         const save=h('button',{class:'btn compact',onClick:async()=>{
           save.disabled=true;
           try {
             const result=await api.saveTranslationSettings(mode.value,key.value.trim()||null);
             status.textContent=result.ok?t('ui.translation.settingsSaved'):window.RMSI18n.formatError(result.error);
-            if(result.ok){key.value='';key.placeholder=t(result.data.hasKey?'ui.translation.keySaved':'ui.translation.key');}
+            if(result.ok){announce(!!result.data.verified);key.value='';key.placeholder=t(result.data.hasKey?'ui.translation.keySaved':'ui.translation.key');}
           }finally{save.disabled=false;}
         }},[t('ui.translation.saveSettings')]);
         box.appendChild(h('div',{class:'field-label'},[t('ui.translation.service')]));box.appendChild(mode);
         box.appendChild(h('div',{class:'field-label'},[t('ui.translation.key')]));box.appendChild(key);
         box.appendChild(h('div',{class:'modal-hint'},[t('ui.translation.disclosure')]));
-        box.appendChild(h('div',{class:'translation-settings-actions'},[save,status]));
+        box.appendChild(h('div',{class:'modal-hint'},[t('ui.translation.testHelp')]));
+        box.appendChild(h('div',{class:'translation-settings-actions'},[save,test,status]));box.appendChild(testHost);
       })();
       return box;
     }
@@ -36,7 +53,7 @@
       const configured=await api.translationSettings();
       if(!isCurrent()||!input.isConnected)return;
       if(!configured.ok){showToast(configured.error,'error');return;}
-      if(configured.data.mode==='off'||!configured.data.hasKey){showToast(t('ui.translation.configure'),'warning');openSettings('metadata');return;}
+      if(configured.data.mode==='off'||!configured.data.hasKey||!configured.data.verified){showToast(t('ui.translation.configure'),'warning');openSettings('metadata');return;}
       let closed=false,busy=false,jobId=null,result=null,allowSameLanguage=false;
       const original=h('textarea',{class:'field-input translation-original',rows:6,readonly:true});original.value=source;
       const translated=h('textarea',{class:'field-input translation-result',rows:6,readonly:true});

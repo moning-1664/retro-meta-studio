@@ -262,7 +262,8 @@
     get_archive_media_video_url: () => ok(null),
     get_media_image: () => ok(
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="),
-    translation_settings: () => ok({mode:'off',hasKey:false}),
+    translation_settings: () => ok({mode:'off',hasKey:false,verified:false}),
+    test_translation_connection: () => ok({jobId:'translation-test'}),
     save_translation_settings: (mode, key) => ok({mode,hasKey:!!key}),
     original_description: () => ok(null),
     remember_description_translation: () => ok(true),
@@ -1151,6 +1152,7 @@
     getMediaImage: (id, romUid, label, thumbnail) => call("get_media_image", id, romUid, label, !!thumbnail),
     getMediaVideoUrl: (id, romUid) => call("get_media_video_url", id, romUid),
     getArchiveMediaVideoUrl: (romIdentityId) => call("get_archive_media_video_url", romIdentityId),
+    testTranslationConnection: () => call("test_translation_connection"),
     translationSettings: () => call("translation_settings"),
     saveTranslationSettings: (mode,key) => call("save_translation_settings",mode,key),
     startTranslateDescription: (text,language) => call("start_translate_description",text,language),

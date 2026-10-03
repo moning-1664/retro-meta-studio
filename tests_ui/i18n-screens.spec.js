@@ -220,9 +220,9 @@ test('English failed recovery includes close confirmation', async ({page}) => {
   await page.evaluate(() => {
     window.api.operationHistory=async()=>({ok:true,data:{items:[{id:'failed',status:'recovery_failed',action:'paste',createdAt:1,bytes:2048,canDiscard:false,canForceRecovery:true,recoveryError:'External file changed'}]}});
   });
-  if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
-  await page.locator('.stg-nav-item[data-section="advanced"]').click();
-  await page.getByRole('button',{name:'Open recovery records',exact:true}).click();
+  await page.evaluate(()=>{window.api.operationState=async()=>({ok:true,data:{recoveryError:'interrupted'}});});
+  await page.locator('.ctab.archive').click();
+  await page.locator('.modal-actions .btn.primary').click();
   await expect.poll(() => untranslated(page)).toEqual([]);
   await page.getByRole('button',{name:'Close record (keep backup)',exact:true}).click();
   await expect.poll(() => untranslated(page)).toEqual([]);
@@ -348,17 +348,16 @@ for (const language of ['ja','es','fr']) {
     await expect.poll(()=>untranslated(page)).toEqual([]);
     await page.keyboard.press('Escape');
     await page.evaluate(()=>{window.api.operationHistory=async()=>({ok:true,data:{items:[{id:'failed',status:'recovery_failed',action:'paste',createdAt:1,bytes:2048,canDiscard:false,canForceRecovery:true,recoveryError:'External file changed'}]}});});
-    if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
-    await page.locator('.stg-nav-item[data-section="advanced"]').click();
+    await page.evaluate(()=>{window.api.operationState=async()=>({ok:true,data:{recoveryError:'interrupted'}});});
+    await page.locator('.ctab.archive').click();
+    await page.locator('.modal-actions .btn.primary').click();
     const label=id=>page.evaluate(key=>window.RMSI18n.t(key),id);
-    await page.getByRole('button',{name:await label('ui.backup.open'),exact:true}).click();
     await expect.poll(()=>untranslated(page)).toEqual([]);
     await page.getByRole('button',{name:await label('ui.history.force'),exact:true}).click();
     await expect.poll(()=>untranslated(page)).toEqual([]);
     await page.keyboard.press('Escape');
-    if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
-    await page.locator('.stg-nav-item[data-section="advanced"]').click();
-    await page.getByRole('button',{name:await label('ui.backup.open'),exact:true}).click();
+    await page.locator('.ctab:not(.archive)').first().click();
+    await page.locator('.modal-actions .btn.primary').click();
     await page.getByRole('button',{name:await label('ui.history.close'),exact:true}).click();
     await expect.poll(()=>untranslated(page)).toEqual([]);
   });

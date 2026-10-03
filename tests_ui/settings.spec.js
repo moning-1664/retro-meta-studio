@@ -14,23 +14,21 @@ const openSettings = async (page, section = "appearance") => {
 };
 const row = (page, key) => page.locator(`.stg-row[data-key='${key}']`);
 
-test("백업 자동 정리는 기본 꺼짐이고 한도를 저장한다", async ({page}) => {
+test("종료 시 백업 비우기는 기본 켜짐이고 한도를 저장한다", async ({page}) => {
   await openSettings(page, "advanced");
-  await expect(row(page, "backupRetention.enabled").locator('input')).not.toBeChecked();
-  await expect(row(page, "backupRetention.maxCount").locator('input')).toBeDisabled();
-  await row(page, "backupRetention.enabled").locator('.stg-switch').click();
+  await expect(row(page, "backupRetention.clearOnExit").locator('input')).toBeChecked();
+  await expect(row(page, "backupRetention.maxCount").locator('input')).toBeEnabled();
   await row(page, "backupRetention.maxCount").locator('input').fill('5');
   await row(page, "backupRetention.maxCount").locator('input').blur();
   await row(page, "backupRetention.maxSizeGB").locator('input').fill('2');
   await row(page, "backupRetention.maxSizeGB").locator('input').blur();
   await page.locator('.stg-confirm').click();
   await expect.poll(() => page.evaluate(async () => (await window.api.getAppSettings()).data.backupRetention))
-    .toEqual({enabled:true, maxCount:5, maxSizeGB:2});
+    .toMatchObject({enabled:true, maxCount:5, maxSizeGB:2});
 });
 
 test("백업 한도를 모두 무제한으로 켤 수 없다", async ({page}) => {
   await openSettings(page, "advanced");
-  await row(page, "backupRetention.enabled").locator('.stg-switch').click();
   await row(page, "backupRetention.maxCount").locator('input').fill('0');
   await row(page, "backupRetention.maxCount").locator('input').blur();
   await row(page, "backupRetention.maxSizeGB").locator('input').fill('0');
