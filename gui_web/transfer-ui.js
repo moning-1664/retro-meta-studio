@@ -36,9 +36,11 @@
           }
           await reloadList();
           if (targetRow && S.detailState?.archive) {
+            const state = S.detailState;
+            const ownerId = S.activeId;
             const detail = await api.archiveDetail(targetRow.romIdentityId || targetRow.romUid);
-            if (detail.ok && detail.data) {
-              S.detailState = archiveDetailState(detail.data, S.detailState.tab);
+            if (detail.ok && detail.data && S.detailState === state && S.activeId === ownerId) {
+              S.detailState = archiveDetailState(detail.data, state.tab);
               renderDetailPanel();
             }
           }
@@ -328,7 +330,7 @@
                 : preview.target === "archive"
                   ? api.getArchiveMediaImage(item.existingRomUid,
                     type === "covers" ? "Covers" : "Screenshots", true)
-                  : api.getMediaImage(S.activeId, item.existingRomUid,
+                  : api.getMediaImage(preview.targetCollectionId || S.activeId, item.existingRomUid,
                     type === "covers" ? "Covers" : "Screenshots", true);
               request.then((result) => {
                 if (result.ok && result.data && row.isConnected) {

@@ -130,8 +130,8 @@ test("∨를 누르면 필드 비교와 미디어 선택을 펼친다", async ({
   await expect(page.locator(".candidate-detail-field", { hasText: "제목" })).toBeVisible();
   await expect(page.locator(".candidate-detail-current")).toHaveCount(0);
   await expect(page.locator(".scrape-evidence")).toHaveCount(0);
-  await expect(page.locator(".scrape-media-option", { hasText: "covers" })).toBeVisible();
-  await expect(page.locator(".scrape-media-option input")).toBeChecked();
+  await expect(page.locator(".scrape-media-option", { hasText: "covers" })).toHaveCount(0);
+  await expect(page.locator(".candidate-detail-field input").first()).toBeChecked();
 });
 
 test("후보는 cover와 screenshot만 미리 보고 다른 설정 미디어도 적용 대상으로 유지한다", async ({ page }) => {
@@ -156,7 +156,7 @@ test("후보는 cover와 screenshot만 미리 보고 다른 설정 미디어도 
   });
   await openForRows(page);
   await page.locator(".scrape-expand").first().click();
-  await expect(page.locator(".scrape-media-option")).toHaveCount(2);
+  await expect(page.locator(".scrape-media-option")).toHaveCount(1);
   await expect(page.locator(".scrape-media-option img")).toHaveCount(1);
   await expect(page.locator(".scrape-media-option", { hasText: "videos" })).toHaveCount(0);
   await page.locator(".scrape-candidate-title").first().click();

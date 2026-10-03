@@ -14,7 +14,7 @@ const REGION_INDEX = { kr: 0, en: 1, jp: 2, eu: 3, global: 4 };
 
 const openMetadataSettings = async (page) => {
   await page.locator(".settings-btn").click();
-  await page.locator(".stg-nav-item[data-section='metadata']").click();
+  await page.locator(".stg-nav-item[data-section='tags']").click();
   await expect(page.locator(".stg-title-affix")).toBeVisible();
 };
 

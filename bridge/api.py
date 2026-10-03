@@ -2500,9 +2500,15 @@ class Api(ScraperBridge, TranslationBridge):
         item = next((i for i in op["prepared"] if transfer.item_key(i) == key), None)
         if item is None:
             return ok(None)
-        media = next((m for m in item.get("media") or []
+        media = next((m for m in item.get("previewMedia", item.get("media")) or []
                       if (m.get("type") or m.get("media_type")) == media_type), None)
-        return ok(self._encode_image(media.get("path"), THUMBNAIL_MAX) if media else None)
+        image = self._encode_image(media.get("path"), THUMBNAIL_MAX) if media else None
+        if not image:
+            log.warning("Paste preview image unavailable operation=%s key=%s type=%s "
+                        "referenceFound=%s plannedMedia=%d previewMedia=%d", operation_id, key,
+                        media_type, bool(media), len(item.get("media") or []),
+                        len(item.get("previewMedia", item.get("media")) or []))
+        return ok(image)
 
     @guarded
     def paste_undo(self, collection_id, archive_operation_id=None):

@@ -30,7 +30,7 @@
             h("option", { value: "convert" }, [window.RMSI18n.t("ui.legacy.da319f4d4f")]),
           ]);
           if (cfg.configured) mode.value = "existing";
-          const folderInfo = h("div", { class: "folder-detection", role: "status" });
+          const folderInfo = h("div", { class: "folder-detection archive-folder-result", role: "status" });
           let folderResult = null;
           let inspectRun = 0;
           let inspectJobId = null;
@@ -72,29 +72,29 @@
             const r = await api.pickFolder(title);
             if (r.ok && r.data) { input.value = r.data; input.dispatchEvent(new Event("change")); }
           } }, ["찾아보기"]);
-          const rowOf = (key, label, help, control) => h("div", { class: "stg-row", "data-key": key,
+          const rowOf = (key, label, help, control) => h("div", { class: "stg-row" + (control.classList.contains("stg-path") ? " stg-row-path" : ""), "data-key": key,
             title: help }, [
-            h("div", { class: "stg-label" }, [h("div", { class: "stg-name" }, [label]), h("div", { class: "stg-help" }, [help])]),
+            h("div", { class: "stg-label" }, [h("div", { class: "stg-name" }, [label]), h("div", { class: "stg-help", title: help }, [help])]),
             control,
           ]);
     
           wrap.appendChild(h("div", { class: "stg-help" },
-            ["Archive는 선택한 게임의 메타데이터·미디어와 변경 이력을 보관합니다. 현재 Collection과 자동 동기화하지 않습니다."]));
+            [window.RMSI18n.message("ui.settings.archiveAbout")]));
           if (!cfg.configured) wrap.appendChild(rowOf("archive.mode", window.RMSI18n.t("ui.legacy.b43dc959bb"),
             window.RMSI18n.t("ui.legacy.5ff094de1f"), mode));
           wrap.appendChild(rowOf("archive.frontend", "저장 형식",
-            "Archive를 어떤 Frontend의 형식으로 둘지 정합니다. 바꾸면 그 형식으로 다시 배치합니다(이전 형식의 파일은 지우지 않습니다).",
+            window.RMSI18n.message("ui.settings.archiveFormat"),
             frontendSel));
           wrap.appendChild(rowOf("archive.archiveDir", "메타데이터 폴더",
-            "메타데이터와 미디어 폴더입니다. 이 폴더에 Archive DB도 저장됩니다.",
+            window.RMSI18n.message("ui.settings.archiveFolder"),
             h("div", { class: "stg-path" }, [dirInput, browse(dirInput, "Archive 디렉토리")])));
-          wrap.appendChild(folderInfo);
+          wrap.querySelector("[data-key='archive.archiveDir'] .stg-label").appendChild(folderInfo);
           inspectPromise = inspectArchiveFolder();
           wrap.appendChild(rowOf("archive.romDir", "ROM 디렉토리 (선택)",
-            "ROM을 둘 폴더입니다. 지정하면 여기에 ROM을 넣고 새로고침해서 Archive에 올릴 수 있고, Collection으로 ROM까지 보낼 수 있습니다.",
+            window.RMSI18n.message("ui.settings.archiveRom"),
             h("div", { class: "stg-path" }, [romInput, browse(romInput, "ROM 디렉토리")])));
           wrap.appendChild(rowOf("archive.mediaInternal", "미디어를 Archive에 보관",
-            "켜면 미디어 파일을 Archive 디렉토리로 복사해 둡니다(없는 파일만 복사). 끄면 원본 Collection의 파일을 참조만 합니다.",
+            window.RMSI18n.message("ui.settings.archiveMedia"),
             h("label", { class: "stg-toggle-row" }, [media])));
     
           const status = h("div", { class: "stg-help archive-apply-status" }, [
@@ -182,27 +182,6 @@
             if (onApplied) await onApplied();
             draw();
           });
-          const rescan = h("button", { class: "btn archive-rescan", disabled: !cfg.configured },
-            ["디렉터리 다시 읽기"]);
-          rescan.addEventListener("click", async () => {
-            const started = await api.startArchiveRefresh();
-            if (!started.ok) { showToast(started.error, "error"); return; }
-            const done = await pollJob(started.data.jobId, window.RMSI18n.t("ui.legacy.3e6cf405ea"), progressHost);
-            if (!done.ok) {
-              if (String(done.error || "").includes("자동으로 합칠 수 없습니다")) await showSharedConflict();
-              else if (!done.cancelled) showToast(done.error, "error");
-              return;
-            }
-            const scan = done.data?.timings || {};
-            lastDiagnostics = window.RMSI18n.t("ui.legacy.3bc47ee5a2", {value0: (done.data?.scanSeconds ?? "?"), value1: (scan.metadataSeconds ?? "?"), value2: (scan.mediaSeconds ?? "?"), value3: (scan.romSeconds ?? "?"), value4: (scan.databaseSeconds ?? "?")});
-            status.textContent = lastDiagnostics;
-            showToast(window.RMSI18n.t("ui.legacy.b4f74b78a3", {value0: (done.data?.scanSeconds ?? "?")}));
-            if (done.data?.sharedSnapshot?.status === "conflict")
-              await showSharedConflict();
-            if (onApplied) await onApplied();
-          });
-          wrap.appendChild(h("div", { class: "stg-help" },
-            ["저장된 DB를 먼저 표시합니다. 파일 변경분은 필요할 때 다시 읽으세요."]));
           if (lastDiagnostics) status.textContent = lastDiagnostics;
           if (cfg.editLock) {
             const lockInfo = h("div", {class: "stg-help"}, [
@@ -219,7 +198,7 @@
             wrap.appendChild(h("div", {class: "archive-config-actions"}, [lockInfo, release]));
           }
           wrap.appendChild(progressHost);
-          wrap.appendChild(h("div", { class: "archive-config-actions" }, [status, rescan, apply]));
+          wrap.appendChild(h("div", { class: "archive-config-actions" }, [status, apply]));
         };
         draw();
         return wrap;

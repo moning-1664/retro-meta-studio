@@ -118,7 +118,7 @@ def decide(item, existing, mode, *, allow_rom_replace=False,
     if not (fields != (existing.get("fields") or {}) or media or rom):
         return None, _nothing_to_change(mode, item)
     return {**item, "fields": fields, "frontend_raw": raw, "rom": rom,
-            "media": media, "forceMedia": force_media}, None
+            "media": media, "previewMedia": item.get("previewMedia", item.get("media") or []), "forceMedia": force_media}, None
 
 
 def item_key(item) -> str:

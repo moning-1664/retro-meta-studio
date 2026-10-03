@@ -40,7 +40,7 @@ test("백업 한도를 모두 무제한으로 켤 수 없다", async ({page}) =>
 
 test("Navigator의 Settings 버튼으로 열리고 Esc로 닫힌다", async ({ page }) => {
   await openSettings(page);
-  await expect(page.locator(".stg-nav-item")).toHaveCount(9);
+  await expect(page.locator(".stg-nav-item")).toHaveCount(10);
   await page.keyboard.press("Escape");
   await expect(page.locator(".stg-panel")).toHaveCount(0);
 });

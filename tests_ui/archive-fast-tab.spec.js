@@ -25,7 +25,7 @@ test("Archive tab displays cached rows without waiting for ownership summary", a
   expect(await page.evaluate(() => window.__ownershipCalls)).toBe(0);
 });
 
-test("directory refresh is an explicit setting action", async ({ page }) => {
+test("directory refresh remains available through Archive refresh", async ({ page }) => {
   await openApp(page);
   await page.evaluate(() => {
     window.__refreshCalls = 0;
@@ -43,8 +43,10 @@ test("directory refresh is an explicit setting action", async ({ page }) => {
   });
   await page.locator(".settings-btn").click();
   await page.locator(".stg-nav-item[data-section='archive']").click();
-  await expect(page.locator(".archive-rescan")).toBeEnabled();
-  await page.locator(".archive-rescan").click();
+  await expect(page.locator(".archive-rescan")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.locator(".ctab.archive").click();
+  await page.keyboard.press("F5");
   await expect.poll(() => page.evaluate(() => window.__refreshCalls)).toBe(1);
-  await expect(page.locator(".archive-apply-status")).toContainText("0.1초");
+
 });

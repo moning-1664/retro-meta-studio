@@ -57,13 +57,14 @@
               api.saveScraperSettings({ mediaTypes: [...enabledMedia] });
             });
             mediaChoices.appendChild(h("label", { class: "scrape-media-choice" }, [
-              box, h("span", {}, [label]),
+              box, h("span", {}, [window.RMSI18n.raw(label)]),
             ]));
           });
           wrap.appendChild(mediaChoices);
-          const datHeading = h("div", { class: "stg-subsection-title" }, ["식별 데이터"]);
+          const datPanel = h("details", { class: "scrape-dat-settings" });
+          const datHeading = h("summary", {}, [window.RMSI18n.message("ui.settings.datTitle")]);
           const datHelp = h("div", { class: "stg-help" },
-            ["보유한 Logiqx DAT 또는 MAME listxml을 가져오면 ROM 코드명과 CRC를 정식 제목 검색에 활용합니다. 결과는 직접 확인해야 합니다."]);
+            [window.RMSI18n.message("ui.settings.datHelp")]);
           const datStatus = h("div", { class: "stg-info" }, ["가져온 DAT를 확인하는 중…"]);
           const datProgress = h("div", { class: "stg-progress" });
           const systemSelect = h("select", { class: "field-input", "aria-label": "DAT System" });
@@ -96,8 +97,9 @@
                 ? sources.data.map((source) => window.RMSI18n.t(msg("ui.dat.source", {name:source.name,system:source.system,count:source.entries.toLocaleString()}))).join(" · ")
                 : window.RMSI18n.t("ui.scraper.datEmpty");
           };
-          wrap.append(datHeading, datHelp, h("div", { class: "stg-inline-actions" },
+          datPanel.append(datHeading, datHelp, h("a", {href:"https://docs.mamedev.org/usingmame/assetsearch.html",target:"_blank",rel:"noopener noreferrer"}, [window.RMSI18n.message("ui.settings.datGuide")]), h("div", { class: "stg-inline-actions" },
             [systemSelect, datButton]), datProgress, datStatus, datSources);
+          wrap.appendChild(datPanel);
           refreshDatSources();
         };
         draw();
@@ -360,7 +362,7 @@
               },
             }));
             const previewMedia = (candidate.media || []).map((media, mediaIndex) => ({ media, mediaIndex }))
-              .filter(({ media }) => media.media_type === "covers" || media.media_type === "screenshots");
+              .filter(({ media }) => media.media_type === "screenshots");
             if (previewMedia.length) {
               const mediaList = h("div", { class: "scrape-media-list" });
               previewMedia.forEach(({ media, mediaIndex }) => {

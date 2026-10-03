@@ -10,7 +10,7 @@ RetroMeta Studio 버전 정보 (MAJOR.MINOR.PATCH).
 - python version.py --sync: 번호 증가 없이 UI 버전 파일 동기화.
 """
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 
 def version_tuple():

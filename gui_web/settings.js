@@ -17,9 +17,10 @@
   const SECTIONS = [
     ["general", "일반", "프로그램의 기본 동작"],
     ["collections", "컬렉션", "Collection 열기와 세션"],
-    ["metadata", "메타데이터와 미디어", "목록과 메타데이터 표시"],
+    ["metadata", window.RMSI18n.message("ui.settings.gamelist"), window.RMSI18n.message("ui.settings.gamelistHelp")],
+    ["tags", window.RMSI18n.message("ui.settings.tags"), window.RMSI18n.message("ui.settings.tagsHelp")],
     ["scraper", "스크랩", "외부 게임 정보 검색"],
-    ["transfer", "복사와 가져오기", "가져오기와 내보내기"],
+    ["transfer", window.RMSI18n.message("ui.settings.copyPolicy"), window.RMSI18n.message("ui.settings.copyPolicyHelp")],
     ["archive", "Archive", "저장 형식과 위치"],
     ["emulator", "에뮬레이터", "RetroArch 연동"],
     ["appearance", "화면", "테마와 화면 밀도"],
@@ -39,6 +40,7 @@
   function open(ctx) {
     const { h } = ctx;
     const root = document.getElementById("modal-root");
+    root.__settingsParent = null;
     let active = ctx.section || "appearance";
 
     while (root.firstChild) root.removeChild(root.firstChild);
@@ -93,7 +95,7 @@
       return h("div", { class: "stg-row" + (soon ? " soon" : ""), "data-key": key }, [
         h("div", { class: "stg-label" }, [
           h("div", { class: "stg-name" }, [label, soon ? h("span", { class: "stg-soon" }, ["준비 중"]) : null]),
-          help ? h("div", { class: "stg-help" }, [help]) : null,
+          help ? h("div", { class: "stg-help", title: help }, [help]) : null,
         ]),
         control,
       ]);
@@ -180,7 +182,7 @@
         });
         textInput.addEventListener("change", () => commit({ text: textInput.value }));
         const modeSelect = select(state.mode,
-          [["prefix", "제목 앞에 (Prefix)"], ["postfix", "제목 뒤에 (Postfix)"]],
+          [["prefix", window.RMSI18n.message("ui.settings.prefix")], ["postfix", window.RMSI18n.message("ui.settings.suffix")]],
           (v) => commit({ mode: v }), !state.enabled);
         const rowEl = h("div", { class: "stg-title-affix-row" + (state.enabled ? "" : " off") }, [
           toggle(state.enabled, (v) => {
@@ -206,7 +208,7 @@
       const s = ctx.get();
 
       if (key === "general") {
-        add(...section("일반", "RetroMeta Studio의 전역 동작을 설정합니다."));
+        add(...section("일반", window.RMSI18n.message("ui.settings.generalHelp")));
         const currentLanguage = (s.general && s.general.language) || "ko";
         // 언어 이름은 **그 나라 고유 표기**로 보여준다(사용자 결정, 메뉴 정리 §9) - "한국어"
         // 처럼 흔한 UI 문구와 겹치는 문자열은 i18n 번역표를 거치면 "Korean"처럼 옮겨져
@@ -218,19 +220,35 @@
               : [["ko", "한국어"], ["en", "English"], ["ja", "日本語"], ["es", "Español"], ["fr", "Français"]])
               .map(([code, label]) => [code, document.createTextNode(label)]),
             (v) => ctx.update("general", { language: v })), window.RMSI18n.message("ui.settings.languageCoverage")));
+        const m = { videoMode: "auto", videoDelay: 3, videoSound: true, videoLoop: true,
+                    videoVolume: 70, ...(s.media || {}) };
+        add(h("div", { class: "stg-subsection-title" }, ["동영상"]));
+        add(row("media.videoMode", "영상 재생",
+          select(m.videoMode, [["auto", "자동 재생"], ["manual", "눌러서 재생"], ["off", "재생 안 함"]],
+            (v) => ctx.update("media", { videoMode: v })),
+          window.RMSI18n.message("ui.settings.videoHelp")));
+        add(row("media.videoDelay", "자동 재생 대기",
+          select(m.videoDelay, [[0, "0초"], [1, "1초"], [3, "3초"], [5, "5초"], [10, "10초"], [15, "15초"]],
+            (v) => ctx.update("media", { videoDelay: Number(v) })),
+          window.RMSI18n.message("ui.settings.videoDelayHelp")));
+        add(row("media.videoSound", "소리", toggle(m.videoSound, (v) => ctx.update("media", { videoSound: v }))));
+        add(row("media.videoVolume", "음량", volumeSlider(m.videoVolume,
+            (v) => ctx.update("media", { videoVolume: v })),
+          "소리를 켰을 때의 재생 음량입니다."));
+        add(row("media.videoLoop", "반복 재생", toggle(m.videoLoop, (v) => ctx.update("media", { videoLoop: v }))));
       } else if (key === "collections") {
-        add(...section("컬렉션", "Collection 자체의 경로가 아니라 열기/복원 동작을 설정합니다."));
+        add(...section("컬렉션", window.RMSI18n.message("ui.settings.collectionsHelp")));
         const coll = { restoreTabs: true, rememberSystem: true, ...(s.collections || {}) };
         add(row("collections.restoreTabs", "열린 탭 복원",
           toggle(coll.restoreTabs !== false, (v) => ctx.update("collections", { restoreTabs: v })),
-          "앱을 다시 켜면 마지막에 열어 둔 Collection 탭을 모두 되살립니다(끄면 첫 Collection만 엽니다)."));
+          window.RMSI18n.message("ui.settings.restoreTabsHelp")));
         add(row("collections.rememberSystem", "마지막 시스템 기억",
           toggle(coll.rememberSystem !== false, (v) => ctx.update("collections", { rememberSystem: v })),
           "Collection마다 마지막으로 고른 System/Storage에서 시작합니다."));
         add(row("navigation.hideEmptySystems", "빈 시스템 숨기기",
           toggle(s.navigation && s.navigation.hideEmptySystems,
             (v) => ctx.update("navigation", { hideEmptySystems: v })),
-          "좌측 SYSTEMS 목록에서 게임이 없는 System을 숨깁니다. SYSTEMS 제목 옆 눈 아이콘으로도 바꿀 수 있습니다."));
+          window.RMSI18n.message("ui.settings.emptySystemsHelp")));
         // 우선 정렬(실사용 피드백) - 예전 상태 필터는 실제로 아무것도 걸러내지
         // 못했다. 그 자리를 "ROM/Metadata/Media가 있는 항목을 먼저 보여주는"
         // 1차 정렬로 바꾸면서, Collection을 새로 열 때 기본으로 쓸 값도 여기서
@@ -240,30 +258,18 @@
             ["none", "전체보기"], ["rom", "ROM 우선"],
             ["metadata", "메타데이터 우선"], ["media", "미디어 우선"],
           ], (v) => ctx.update("navigation", { defaultSortPriority: v })),
-          "Collection을 새로 열 때 목록의 기본 우선 정렬입니다. Toolbar에서 그때그때 바꿀 수 있습니다."));
-        add(h("div", { class: "stg-info" }, ["ROM / Metadata / Media 경로는 Collection 탭의 우클릭 메뉴에서 관리합니다."]));
+          window.RMSI18n.message("ui.settings.sortHelp")));
+
       } else if (key === "metadata") {
-        add(...section("메타데이터와 미디어", "목록 표시와 Metadata/Media의 기본 처리 정책입니다."));
+        add(...section(window.RMSI18n.message("ui.settings.gamelist"), window.RMSI18n.message("ui.settings.gamelistHelp")));
         add(h("div", { class: "stg-subsection-title" }, ["게임 목록 열"]));
         add(ctx.renderColumns ? ctx.renderColumns() :
           h("div", { class: "stg-info" }, ["컬럼 순서/표시 설정은 준비 중입니다."]));
-        const m = { videoMode: "auto", videoDelay: 3, videoSound: true, videoLoop: true,
-                    videoVolume: 70, ...(s.media || {}) };
-        add(h("div", { class: "stg-subsection-title" }, ["동영상"]));
-        add(row("media.videoMode", "영상 재생",
-          select(m.videoMode, [["auto", "자동 재생"], ["manual", "눌러서 재생"], ["off", "재생 안 함"]],
-            (v) => ctx.update("media", { videoMode: v })),
-          "Media 탭의 Screenshot 자리에서 영상을 보여줍니다. 재생 중에 누르면 멈춥니다."));
-        add(row("media.videoDelay", "자동 재생 대기",
-          select(m.videoDelay, [[0, "0초"], [1, "1초"], [3, "3초"], [5, "5초"], [10, "10초"], [15, "15초"]],
-            (v) => ctx.update("media", { videoDelay: Number(v) })),
-          "게임을 고르고 이 시간만큼 그대로 두면 재생합니다. 그 전에 다른 게임으로 넘기면 재생하지 않습니다."));
-        add(row("media.videoSound", "소리", toggle(m.videoSound, (v) => ctx.update("media", { videoSound: v }))));
-        add(row("media.videoVolume", "음량", volumeSlider(m.videoVolume,
-            (v) => ctx.update("media", { videoVolume: v })),
-          "소리를 켰을 때의 재생 음량입니다."));
-        add(row("media.videoLoop", "반복 재생", toggle(m.videoLoop, (v) => ctx.update("media", { videoLoop: v }))));
-        add(h("div", { class: "stg-subsection-title" }, ["제목 앞뒤 문구"]));
+        add(...section(window.RMSI18n.t("ui.translation.title"), window.RMSI18n.t("ui.translation.disclosure")));
+        if (ctx.renderTranslation) add(ctx.renderTranslation());
+      } else if (key === "tags") {
+        add(...section(window.RMSI18n.message("ui.settings.tags"), window.RMSI18n.message("ui.settings.tagsHelp")));
+        add(h("div", { class: "stg-subsection-title" }, [window.RMSI18n.message("ui.settings.languageTags")]));
         add(h("div", { class: "stg-help" }, [
           window.RMSI18n.message("ui.metadata.titleAffixHelp"),
         ]));
@@ -277,14 +283,12 @@
           (window.RMSI18n.t("ui.legacy.e47c2599fa") + " ")
           + window.RMSI18n.t("ui.legacy.fdec9c6fb9")));
         add(discFormatRow(s));
-        add(...section(window.RMSI18n.t("ui.translation.title"), window.RMSI18n.t("ui.translation.disclosure")));
-        if (ctx.renderTranslation) add(ctx.renderTranslation());
       } else if (key === "scraper") {
         add(...section("스크랩", "ScreenScraper 계정과 요청 사용량을 관리합니다."));
         add(ctx.renderScraper ? ctx.renderScraper()
           : h("div", { class: "stg-info" }, [window.RMSI18n.t("ui.legacy.9ad2a4ee8d")]));
       } else if (key === "transfer") {
-        add(...section("복사와 가져오기", "파일과 Metadata/Media를 옮길 때의 기본값입니다."));
+        add(...section(window.RMSI18n.message("ui.settings.copyPolicy"), window.RMSI18n.message("ui.settings.copyPolicyHelp")));
         // 붙여넣기(bridge paste)가 이 값을 읽는다. 저장된 사용자 선택은 기본값보다 우선한다.
         // unmatchedRom*은 registry에 평평하게 저장한다(bridge/api.py TRANSFER_DEFAULTS 참고) -
         // "transfer" 섹션 patch는 한 단계 깊이까지만 병합되므로, 중첩 객체로 두면 필드 하나만
@@ -347,9 +351,9 @@
         add(row("backupRetention.enabled", "백업 자동 정리", toggle(retention.enabled,
           value => { ctx.update("backupRetention", {enabled:value,
             ...(value && !retention.maxCount && !retention.maxSizeGB ? {maxCount:20} : {})}); render(); }),
-          "작업 완료 후 오래된 백업부터 정리합니다. 최신 실행 취소·복구 기록은 보존합니다."));
+          window.RMSI18n.message("ui.settings.backupHelp")));
         const limitInput = (key, fallback, maximum) => {
-          const input = h("input", {class:"stg-control stg-text", type:"number", min:"0", max:String(maximum),
+          const input = h("input", {class:"stg-control stg-number", type:"number", min:"0", max:String(maximum),
             step:"1", value:String(retention[key] ?? fallback), disabled:!retention.enabled});
           input.addEventListener("change", () => {
             const current = ctx.get().backupRetention || retention;
@@ -364,8 +368,8 @@
           });
           return input;
         };
-        add(row("backupRetention.maxCount", "보관할 작업 수", limitInput("maxCount", 20, 10000), "Collection / Archive별 한도. 0은 제한 없음입니다."));
-        add(row("backupRetention.maxSizeGB", "보관 용량 (GB)", limitInput("maxSizeGB", 10, 100000), "0은 제한 없음. 보호된 백업 때문에 한도를 초과할 수 있습니다."));
+        add(row("backupRetention.maxCount", window.RMSI18n.message("ui.settings.backupCount"), limitInput("maxCount", 20, 10000), window.RMSI18n.message("ui.settings.backupCountHelp")));
+        add(row("backupRetention.maxSizeGB", window.RMSI18n.message("ui.settings.backupSize"), limitInput("maxSizeGB", 10, 100000), window.RMSI18n.message("ui.settings.backupSizeHelp")));
         const reset = h("button", { class: "stg-danger" }, ["화면 설정 초기화"]);
         reset.addEventListener("click", () => { ctx.reset(); render(); });
         add(row("advanced.reset", "화면 설정 초기화", reset, "테마·밀도·크기를 기본값으로 되돌립니다."));

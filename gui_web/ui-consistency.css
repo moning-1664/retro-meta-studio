@@ -129,3 +129,29 @@ input[type="range"]:disabled { opacity: .5; cursor: not-allowed; }
 /* Action text must stay on one line in longer translations. */
 .detail-save { flex-shrink: 0; white-space: nowrap; width: auto; }
 .detail-save > span { white-space: nowrap; }
+
+/* Settings: concise labels, trailing compact controls, full-width paths. */
+.stg-content { max-width: 820px; }
+.stg-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px 18px; min-height: 44px; }
+.stg-label { min-width: 0; }
+.stg-name { font-size: var(--fs-body); font-weight: 500; }
+.stg-help, .stg-section-desc, .stg-nav-desc { font-size: var(--fs-caption); }
+.stg-label > .stg-help { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stg-section-desc { margin: 4px 0 12px; }
+.stg-row-path { grid-template-columns: minmax(0,1fr); }
+.stg-row-path .stg-path { width: 100%; min-width: 0; }
+.stg-row-path .stg-help { white-space: normal; }
+.stg-number { width: 80px; min-width: 80px; text-align: right; justify-self: end; }
+.archive-folder-result { border: 0; padding: 0; margin: 2px 0 0; font-size: var(--fs-caption); background: none; }
+.stg-content[data-section="archive"] > .stg-section-desc { margin-bottom: 0; }
+.stg-archive > .stg-help:first-child { margin: 0 0 12px; }
+.stg-title-affix { max-width: 540px; }
+.stg-title-affix-row { display: grid; grid-template-columns: 36px 85px 72px minmax(50px,100px); gap: 8px; }
+.stg-title-affix-row select.stg-control, .stg-title-affix-text { width: 100%; min-width: 0; }
+.scrape-media-settings { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); max-width: 570px; gap: 6px 10px; }
+.scrape-media-choice { background: none; border: 0; padding: 2px 0; min-height: 24px; border-radius: 0; }
+.scrape-dat-settings { margin-top: 18px; }
+.scrape-dat-settings summary { cursor: pointer; color: var(--muted); font-size: var(--fs-body); }
+.scrape-dat-settings a { font-size: var(--fs-caption); }
+.cheader-expanded, #header-row.has-sys-art .detail-topspace { background: var(--chrome); background-image: none; }
+@media(max-width:1000px) { .scrape-media-settings { grid-template-columns: repeat(3,minmax(0,1fr)); } }

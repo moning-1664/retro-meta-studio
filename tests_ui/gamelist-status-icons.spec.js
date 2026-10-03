@@ -60,7 +60,7 @@ test("일부만 있으면 노란색이고 이유가 툴팁에 나온다", async 
   await page.locator(".nav-system", { hasText: "PS2" }).click();
   const mgs2 = rowByFile(page, "Metal Gear Solid 2");
   await expect(icon(mgs2, "metaLevel")).toHaveClass(/lv-partial/);
-  await expect(icon(mgs2, "metaLevel")).toHaveAttribute("title", /Title 또는 Description/);
+  await expect(icon(mgs2, "metaLevel")).toHaveAttribute("title", /제목 또는 설명/);
   await expect(icon(mgs2, "mediaLevel")).toHaveClass(/lv-partial/);
   await expect(icon(mgs2, "mediaLevel")).toHaveAttribute("title", /주요 미디어/);
   // 노란색은 색이 실제로 다르다.

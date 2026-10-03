@@ -696,7 +696,7 @@
       get: () => S.settings,
       update: updateSettings,
       reset: () => updateSettings("appearance", { ...DEFAULT_SETTINGS.appearance }),
-      openRecovery: () => { closeModal(); openOperationHistory(); },
+      openRecovery: () => { openOperationHistory(); },
       renderColumns: columnSettingsEditor,
       renderEmulator: emulatorSettingsEditor,
       renderScraper: scraperSettingsEditor,
@@ -848,10 +848,18 @@
     if (root) root.__beforeClose = null;
     if (beforeClose) beforeClose();
     clear(root);
+    if (root?.__settingsParent) {
+      const parent = root.__settingsParent; root.__settingsParent = null; root.appendChild(parent);
+    }
   }
 
   function showModal(title, bodyEl, actions, { dismissOnBackdrop = false } = {}) {
     const root = $("modal-root");
+    if (root.querySelector(".stg-overlay")) {
+      const parent = document.createDocumentFragment();
+      while (root.firstChild) parent.appendChild(root.firstChild);
+      root.__settingsParent = parent;
+    }
     clear(root);
     const card = h("div", { class: "modal-card" }, [
       h("div", { class: "modal-title" }, [title]),
@@ -2566,14 +2574,14 @@
         const p = await api.pickFolder("RetroArch Core 폴더");
         if (p.ok && p.data) { coresInput.value = p.data; saveBoth(); }
       } }, ["찾아보기"]);
-      const pathRow = (key, label, input, button, help) => h("div", { class: "stg-row", "data-key": key }, [
+      const pathRow = (key, label, input, button, help) => h("div", { class: "stg-row stg-row-path", "data-key": key }, [
         h("div", { class: "stg-label" }, [h("div", { class: "stg-name" }, [label]), h("div", { class: "stg-help" }, [help])]),
         h("div", { class: "stg-path" }, [input, button]),
       ]);
       wrap.appendChild(pathRow("emulator.retroarchPath", "RetroArch 실행 파일", exeInput, browseExe,
-        "게임 행을 더블클릭하거나 Detail의 ▶ 버튼으로 실행합니다."));
+        window.RMSI18n.message("ui.settings.emulatorExe")));
       wrap.appendChild(pathRow("emulator.coresDir", "Core 폴더", coresInput, browseCores,
-        "Core는 이 폴더 기준 파일명으로 기억합니다 - RetroArch를 옮겨도 폴더만 다시 지정하면 됩니다."));
+        window.RMSI18n.message("ui.settings.emulatorCores")));
 
       const systems = [...new Set([...systemsInUse(), ...Object.keys(s.systemCores)])].sort();
       const fill = h("button", { class: "btn compact stg-core-fill", disabled: !s.cores.length, onClick: async () => {
@@ -5534,8 +5542,7 @@
       ]),
       h("div", { class: "field-label" }, [msg("ui.import.candidates")]),
       list,
-      h("div", { class: "modal-hint" },
-        [msg("ui.import.review")]),
+
     ]);
 
     const applyBtn = h("button", { class: "btn primary", disabled: !chosen }, ["선택 적용"]);
@@ -5630,6 +5637,9 @@
     // 미리보기를 꺼 둔 상태에서는 고르기만 하고 패널을 열지 않는다(탐색기와 같다).
     if (!S.previewOn) return;
     const tab = rememberedTab || (S.detailState && S.detailState.tab) || "metadata";
+    S.detailState = null;
+    Object.keys(fieldRefs).forEach(key => delete fieldRefs[key]);
+    renderDetailPanel();
 
     // **늦게 온 응답은 버린다.** 고른 줄은 위에서 이미 S.focused에 적었으니, 응답이
     // 돌아왔을 때 그 값이 아니면 그 사이 사용자가 다른 줄로 옮겨 간 것이다. 이 검사가
@@ -5659,6 +5669,7 @@
   }
 
   function closeDetail() {
+    ++detailRequestToken;
     S.detailState = null;
     S.focused = null;
     renderDetailPanel();
@@ -6081,6 +6092,7 @@
     const state = S.detailState;
     if (!state) return;
     const romUid = state.romUid;
+    const ownerId = S.activeId;
     // **Archive 항목은 조회 경로가 다르다.**
     //
     // Collection용 조회는 `collection_id` + `rom_uid`로 Cache를 뒤지는데, Archive
@@ -6090,7 +6102,7 @@
     const r = state.archive
       ? await api.getArchiveMediaImage(state.romIdentityId, label, !!thumbnail)
       : await api.getMediaImage(S.activeId, romUid, label, !!thumbnail);
-    if (r.ok && r.data && S.detailState && S.detailState.romUid === romUid) img.src = r.data;
+    if (r.ok && r.data && S.detailState === state && S.activeId === ownerId) img.src = r.data;
   }
 
   //: 화면에 보여줄 media와 그 표시 방식.
@@ -6200,7 +6212,7 @@
       if (file) importExternalMedia(slot, file);
     });
     // 라벨은 그림 위에 겹쳐 놓는다 - 레이아웃 공간을 먹지 않아야 그림이 커진다.
-    zone.appendChild(h("div", { class: "media-tile-label" }, [slot.label]));
+    zone.appendChild(h("div", { class: "media-tile-label" }, [window.RMSI18n.raw(slot.label)]));
     if (ownership) {
       zone.appendChild(h("div", {
         class: `media-tile-owner ${ownership.mode}`,
@@ -6328,7 +6340,7 @@
         title: `${slot.label}${has ? " 있음" : " 없음"}`,
       }, [
         icon(MEDIA_FLAG_ICONS[slot.key] || "image", 11),
-        h("span", { class: "media-flag-label" }, [slot.label]),
+        h("span", { class: "media-flag-label" }, [window.RMSI18n.raw(slot.label)]),
         ownership ? h("span", {
           class: `media-flag-owner ${ownership.mode}`,
           title: OWNERSHIP_LABEL[ownership.mode] || window.RMSI18n.t("ui.legacy.dad41c54ce"),
@@ -6703,7 +6715,7 @@
             class: "revision-chip" + (size == null ? " off" : "")
               + (mediaDiffering.has(type) ? " changed" : ""),
             title: size == null ? window.RMSI18n.t("ui.legacy.5ed5f8c40c", {value0: (type)}) : `${type} ${formatBytes(size)}`,
-          }, [MEDIA_LABEL[type] || type]));
+          }, [window.RMSI18n.raw(MEDIA_LABEL[type] || type)]));
         });
         expanded.appendChild(chips);
       }
@@ -6730,7 +6742,7 @@
     const detail = await api.archiveDetail(state.romIdentityId);
     if (detail.ok && S.detailState === state) {
       S.detailState = archiveDetailState(detail.data, state.tab);
-    } else {
+    } else if (S.detailState === state) {
       state.preferredRecordId = chosen ? null : source.recordId;
     }
     delete S.matchCounts[state.romUid];
@@ -6839,7 +6851,7 @@
   async function handleSaveDetail() {
     if (blockedInCompare("저장")) return;
     const state = S.detailState;
-    if (!state) return;
+    if (!state || S.focused !== state.romUid) return;
     captureDraft();
     const fields = { ...state.fields, ...(state.draft || {}) };
     const r = state.archive
@@ -6982,9 +6994,10 @@
         resetList();
         await reloadList();
         if (S.detailState?.archive && ids.map(String).includes(String(S.detailState.romIdentityId))) {
-          const detail = await api.archiveDetail(S.detailState.romIdentityId);
-          if (detail.ok && detail.data) {
-            S.detailState = archiveDetailState(detail.data, S.detailState.tab);
+          const state = S.detailState;
+          const detail = await api.archiveDetail(state.romIdentityId);
+          if (detail.ok && detail.data && S.detailState === state) {
+            S.detailState = archiveDetailState(detail.data, state.tab);
             renderDetailPanel();
           }
         }
@@ -7022,9 +7035,10 @@
         const result = r.data || {};
         await reloadList();
         if (S.detailState?.archive && ids.map(String).includes(String(S.detailState.romIdentityId))) {
-          const detail = await api.archiveDetail(S.detailState.romIdentityId);
-          if (detail.ok && detail.data) {
-            S.detailState = archiveDetailState(detail.data, S.detailState.tab);
+          const state = S.detailState;
+          const detail = await api.archiveDetail(state.romIdentityId);
+          if (detail.ok && detail.data && S.detailState === state) {
+            S.detailState = archiveDetailState(detail.data, state.tab);
             renderDetailPanel();
           }
         }

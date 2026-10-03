@@ -133,7 +133,7 @@ test("영상이 없는 게임에는 영상 자리가 생기지 않는다", async
 test.describe("Settings > Metadata & Media > Video", () => {
   const openVideoSettings = async (page) => {
     await page.locator(".settings-btn").click();
-    await page.locator(".stg-nav-item[data-section='metadata']").click();
+    await page.locator(".stg-nav-item[data-section='general']").click();
   };
 
   test("기본값은 자동 재생 / 3초 / 소리 켬 / 반복 켬", async ({ page }) => {

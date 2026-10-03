@@ -168,9 +168,9 @@ test.describe("Media 격자", () => {
     const tiles = await page.locator(".media-tile-label").allTextContents();
     const flags = await page.locator(".media-flag-label").allTextContents();
     const all = [...tiles, ...flags];
-    ["커버", "Marquee", "MixImage", "TitleScreen", "스크린샷",
+    ["Cover", "Marquee", "MixImage", "TitleScreen", "Screenshot",
      "3DBox", "BackCover", "PhysicalMedia", "Wheel",
-     "영상", "Manual", "FanArt"].forEach((name) => {
+     "Video", "Manual", "FanArt"].forEach((name) => {
       expect(all).toContain(name);
     });
   });
@@ -288,7 +288,7 @@ test.describe("Media 격자", () => {
     // 영상은 실어 오기엔 크고 설명서는 PDF라 애초에 그릴 수 없다. FanArt는 자리를
     // 차지할 만큼 자주 보는 것이 아니다(사용자 결정).
     await openMedia(page);
-    const video = page.locator(".media-flag-item", { hasText: "영상" });
+    const video = page.locator(".media-flag-item", { hasText: "Video" });
     await expect(video).toHaveClass(/on/);
     // `v` / `x` 글자는 둘이 닮아서 멀리서 구분이 안 됐다(사용자 피드백) - 지금은
     // media 종류를 뜻하는 아이콘 칩이고, 있고 없고는 밝기로 갈린다.

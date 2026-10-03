@@ -35,9 +35,9 @@ test.beforeEach(async ({page}) => {
   await page.evaluate(() => window.RMSI18n.setLanguage('en'));
 });
 
-for (const section of ['general','collections','metadata','scraper','transfer','archive','emulator','appearance','advanced']) {
+for (const section of ['general','collections','metadata','tags','scraper','transfer','archive','emulator','appearance','advanced']) {
   test(`English settings: ${section} has no untranslated UI`, async ({page}) => {
-    await page.locator('.settings-btn').click();
+    if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
     await page.locator(`.stg-nav-item[data-section="${section}"]`).click();
     await expect.poll(() => untranslated(page)).toEqual([]);
   });
@@ -72,8 +72,9 @@ test('English scraper settings include account test results and imported DAT cou
     window.api.datSources=async () => ({ok:true,data:[{name:'arcade.dat',system:'arcade',entries:15}]});
     window.api.pickFile=async () => ({ok:true,data:'D:\\arcade.dat'});
   });
-  await page.locator('.settings-btn').click();
+  if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
   await page.locator('.stg-nav-item[data-section="scraper"]').click();
+  await page.locator('.scrape-dat-settings summary').click();
   await expect(page.locator('.stg-help', {hasText:'arcade.dat'})).toBeVisible();
   await page.getByRole('button', {name:'Test connection',exact:true}).click();
   await expect(page.getByRole('button', {name:'Test connection',exact:true})).toBeEnabled();
@@ -91,7 +92,7 @@ test('English Archive settings include the folder detection result', async ({pag
       ok:true,data:{done:true,current:1,total:1,result:{path:'D:/Archive',archive:true,
         suggestedFrontend:'es-de',findings:[{frontend:'es-de',evidence:'gamelists',systems:[]}]}}};
   });
-  await page.locator('.settings-btn').click();
+  if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
   await page.locator('.stg-nav-item[data-section="archive"]').click();
   await page.locator('.archive-dir').fill('D:/Archive');
   await page.locator('.archive-dir').press('Tab');
@@ -100,7 +101,7 @@ test('English Archive settings include the folder detection result', async ({pag
 });
 
 test('English scraper setup and connection result are translated', async ({page}) => {
-  await page.locator('.settings-btn').click();
+  if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
   await page.locator('.stg-nav-item[data-section="scraper"]').click();
   await page.getByRole('button', {name:'Connection settings…',exact:true}).click();
   await expect(page.locator('.scrape-setup-card')).toBeVisible();
@@ -189,9 +190,9 @@ test('F1 opens help, Escape closes it, and F1 preserves an existing dialog', asy
   await expect.poll(() => untranslated(page)).toEqual([]);
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.locator('.settings-btn').click();
+  if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
   await page.keyboard.press('F1');
-  await expect(page.locator('.stg-nav-item')).toHaveCount(9);
+  await expect(page.locator('.stg-nav-item')).toHaveCount(10);
 });
 
 test('English favorite menu covers add and remove states', async ({page}) => {
@@ -219,7 +220,7 @@ test('English failed recovery includes close confirmation', async ({page}) => {
   await page.evaluate(() => {
     window.api.operationHistory=async()=>({ok:true,data:{items:[{id:'failed',status:'recovery_failed',action:'paste',createdAt:1,bytes:2048,canDiscard:false,canForceRecovery:true,recoveryError:'External file changed'}]}});
   });
-  await page.locator('.settings-btn').click();
+  if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
   await page.locator('.stg-nav-item[data-section="advanced"]').click();
   await page.getByRole('button',{name:'Open recovery records',exact:true}).click();
   await expect.poll(() => untranslated(page)).toEqual([]);
@@ -229,7 +230,7 @@ test('English failed recovery includes close confirmation', async ({page}) => {
 
 test('English connection failure remains visible and retryable', async ({page}) => {
   await page.evaluate(() => {window.api.startScraperAccountStatus=async()=>({ok:false,error:'HTTP 401'});});
-  await page.locator('.settings-btn').click();
+  if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
   await page.locator('.stg-nav-item[data-section="scraper"]').click();
   await page.getByRole('button',{name:'Connection settings…',exact:true}).click();
   const button=page.getByRole('button',{name:'Test connection',exact:true});
@@ -247,7 +248,7 @@ test('Korean item count uses Korean UI text', async ({page}) => {
 
 test('English backend connection error translates the reason and allows retry', async ({page}) => {
   await page.evaluate(() => {window.api.startScraperAccountStatus=async()=>({ok:false,error:'ScreenScraper 인증에 실패했습니다.'});});
-  await page.locator('.settings-btn').click();
+  if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
   await page.locator('.stg-nav-item[data-section="scraper"]').click();
   await page.getByRole('button',{name:'Connection settings…',exact:true}).click();
   await page.getByRole('button',{name:'Test connection',exact:true}).click();
@@ -267,9 +268,9 @@ test('backend error translation preserves codes and unknown diagnostic text', as
 for (const language of ['ja','es','fr']) {
   test(`partial language audit: ${language} settings and stable IDs`, async ({page}, testInfo) => {
     await page.evaluate(lang => window.RMSI18n.setLanguage(lang),language);
-    await page.locator('.settings-btn').click();
+    if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
     const report={language,settings:{},stableIds:null};
-    for (const section of ['general','collections','metadata','scraper','transfer','archive','emulator','appearance','advanced']) {
+    for (const section of ['general','collections','metadata','tags','scraper','transfer','archive','emulator','appearance','advanced']) {
       await page.locator(`.stg-nav-item[data-section="${section}"]`).click();
       report.settings[section]=await untranslated(page);
       expect(report.settings[section], `${language}: ${section}`).toEqual([]);
@@ -315,7 +316,7 @@ for (const language of ['ja','es','fr']) {
     await expect.poll(()=>untranslated(page)).toEqual([]);
     expect(await page.locator('.scrape-actions button').evaluateAll(nodes=>nodes.every(el=>el.scrollWidth<=el.clientWidth))).toBe(true);
     await page.keyboard.press('Escape');
-    await page.locator('.settings-btn').click();
+    if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
     await page.locator('.stg-nav-item[data-section="scraper"]').click();
     await page.getByRole('button',{name:await name('ui.scraper.connect'),exact:true}).click();
     await expect(page.locator('.scrape-setup-card')).toBeVisible();
@@ -347,7 +348,7 @@ for (const language of ['ja','es','fr']) {
     await expect.poll(()=>untranslated(page)).toEqual([]);
     await page.keyboard.press('Escape');
     await page.evaluate(()=>{window.api.operationHistory=async()=>({ok:true,data:{items:[{id:'failed',status:'recovery_failed',action:'paste',createdAt:1,bytes:2048,canDiscard:false,canForceRecovery:true,recoveryError:'External file changed'}]}});});
-    await page.locator('.settings-btn').click();
+    if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
     await page.locator('.stg-nav-item[data-section="advanced"]').click();
     const label=id=>page.evaluate(key=>window.RMSI18n.t(key),id);
     await page.getByRole('button',{name:await label('ui.backup.open'),exact:true}).click();
@@ -355,7 +356,7 @@ for (const language of ['ja','es','fr']) {
     await page.getByRole('button',{name:await label('ui.history.force'),exact:true}).click();
     await expect.poll(()=>untranslated(page)).toEqual([]);
     await page.keyboard.press('Escape');
-    await page.locator('.settings-btn').click();
+    if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
     await page.locator('.stg-nav-item[data-section="advanced"]').click();
     await page.getByRole('button',{name:await label('ui.backup.open'),exact:true}).click();
     await page.getByRole('button',{name:await label('ui.history.close'),exact:true}).click();
@@ -419,7 +420,7 @@ for (const language of ['en','ja','es','fr']) {
     await page.evaluate(language => {
       window.RMSI18n.setLanguage(language);
       window.__sharedCalls=[];
-      window.api.startArchiveRefresh=async () => ({ok:true,data:{jobId:'shared-i18n'}});
+      window.api.startArchiveApply=async () => ({ok:true,data:{jobId:'shared-i18n'}});
       const original=window.api.jobProgress;
       window.api.jobProgress=async id => id==='shared-i18n' ?
         {ok:true,data:{done:true,error:'자동으로 합칠 수 없습니다'}} : original(id);
@@ -429,18 +430,18 @@ for (const language of ['en','ja','es','fr']) {
         return {ok:true,data:choice==='local' ? {status:'published',backups:['D:/백업/local.db','D:/백업/shared.db']} : {status:'conflict'}};
       };
     },language);
-    await page.locator('.settings-btn').click();
+    if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
     await page.locator('.stg-nav-item[data-section="archive"]').click();
-    await page.locator('.archive-rescan').click();
+    await page.locator('.archive-apply').click();
     await expect(page.locator('.modal-title')).toHaveText(await page.evaluate(() => window.RMSI18n.t('ui.archive.sharedTitle')));
     await expect.poll(() => untranslated(page)).toEqual([]);
     await page.getByRole('button',{name:await page.evaluate(() => window.RMSI18n.t('ui.archive.useLocal')),exact:true}).click();
     await expect(page.locator('#toast')).toHaveText(await page.evaluate(() => window.RMSI18n.t('ui.archive.resolved',{paths:'D:/백업/local.db · D:/백업/shared.db'})));
     expect(await page.evaluate(() => window.__sharedCalls)).toEqual([['local','observed-digest']]);
     // Raw paths inside the parameterized toast are deliberately preserved.
-    await page.locator('.settings-btn').click();
+    if (!(await page.locator('.stg-panel').count())) await page.locator('.settings-btn').click();
     await page.locator('.stg-nav-item[data-section="archive"]').click();
-    await page.locator('.archive-rescan').click();
+    await page.locator('.archive-apply').click();
     await page.getByRole('button',{name:await page.evaluate(() => window.RMSI18n.t('ui.archive.useShared')),exact:true}).click();
     await expect(page.locator('#toast')).toHaveText(await page.evaluate(() => window.RMSI18n.t('ui.archive.changedAgain')));
     await expect.poll(() => untranslated(page)).toEqual([]);
