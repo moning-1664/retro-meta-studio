@@ -2379,7 +2379,7 @@
       list.appendChild(h("div", { class: "sysdel-target" }, [
         h("span", { class: "sysdel-kind" }, [KIND[t.kind] || t.kind]),
         h("span", { class: "sysdel-path", title: t.path }, [t.filesOnly ? window.RMSI18n.t("ui.legacy.e8edfa00bd", {value0: (t.path)}) : t.path]),
-        h("span", { class: "sysdel-count" }, [t.fileCount ? window.RMSI18n.t("ui.legacy.16e62bcd40", {value0: (formatCount(t.fileCount))}) : "비어 있음"]),
+        h("span", { class: "sysdel-count" }, [t.fileCount ? window.RMSI18n.t("ui.legacy.16e62bcd40", {value0: (formatCount(t.fileCount))}) : window.RMSI18n.t("ui.common.empty")]),
       ]));
       t.files.forEach((file) => list.appendChild(h("div", { class: "sysdel-file", title: file }, [file])));
       if (t.fileCount > t.files.length) {
@@ -3775,9 +3775,9 @@
   const STATUS_ICON_DEFS = [
     { key: "rom", icon: "gamepad", label: "ROM", part: "rom" },
     { key: "metaLevel", icon: "fileText", label: "Metadata", part: "metadata",
-      partial: window.RMSI18n.t("ui.legacy.d1051537bc") },
+      partialKey: "ui.status.metadataPartial" },
     { key: "mediaLevel", icon: "image", label: "Media", part: "media",
-      partial: window.RMSI18n.t("ui.legacy.2b86504d5a") },
+      partialKey: "ui.legacy.2b86504d5a" },
     { key: "videoLevel", icon: "play", label: "Video", part: "video" },
   ];
 
@@ -3834,11 +3834,12 @@
     // 정상이다 - 그 칸만 빨갛게 켜지 않는다(자리는 그대로 유지해 칸 정렬이 흔들리지
     // 않게 한다).
     const metaOnly = !!(activeDetail() && activeDetail().metadataOnly);
-    return STATUS_ICON_DEFS.map(({ key, icon: name, label, partial, part }) => {
+    return STATUS_ICON_DEFS.map(({ key, icon: name, label, partialKey, part }) => {
       // 예전 응답(수준 값 없음)도 견디도록 불리언 필드로 떨어진다.
       let level = row[key] || (row.present !== undefined && key === "rom" ? (row.present ? "ok" : "none") : "none");
       if (key === "rom" && metaOnly && level === "none") level = "ok";
-      const text = level === "ok" ? label : level === "partial" ? `${label}: ${partial || "일부만 있음"}` : window.RMSI18n.t("ui.legacy.5ed5f8c40c", {value0: (label)});
+      const localizedLabel = window.RMSI18n.t(label);
+      const text = level === "ok" ? localizedLabel : level === "partial" ? window.RMSI18n.t("ui.status.partialTooltip", {label: localizedLabel, detail: window.RMSI18n.t(partialKey || "ui.status.partial")}) : window.RMSI18n.t("ui.legacy.5ed5f8c40c", {value0: localizedLabel});
       const el = h("span", { class: `status-icon lv-${level}`, title: text,
                              "data-status": key }, [icon(name, 12)]);
       // 아이콘을 우클릭하면 **그 칸만** 지우는 메뉴가 뜬다(사용자 결정) - 행 우클릭 메뉴가 뜨지 않게 막는다.
@@ -4337,7 +4338,7 @@
         disabled: !!item.disabled, title: item.title || null,
       }, [
         item.icon ? icon(item.icon, 12) : h("span", { class: "ctx-icon-gap" }),
-        h("span", { class: "ctx-label" }, [item.label]),
+        h("span", { class: "ctx-label", title: window.RMSI18n.t(item.label) }, [item.label]),
         item.hint ? h("span", { class: "ctx-hint" }, [item.hint]) : null,
         item.children ? h("span", { class: "ctx-hint ctx-submenu-trigger", role: "button", title: "다른 명령" }, ["›"]) : null,
       ]);
@@ -4350,7 +4351,7 @@
             class: "ctx-item" + (child.danger ? " danger" : ""), role: "menuitem",
             disabled: !!child.disabled, title: child.title || null,
           }, [child.icon ? icon(child.icon, 12) : h("span", { class: "ctx-icon-gap" }),
-              h("span", { class: "ctx-label" }, [child.label])]);
+              h("span", { class: "ctx-label", title: window.RMSI18n.t(child.label) }, [child.label])]);
           action.addEventListener("click", () => { closeContextMenu(); child.onSelect(); });
           subMenu.appendChild(action);
         });
@@ -7260,7 +7261,7 @@
 
     const right = h("div", { class: "sb-left" }, [
       icon("layoutList", IC.sm),
-      h("span", {}, [msg("ui.status.selected", { count: formatCount(S.selected.size) })]),
+      h("span", {}, [msg(S.selected.size === 1 ? "ui.status.selectedOne" : "ui.status.selected", { count: formatCount(S.selected.size) })]),
     ]);
     const left = h("div", { class: "sb-middle" });
     if (detail) {

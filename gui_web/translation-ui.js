@@ -13,6 +13,7 @@
           ...[['off','ui.translation.mode.off'],['deepl-free','ui.translation.mode.deepl-free'],['deepl-pro','ui.translation.mode.deepl-pro'],['google','ui.translation.mode.google']].map(([value,label])=>h('option',{value},[t(label)]))]);
         mode.value=r.data.mode;
         const key=h('input',{type:'password',class:'field-input translation-key',autocomplete:'new-password',placeholder:t(r.data.hasKey?'ui.translation.keySaved':'ui.translation.key')});
+        key.addEventListener('input',()=>{if(mode.value.startsWith('deepl-'))mode.value=key.value.trim().endsWith(':fx')?'deepl-free':'deepl-pro';});
         const status=h('div',{class:'modal-hint translation-settings-result'});
         const save=h('button',{class:'btn compact',onClick:async()=>{
           save.disabled=true;
@@ -36,7 +37,7 @@
       if(!isCurrent()||!input.isConnected)return;
       if(!configured.ok){showToast(configured.error,'error');return;}
       if(configured.data.mode==='off'||!configured.data.hasKey){showToast(t('ui.translation.configure'),'warning');openSettings('metadata');return;}
-      let closed=false,busy=false,jobId=null,result=null;
+      let closed=false,busy=false,jobId=null,result=null,allowSameLanguage=false;
       const original=h('textarea',{class:'field-input translation-original',rows:6,readonly:true});original.value=source;
       const translated=h('textarea',{class:'field-input translation-result',rows:6,readonly:true});
       const language=h('select',{class:'field-input translation-language'},window.RMSI18n.LANGS.map(value=>h('option',{value},[window.RMSI18n.LABELS[value]])));
@@ -59,7 +60,11 @@
         input.value=original.value;onChange();close();showToast(t('ui.translation.draftReady'),'success');
       }},[t('ui.translation.useOriginal')]);
       const start=h('button',{class:'btn primary compact translation-start',onClick:async()=>{
-        if(busy)return;busy=true;result=null;apply.disabled=true;restore.disabled=true;start.disabled=true;language.disabled=true;status.textContent='';translated.value='';
+        if(busy)return;
+        const letters=Array.from(source).filter(char=>/\p{L}/u.test(char));
+        const korean=letters.filter(char=>/[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(char)).length;
+        if(language.value==='ko'&&letters.length>=8&&korean/letters.length>=0.8&&!allowSameLanguage){status.textContent=t('ui.translation.alreadyKorean');allowSameLanguage=true;return;}
+        busy=true;result=null;apply.disabled=true;restore.disabled=true;start.disabled=true;language.disabled=true;status.textContent='';translated.value='';
         try{
           const started=await api.startTranslateDescription(source,language.value);
           if(closed){if(started.ok)api.cancelJob(started.data.jobId);return;}
@@ -72,7 +77,7 @@
           status.textContent=t(result.cached?'ui.translation.cached':'ui.translation.ready');apply.disabled=false;
         }finally{if(!closed){busy=false;start.disabled=false;language.disabled=false;restore.disabled=original.value===source;}}
       }},[t('ui.translation.start')]);
-      language.addEventListener('change',()=>{result=null;apply.disabled=true;translated.value='';status.textContent='';});
+      language.addEventListener('change',()=>{allowSameLanguage=false;result=null;apply.disabled=true;translated.value='';status.textContent='';});
       const body=h('div',{class:'modal-body translation-body'},[
         h('div',{class:'translation-controls'},[h('span',{class:'field-label'},[t('ui.translation.target')]),language,start]),
         host,status,h('div',{class:'translation-grid'},[

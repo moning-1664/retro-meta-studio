@@ -15,7 +15,7 @@ async function untranslated(page) {
       if (/[가-힣]/.test(node.nodeValue)) found.add(node.nodeValue.trim());
     }
     document.querySelectorAll('button,input,textarea,[title]').forEach(el => {
-      if (!el.getClientRects().length || el.closest('.lrow,[data-i18n-skip]')) return;
+      if (!el.getClientRects().length || el.closest('[data-i18n-skip]')) return;
       for (const attr of ['placeholder','title','aria-label']) {
         if (window.RMSI18n.isRawAttribute(el, attr)) continue;
         const value = el.getAttribute(attr);

@@ -30,7 +30,7 @@
         const current = valueText(options.current[key]);
         content.appendChild(h("span", { class: "candidate-detail-current", title: window.RMSI18n.raw(current) },
           [h("span", { class: "candidate-detail-label" }, ["기존"]), " · ",
-            current ? window.RMSI18n.raw(current) : "비어 있음"]));
+            current ? window.RMSI18n.raw(current) : window.RMSI18n.t("ui.common.empty")]));
       }
       content.appendChild(h("span", { class: "candidate-detail-value", title: window.RMSI18n.raw(text) },
         [text ? window.RMSI18n.raw(text) : "없음"]));

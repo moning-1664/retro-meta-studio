@@ -16,6 +16,28 @@ MODES = {'off', 'deepl-free', 'deepl-pro', 'google'}
 class TranslationError(ValueError):
     pass
 
+def google_error_key(response):
+    """Map structured Google reasons without exposing provider messages or API keys."""
+    try:
+        error = response.json().get('error', {})
+        if not isinstance(error, dict):
+            return 'ui.translation.permission'
+        reasons = [entry.get('reason', '') for entry in error.get('errors', []) if isinstance(entry, dict)]
+        reasons += [entry.get('reason', '') for entry in error.get('details', []) if isinstance(entry, dict)]
+        diagnostic = ' '.join(map(str, reasons + [error.get('status', ''), error.get('message', '')])).casefold()
+    except (ValueError, AttributeError, TypeError):
+        return 'ui.translation.permission'
+    if any(word in diagnostic for word in ('quota', 'limitexceeded', 'limit exceeded', 'resource_exhausted')):
+        return 'ui.translation.quota'
+    if 'billing' in diagnostic:
+        return 'ui.translation.billing'
+    if any(word in diagnostic for word in ('accessnotconfigured', 'service_disabled', 'has not been used', 'api has not been enabled')):
+        return 'ui.translation.apiDisabled'
+    if any(word in diagnostic for word in ('api_key_invalid', 'keyinvalid', 'api key not valid', 'unauthenticated', 'autherror')):
+        return 'ui.translation.authentication'
+    return 'ui.translation.permission'
+
+
 class DescriptionTranslator:
     def __init__(self, database):
         self.database = Path(database)
@@ -52,6 +74,8 @@ class DescriptionTranslator:
             else:
                 response = requests.post('https://translation.googleapis.com/language/translate/v2', headers={'X-Goog-Api-Key':api_key}, json={'q':text,'target':target_language,'format':'text'}, timeout=(4,15))
             with response:
+                if mode == 'google' and response.status_code in (400,403):
+                    raise TranslationError(google_error_key(response))
                 if response.status_code in (401,403): raise TranslationError('ui.translation.authentication')
                 if response.status_code in (429,456): raise TranslationError('ui.translation.quota')
                 if response.status_code != 200: raise TranslationError('ui.translation.serviceError')

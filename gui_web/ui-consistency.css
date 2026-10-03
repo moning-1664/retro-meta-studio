@@ -125,3 +125,7 @@ input[type="range"]:disabled { opacity: .5; cursor: not-allowed; }
 .detail-body > .revision-row { flex-shrink: 0; }
 .detail-body > .revision-actions { flex-shrink: 0; position: sticky; bottom: 0; background: var(--card2); }
 .game-candidate-dialog { width: calc(331px * var(--font-scale)); max-width: calc(100vw - 24px); }
+
+/* Action text must stay on one line in longer translations. */
+.detail-save { flex-shrink: 0; white-space: nowrap; width: auto; }
+.detail-save > span { white-space: nowrap; }
